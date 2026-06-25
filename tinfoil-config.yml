@@ -1,0 +1,18 @@
+# Tinfoil Container Configuration
+# For updates: edit this file, commit, run the workflow (e.g., v0.0.2)
+cvm-version: 0.7.5
+cpus: 2
+memory: 8192
+
+containers:
+  - name: "hello-world"
+    image: "ghcr.io/tinfoilsh/tinfoil-containers-hello-world@sha256:c943b1cab16409e2e686ad71deab30364c27421852cdd6b3080df1c7a38331ed"
+    env:
+      - MESSAGE: "Hello from Tinfoil"
+    secrets:
+      - GREETING_TOKEN
+
+shim:
+  upstream-port: 8080
+  paths:
+    - /*
