@@ -14,7 +14,7 @@ gpus: 1           # the GPU reserved for the month (the supervisor does not touc
 containers:
   - name: "nan"
     # Built + pinned by CI (ghcr.io/stevedefacto/nan, lowercase — see the workflow).
-    image: "ghcr.io/stevedefacto/nan:placeholder"
+    image: "ghcr.io/stevedefacto/nan@sha256:1f2e081f4e35587b03168a8e2e07d49f18a4352b37c8e1d83e2e6829a490b535" # v0.1.3
     env:
       - PORT: "8080"
       # The shim URL Tinfoil assigns this container (or your custom domain once mapped).
