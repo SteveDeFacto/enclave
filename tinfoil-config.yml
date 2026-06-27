@@ -26,8 +26,13 @@ containers:
       - BASE_RPC: "https://mainnet.base.org"
       - ESCROW_ENABLED: "false"
       - SESSION_TTL: "43200"
-      - MIG_LAYOUT: "1g.18gb,1g.18gb,1g.18gb,1g.18gb,1g.18gb,1g.18gb,1g.35gb"
+      - GPU_COUNT: "1"
+      - GPU_VRAM_GB: "141"
+      - MIN_COMPUTE_SHARE: "0.1428571"
+      - VRAM_GRANULARITY_GB: "1"
+      - CTX_OVERHEAD_GB: "0.5"
       - SSH_USER: "instance"
+      - MOCK_SPAWN: "1"
       - DEFAULT_IMAGE: "debian:bookworm-slim"   # any stock image; sshd is hosted by the supervisor
       # SSH host-key fingerprint is generated at boot in-enclave and measured into an RTMR — not configured here.
     secrets:
