@@ -1,3 +1,15 @@
+# Tinfoil Containers release workflow (phase 1 — build + initiate a release).
+#
+# Run this from the Actions tab ("Run workflow") with a version like v0.0.1.
+# It builds the supervisor image, pushes it to ghcr.io, rewrites the digest in
+# tinfoil-config.yml, creates the release tag, then dispatches phase 2
+# (tinfoil-release-publish.yml) which measures + attests the pinned image.
+#
+# NOTE: the ghcr path is hardcoded LOWERCASE (ghcr.io/stevedefacto/nan). The repo
+# is SteveDeFacto/Nan; ${{ github.repository }} would emit mixed-case refs and
+# ghcr / the measurement step want lowercase. Keep this in sync with the
+# `image:` line in tinfoil-config.yml.
+
 name: Tinfoil Release
 
 run-name: Release ${{ inputs.version }}
@@ -14,17 +26,19 @@ concurrency:
   group: tinfoil-container-release-${{ inputs.version }}
 
 jobs:
-  prepare-release:
+  build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write       # push the release tag
-      actions: write        # dispatch tinfoil-release-publish.yml on the new tag
+      contents: read    # checkout + check the tag does not exist
+      packages: write   # push the container image
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
-          persist-credentials: true  # needed to push the release tag below
+          persist-credentials: false
 
       - name: Check if version tag already exists
         env:
@@ -35,12 +49,55 @@ jobs:
             exit 1
           fi
 
-      - name: Create and push the release tag
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ghcr.io/stevedefacto/nan
+          tags: |
+            type=semver,pattern={{version}},value=${{ inputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }}
+            type=sha,format=short
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          git tag "$VERSION" "$GITHUB_SHA"
-          git push origin "refs/tags/$VERSION"
+          SOURCE_DATE_EPOCH: 0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  prepare-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # update-container-action pushes the release tag
+      pull-requests: write  # required by update-container-action
+      actions: write        # dispatch tinfoil-release-publish.yml on the new tag
+
+    steps:
+      - name: Update tinfoil-config.yml and create the release tag
+        uses: tinfoilsh/update-container-action@5e0a3789316941664cee055706799114e0180565 # v0.6.0
+        with:
+          version: ${{ inputs.version }}
+          source-sha: ${{ github.sha }}
+          update-config: true
+          image-refs: |
+            ghcr.io/stevedefacto/nan@${{ needs.build.outputs.digest }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Dispatch the publish workflow on the new tag
         env:
