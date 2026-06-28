@@ -74,7 +74,8 @@ containers:
       - SESSION_TTL: "43200"
       - GPU_COUNT: "1"
       - GPU_VRAM_GB: "141"
-      - MIN_COMPUTE_SHARE: "0.1428571"
+      - SM_TOTAL: "132"
+      - MIN_COMPUTE_PCT: "1"
       - VRAM_GRANULARITY_GB: "1"
       - CTX_OVERHEAD_GB: "0.5"
     secrets:
