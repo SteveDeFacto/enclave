@@ -1,23 +1,69 @@
-# Tinfoil enclave = ONE persistent NAN supervisor. It IS the api.nan.host service
-# (control + data), measured and attested. Per-use sandboxes are spawned by the
-# supervisor in-process at runtime — no external tier, no redeploy per use.
+# NAN enclave — SUBMISSION MODEL (multi-container, all measured & attested).
 #
-# This repo BUILDS the image in CI: the `image:` digest below is rewritten by the
-# Tinfoil Release workflow on every tagged release. Leave the :placeholder tag —
-# do NOT hand-edit the @sha256 part. Just edit env/secrets, commit, and run the
-# workflow with a new version.
+# Three containers share one confidential VM (shared localhost network, shared
+# /mnt/ramdisk volume, ipc:host so MPS shared-memory works):
+#
+#   supervisor   — control plane (auth, billing, quota, routing). No GPU. Public via shim.
+#   mps-control  — runs the MPS daemon so per-tenant worker processes get HARDWARE-
+#                  enforced SM% + VRAM caps (validated under CC). Owns /tmp/nvidia-mps.
+#   worker       — GPU container. Holds the card, forks one MPS-capped CUDA process
+#                  per tenant, runs submitted compute. Reached by the supervisor on localhost.
+#
+# Tenants do NOT bring containers (Tinfoil forbids runtime container creation) — they
+# SUBMIT work to the worker. That is the only model the platform allows.
+#
+# Images are built+pinned by CI; leave the :placeholder tags, the Release workflow
+# rewrites the @sha256 digests. Tinfoil REQUIRES a digest on every image to attest it.
 cvm-version: 0.7.5
-cpus: 8           # supervisor + headroom for spawned sandboxes
-memory: 65536     # 64 GiB — raise to fit concurrent per-use containers
-gpus: 1           # the GPU reserved for the month (the supervisor does not touch it yet — initMig is a stub)
+cpus: 16
+memory: 65536      # 64 GiB
+gpus: 1            # whole H200 attached to the enclave (CC allows 1 or 8)
 
 containers:
-  - name: "nan"
-    # Built + pinned by CI (ghcr.io/stevedefacto/nan, lowercase — see the workflow).
+  # --- MPS daemon: makes per-tenant SM%/VRAM caps enforceable in prod -----------
+  - name: "mps-control"
+    image: "ghcr.io/stevedefacto/nan-mps:placeholder"
+    runtime: nvidia
+    gpus: all
+    ipc: host
+    restart: always
+    volumes:
+      - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # shared MPS pipe dir
+      - /mnt/ramdisk/nvidia-mps-log:/tmp/nvidia-mps-log
+    healthcheck:
+      test: ["CMD-SHELL", "echo get_server_list | nvidia-cuda-mps-control >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # --- GPU worker: forks MPS-capped CUDA processes per tenant, runs submitted jobs
+  - name: "worker"
+    image: "ghcr.io/stevedefacto/nan-worker:placeholder"
+    runtime: nvidia
+    gpus: all
+    ipc: host
+    restart: always
+    env:
+      - WORKER_PORT: "8090"
+      - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
+      - GPU_VRAM_GB: "141"
+    volumes:
+      - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # join the MPS daemon
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # --- supervisor: control plane (no GPU), public ingress -----------------------
+  - name: "supervisor"
     image: "ghcr.io/stevedefacto/nan:placeholder"
+    restart: always
     env:
       - PORT: "8080"
-      # The shim URL Tinfoil assigns this container (or your custom domain once mapped).
+      - WORKER_URL: "http://localhost:8090"              # reach the worker over shared localhost
       - PUBLIC_URL: "https://nan.<org>.containers.tinfoil.dev"
       - SIWE_DOMAIN: "nan.host"
       - SIWE_URI: "https://nan.host"
@@ -31,15 +77,15 @@ containers:
       - MIN_COMPUTE_SHARE: "0.1428571"
       - VRAM_GRANULARITY_GB: "1"
       - CTX_OVERHEAD_GB: "0.5"
-      - SSH_USER: "instance"
-      - DEFAULT_IMAGE: "debian:bookworm-slim"   # any stock image; sshd is hosted by the supervisor
-      # SSH host-key fingerprint is generated at boot in-enclave and measured into an RTMR — not configured here.
     secrets:
-      - SECRET            # signs/verifies the session+capability token (add it in Dashboard > Secrets)
+      - SECRET
+    command: ["node", "supervisor.js"]
 
-# The shim is the single ingress. Control (/v1/*) and data (/x/:id/*) are both
-# served by the supervisor on one port — one origin, one cert for the browser.
+# Single ingress → supervisor. Only these paths are reachable from outside.
 shim:
   upstream-port: 8080
   paths:
-    - /*
+    - /health
+    - /v1/*
+    - /availability
+    - /x/*
