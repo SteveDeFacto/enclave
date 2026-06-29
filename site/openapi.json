@@ -1,0 +1,1416 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "NAN API",
+    "version": "1.0.0",
+    "summary": "Trustless on-demand confidential compute.",
+    "description": "Deploy confidential GPU workloads into hardware-isolated enclaves with an H200 in NVIDIA confidential-computing mode. Authenticate with an Ethereum signature (SIWE), pay USDC per deployment (no accounts, no held balance), and verify the enclave yourself. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
+  },
+  "servers": [
+    {
+      "url": "https://api.nan.host/v1",
+      "description": "Production (per-enclave base; the live debug enclave is https://enclave1.debug.nan.containers.tinfoil.dev/v1)"
+    }
+  ],
+  "security": [
+    {
+      "siwe": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Prove control of an address and obtain a bearer token."
+    },
+    {
+      "name": "Account",
+      "description": "Your address, the payment forwarder, and a summary of your deployments. No balances are held."
+    },
+    {
+      "name": "Pricing",
+      "description": "Live per-second rates and GPU availability."
+    },
+    {
+      "name": "Deployments",
+      "description": "Create, fund, inspect, and tear down confidential workloads."
+    },
+    {
+      "name": "Attestation",
+      "description": "Verify what is actually running."
+    },
+    {
+      "name": "System",
+      "description": "Health and build metadata."
+    }
+  ],
+  "paths": {
+    "/auth/nonce": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "getNonce",
+        "summary": "Get a SIWE nonce",
+        "security": [],
+        "description": "Returns a single-use nonce (and a ready-to-sign SIWE message) for an address. Sign the message and exchange it at /auth/login.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "0x4E5A...b9c1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A nonce and canonical SIWE message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthChallenge"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "login",
+        "summary": "Exchange a signature for a token",
+        "security": [],
+        "description": "Verifies the signed SIWE message and issues a short-lived bearer token bound to the address. The token only authorizes API orchestration; there are no custodied funds it could ever move.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A bearer token bound to the address.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bad or expired signature.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/account": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "getAccount",
+        "summary": "Account summary",
+        "description": "Your address, the USDC payment forwarder to pay, and counts of your running and awaiting-payment deployments plus total funded time remaining. No balances are held by NAN.",
+        "responses": {
+          "200": {
+            "description": "Account summary.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pricing": {
+      "get": {
+        "tags": [
+          "Pricing"
+        ],
+        "operationId": "getPricing",
+        "summary": "Rates and billing model",
+        "security": [],
+        "description": "The whole-card per-second rate and how a share maps to a price. Billed per second at your share of the full-GPU rate.",
+        "responses": {
+          "200": {
+            "description": "Pricing model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pricing"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/availability": {
+      "get": {
+        "tags": [
+          "Pricing"
+        ],
+        "operationId": "getAvailability",
+        "summary": "Live GPU capacity",
+        "security": [],
+        "servers": [
+          {
+            "url": "https://api.nan.host",
+            "description": "Root origin (this path is not under /v1)"
+          }
+        ],
+        "description": "Live free capacity on the enclave's card, as a single `share` (0 to 1). Read directly from the worker allocator; falls back to local accounting if the worker is briefly unreachable. NOTE: this endpoint is served at the root origin, not under /v1.",
+        "responses": {
+          "200": {
+            "description": "Current capacity.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Availability"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gpu": {
+      "get": {
+        "tags": [
+          "Pricing"
+        ],
+        "operationId": "getGpu",
+        "summary": "Live MPS / per-tenant SM grants",
+        "security": [],
+        "description": "External proof that MPS caps are live: each running tenant's granted SM count (sanitized, no tenant ids). A 25% tenant reports roughly a quarter of the card's SMs.",
+        "responses": {
+          "200": {
+            "description": "MPS status and per-tenant SM grants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Gpu"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Worker manager unreachable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deployments": {
+      "post": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "createDeployment",
+        "summary": "Create a deployment (awaiting payment)",
+        "description": "Reserves a GPU share and returns a deployment in `awaiting_payment` with a `payment` block. The workload is NOT provisioned yet: approve USDC to the forwarder and call pay(deploymentRef, amount); the enclave sees the payment, provisions your MPS-capped worker process, and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. The share is a software cap (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDeployment"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created, awaiting payment. (ssh.privateKey, if generated, is returned ONCE.)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deployment"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No single card has that share free.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid spec (e.g. share out of range, or share exceeds a whole card).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "listDeployments",
+        "summary": "List your deployments",
+        "responses": {
+          "200": {
+            "description": "Your deployments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deployments/{id}": {
+      "get": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "getDeployment",
+        "summary": "Get a deployment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deployment"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "terminateDeployment",
+        "summary": "Stop a deployment",
+        "description": "Stops the worker process, tears down the tenant, and releases the GPU share. Pay-per-deploy holds no balance, so any unused funded time is forfeit on early stop.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Teardown acknowledged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminationReceipt"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deployments/{id}/topup": {
+      "post": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "topupDeployment",
+        "summary": "Top-up instructions",
+        "description": "Returns the payment instructions to extend a deployment. A top-up is just another pay(deploymentRef, amount) to the same forwarder; each payment adds amount(6dp)/rate seconds to the expiry. Send it before expiry (a short grace period covers in-flight top-ups).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payment instructions for the top-up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopupResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Deployment is not in a top-up-able state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deployments/{id}/logs": {
+      "get": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "getLogs",
+        "summary": "Worker logs (owner only)",
+        "description": "Stdout/stderr from inside the enclave as text/plain. ?tail=N (default 200, max 2000).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "maximum": 2000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Log text.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deployments/{id}/attestation": {
+      "get": {
+        "tags": [
+          "Attestation"
+        ],
+        "operationId": "getAttestation",
+        "summary": "Get the enclave attestation",
+        "description": "The Intel TDX quote and NVIDIA GPU attestation report plus the measurements to check them against. Verify client-side before sending data.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attestation material.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attestation"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "operationId": "getHealth",
+        "summary": "Health",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/version": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "operationId": "getVersion",
+        "summary": "Build metadata",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Version"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "siwe": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer token from POST /auth/login. Bound to one address; short-lived."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "invalid_spec"
+          },
+          "message": {
+            "type": "string",
+            "example": "resources.share must be in (0, 1]."
+          }
+        }
+      },
+      "Asset": {
+        "type": "string",
+        "enum": [
+          "USDC"
+        ],
+        "description": "Settlement asset. Payments are USDC on Base."
+      },
+      "DeploymentStatus": {
+        "type": "string",
+        "enum": [
+          "awaiting_payment",
+          "running",
+          "expired",
+          "stopping",
+          "failed"
+        ]
+      },
+      "AuthChallenge": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "nonce": {
+            "type": "string",
+            "description": "Single-use, expires in minutes.",
+            "example": "z8Qa2K9fP1"
+          },
+          "message": {
+            "type": "string",
+            "description": "Canonical SIWE message to sign."
+          },
+          "issuedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "message",
+          "signature"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string",
+            "example": "0x..."
+          }
+        }
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "example": "eyJhbGciOiJIUzI1NiJ9..."
+          },
+          "tokenType": {
+            "type": "string",
+            "example": "Bearer"
+          },
+          "address": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PaymentInstructions": {
+        "type": "object",
+        "description": "How to fund (or top up) a deployment by paying the NanPay forwarder. Funds pass straight through to NAN; nothing is custodied.",
+        "properties": {
+          "chainId": {
+            "type": "integer",
+            "example": 8453
+          },
+          "asset": {
+            "type": "string",
+            "example": "USDC"
+          },
+          "usdc": {
+            "type": "string",
+            "description": "USDC token address on Base.",
+            "example": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+          },
+          "forwarder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "NanPay contract to call. null until configured.",
+            "example": "0x..."
+          },
+          "deploymentRef": {
+            "type": "string",
+            "description": "bytes32 to pass as pay()'s deploymentId.",
+            "example": "0x9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+          },
+          "ratePerSecondUsdc": {
+            "type": "string",
+            "example": "0.0004167"
+          },
+          "method": {
+            "type": "string",
+            "example": "pay(bytes32 deploymentId, uint256 amount)"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "chainId": {
+            "type": "integer",
+            "example": 8453
+          },
+          "payment": {
+            "type": "object",
+            "properties": {
+              "forwarder": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usdc": {
+                "type": "string",
+                "example": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+              },
+              "asset": {
+                "type": "string",
+                "example": "USDC"
+              }
+            }
+          },
+          "deployments": {
+            "type": "object",
+            "properties": {
+              "running": {
+                "type": "integer",
+                "example": 1
+              },
+              "awaitingPayment": {
+                "type": "integer",
+                "example": 0
+              },
+              "total": {
+                "type": "integer",
+                "example": 3
+              },
+              "totalTimeRemainingSec": {
+                "type": "integer",
+                "example": 5400
+              }
+            }
+          }
+        }
+      },
+      "PricingExample": {
+        "type": "object",
+        "properties": {
+          "vramGb": {
+            "type": "number",
+            "example": 35
+          },
+          "computeShare": {
+            "type": "number",
+            "example": 0.25
+          },
+          "billedOn": {
+            "type": "string",
+            "enum": [
+              "memory",
+              "compute"
+            ]
+          },
+          "ratePerSecondUsdc": {
+            "type": "string",
+            "example": "0.0004167"
+          },
+          "ratePerHourUsdc": {
+            "type": "string",
+            "example": "1.50"
+          }
+        }
+      },
+      "Pricing": {
+        "type": "object",
+        "properties": {
+          "assets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "ETH",
+              "USDC"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "card": {
+            "type": "object",
+            "properties": {
+              "vramGb": {
+                "type": "number",
+                "example": 141
+              },
+              "count": {
+                "type": "integer",
+                "example": 1
+              },
+              "sms": {
+                "type": "integer",
+                "example": 132
+              },
+              "wholeCardPerSecondUsdc": {
+                "type": "string",
+                "example": "0.0016667"
+              },
+              "wholeCardPerHourUsdc": {
+                "type": "string",
+                "example": "6.00"
+              }
+            }
+          },
+          "cpu": {
+            "type": "object",
+            "properties": {
+              "ratePerSecondUsdc": {
+                "type": "string"
+              },
+              "ratePerHourUsdc": {
+                "type": "string"
+              }
+            }
+          },
+          "computeGranularity": {
+            "type": "object",
+            "properties": {
+              "unit": {
+                "type": "string",
+                "example": "percent"
+              },
+              "step": {
+                "type": "integer",
+                "example": 1
+              },
+              "minPercent": {
+                "type": "integer",
+                "example": 1
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          },
+          "vramGranularityGb": {
+            "type": "number",
+            "example": 1
+          },
+          "formula": {
+            "type": "string",
+            "example": "ratePerSecondUsdc = wholeCardPerSecond x max(vramGb / cardVramGb, computeShare)"
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PricingExample"
+            }
+          },
+          "billingIncrementSeconds": {
+            "type": "integer",
+            "example": 1
+          }
+        }
+      },
+      "Availability": {
+        "type": "object",
+        "description": "Live free capacity as a single share (0 to 1). Served at the root origin, not under /v1.",
+        "properties": {
+          "maxShare": {
+            "type": "number",
+            "description": "Largest share of the card still free (0 to 1). Requests above this get 409.",
+            "example": 0.55
+          },
+          "usedShare": {
+            "type": "number",
+            "example": 0.45
+          },
+          "smFree": {
+            "type": "integer",
+            "example": 72
+          },
+          "smTotal": {
+            "type": "integer",
+            "example": 132
+          },
+          "vramFreeGb": {
+            "type": "number",
+            "example": 77
+          },
+          "cardVramGb": {
+            "type": "number",
+            "example": 141
+          },
+          "cards": {
+            "type": "integer",
+            "example": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "worker",
+              "fallback"
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "example": {
+          "maxShare": 0.55,
+          "usedShare": 0.45,
+          "smFree": 72,
+          "smTotal": 132,
+          "vramFreeGb": 77,
+          "cardVramGb": 141,
+          "cards": 1,
+          "source": "worker",
+          "updatedAt": "2026-06-29T17:04:30Z"
+        }
+      },
+      "Gpu": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "role": {
+            "type": "string",
+            "example": "manager"
+          },
+          "mpsActive": {
+            "type": "boolean"
+          },
+          "capacity": {
+            "type": "object",
+            "description": "Live allocator capacity."
+          },
+          "smTotal": {
+            "type": "integer",
+            "example": 132
+          },
+          "tenants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "pct": {
+                  "type": "integer",
+                  "example": 25
+                },
+                "status": {
+                  "type": "string",
+                  "example": "running"
+                },
+                "smGranted": {
+                  "type": "integer",
+                  "description": "SMs the MPS cap actually granted.",
+                  "example": 33
+                }
+              }
+            }
+          }
+        }
+      },
+      "ImageRef": {
+        "type": "object",
+        "required": [
+          "reference"
+        ],
+        "properties": {
+          "reference": {
+            "type": "string",
+            "example": "debian:bookworm-slim"
+          },
+          "digest": {
+            "type": "string",
+            "description": "Optional sha256. If set, it is pinned and folded into the measurement.",
+            "example": "sha256:9f86..."
+          },
+          "registryAuth": {
+            "type": "string",
+            "description": "Base64 docker auth for private images. Encrypted to the enclave; never stored in plaintext."
+          }
+        }
+      },
+      "ResourceSpec": {
+        "type": "object",
+        "description": "A single share of the card (0 to 1) sets a matching VRAM + compute cap. Legacy vramGb/computeShare are still accepted.",
+        "properties": {
+          "share": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 1,
+            "description": "Share of the whole card (0 to 1).",
+            "example": 0.25
+          },
+          "vramGb": {
+            "type": "number",
+            "description": "Legacy: explicit VRAM cap in GB.",
+            "example": 35
+          },
+          "computeShare": {
+            "type": "number",
+            "description": "Legacy: explicit compute share (0 to 1).",
+            "example": 0.25
+          }
+        }
+      },
+      "NetworkSpec": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "integer",
+            "example": 8080
+          },
+          "protocol": {
+            "type": "string",
+            "example": "https"
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "Public URL on the enclave's single pinned origin: a path under the shim.",
+            "example": "https://enclave1.debug.nan.containers.tinfoil.dev/x/dep_3xK9f2Qa"
+          }
+        }
+      },
+      "SshAccess": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "example": "ssh ..."
+          },
+          "keySource": {
+            "type": "string",
+            "enum": [
+              "provided",
+              "generated"
+            ]
+          },
+          "hostKeyFingerprint": {
+            "type": "string"
+          },
+          "privateKey": {
+            "type": "string",
+            "description": "Returned ONCE at create if NAN generated the key. Never persisted."
+          }
+        }
+      },
+      "AttestationSummary": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "vmTechnology": {
+            "type": "string",
+            "example": "intel-tdx"
+          },
+          "gpuTechnology": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "nvidia-cc"
+          },
+          "href": {
+            "type": "string",
+            "example": "/v1/deployments/dep_3xK9f2Qa/attestation"
+          }
+        }
+      },
+      "CreateDeployment": {
+        "type": "object",
+        "required": [
+          "resources"
+        ],
+        "properties": {
+          "image": {
+            "$ref": "#/components/schemas/ImageRef"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "port": {
+            "type": "integer",
+            "default": 8080
+          },
+          "sshPublicKey": {
+            "type": "string",
+            "description": "OpenSSH public key. If omitted, NAN generates one and returns the private key once."
+          },
+          "resources": {
+            "$ref": "#/components/schemas/ResourceSpec"
+          },
+          "attestationPolicy": {
+            "type": "object",
+            "properties": {
+              "requireGpuAttestation": {
+                "type": "boolean"
+              }
+            }
+          },
+          "region": {
+            "type": "string",
+            "example": "auto"
+          }
+        },
+        "example": {
+          "image": {
+            "reference": "debian:bookworm-slim"
+          },
+          "port": 8080,
+          "resources": {
+            "share": 0.25
+          },
+          "attestationPolicy": {
+            "requireGpuAttestation": true
+          },
+          "region": "auto"
+        }
+      },
+      "Deployment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "dep_3xK9f2Qa"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeploymentStatus"
+          },
+          "image": {
+            "$ref": "#/components/schemas/ImageRef"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "resources": {
+            "type": "object",
+            "properties": {
+              "vramGb": {
+                "type": "number"
+              },
+              "computeShare": {
+                "type": "number"
+              },
+              "share": {
+                "type": "number"
+              },
+              "cardId": {
+                "type": "integer"
+              }
+            }
+          },
+          "network": {
+            "$ref": "#/components/schemas/NetworkSpec"
+          },
+          "attestation": {
+            "$ref": "#/components/schemas/AttestationSummary"
+          },
+          "region": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Set when payment provisions the worker."
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Funded through this time; extended by top-ups."
+          },
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payRef": {
+            "type": "string",
+            "description": "bytes32 payment reference (pass to pay())."
+          },
+          "ratePerSecondUsdc": {
+            "type": "string",
+            "example": "0.0004167"
+          },
+          "spentUsdc": {
+            "type": "string",
+            "description": "Elapsed runtime cost so far (informational).",
+            "example": "0.41"
+          },
+          "paidUsdc": {
+            "type": "string",
+            "description": "Total USDC paid into this deployment.",
+            "example": "10.00"
+          },
+          "timeRemainingSec": {
+            "type": "integer",
+            "example": 21600
+          },
+          "ssh": {
+            "$ref": "#/components/schemas/SshAccess"
+          },
+          "payment": {
+            "$ref": "#/components/schemas/PaymentInstructions"
+          }
+        }
+      },
+      "DeploymentList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Deployment"
+            }
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TerminationReceipt": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "example": "stopping"
+          },
+          "paidUsdc": {
+            "type": "string",
+            "example": "10.00"
+          },
+          "ranSeconds": {
+            "type": "integer",
+            "example": 1240
+          },
+          "note": {
+            "type": "string",
+            "example": "Pay-per-deploy: no balance is held, so unused funded time is forfeit on early stop."
+          }
+        }
+      },
+      "TopupResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeploymentStatus"
+          },
+          "timeRemainingSec": {
+            "type": "integer",
+            "example": 3600
+          },
+          "payment": {
+            "$ref": "#/components/schemas/PaymentInstructions"
+          }
+        }
+      },
+      "Measurements": {
+        "type": "object",
+        "description": "Expected measurements to check the quote/report against.",
+        "additionalProperties": true
+      },
+      "VmAttestation": {
+        "type": "object",
+        "description": "Intel TDX quote material.",
+        "additionalProperties": true
+      },
+      "GpuAttestation": {
+        "type": "object",
+        "description": "NVIDIA GPU attestation report.",
+        "additionalProperties": true
+      },
+      "Attestation": {
+        "type": "object",
+        "properties": {
+          "deploymentId": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "vm": {
+            "$ref": "#/components/schemas/VmAttestation"
+          },
+          "gpu": {
+            "$ref": "#/components/schemas/GpuAttestation"
+          },
+          "measurements": {
+            "$ref": "#/components/schemas/Measurements"
+          },
+          "guideUrl": {
+            "type": "string",
+            "example": "https://nan.host/#attest"
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ok"
+          },
+          "deployments": {
+            "type": "integer",
+            "example": 2
+          }
+        }
+      },
+      "Version": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string",
+            "example": "nan-supervisor/0.1.0"
+          },
+          "contract": {
+            "type": "string",
+            "example": "nan-openapi/1.0.0"
+          },
+          "chainId": {
+            "type": "integer",
+            "example": 8453
+          }
+        }
+      }
+    }
+  }
+}

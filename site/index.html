@@ -1,0 +1,3682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NAN · Trustless Confidential Compute</title>
+<meta name="description" content="Trustless on-demand confidential compute. Deploy a container with an H200 GPU from your browser, pay in ETH or USDC, and verify the enclave yourself. CORS-friendly API." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 9v14L16 30 4 23V9z' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 10v12M11 13l5-3 5 3' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3C/svg%3E" />
+<style>
+/* ============================================================
+   NAN design tokens
+   mono = product voice · jade = verified · amber = compute
+   ============================================================ */
+:root{
+  --bg:#070A0F;
+  --bg-1:#0B0F16;
+  --surface:#0F1620;
+  --surface-2:#131C28;
+  --surface-3:#172230;
+  --line:#1E2937;
+  --line-soft:#16202C;
+  --text:#E7EEF6;
+  --text-muted:#93A1B5;
+  --text-dim:#5E6E83;
+  --jade:#2FE6A8;
+  --jade-2:#5FF0C0;
+  --jade-dim:#1C9C74;
+  --jade-deep:#0E3A2C;
+  --jade-glow:rgba(47,230,168,.14);
+  --amber:#FF914D;
+  --amber-2:#FFB07A;
+  --amber-deep:#3A2014;
+  --iris:#8FA2FF;
+  --iris-deep:#1A2150;
+  --danger:#FF6B6B;
+  --danger-deep:#3A1717;
+  --m-get:#2FE6A8;
+  --m-post:#7E9CFF;
+  --m-patch:#FF914D;
+  --m-delete:#FF6B6B;
+  --font-mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code","Fira Code",Menlo,Consolas,"Liberation Mono",monospace;
+  --font-sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --maxw:1200px;
+  --radius:14px;
+  --radius-sm:9px;
+  --ease:cubic-bezier(.2,.7,.2,1);
+}
+
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto;}}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font-family:var(--font-sans);font-size:16px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  overflow-x:hidden;
+}
+/* faint silicon substrate */
+body::before{
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(1100px 600px at 78% -8%, rgba(47,230,168,.07), transparent 60%),
+    radial-gradient(900px 500px at 8% 8%, rgba(143,162,255,.05), transparent 55%),
+    linear-gradient(transparent 0 95%, rgba(255,255,255,.018) 95%) 0 0/100% 26px,
+    linear-gradient(90deg, transparent 0 95%, rgba(255,255,255,.018) 95%) 0 0/26px 100%;
+}
+a{color:inherit;text-decoration:none;}
+img{max-width:100%;display:block;}
+::selection{background:rgba(47,230,168,.28);color:#fff;}
+:focus-visible{outline:2px solid var(--jade);outline-offset:2px;border-radius:4px;}
+
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px;position:relative;z-index:1;}
+.mono{font-family:var(--font-mono);}
+.eyebrow{
+  font-family:var(--font-mono);font-size:.72rem;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--jade);display:inline-flex;align-items:center;gap:.6em;
+}
+.eyebrow::before{content:"";width:22px;height:1px;background:linear-gradient(90deg,var(--jade),transparent);}
+.muted{color:var(--text-muted);}
+.dim{color:var(--text-dim);}
+
+/* ---------- buttons ---------- */
+.btn{
+  font-family:var(--font-mono);font-size:.86rem;letter-spacing:.02em;
+  display:inline-flex;align-items:center;gap:.55em;cursor:pointer;
+  padding:.74em 1.15em;border-radius:var(--radius-sm);border:1px solid var(--line);
+  background:var(--surface);color:var(--text);transition:.18s var(--ease);
+  text-decoration:none;white-space:nowrap;
+}
+.btn:hover{border-color:#33465c;background:var(--surface-2);transform:translateY(-1px);}
+.btn .arr{transition:transform .18s var(--ease);}
+.btn:hover .arr{transform:translateX(3px);}
+.btn-primary{
+  background:linear-gradient(180deg, rgba(47,230,168,.16), rgba(47,230,168,.06));
+  border-color:rgba(47,230,168,.4);color:var(--jade-2);
+  box-shadow:0 0 0 1px rgba(47,230,168,.06), 0 10px 30px -12px rgba(47,230,168,.45);
+}
+.btn-primary:hover{border-color:var(--jade);background:linear-gradient(180deg, rgba(47,230,168,.24), rgba(47,230,168,.1));}
+.btn-ghost{background:transparent;}
+.btn-sm{padding:.5em .8em;font-size:.78rem;}
+
+/* ---------- nav ---------- */
+header.nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
+  background:rgba(7,10,15,.72);border-bottom:1px solid var(--line-soft);}
+.nav-inner{display:flex;align-items:center;justify-content:space-between;height:64px;position:relative;}
+.brand{display:flex;align-items:center;gap:.7em;font-family:var(--font-mono);font-weight:600;letter-spacing:.04em;}
+.brand svg{width:26px;height:26px;flex:none;}
+.brand .nm{font-size:1.02rem;}
+.brand .sub{color:var(--text-dim);font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;border-left:1px solid var(--line);padding-left:.7em;margin-left:.2em;}
+.nav-links{display:flex;align-items:center;gap:6px;position:absolute;left:50%;transform:translateX(-50%);}
+.nav-links a{font-family:var(--font-mono);font-size:.82rem;color:var(--text-muted);padding:.5em .7em;border-radius:7px;transition:.15s;}
+.nav-links a:hover{color:var(--text);background:var(--surface);}
+.nav-cta{display:flex;align-items:center;gap:10px;}
+.menu-btn{display:none;}
+
+/* ---------- hero ---------- */
+.hero{padding:78px 0 30px;}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center;}
+.hero h1{
+  font-family:var(--font-mono);font-weight:600;line-height:1.04;letter-spacing:-.02em;
+  font-size:clamp(2rem,4vw,2.8rem);margin:.5rem 0 .2rem;
+}
+.hero h1 .hl{color:var(--jade);}
+.hero h1 .am{color:var(--amber);}
+.hero .lede{font-size:clamp(1rem,1.6vw,1.18rem);color:var(--text-muted);max-width:42ch;margin:1.1rem 0 1.7rem;}
+.hero .lede b{color:var(--text);font-weight:600;}
+.hero-cta{display:flex;gap:12px;flex-wrap:wrap;}
+.hero-foot{margin-top:30px;display:flex;flex-wrap:wrap;gap:8px 22px;font-family:var(--font-mono);font-size:.76rem;color:var(--text-dim);}
+.hero-foot span{display:inline-flex;align-items:center;gap:.55em;}
+.hero-foot span::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--jade);opacity:.8;}
+.hero-foot span.soon::before{background:var(--amber);}
+
+/* enclave signature panel */
+.enclave{
+  position:relative;border:1px solid var(--line);border-radius:var(--radius);
+  background:linear-gradient(180deg,#0A111A,#080C12);overflow:hidden;
+  box-shadow:0 30px 80px -40px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.03);
+}
+.enclave::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 90% at 50% 0%, transparent 60%, rgba(0,0,0,.5));}
+.enclave-bar{display:flex;align-items:center;justify-content:space-between;
+  padding:11px 14px;border-bottom:1px solid var(--line-soft);font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);position:relative;z-index:2;}
+.enclave-bar .lbl{display:flex;align-items:center;gap:.6em;color:var(--text-muted);}
+.enclave-bar .seal{color:var(--jade);}
+.enclave-canvas{display:block;width:100%;height:330px;}
+.enclave-foot{position:relative;z-index:2;border-top:1px solid var(--line-soft);padding:10px 14px;font-family:var(--font-mono);font-size:.7rem;color:var(--text-dim);display:flex;justify-content:space-between;gap:10px;overflow:hidden;}
+.enclave-foot .k{color:var(--text-muted);}
+#measureHash{color:var(--jade);}
+.corner{position:absolute;width:12px;height:12px;border:1px solid var(--jade);opacity:.5;z-index:3;}
+.corner.tl{top:8px;left:8px;border-right:0;border-bottom:0;}
+.corner.tr{top:8px;right:8px;border-left:0;border-bottom:0;}
+.corner.bl{bottom:8px;left:8px;border-right:0;border-top:0;}
+.corner.br{bottom:8px;right:8px;border-left:0;border-top:0;}
+
+/* ---------- marquee facts ---------- */
+.ticker{border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);background:var(--bg-1);overflow:hidden;margin-top:34px;}
+.ticker-track{display:flex;gap:0;white-space:nowrap;animation:scrollx 32s linear infinite;}
+.ticker:hover .ticker-track{animation-play-state:paused;}
+.ticker-track .it{font-family:var(--font-mono);font-size:.78rem;color:var(--text-muted);padding:13px 26px;display:inline-flex;align-items:center;gap:.7em;}
+.ticker-track .it b{color:var(--text);font-weight:600;}
+.ticker-track .it::after{content:"/";color:var(--line);margin-left:26px;}
+@keyframes scrollx{to{transform:translateX(-50%);}}
+@media (prefers-reduced-motion:reduce){.ticker-track{animation:none;}}
+
+/* ---------- section scaffolding ---------- */
+section{padding:84px 0;position:relative;}
+.sec-head{max-width:62ch;margin-bottom:42px;}
+.sec-head h2{font-family:var(--font-mono);font-weight:600;font-size:clamp(1.7rem,3vw,2.5rem);letter-spacing:-.01em;margin:.7rem 0 .5rem;line-height:1.1;}
+.sec-head p{color:var(--text-muted);font-size:1.05rem;margin:0;}
+.divider{height:1px;background:linear-gradient(90deg,var(--line),transparent);}
+
+/* ---------- principle cards ---------- */
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
+.card{border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0C131C);padding:22px;position:relative;overflow:hidden;transition:.2s var(--ease);}
+.card:hover{transform:translateY(-3px);border-color:#2b3a4d;}
+.card .ic{width:38px;height:38px;border-radius:9px;border:1px solid var(--line);display:grid;place-items:center;margin-bottom:16px;background:var(--bg-1);}
+.card .ic svg{width:20px;height:20px;}
+.card h3{font-family:var(--font-mono);font-size:1rem;margin:0 0 .4em;letter-spacing:.01em;}
+.card p{margin:0;color:var(--text-muted);font-size:.92rem;line-height:1.55;}
+.card .tag{position:absolute;top:16px;right:16px;font-family:var(--font-mono);font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);}
+.card.jade .ic{border-color:rgba(47,230,168,.35);box-shadow:0 0 24px -10px var(--jade-glow);}
+.card.jade .ic svg{color:var(--jade);}
+.card.amber .ic svg{color:var(--amber);}
+.iso-mech{margin-top:28px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0C131C);padding:24px 26px;}
+.iso-mech h4{margin:0 0 14px;font-family:var(--font-mono);font-size:.86rem;color:var(--text);letter-spacing:.01em;}
+.iso-list{list-style:none;margin:0;padding:0;display:grid;gap:14px;}
+.iso-list li{position:relative;padding-left:24px;color:var(--text-muted);font-size:.92rem;line-height:1.6;}
+.iso-list li::before{content:"";position:absolute;left:0;top:.5em;width:9px;height:9px;border-radius:2px;background:var(--jade);box-shadow:0 0 14px -2px var(--jade-glow);}
+.iso-list b{color:var(--text);}
+.iso-honest{margin-top:22px;border:1px solid var(--amber);border-left-width:3px;border-radius:var(--radius);background:linear-gradient(180deg,var(--amber-deep),#0C131C);padding:20px 24px;}
+.iso-honest h4{margin:0 0 8px;font-family:var(--font-mono);font-size:.82rem;letter-spacing:.04em;text-transform:uppercase;color:var(--amber);}
+.iso-honest p{margin:0;color:var(--text-muted);font-size:.9rem;line-height:1.62;}
+.iso-honest b{color:var(--text);}
+.card.iris .ic svg{color:var(--iris);}
+
+/* ---------- how it works stepper ---------- */
+.flow{display:grid;grid-template-columns:300px 1fr;gap:30px;align-items:start;}
+.steps{display:flex;flex-direction:column;gap:8px;}
+.step{display:flex;gap:14px;align-items:flex-start;padding:14px;border:1px solid var(--line-soft);border-radius:var(--radius-sm);background:var(--surface);cursor:pointer;transition:.18s var(--ease);text-align:left;width:100%;font-family:inherit;color:inherit;}
+.step:hover{border-color:var(--line);}
+.step.active{border-color:rgba(47,230,168,.5);background:linear-gradient(180deg,rgba(47,230,168,.07),transparent);}
+.step .num{font-family:var(--font-mono);font-size:.8rem;color:var(--text-dim);border:1px solid var(--line);width:30px;height:30px;border-radius:8px;display:grid;place-items:center;flex:none;}
+.step.active .num{color:var(--jade);border-color:rgba(47,230,168,.5);}
+.step .st-t{font-family:var(--font-mono);font-size:.92rem;}
+.step .st-d{font-size:.82rem;color:var(--text-muted);margin-top:2px;}
+.flow-detail{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);overflow:hidden;min-height:340px;}
+
+/* ---------- code block ---------- */
+.code{font-family:var(--font-mono);font-size:.82rem;line-height:1.65;background:#080C12;border:1px solid var(--line-soft);border-radius:var(--radius-sm);overflow:auto;}
+.code .codebar{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid var(--line-soft);background:var(--bg-1);position:sticky;top:0;}
+.code .codebar .fn{color:var(--text-dim);font-size:.72rem;display:flex;align-items:center;gap:.6em;}
+.code pre{margin:0;padding:14px 16px;white-space:pre;}
+.code code{color:#C7D3E2;}
+.tok-key{color:var(--iris);}
+.tok-str{color:var(--jade-2);}
+.tok-num{color:var(--amber-2);}
+.tok-punc{color:var(--text-dim);}
+.tok-com{color:#4B5A6E;font-style:italic;}
+.tok-bool{color:var(--amber);}
+.tok-meth{color:var(--jade);font-weight:600;}
+.copybtn{font-family:var(--font-mono);font-size:.7rem;color:var(--text-muted);border:1px solid var(--line);background:var(--surface);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;display:inline-flex;gap:.4em;align-items:center;}
+.copybtn:hover{color:var(--text);border-color:#33465c;}
+.copybtn.ok{color:var(--jade);border-color:rgba(47,230,168,.4);}
+
+/* ---------- deploy console ---------- */
+.console{display:grid;grid-template-columns:380px 1fr;gap:0;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--surface);}
+.cfg{padding:22px;border-right:1px solid var(--line);background:linear-gradient(180deg,#0C131C,#0A0F17);}
+.cfg h4{font-family:var(--font-mono);font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-dim);margin:0 0 18px;}
+.field{margin-bottom:16px;}
+.field label{display:block;font-family:var(--font-mono);font-size:.74rem;color:var(--text-muted);margin-bottom:6px;letter-spacing:.02em;}
+.field input[type=text],.field input[type=number],.field select{
+  width:100%;font-family:var(--font-mono);font-size:.84rem;color:var(--text);
+  background:#080C12;border:1px solid var(--line);border-radius:8px;padding:.6em .7em;transition:.15s;}
+.field input:focus,.field select:focus{border-color:var(--jade);outline:none;box-shadow:0 0 0 3px rgba(47,230,168,.12);}
+.seg{display:flex;gap:6px;}
+.seg button{flex:1;font-family:var(--font-mono);font-size:.78rem;color:var(--text-muted);background:#080C12;border:1px solid var(--line);border-radius:8px;padding:.55em;cursor:pointer;transition:.15s;position:relative;}
+.seg button:hover{border-color:#33465c;color:var(--text);}
+.seg button.on{border-color:rgba(47,230,168,.5);color:var(--jade);background:linear-gradient(180deg,rgba(47,230,168,.1),transparent);}
+.seg button.soon{opacity:.55;cursor:not-allowed;}
+.seg button .badge{position:absolute;top:-7px;right:-6px;font-size:.54rem;background:var(--amber-deep);color:var(--amber);border:1px solid var(--amber-dim);padding:.1em .35em;border-radius:5px;letter-spacing:.05em;}
+.est{margin-top:6px;padding:12px;border:1px dashed var(--line);border-radius:8px;font-family:var(--font-mono);font-size:.78rem;color:var(--text-muted);display:flex;justify-content:space-between;}
+.est b{color:var(--amber);}
+.console-main{display:flex;flex-direction:column;min-width:0;}
+.console-tabs{display:flex;border-bottom:1px solid var(--line);background:var(--bg-1);}
+.console-tabs button{font-family:var(--font-mono);font-size:.78rem;color:var(--text-muted);background:none;border:0;border-bottom:2px solid transparent;padding:13px 16px;cursor:pointer;transition:.15s;}
+.console-tabs button:hover{color:var(--text);}
+.console-tabs button.on{color:var(--jade);border-bottom-color:var(--jade);}
+.console-body{flex:1;min-height:300px;position:relative;overflow:auto;}
+.console-body .pane{display:none;height:100%;}
+.console-body .pane.on{display:block;}
+.run-row{display:flex;align-items:center;gap:12px;padding:13px 16px;border-top:1px solid var(--line);background:var(--bg-1);}
+.run-row .hint{font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);margin-left:auto;}
+
+/* terminal sim */
+.term{font-family:var(--font-mono);font-size:.8rem;padding:16px;line-height:1.7;color:#B9C6D6;min-height:300px;}
+.term .ln{display:block;white-space:pre-wrap;}
+.term .p{color:var(--jade);}
+.term .ok{color:var(--jade);}
+.term .warn{color:var(--amber);}
+.term .info{color:var(--iris);}
+.term .dimln{color:var(--text-dim);}
+.cursorblink::after{content:"▋";color:var(--jade);animation:blink 1s steps(2) infinite;}
+@keyframes blink{50%{opacity:0;}}
+
+/* ---------- attestation chain ---------- */
+.attest-wrap{display:grid;grid-template-columns:1fr 360px;gap:30px;align-items:start;}
+.chain{display:flex;flex-direction:column;gap:0;}
+.link{position:relative;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);padding:16px 18px;cursor:pointer;transition:.18s var(--ease);}
+.link:not(:last-child){margin-bottom:34px;}
+.link:not(:last-child)::after{content:"";position:absolute;left:32px;bottom:-34px;width:1px;height:34px;background:linear-gradient(var(--jade),transparent);opacity:.5;}
+.link:hover,.link.active{border-color:rgba(47,230,168,.5);box-shadow:0 0 30px -16px var(--jade-glow);}
+.link .lk-h{display:flex;align-items:center;gap:12px;}
+.link .lk-n{font-family:var(--font-mono);font-size:.72rem;color:var(--jade);border:1px solid rgba(47,230,168,.4);border-radius:6px;padding:.2em .5em;flex:none;}
+.link .lk-t{font-family:var(--font-mono);font-size:.94rem;}
+.link .lk-d{color:var(--text-muted);font-size:.86rem;margin:8px 0 0 0;}
+.attest-side{border:1px solid var(--line);border-radius:var(--radius);background:#080C12;position:sticky;top:84px;overflow:hidden;}
+.attest-side .as-h{padding:13px 16px;border-bottom:1px solid var(--line-soft);font-family:var(--font-mono);font-size:.74rem;color:var(--text-muted);display:flex;justify-content:space-between;}
+.verified-pill{color:var(--jade);display:inline-flex;align-items:center;gap:.4em;}
+
+/* ---------- pricing ---------- */
+.price-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+.plan{border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0B121A);padding:24px;position:relative;display:flex;flex-direction:column;}
+.plan.feature{border-color:rgba(47,230,168,.4);box-shadow:0 0 50px -24px var(--jade-glow);}
+.plan.soon{opacity:.72;}
+.plan .pl-tag{font-family:var(--font-mono);font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-dim);}
+.plan.feature .pl-tag{color:var(--jade);}
+.plan.soon .pl-tag{color:var(--amber);}
+.plan h3{font-family:var(--font-mono);font-size:1.3rem;margin:.5rem 0 .2rem;}
+.plan .price{font-family:var(--font-mono);font-size:2.1rem;color:var(--text);margin:.4rem 0 .1rem;letter-spacing:-.02em;}
+.plan .price small{font-size:.8rem;color:var(--text-dim);letter-spacing:0;}
+.plan .persec{font-family:var(--font-mono);font-size:.74rem;color:var(--text-muted);}
+.plan ul{list-style:none;padding:0;margin:18px 0 0;display:flex;flex-direction:column;gap:9px;}
+.plan li{font-size:.88rem;color:var(--text-muted);display:flex;gap:.6em;align-items:flex-start;}
+.plan li svg{width:15px;height:15px;color:var(--jade);flex:none;margin-top:3px;}
+.plan.soon li svg{color:var(--amber);}
+
+/* ============================================================
+   API reference (Swagger-style, disciplined)
+   ============================================================ */
+.api{background:var(--bg-1);border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);}
+.api-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:26px;}
+.api-meta{display:flex;gap:8px;flex-wrap:wrap;font-family:var(--font-mono);font-size:.74rem;}
+.api-meta .chip{border:1px solid var(--line);border-radius:7px;padding:.4em .65em;color:var(--text-muted);background:var(--surface);}
+.api-meta .chip b{color:var(--text);}
+.api-layout{display:grid;grid-template-columns:240px 1fr;gap:26px;align-items:start;}
+.api-side{position:sticky;top:80px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);overflow:hidden;max-height:calc(100vh - 100px);display:flex;flex-direction:column;}
+.api-search{padding:12px;border-bottom:1px solid var(--line-soft);}
+.api-search input{width:100%;font-family:var(--font-mono);font-size:.8rem;background:#080C12;border:1px solid var(--line);border-radius:8px;padding:.55em .7em;color:var(--text);}
+.api-search input:focus{border-color:var(--jade);outline:none;}
+.api-nav{overflow:auto;padding:8px;flex:1;}
+.api-nav .grp{font-family:var(--font-mono);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);padding:12px 8px 6px;}
+.api-nav a{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;font-family:var(--font-mono);font-size:.76rem;color:var(--text-muted);transition:.12s;cursor:pointer;}
+.api-nav a:hover{background:var(--bg-1);color:var(--text);}
+.api-nav a.hidden{display:none;}
+.mtag{font-size:.6rem;font-weight:700;letter-spacing:.04em;padding:.18em .42em;border-radius:5px;flex:none;width:46px;text-align:center;}
+.m-get{color:var(--m-get);background:rgba(47,230,168,.12);border:1px solid rgba(47,230,168,.3);}
+.m-post{color:var(--m-post);background:rgba(126,156,255,.12);border:1px solid rgba(126,156,255,.3);}
+.m-patch{color:var(--m-patch);background:rgba(255,145,77,.12);border:1px solid rgba(255,145,77,.3);}
+.m-delete{color:var(--m-delete);background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.3);}
+
+.api-main{display:flex;flex-direction:column;gap:30px;min-width:0;}
+.op-group{scroll-margin-top:80px;}
+.op-group>.gh{display:flex;align-items:baseline;gap:12px;margin-bottom:14px;border-bottom:1px solid var(--line-soft);padding-bottom:10px;}
+.op-group>.gh h3{font-family:var(--font-mono);font-size:1.15rem;margin:0;}
+.op-group>.gh p{margin:0;color:var(--text-dim);font-size:.84rem;}
+.op{border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);overflow:hidden;margin-bottom:12px;scroll-margin-top:80px;transition:border-color .15s;}
+.op.open{border-color:#2b3a4d;}
+.op-sum{display:flex;align-items:center;gap:14px;padding:13px 16px;cursor:pointer;user-select:none;}
+.op-sum:hover{background:var(--surface-2);}
+.op-path{font-family:var(--font-mono);font-size:.9rem;color:var(--text);}
+.op-desc{color:var(--text-muted);font-size:.82rem;margin-left:auto;text-align:right;}
+.op-chev{transition:transform .2s var(--ease);color:var(--text-dim);flex:none;}
+.op.open .op-chev{transform:rotate(90deg);}
+.op-body{display:none;border-top:1px solid var(--line-soft);padding:18px 16px;}
+.op.open .op-body{display:block;animation:fade .2s var(--ease);}
+@keyframes fade{from{opacity:0;transform:translateY(-3px);}to{opacity:1;transform:none;}}
+.op-long{color:var(--text-muted);font-size:.9rem;margin:0 0 18px;max-width:72ch;}
+.op-auth{display:inline-flex;align-items:center;gap:.5em;font-family:var(--font-mono);font-size:.7rem;color:var(--amber);border:1px solid var(--amber-dim);background:var(--amber-deep);border-radius:6px;padding:.25em .5em;margin-bottom:14px;}
+.op-auth.pub{color:var(--jade);border-color:var(--jade-dim);background:var(--jade-deep);}
+
+.block-lbl{font-family:var(--font-mono);font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-dim);margin:20px 0 10px;display:flex;align-items:center;gap:10px;}
+.block-lbl::after{content:"";flex:1;height:1px;background:var(--line-soft);}
+.block-lbl:first-child{margin-top:0;}
+
+table.params{width:100%;border-collapse:collapse;font-size:.84rem;}
+table.params th{text-align:left;font-family:var(--font-mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);padding:7px 10px;border-bottom:1px solid var(--line-soft);font-weight:500;}
+table.params td{padding:9px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top;}
+table.params td.pname{font-family:var(--font-mono);color:var(--text);white-space:nowrap;}
+.req-star{color:var(--danger);margin-left:3px;}
+.ptype{font-family:var(--font-mono);font-size:.76rem;color:var(--iris);}
+.pin{font-family:var(--font-mono);font-size:.66rem;color:var(--text-dim);border:1px solid var(--line);border-radius:5px;padding:.1em .4em;}
+.pdesc{color:var(--text-muted);}
+.enumv{display:inline-block;font-family:var(--font-mono);font-size:.72rem;color:var(--amber-2);background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:.05em .4em;margin:2px 3px 0 0;}
+
+/* schema tree */
+.schema{font-family:var(--font-mono);font-size:.8rem;line-height:1.7;background:#080C12;border:1px solid var(--line-soft);border-radius:var(--radius-sm);padding:14px 16px;overflow:auto;}
+.srow{display:block;}
+.skey{color:var(--iris);}
+.stype{color:var(--jade);}
+.sopt{color:var(--text-dim);}
+.sreq{color:var(--danger);}
+.sdesc{color:#566B82;}
+.sindent{padding-left:1.4em;border-left:1px solid var(--line-soft);margin-left:.4em;}
+
+.resp-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line-soft);border-radius:8px;margin-bottom:8px;cursor:pointer;transition:.15s;background:#0A1019;}
+.resp-row:hover{border-color:var(--line);}
+.resp-code{font-family:var(--font-mono);font-weight:700;font-size:.82rem;padding:.2em .55em;border-radius:6px;flex:none;}
+.rc-2{color:var(--jade);background:rgba(47,230,168,.1);border:1px solid rgba(47,230,168,.3);}
+.rc-4{color:var(--amber);background:rgba(255,145,77,.1);border:1px solid rgba(255,145,77,.3);}
+.rc-5{color:var(--danger);background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);}
+.resp-desc{color:var(--text-muted);font-size:.84rem;}
+.resp-chev{margin-left:auto;color:var(--text-dim);transition:transform .2s;}
+.resp-row.open .resp-chev{transform:rotate(90deg);}
+.resp-body{display:none;margin:-2px 0 10px;}
+.resp-body.open{display:block;}
+
+.samples{display:flex;gap:4px;margin-bottom:8px;}
+.samples button{font-family:var(--font-mono);font-size:.74rem;color:var(--text-muted);background:#080C12;border:1px solid var(--line);border-radius:7px;padding:.4em .7em;cursor:pointer;transition:.12s;}
+.samples button.on{color:var(--jade);border-color:rgba(47,230,168,.45);}
+
+/* ---------- footer ---------- */
+footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px 0 36px;}
+.foot-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:30px;}
+.foot-grid h5{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin:0 0 14px;}
+.foot-grid a{display:block;color:var(--text-muted);font-size:.88rem;padding:4px 0;transition:.12s;}
+.foot-grid a:hover{color:var(--jade);}
+.foot-brand p{color:var(--text-muted);font-size:.9rem;max-width:34ch;margin:14px 0;}
+.foot-meta{font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);display:flex;flex-direction:column;gap:6px;}
+.foot-meta code{color:var(--jade);background:var(--surface);border:1px solid var(--line);padding:.1em .4em;border-radius:5px;}
+.foot-bottom{margin-top:40px;padding-top:22px;border-top:1px solid var(--line-soft);display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;font-family:var(--font-mono);font-size:.74rem;color:var(--text-dim);}
+
+/* ---------- toast ---------- */
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface-3);border:1px solid var(--jade-dim);color:var(--text);font-family:var(--font-mono);font-size:.8rem;padding:.7em 1.1em;border-radius:9px;opacity:0;pointer-events:none;transition:.25s var(--ease);z-index:100;box-shadow:0 20px 50px -20px rgba(0,0,0,.8);}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* ---------- responsive ---------- */
+@media (max-width:1000px){
+  .hero-grid{grid-template-columns:1fr;gap:34px;}
+  .cards{grid-template-columns:repeat(2,1fr);}
+  .flow{grid-template-columns:1fr;}
+  .console{grid-template-columns:1fr;}
+  .cfg{border-right:0;border-bottom:1px solid var(--line);}
+  .attest-wrap{grid-template-columns:1fr;}
+  .attest-side{position:static;}
+  .price-grid{grid-template-columns:1fr;}
+  .api-layout{grid-template-columns:1fr;}
+  .api-side{position:static;max-height:none;}
+  .api-nav{max-height:300px;}
+  .foot-grid{grid-template-columns:1fr 1fr;}
+}
+@media (max-width:640px){
+  .nav-links{display:none;}
+  .menu-btn{display:inline-flex;}
+  .cards{grid-template-columns:1fr;}
+  .foot-grid{grid-template-columns:1fr;}
+  .op-desc{display:none;}
+  section{padding:60px 0;}
+  .hero{padding:48px 0 20px;}
+  .console-tabs{overflow:auto;}
+}
+</style>
+</head>
+<body>
+<!-- ===================== NAV ===================== -->
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a href="#top" class="brand" aria-label="NAN home">
+      <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <path d="M16 2 28 9v14L16 30 4 23V9z" stroke="var(--jade)" stroke-width="1.6"/>
+        <path d="M16 9.5 22 13v6l-6 3.5L10 19v-6z" stroke="var(--jade)" stroke-width="1.2" opacity=".55"/>
+        <path d="M16 13.2v5.6M13.4 14.6 16 13l2.6 1.6" stroke="var(--jade)" stroke-width="1.4"/>
+      </svg>
+      <span class="nm">NAN</span>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#top" data-view="overview" class="active">Overview</a>
+      <a href="#deploy" data-view="deploy">Deploy</a>
+      <a href="#api" data-view="api">API</a>
+    </nav>
+  </div>
+  <div class="wallet-pick" id="walletPick" hidden></div>
+</header>
+
+<!-- ===================== HERO ===================== -->
+<a id="top"></a>
+<section class="hero" data-view="overview" aria-label="Intro">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <span class="eyebrow">Confidential compute · API v1</span>
+      <h1>Trustless compute<br>you can&nbsp;actually <span class="hl">verify</span>.</h1>
+      <p class="lede">Deploy a container with an <b>H200 GPU</b> straight from your browser. Pay per second in <b>ETH or USDC</b>, with no account and no KYC. Then check the cryptographic attestation <b>yourself</b> before you send a single byte of data.</p>
+      <div class="hero-cta">
+        <a href="#deploy" class="btn btn-primary">Deploy a container <span class="arr">→</span></a>
+        <a href="#api" class="btn btn-ghost">Read the API</a>
+      </div>
+      <div class="hero-foot">
+        <span>H200 · confidential (TDX + NVIDIA&nbsp;CC)</span>
+        <span>per-tenant process isolation</span>
+        <span>VRAM zeroed on rotation</span>
+        <span>CORS-friendly</span>
+      </div>
+    </div>
+
+    <!-- signature: sealed enclave -->
+    <div class="enclave" id="enclave">
+      <span class="corner tl"></span><span class="corner tr"></span>
+      <span class="corner bl"></span><span class="corner br"></span>
+      <div class="enclave-bar">
+        <span class="lbl"><span class="seal">◆</span> enclave · tdx + nvidia-cc</span>
+        <span id="enclaveState">sealed</span>
+      </div>
+      <canvas class="enclave-canvas" id="enclaveCanvas" aria-label="Animated diagram of data sealed inside a measured enclave"></canvas>
+      <div class="enclave-foot">
+        <span class="k">measurement (rtmr3)</span>
+        <span id="measureHash">0x0000…0000</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- facts marquee -->
+  <div class="ticker" aria-hidden="true">
+    <div class="ticker-track" id="tickerTrack"></div>
+  </div>
+</section>
+
+<!-- ===================== WHY ===================== -->
+<section id="why" data-view="overview" aria-label="Principles">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">The model</span>
+      <h2>Don't trust the operator. Measure it.</h2>
+      <p>NAN runs your workload inside a hardware-isolated, attested enclave, so the operator can't read your memory, your keys, or your traffic, and you don't have to take our word for it. Every claim on this page is something you can check on-chain or in a signed attestation. We're equally explicit about the part that <i>isn't</i> hardware-enforced: how tenants are kept apart from each other on a shared GPU. <a href="#isolation">See exactly how isolation works ↓</a></p>
+    </div>
+    <div class="cards">
+      <div class="card jade">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <span class="tag">verifiable</span>
+        <h3>Trustless</h3>
+        <p>Each enclave produces an Intel TDX quote and an NVIDIA GPU attestation report. Verify them client-side against published measurements, then connect.</p>
+      </div>
+      <div class="card iris">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5h4a1.8 1.8 0 010 3.6H10a1.8 1.8 0 000 3.6h4.5"/></svg></div>
+        <span class="tag">no accounts</span>
+        <h3>Crypto-native</h3>
+        <p>No accounts, no deposits, no custody. You pay USDC per deployment straight through to NAN; each payment buys runtime by the second, and you top up to keep an instance alive. We never hold your balance.</p>
+      </div>
+      <div class="card jade">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></div>
+        <span class="tag">cors</span>
+        <h3>Browser-native</h3>
+        <p>The whole API is CORS-enabled. Spin up a server, stream logs, and pull attestation from front-end JavaScript. No backend required.</p>
+      </div>
+      <div class="card amber">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/><path d="M9 4V2M15 4V2M9 22v-2M15 22v-2M4 9H2M4 15H2M22 9h-2M22 15h-2"/></svg></div>
+        <span class="tag">h200</span>
+        <h3>Real GPUs</h3>
+        <p>Full H200s in NVIDIA confidential-computing mode. The whole GPU is one attested trust domain (CC disables MIG, so there's no hardware sub-slicing). You buy a VRAM slice and a compute share; tenants share the card by time, isolated from each other at the process level. <a href="#isolation">How that's enforced →</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- ===================== HOW IT WORKS ===================== -->
+<section id="how" data-view="overview" style="background:var(--bg-1);border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);" aria-label="How it works">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Lifecycle</span>
+      <h2>Five calls, start to finish.</h2>
+      <p>The path from an empty wallet to a verified GPU endpoint. Click a step to see exactly what crosses the wire.</p>
+    </div>
+    <div class="flow">
+      <div class="steps" id="flowSteps" role="tablist" aria-label="Lifecycle steps"></div>
+      <div class="flow-detail" id="flowDetail"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== DEPLOY CONSOLE ===================== -->
+<section id="deploy" data-view="deploy" aria-label="Deploy console" hidden>
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Deploy · live on Base</span>
+      <h2>Build a deployment.</h2>
+      <p>Configure a container, connect your wallet, and provision a real confidential enclave. This console calls the same public REST API documented below. The request body and browser <span class="mono">fetch()</span> shown here are exactly what gets sent. Use <span class="mono">Dry run</span> to inspect the call before spending anything.</p>
+      <div class="endpoint-row">
+        <label for="apiBase">API endpoint</label>
+        <input type="text" id="apiBase" spellcheck="false" autocapitalize="off" autocomplete="off" />
+        <span class="ep-state" id="epState"></span>
+      </div>
+      <div class="endpoint-row">
+        <label>Wallet</label>
+        <div class="wallet-mount">
+          <button class="btn btn-primary btn-sm" id="walletBtn" type="button">Connect wallet <span class="arr">→</span></button>
+          <div class="wallet-pop" id="walletPop" hidden></div>
+        </div>
+        <span class="dim" style="font-family:var(--font-mono);font-size:.7rem;">used only to sign in &amp; pay, with no account or KYC</span>
+      </div>
+    </div>
+    <div class="console">
+      <!-- config -->
+      <div class="cfg">
+        <h4>Instance</h4>
+        <div class="field">
+          <label for="cfgImage">Image <span class="dim">(optional · any stock image · default debian:bookworm-slim)</span></label>
+          <input type="text" id="cfgImage" value="debian:bookworm-slim" spellcheck="false" />
+        </div>
+        <div class="field">
+          <label for="cfgCmd">Start command <span class="dim">(optional)</span></label>
+          <input type="text" id="cfgCmd" value="" placeholder="leave empty for a plain SSH instance" spellcheck="false" />
+        </div>
+        <div class="field">
+          <label for="cfgSsh">SSH public key <span class="dim">(optional · blank = we generate one)</span></label>
+          <input type="text" id="cfgSsh" value="" placeholder="ssh-ed25519 AAAA… you@laptop" spellcheck="false" autocapitalize="off" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="cfgShare">Share <span class="dim">(% of card · 1 to 100)</span> <span class="dim" id="shareCap">· checking live capacity…</span></label>
+          <input type="number" id="cfgShare" value="25" min="1" max="100" step="1" />
+          <div class="tier-readout" id="tierOut"></div>
+        </div>
+        <div class="field">
+          <label for="cfgPort">App port <span class="dim">(optional · for a service behind /x/{id})</span></label>
+          <input type="number" id="cfgPort" value="8080" min="1" max="65535" />
+        </div>
+        <div class="field">
+          <label>Pay with</label>
+          <div class="seg" id="cfgAsset" role="group" aria-label="Payment asset">
+            <button data-asset="USDC" class="on" type="button">USDC</button>
+            <button data-asset="ETH" type="button">ETH</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="cfgBudget">Fund now <span class="dim">(USDC · buys runtime)</span></label>
+          <input type="number" id="cfgBudget" value="10" min="1" step="1" />
+        </div>
+        <div class="est">
+          <span>≈ runtime this buys</span>
+          <span><b id="estRuntime">n/a</b></span>
+        </div>
+      </div>
+
+      <!-- main -->
+      <div class="console-main">
+        <div class="console-tabs" role="tablist">
+          <button class="on" data-pane="req" type="button" role="tab">Request body</button>
+          <button data-pane="fetch" type="button" role="tab">fetch()</button>
+          <button data-pane="curl" type="button" role="tab">cURL</button>
+          <button data-pane="run" type="button" role="tab">Enclave</button>
+        </div>
+        <div class="console-body">
+          <div class="pane on" data-pane="req"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">POST /v1/deployments</span><button class="copybtn" data-copy="req">⧉ copy</button></div><pre><code id="outReq"></code></pre></div></div>
+          <div class="pane" data-pane="fetch"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">deploy.js</span><button class="copybtn" data-copy="fetch">⧉ copy</button></div><pre><code id="outFetch"></code></pre></div></div>
+          <div class="pane" data-pane="curl"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" data-copy="curl">⧉ copy</button></div><pre><code id="outCurl"></code></pre></div></div>
+          <div class="pane" data-pane="run"><div class="term" id="termOut"><span class="ln dimln">// press “Deploy” to provision a confidential enclave…</span></div></div>
+        </div>
+        <div class="run-row">
+          <button class="btn btn-primary btn-sm" id="deployBtn" type="button">▸ Deploy enclave</button>
+          <button class="btn btn-sm" id="resetBtn" type="button">reset</button>
+          <label class="dry"><input type="checkbox" id="dryRun" /> <span>Dry run</span></label>
+          <span class="hint" id="runHint">connect a wallet to deploy</span>
+        </div>
+      </div>
+    </div>
+    <div class="key-once" id="keyOnce" hidden></div>
+    <div class="enclaves" id="enclaves">
+      <div class="enc-head">
+        <h4>My enclaves</h4>
+        <div class="enc-tools">
+          <span class="enc-count" id="encCount"></span>
+          <button class="btn btn-sm" id="encRefresh" type="button">↻ refresh</button>
+        </div>
+      </div>
+      <div class="enc-body" id="encBody"></div>
+    </div>
+  </div>
+</section>
+<section id="attest" data-view="overview" style="background:var(--bg-1);border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);" aria-label="Attestation">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Root of trust</span>
+      <h2>What "trustless" actually means here.</h2>
+      <p>"Trustless" isn't a slogan. It's a chain of measurements that ends in your browser. Walk each link to see what gets verified and why the operator can't fake it.</p>
+    </div>
+    <div class="attest-wrap">
+      <div class="chain" id="attestChain"></div>
+      <div class="attest-side">
+        <div class="as-h"><span>GET /v1/deployments/{id}/attestation</span></div>
+        <div class="code" style="border:0;border-radius:0;"><div class="codebar"><span class="fn" id="attestFn">attestation.json</span><button class="copybtn" data-copy="attest">⧉ copy</button></div><pre><code id="attestOut"></code></pre></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ISOLATION ===================== -->
+<section id="isolation" data-view="overview" aria-label="How isolation works">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">How isolation is achieved</span>
+      <h2>Two boundaries. One is hardware. One is not. We tell you which.</h2>
+      <p>Most "confidential GPU" pitches blur these together. NAN keeps them separate because they're enforced by different things and carry different guarantees. Here is precisely what protects you, and from whom.</p>
+    </div>
+
+    <div class="cards">
+      <div class="card jade">
+        <span class="tag">hardware · attested</span>
+        <h3>You vs. the operator</h3>
+        <p>Your enclave runs in a CPU TEE (Intel TDX) with the H200 in NVIDIA confidential-computing mode. The CPU↔GPU link is encrypted and the GPU is walled off from the host. NAN, the operator, cannot read your VRAM, RAM, keys, or traffic. This is enforced by hardware and proven by an attestation you verify in your browser <b>before</b> sending data. This is the strong guarantee, and it's the one you can check cryptographically.</p>
+      </div>
+      <div class="card amber">
+        <span class="tag">software · process-level</span>
+        <h3>You vs. other tenants</h3>
+        <p>CC seals the <i>whole</i> GPU as a single trust domain and disables MIG, so there's no hardware partition between tenants on one card. We isolate tenants the way an OS isolates processes: each tenant runs in its own dedicated worker <b>process</b>, never sharing one with another tenant. That boundary, not a hardware slice, is what keeps tenants apart, and we don't pretend otherwise.</p>
+      </div>
+    </div>
+
+    <div class="iso-mech">
+      <h4>What the process boundary actually buys you, with each point measured on our own hardware:</h4>
+      <ul class="iso-list">
+        <li><b>No cross-tenant reads.</b> Separate processes get separate GPU address spaces. A kernel in one tenant's process that tries to read another tenant's memory faults. The address simply isn't mapped. (Verified: the cross-process read attempt raised an illegal-access fault.)</li>
+        <li><b>Blast radius of one.</b> A tenant whose kernel crashes or runs illegal memory access takes down only their own worker. A co-tenant running on the same GPU kept executing without a single error, and the GPU stayed healthy. (Verified under a live fault.)</li>
+        <li><b>Memory wiped on rotation.</b> When a worker exits (normally, on idle, or by crashing), the driver zeroes its VRAM before those pages are handed to anyone else. We confirmed a fresh allocation came back fully zeroed even after a tenant wrote ~117&nbsp;GB and was killed without cleaning up. A tenant rotation <i>is</i> a process exit, so the scrub is structural, not best-effort.</li>
+        <li><b>Fair share, not free-for-all.</b> Each worker is capped to its purchased compute share so one tenant can't starve the GPU, and a watchdog kills any worker that exceeds its slice or hangs.</li>
+      </ul>
+    </div>
+
+    <div class="iso-honest">
+      <h4>What we do <u>not</u> claim</h4>
+      <p>Inter-tenant isolation is enforced by the operating system and the NVIDIA GPU driver, the one component every tenant's workload passes through. So tenants are isolated from each other <b>at the process level, modulo the integrity of that shared driver</b>, not by per-tenant hardware partitioning (which this GPU generation does not offer with confidential computing on). If your threat model requires hardware-enforced isolation from <i>other tenants</i> specifically, run a dedicated full-GPU deployment instead of a shared one. Isolation from <i>us</i>, the operator, is hardware-enforced and attested either way.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PRICING ===================== -->
+<section id="pricing" data-view="overview" aria-label="Pricing">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Pricing</span>
+      <h2>Metered per second. Paid on-chain.</h2>
+      <p>Pick a single <b>share of the H200</b>, from 1% to 100% of the card. That share gives you a matching slice of <b>VRAM, compute, CPU, and host RAM</b> at once (25% of the card is ~35&nbsp;GB of VRAM, a quarter of its throughput, ~4 vCPU and ~16&nbsp;GB RAM), so nothing can be stranded by another tenant. It is a software cap, not a hardware MIG partition (CC disables MIG). Billed per second at your share of the full-GPU rate. You pay USDC up front and it buys runtime by the second; the instance runs until that time is used up, and you top up to extend it. No balance is held and nothing is custodied.</p>
+    </div>
+    <div class="mig-table-wrap">
+      <table class="mig-table">
+        <thead>
+          <tr><th>Example</th><th>Share</th><th>VRAM + compute</th><th>Per hour</th><th>Per second</th></tr>
+        </thead>
+        <tbody>
+          <tr class="full"><td>Slice</td><td>10%</td><td>~14 GB · 10%</td><td>$0.60</td><td>$0.0001667</td></tr>
+          <tr class="full"><td>Quarter</td><td>25%</td><td>~35 GB · 25%</td><td>$1.50</td><td>$0.0004167</td></tr>
+          <tr class="full"><td>Half</td><td>50%</td><td>~70 GB · 50%</td><td>$3.00</td><td>$0.0008333</td></tr>
+          <tr class="full"><td>Full GPU</td><td>100%</td><td>141 GB · 100%</td><td>$6.00</td><td>$0.0016667</td></tr>
+        </tbody>
+      </table>
+      <p class="mig-note">These are example points on a continuous scale, not a fixed menu. The share is a software cap dialed in whole-percent steps (1% to 100% of the card, where each percent is ≈1.4&nbsp;GB of VRAM and ≈1.3 SMs of compute together). One dial means VRAM, compute, CPU and host RAM are always allocated in the same proportion, so a tenant can't grab one resource and strand another. A <b>Full GPU</b> deployment (100%) is the option to choose when you want no co-tenants on the card at all. It's the only configuration where isolation from other tenants is also hardware-enforced, not just process-level. Tenants on a shared card are isolated from each other at the process level (<a href="#isolation">how →</a>) and always isolated from the operator by confidential computing.</p>
+    </div>
+  </div>
+</section>
+<!-- ===================== API REFERENCE ===================== -->
+<section class="api" id="api" data-view="api" aria-label="API reference" hidden>
+  <div class="wrap">
+    <div class="api-head">
+      <div class="sec-head" style="margin-bottom:0;">
+        <span class="eyebrow">Reference</span>
+        <h2>The NAN API</h2>
+        <p>Everything the service does, fully scoped. Authenticate with an Ethereum signature, pay USDC per deployment, and orchestrate confidential compute over plain HTTPS.</p>
+      </div>
+      <div class="api-meta">
+        <span class="chip">OpenAPI <b>3.1</b></span>
+        <span class="chip">base <b>https://api.nan.host/v1</b></span>
+        <span class="chip">auth <b>SIWE bearer</b></span>
+        <span class="chip" style="cursor:pointer" id="dlSpec">⬇ <b>openapi.json</b></span>
+      </div>
+    </div>
+
+    <div class="api-layout">
+      <aside class="api-side">
+        <div class="api-search"><input type="text" id="apiSearch" placeholder="filter operations…" spellcheck="false" aria-label="Filter operations" /></div>
+        <nav class="api-nav" id="apiNav" aria-label="API operations"></nav>
+      </aside>
+      <main class="api-main" id="apiMain"></main>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FOOTER ===================== -->
+<footer aria-label="Footer">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <a href="#top" class="brand">
+          <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path d="M16 2 28 9v14L16 30 4 23V9z" stroke="var(--jade)" stroke-width="1.6"/>
+            <path d="M16 13.2v5.6M13.4 14.6 16 13l2.6 1.6" stroke="var(--jade)" stroke-width="1.4"/>
+          </svg>
+          <span class="nm">NAN</span>
+        </a>
+        <p>Trustless on-demand confidential compute, paid for exclusively in crypto.</p>
+        <div class="foot-meta">
+          <span>front-end: <code>nan.host</code> · static, IPFS-pinnable</span>
+          <span>pay: <code>USDC</code> per deploy, no custody (Base)</span>
+          <span>chain id: <code>8453</code></span>
+        </div>
+      </div>
+      <div>
+        <h5>Product</h5>
+        <a href="#why">The model</a>
+        <a href="#how">How it works</a>
+        <a href="#deploy">Deploy console</a>
+        <a href="#pricing">Pricing</a>
+      </div>
+      <div>
+        <h5>Developers</h5>
+        <a href="#api">API reference</a>
+        <a href="#" id="dlSpec2">OpenAPI spec</a>
+        <a href="#attest">Attestation guide</a>
+        <a href="#api">Error codes</a>
+      </div>
+      <div>
+        <h5>Trust</h5>
+        <a href="#attest">Verify an enclave</a>
+        <a href="#attest">Measurement policy</a>
+        <a href="#why">Threat model</a>
+        <a href="#top">Status</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 NAN · served from IPFS</span>
+      <span>built for the open, verifiable web</span>
+    </div>
+  </div>
+</footer>
+
+<div id="toast"></div>
+<script>
+"use strict";
+/* ============================================================
+   NAN API · OpenAPI 3.1 specification (source of truth)
+   ============================================================ */
+const SPEC = {
+  "openapi": "3.1.0",
+  "info": {
+    "title": "NAN API",
+    "version": "1.0.0",
+    "summary": "Trustless on-demand confidential compute.",
+    "description": "Deploy confidential GPU workloads into hardware-isolated enclaves with an H200 in NVIDIA confidential-computing mode. Authenticate with an Ethereum signature (SIWE), pay USDC per deployment (no accounts, no held balance), and verify the enclave yourself. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
+  },
+  "servers": [
+    {
+      "url": "https://api.nan.host/v1",
+      "description": "Production (per-enclave base; the live debug enclave is https://enclave1.debug.nan.containers.tinfoil.dev/v1)"
+    }
+  ],
+  "security": [
+    {
+      "siwe": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Prove control of an address and obtain a bearer token."
+    },
+    {
+      "name": "Account",
+      "description": "Your address, the payment forwarder, and a summary of your deployments. No balances are held."
+    },
+    {
+      "name": "Pricing",
+      "description": "Live per-second rates and GPU availability."
+    },
+    {
+      "name": "Deployments",
+      "description": "Create, fund, inspect, and tear down confidential workloads."
+    },
+    {
+      "name": "Attestation",
+      "description": "Verify what is actually running."
+    },
+    {
+      "name": "System",
+      "description": "Health and build metadata."
+    }
+  ],
+  "paths": {
+    "/auth/nonce": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "getNonce",
+        "summary": "Get a SIWE nonce",
+        "security": [],
+        "description": "Returns a single-use nonce (and a ready-to-sign SIWE message) for an address. Sign the message and exchange it at /auth/login.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "0x4E5A...b9c1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A nonce and canonical SIWE message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthChallenge"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "login",
+        "summary": "Exchange a signature for a token",
+        "security": [],
+        "description": "Verifies the signed SIWE message and issues a short-lived bearer token bound to the address. The token only authorizes API orchestration; there are no custodied funds it could ever move.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A bearer token bound to the address.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bad or expired signature.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/account": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "getAccount",
+        "summary": "Account summary",
+        "description": "Your address, the USDC payment forwarder to pay, and counts of your running and awaiting-payment deployments plus total funded time remaining. No balances are held by NAN.",
+        "responses": {
+          "200": {
+            "description": "Account summary.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pricing": {
+      "get": {
+        "tags": [
+          "Pricing"
+        ],
+        "operationId": "getPricing",
+        "summary": "Rates and billing model",
+        "security": [],
+        "description": "The whole-card per-second rate and how a share maps to a price. Billed per second at your share of the full-GPU rate.",
+        "responses": {
+          "200": {
+            "description": "Pricing model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pricing"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/availability": {
+      "get": {
+        "tags": [
+          "Pricing"
+        ],
+        "operationId": "getAvailability",
+        "summary": "Live GPU capacity",
+        "security": [],
+        "servers": [
+          {
+            "url": "https://api.nan.host",
+            "description": "Root origin (this path is not under /v1)"
+          }
+        ],
+        "description": "Live free capacity on the enclave's card, as a single `share` (0 to 1). Read directly from the worker allocator; falls back to local accounting if the worker is briefly unreachable. NOTE: this endpoint is served at the root origin, not under /v1.",
+        "responses": {
+          "200": {
+            "description": "Current capacity.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Availability"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gpu": {
+      "get": {
+        "tags": [
+          "Pricing"
+        ],
+        "operationId": "getGpu",
+        "summary": "Live MPS / per-tenant SM grants",
+        "security": [],
+        "description": "External proof that MPS caps are live: each running tenant's granted SM count (sanitized, no tenant ids). A 25% tenant reports roughly a quarter of the card's SMs.",
+        "responses": {
+          "200": {
+            "description": "MPS status and per-tenant SM grants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Gpu"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Worker manager unreachable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deployments": {
+      "post": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "createDeployment",
+        "summary": "Create a deployment (awaiting payment)",
+        "description": "Reserves a GPU share and returns a deployment in `awaiting_payment` with a `payment` block. The workload is NOT provisioned yet: approve USDC to the forwarder and call pay(deploymentRef, amount); the enclave sees the payment, provisions your MPS-capped worker process, and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. The share is a software cap (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDeployment"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created, awaiting payment. (ssh.privateKey, if generated, is returned ONCE.)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deployment"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No single card has that share free.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid spec (e.g. share out of range, or share exceeds a whole card).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "listDeployments",
+        "summary": "List your deployments",
+        "responses": {
+          "200": {
+            "description": "Your deployments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deployments/{id}": {
+      "get": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "getDeployment",
+        "summary": "Get a deployment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deployment"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "terminateDeployment",
+        "summary": "Stop a deployment",
+        "description": "Stops the worker process, tears down the tenant, and releases the GPU share. Pay-per-deploy holds no balance, so any unused funded time is forfeit on early stop.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Teardown acknowledged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminationReceipt"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deployments/{id}/topup": {
+      "post": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "topupDeployment",
+        "summary": "Top-up instructions",
+        "description": "Returns the payment instructions to extend a deployment. A top-up is just another pay(deploymentRef, amount) to the same forwarder; each payment adds amount(6dp)/rate seconds to the expiry. Send it before expiry (a short grace period covers in-flight top-ups).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payment instructions for the top-up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopupResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Deployment is not in a top-up-able state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deployments/{id}/logs": {
+      "get": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "getLogs",
+        "summary": "Worker logs (owner only)",
+        "description": "Stdout/stderr from inside the enclave as text/plain. ?tail=N (default 200, max 2000).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "maximum": 2000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Log text.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deployments/{id}/attestation": {
+      "get": {
+        "tags": [
+          "Attestation"
+        ],
+        "operationId": "getAttestation",
+        "summary": "Get the enclave attestation",
+        "description": "The Intel TDX quote and NVIDIA GPU attestation report plus the measurements to check them against. Verify client-side before sending data.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attestation material.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attestation"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "operationId": "getHealth",
+        "summary": "Health",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/version": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "operationId": "getVersion",
+        "summary": "Build metadata",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Version"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "siwe": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer token from POST /auth/login. Bound to one address; short-lived."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "invalid_spec"
+          },
+          "message": {
+            "type": "string",
+            "example": "resources.share must be in (0, 1]."
+          }
+        }
+      },
+      "Asset": {
+        "type": "string",
+        "enum": [
+          "USDC"
+        ],
+        "description": "Settlement asset. Payments are USDC on Base."
+      },
+      "DeploymentStatus": {
+        "type": "string",
+        "enum": [
+          "awaiting_payment",
+          "running",
+          "expired",
+          "stopping",
+          "failed"
+        ]
+      },
+      "AuthChallenge": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "nonce": {
+            "type": "string",
+            "description": "Single-use, expires in minutes.",
+            "example": "z8Qa2K9fP1"
+          },
+          "message": {
+            "type": "string",
+            "description": "Canonical SIWE message to sign."
+          },
+          "issuedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "message",
+          "signature"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string",
+            "example": "0x..."
+          }
+        }
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "example": "eyJhbGciOiJIUzI1NiJ9..."
+          },
+          "tokenType": {
+            "type": "string",
+            "example": "Bearer"
+          },
+          "address": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PaymentInstructions": {
+        "type": "object",
+        "description": "How to fund (or top up) a deployment by paying the NanPay forwarder. Funds pass straight through to NAN; nothing is custodied.",
+        "properties": {
+          "chainId": {
+            "type": "integer",
+            "example": 8453
+          },
+          "asset": {
+            "type": "string",
+            "example": "USDC"
+          },
+          "usdc": {
+            "type": "string",
+            "description": "USDC token address on Base.",
+            "example": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+          },
+          "forwarder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "NanPay contract to call. null until configured.",
+            "example": "0x..."
+          },
+          "deploymentRef": {
+            "type": "string",
+            "description": "bytes32 to pass as pay()'s deploymentId.",
+            "example": "0x9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+          },
+          "ratePerSecondUsdc": {
+            "type": "string",
+            "example": "0.0004167"
+          },
+          "method": {
+            "type": "string",
+            "example": "pay(bytes32 deploymentId, uint256 amount)"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "chainId": {
+            "type": "integer",
+            "example": 8453
+          },
+          "payment": {
+            "type": "object",
+            "properties": {
+              "forwarder": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usdc": {
+                "type": "string",
+                "example": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+              },
+              "asset": {
+                "type": "string",
+                "example": "USDC"
+              }
+            }
+          },
+          "deployments": {
+            "type": "object",
+            "properties": {
+              "running": {
+                "type": "integer",
+                "example": 1
+              },
+              "awaitingPayment": {
+                "type": "integer",
+                "example": 0
+              },
+              "total": {
+                "type": "integer",
+                "example": 3
+              },
+              "totalTimeRemainingSec": {
+                "type": "integer",
+                "example": 5400
+              }
+            }
+          }
+        }
+      },
+      "PricingExample": {
+        "type": "object",
+        "properties": {
+          "vramGb": {
+            "type": "number",
+            "example": 35
+          },
+          "computeShare": {
+            "type": "number",
+            "example": 0.25
+          },
+          "billedOn": {
+            "type": "string",
+            "enum": [
+              "memory",
+              "compute"
+            ]
+          },
+          "ratePerSecondUsdc": {
+            "type": "string",
+            "example": "0.0004167"
+          },
+          "ratePerHourUsdc": {
+            "type": "string",
+            "example": "1.50"
+          }
+        }
+      },
+      "Pricing": {
+        "type": "object",
+        "properties": {
+          "assets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "ETH",
+              "USDC"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "card": {
+            "type": "object",
+            "properties": {
+              "vramGb": {
+                "type": "number",
+                "example": 141
+              },
+              "count": {
+                "type": "integer",
+                "example": 1
+              },
+              "sms": {
+                "type": "integer",
+                "example": 132
+              },
+              "wholeCardPerSecondUsdc": {
+                "type": "string",
+                "example": "0.0016667"
+              },
+              "wholeCardPerHourUsdc": {
+                "type": "string",
+                "example": "6.00"
+              }
+            }
+          },
+          "cpu": {
+            "type": "object",
+            "properties": {
+              "ratePerSecondUsdc": {
+                "type": "string"
+              },
+              "ratePerHourUsdc": {
+                "type": "string"
+              }
+            }
+          },
+          "computeGranularity": {
+            "type": "object",
+            "properties": {
+              "unit": {
+                "type": "string",
+                "example": "percent"
+              },
+              "step": {
+                "type": "integer",
+                "example": 1
+              },
+              "minPercent": {
+                "type": "integer",
+                "example": 1
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          },
+          "vramGranularityGb": {
+            "type": "number",
+            "example": 1
+          },
+          "formula": {
+            "type": "string",
+            "example": "ratePerSecondUsdc = wholeCardPerSecond x max(vramGb / cardVramGb, computeShare)"
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PricingExample"
+            }
+          },
+          "billingIncrementSeconds": {
+            "type": "integer",
+            "example": 1
+          }
+        }
+      },
+      "Availability": {
+        "type": "object",
+        "description": "Live free capacity as a single share (0 to 1). Served at the root origin, not under /v1.",
+        "properties": {
+          "maxShare": {
+            "type": "number",
+            "description": "Largest share of the card still free (0 to 1). Requests above this get 409.",
+            "example": 0.55
+          },
+          "usedShare": {
+            "type": "number",
+            "example": 0.45
+          },
+          "smFree": {
+            "type": "integer",
+            "example": 72
+          },
+          "smTotal": {
+            "type": "integer",
+            "example": 132
+          },
+          "vramFreeGb": {
+            "type": "number",
+            "example": 77
+          },
+          "cardVramGb": {
+            "type": "number",
+            "example": 141
+          },
+          "cards": {
+            "type": "integer",
+            "example": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "worker",
+              "fallback"
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "example": {
+          "maxShare": 0.55,
+          "usedShare": 0.45,
+          "smFree": 72,
+          "smTotal": 132,
+          "vramFreeGb": 77,
+          "cardVramGb": 141,
+          "cards": 1,
+          "source": "worker",
+          "updatedAt": "2026-06-29T17:04:30Z"
+        }
+      },
+      "Gpu": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "role": {
+            "type": "string",
+            "example": "manager"
+          },
+          "mpsActive": {
+            "type": "boolean"
+          },
+          "capacity": {
+            "type": "object",
+            "description": "Live allocator capacity."
+          },
+          "smTotal": {
+            "type": "integer",
+            "example": 132
+          },
+          "tenants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "pct": {
+                  "type": "integer",
+                  "example": 25
+                },
+                "status": {
+                  "type": "string",
+                  "example": "running"
+                },
+                "smGranted": {
+                  "type": "integer",
+                  "description": "SMs the MPS cap actually granted.",
+                  "example": 33
+                }
+              }
+            }
+          }
+        }
+      },
+      "ImageRef": {
+        "type": "object",
+        "required": [
+          "reference"
+        ],
+        "properties": {
+          "reference": {
+            "type": "string",
+            "example": "debian:bookworm-slim"
+          },
+          "digest": {
+            "type": "string",
+            "description": "Optional sha256. If set, it is pinned and folded into the measurement.",
+            "example": "sha256:9f86..."
+          },
+          "registryAuth": {
+            "type": "string",
+            "description": "Base64 docker auth for private images. Encrypted to the enclave; never stored in plaintext."
+          }
+        }
+      },
+      "ResourceSpec": {
+        "type": "object",
+        "description": "A single share of the card (0 to 1) sets a matching VRAM + compute cap. Legacy vramGb/computeShare are still accepted.",
+        "properties": {
+          "share": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 1,
+            "description": "Share of the whole card (0 to 1).",
+            "example": 0.25
+          },
+          "vramGb": {
+            "type": "number",
+            "description": "Legacy: explicit VRAM cap in GB.",
+            "example": 35
+          },
+          "computeShare": {
+            "type": "number",
+            "description": "Legacy: explicit compute share (0 to 1).",
+            "example": 0.25
+          }
+        }
+      },
+      "NetworkSpec": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "integer",
+            "example": 8080
+          },
+          "protocol": {
+            "type": "string",
+            "example": "https"
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "Public URL on the enclave's single pinned origin: a path under the shim.",
+            "example": "https://enclave1.debug.nan.containers.tinfoil.dev/x/dep_3xK9f2Qa"
+          }
+        }
+      },
+      "SshAccess": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "example": "ssh ..."
+          },
+          "keySource": {
+            "type": "string",
+            "enum": [
+              "provided",
+              "generated"
+            ]
+          },
+          "hostKeyFingerprint": {
+            "type": "string"
+          },
+          "privateKey": {
+            "type": "string",
+            "description": "Returned ONCE at create if NAN generated the key. Never persisted."
+          }
+        }
+      },
+      "AttestationSummary": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "vmTechnology": {
+            "type": "string",
+            "example": "intel-tdx"
+          },
+          "gpuTechnology": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "nvidia-cc"
+          },
+          "href": {
+            "type": "string",
+            "example": "/v1/deployments/dep_3xK9f2Qa/attestation"
+          }
+        }
+      },
+      "CreateDeployment": {
+        "type": "object",
+        "required": [
+          "resources"
+        ],
+        "properties": {
+          "image": {
+            "$ref": "#/components/schemas/ImageRef"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "port": {
+            "type": "integer",
+            "default": 8080
+          },
+          "sshPublicKey": {
+            "type": "string",
+            "description": "OpenSSH public key. If omitted, NAN generates one and returns the private key once."
+          },
+          "resources": {
+            "$ref": "#/components/schemas/ResourceSpec"
+          },
+          "attestationPolicy": {
+            "type": "object",
+            "properties": {
+              "requireGpuAttestation": {
+                "type": "boolean"
+              }
+            }
+          },
+          "region": {
+            "type": "string",
+            "example": "auto"
+          }
+        },
+        "example": {
+          "image": {
+            "reference": "debian:bookworm-slim"
+          },
+          "port": 8080,
+          "resources": {
+            "share": 0.25
+          },
+          "attestationPolicy": {
+            "requireGpuAttestation": true
+          },
+          "region": "auto"
+        }
+      },
+      "Deployment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "dep_3xK9f2Qa"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeploymentStatus"
+          },
+          "image": {
+            "$ref": "#/components/schemas/ImageRef"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "resources": {
+            "type": "object",
+            "properties": {
+              "vramGb": {
+                "type": "number"
+              },
+              "computeShare": {
+                "type": "number"
+              },
+              "share": {
+                "type": "number"
+              },
+              "cardId": {
+                "type": "integer"
+              }
+            }
+          },
+          "network": {
+            "$ref": "#/components/schemas/NetworkSpec"
+          },
+          "attestation": {
+            "$ref": "#/components/schemas/AttestationSummary"
+          },
+          "region": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Set when payment provisions the worker."
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Funded through this time; extended by top-ups."
+          },
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payRef": {
+            "type": "string",
+            "description": "bytes32 payment reference (pass to pay())."
+          },
+          "ratePerSecondUsdc": {
+            "type": "string",
+            "example": "0.0004167"
+          },
+          "spentUsdc": {
+            "type": "string",
+            "description": "Elapsed runtime cost so far (informational).",
+            "example": "0.41"
+          },
+          "paidUsdc": {
+            "type": "string",
+            "description": "Total USDC paid into this deployment.",
+            "example": "10.00"
+          },
+          "timeRemainingSec": {
+            "type": "integer",
+            "example": 21600
+          },
+          "ssh": {
+            "$ref": "#/components/schemas/SshAccess"
+          },
+          "payment": {
+            "$ref": "#/components/schemas/PaymentInstructions"
+          }
+        }
+      },
+      "DeploymentList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Deployment"
+            }
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TerminationReceipt": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "example": "stopping"
+          },
+          "paidUsdc": {
+            "type": "string",
+            "example": "10.00"
+          },
+          "ranSeconds": {
+            "type": "integer",
+            "example": 1240
+          },
+          "note": {
+            "type": "string",
+            "example": "Pay-per-deploy: no balance is held, so unused funded time is forfeit on early stop."
+          }
+        }
+      },
+      "TopupResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeploymentStatus"
+          },
+          "timeRemainingSec": {
+            "type": "integer",
+            "example": 3600
+          },
+          "payment": {
+            "$ref": "#/components/schemas/PaymentInstructions"
+          }
+        }
+      },
+      "Measurements": {
+        "type": "object",
+        "description": "Expected measurements to check the quote/report against.",
+        "additionalProperties": true
+      },
+      "VmAttestation": {
+        "type": "object",
+        "description": "Intel TDX quote material.",
+        "additionalProperties": true
+      },
+      "GpuAttestation": {
+        "type": "object",
+        "description": "NVIDIA GPU attestation report.",
+        "additionalProperties": true
+      },
+      "Attestation": {
+        "type": "object",
+        "properties": {
+          "deploymentId": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "vm": {
+            "$ref": "#/components/schemas/VmAttestation"
+          },
+          "gpu": {
+            "$ref": "#/components/schemas/GpuAttestation"
+          },
+          "measurements": {
+            "$ref": "#/components/schemas/Measurements"
+          },
+          "guideUrl": {
+            "type": "string",
+            "example": "https://nan.host/#attest"
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ok"
+          },
+          "deployments": {
+            "type": "integer",
+            "example": 2
+          }
+        }
+      },
+      "Version": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string",
+            "example": "nan-supervisor/0.1.0"
+          },
+          "contract": {
+            "type": "string",
+            "example": "nan-openapi/1.0.0"
+          },
+          "chainId": {
+            "type": "integer",
+            "example": 8453
+          }
+        }
+      }
+    }
+  }
+};
+
+/* ============================================================
+   NAN runtime · helpers, highlighters, schema tools
+   ============================================================ */
+const $  = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+const esc = (s) => String(s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/* ---- pretty JSON -> highlighted HTML ---- */
+function hlJson(v, ind) {
+  ind = ind || 0;
+  const pad = "  ".repeat(ind), pad1 = "  ".repeat(ind + 1);
+  if (v === null) return '<span class="tok-bool">null</span>';
+  if (Array.isArray(v)) {
+    if (!v.length) return '<span class="tok-punc">[]</span>';
+    return '<span class="tok-punc">[</span>\n'
+      + v.map(x => pad1 + hlJson(x, ind + 1)).join('<span class="tok-punc">,</span>\n')
+      + '\n' + pad + '<span class="tok-punc">]</span>';
+  }
+  if (typeof v === "object") {
+    const ks = Object.keys(v);
+    if (!ks.length) return '<span class="tok-punc">{}</span>';
+    return '<span class="tok-punc">{</span>\n'
+      + ks.map(k => pad1
+          + '<span class="tok-key">"' + esc(k) + '"</span><span class="tok-punc">: </span>'
+          + hlJson(v[k], ind + 1)
+        ).join('<span class="tok-punc">,</span>\n')
+      + '\n' + pad + '<span class="tok-punc">}</span>';
+  }
+  if (typeof v === "string")  return '<span class="tok-str">"' + esc(v) + '"</span>';
+  if (typeof v === "number")  return '<span class="tok-num">' + v + '</span>';
+  if (typeof v === "boolean") return '<span class="tok-bool">' + v + '</span>';
+  return esc(String(v));
+}
+
+/* ---- highlight a code string (string-aware) ---- */
+function hlCode(src) {
+  const n = src.length;
+  const isW  = c => /[A-Za-z_$]/.test(c);
+  const isWd = c => /[A-Za-z0-9_$]/.test(c);
+  const isD  = c => /[0-9]/.test(c);
+  const KW   = new Set(["const","let","var","await","async","function","return","new","of","in","if","else","for","while","typeof"]);
+  const METH = new Set(["GET","POST","PATCH","DELETE","PUT","curl"]);
+  const BOOL = new Set(["true","false","null","undefined"]);
+  let out = "", i = 0;
+  while (i < n) {
+    const c = src[i];
+    if (c === "/" && src[i + 1] === "/") {
+      let j = i; while (j < n && src[j] !== "\n") j++;
+      out += '<span class="tok-com">' + esc(src.slice(i, j)) + '</span>'; i = j; continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      const q = c; let j = i + 1;
+      while (j < n) { if (src[j] === "\\") { j += 2; continue; } if (src[j] === q) { j++; break; } j++; }
+      out += '<span class="tok-str">' + esc(src.slice(i, j)) + '</span>'; i = j; continue;
+    }
+    if (isD(c) || (c === "." && isD(src[i + 1]))) {
+      let j = i; while (j < n && /[0-9._a-fxA-FX]/.test(src[j])) j++;
+      out += '<span class="tok-num">' + esc(src.slice(i, j)) + '</span>'; i = j; continue;
+    }
+    if (isW(c)) {
+      let j = i; while (j < n && isWd(src[j])) j++;
+      const w = src.slice(i, j);
+      const cls = KW.has(w) ? "tok-key" : METH.has(w) ? "tok-meth" : BOOL.has(w) ? "tok-bool" : "";
+      out += cls ? '<span class="' + cls + '">' + esc(w) + '</span>' : esc(w);
+      i = j; continue;
+    }
+    out += esc(c); i++;
+  }
+  return out;
+}
+
+/* ---- schema ref resolution + example synthesis ---- */
+function resolveRef(ref) {
+  const parts = ref.replace(/^#\//, "").split("/");
+  let o = SPEC; for (const p of parts) o = o && o[p];
+  return o;
+}
+function deref(s) { let g = 0; while (s && s.$ref && g < 24) { s = resolveRef(s.$ref); g++; } return s; }
+function refName(s) { return s && s.$ref ? s.$ref.split("/").pop() : null; }
+
+function schemaExample(schema) {
+  schema = deref(schema);
+  if (!schema) return null;
+  if ("example" in schema) return schema.example;
+  if (schema.enum) return schema.enum[0];
+  if ("default" in schema) return schema.default;
+  switch (schema.type) {
+    case "object": {
+      const o = {}, props = schema.properties || {};
+      for (const k in props) o[k] = schemaExample(props[k]);
+      return o;
+    }
+    case "array":   return [schemaExample(schema.items || {})];
+    case "integer":
+    case "number":  return 0;
+    case "boolean": return true;
+    case "string":  return schema.format === "date-time" ? "2026-06-26T17:05:00Z" : "string";
+    default:        return null;
+  }
+}
+
+function typeLabel(schema) {
+  const r = deref(schema);
+  if (!r) return "any";
+  if (r.type === "array") {
+    const it = r.items || {};
+    const inner = refName(it) || (deref(it) || {}).type || "any";
+    return "array&lt;" + esc(inner) + "&gt;";
+  }
+  let t = refName(schema) || r.type || "object";
+  t = esc(t);
+  if (r.format) t += ' <span class="sopt">&lt;' + esc(r.format) + "&gt;</span>";
+  return t;
+}
+
+/* recursive schema tree for the API viewer */
+function schemaTree(schema, name, required, depth) {
+  depth = depth || 0;
+  const r = deref(schema) || {};
+  let line = '<div class="srow">';
+  if (name !== undefined) line += '<span class="skey">' + esc(name) + "</span>";
+  if (required) line += '<span class="sreq">*</span>';
+  if (name !== undefined) line += '<span class="sopt">: </span>';
+  line += '<span class="stype">' + typeLabel(schema) + "</span>";
+  if (r.enum) line += ' <span class="sopt">(' + r.enum.map(esc).join(" | ") + ")</span>";
+  if ("default" in r) line += ' <span class="sopt">= ' + esc(JSON.stringify(r.default)) + "</span>";
+  const desc = (schema && schema.description) || r.description;
+  if (desc) line += '  <span class="sdesc">// ' + esc(desc) + "</span>";
+  line += "</div>";
+  let kids = "";
+  if (depth < 6) {
+    if (r.type === "object" && r.properties) {
+      const reqd = r.required || [];
+      for (const k in r.properties) kids += schemaTree(r.properties[k], k, reqd.includes(k), depth + 1);
+    } else if (r.type === "array" && r.items) {
+      kids += schemaTree(r.items, "items", false, depth + 1);
+    }
+  }
+  return kids ? line + '<div class="sindent">' + kids + "</div>" : line;
+}
+
+/* ============================================================
+   Code samples + API reference renderer
+   ============================================================ */
+const BASE = SPEC.servers[0].url;
+const SAMPLE_ID = "dep_3xK9f2Qa";
+const RAW = [];                       // index -> raw text (for copy)
+const SAMP = {};                      // opIndex -> {curl,fetch}
+const BODY = {};                      // opIndex -> {model, exampleHtml, exampleRaw}
+const stash = (t) => (RAW.push(t), RAW.length - 1);
+const opPublic = (op) => Array.isArray(op.security) && op.security.length === 0;
+
+function buildUrl(path, op) {
+  const p = path.replace(/\{(\w+)\}/g, (_, k) => k === "id" ? SAMPLE_ID : "{" + k + "}");
+  const qs = [];
+  (op.parameters || []).forEach(pr => {
+    if (pr.in !== "query") return;
+    const sd = deref(pr.schema || {}) || {};
+    const explicit = ("example" in sd) || ("default" in sd) || sd.enum;
+    if (!pr.required && !explicit) return;
+    const v = schemaExample(pr.schema || {});
+    if (v !== null && v !== undefined) qs.push(encodeURIComponent(pr.name) + "=" + encodeURIComponent(v));
+  });
+  return BASE + p + (qs.length ? "?" + qs.join("&") : "");
+}
+function bodyExample(op) {
+  const rb = op.requestBody; if (!rb) return null;
+  const sch = rb.content && rb.content["application/json"] && rb.content["application/json"].schema;
+  return sch ? schemaExample(sch) : null;
+}
+function bodySchema(op) {
+  const rb = op.requestBody; if (!rb) return null;
+  return rb.content && rb.content["application/json"] && rb.content["application/json"].schema;
+}
+function buildCurl(method, path, op) {
+  const url = buildUrl(path, op), body = bodyExample(op), L = ["curl -X " + method + " " + url];
+  if (!opPublic(op)) L.push('  -H "Authorization: Bearer $NAN_TOKEN"');
+  if (body) { L.push('  -H "Content-Type: application/json"'); L.push("  -d '" + JSON.stringify(body, null, 2) + "'"); }
+  return L.join(" \\\n");
+}
+function buildFetch(method, path, op) {
+  const url = buildUrl(path, op), body = bodyExample(op), H = [];
+  if (!opPublic(op)) H.push('    "Authorization": `Bearer ${NAN_TOKEN}`');
+  if (body) H.push('    "Content-Type": "application/json"');
+  let o = '  method: "' + method + '"';
+  if (H.length) o += ",\n  headers: {\n" + H.join(",\n") + "\n  }";
+  if (body) o += ",\n  body: JSON.stringify(" + JSON.stringify(body, null, 2) + ")";
+  return 'const res = await fetch("' + url + '", {\n' + o + "\n});\nconst data = await res.json();";
+}
+
+/* success + example for a response code */
+function responseExample(resp) {
+  const sch = resp && resp.content && resp.content["application/json"] && resp.content["application/json"].schema;
+  return sch ? schemaExample(sch) : null;
+}
+
+function collectOps() {
+  const out = [];
+  for (const path in SPEC.paths) {
+    const item = SPEC.paths[path];
+    for (const m of ["get", "post", "patch", "delete", "put"]) {
+      if (item[m]) out.push({ method: m.toUpperCase(), path, op: item[m] });
+    }
+  }
+  return out;
+}
+
+function renderApi() {
+  const ops = collectOps();
+  let oi = 0;
+  const navParts = [], mainParts = [];
+
+  SPEC.tags.forEach(tag => {
+    const group = ops.filter(o => (o.op.tags || []).includes(tag.name));
+    if (!group.length) return;
+
+    navParts.push('<div class="grp">' + esc(tag.name) + "</div>");
+    let groupHtml = '<section class="op-group" id="grp-' + esc(tag.name) + '">'
+      + '<div class="gh"><h3>' + esc(tag.name) + "</h3><p>" + esc(tag.description || "") + "</p></div>";
+
+    group.forEach(({ method, path, op }) => {
+      const id = "op-" + (op.operationId || (method + path).replace(/\W+/g, "-"));
+      const mcls = "m-" + method.toLowerCase();
+      const searchStr = (method + " " + path + " " + (op.summary || "") + " " + tag.name).toLowerCase();
+
+      navParts.push('<a data-target="' + id + '" data-search="' + esc(searchStr) + '">'
+        + '<span class="mtag ' + mcls + '">' + method + "</span>"
+        + '<span style="overflow:hidden;text-overflow:ellipsis;">' + esc(path) + "</span></a>");
+
+      // ---- body of the op card ----
+      let body = '<div class="op-body">';
+      body += opPublic(op)
+        ? '<span class="op-auth pub">auth · public</span>'
+        : '<span class="op-auth">auth · SIWE bearer</span>';
+      if (op.description) body += '<p class="op-long">' + esc(op.description) + "</p>";
+
+      // parameters
+      const params = op.parameters || [];
+      if (params.length) {
+        body += '<div class="block-lbl">Parameters</div><table class="params"><thead><tr>'
+          + "<th>Name</th><th>In</th><th>Type</th><th>Description</th></tr></thead><tbody>";
+        params.forEach(pr => {
+          const r = deref(pr.schema || {}) || {};
+          let enums = r.enum ? r.enum.map(e => '<span class="enumv">' + esc(e) + "</span>").join("") : "";
+          body += "<tr><td class='pname'>" + esc(pr.name)
+            + (pr.required ? '<span class="req-star">*</span>' : "")
+            + "</td><td><span class='pin'>" + esc(pr.in) + "</span></td>"
+            + "<td><span class='ptype'>" + typeLabel(pr.schema || {}) + "</span></td>"
+            + "<td class='pdesc'>" + esc(pr.description || "") + (enums ? "<br>" + enums : "") + "</td></tr>";
+        });
+        body += "</tbody></table>";
+      }
+
+      // request body (model | example toggle)
+      const bSch = bodySchema(op);
+      if (bSch) {
+        const ex = bodyExample(op);
+        const exRaw = JSON.stringify(ex, null, 2);
+        BODY[oi] = { model: schemaTree(bSch), exampleHtml: hlJson(ex), exampleRaw: exRaw };
+        body += '<div class="block-lbl">Request body</div>'
+          + '<div class="samples bodytoggle" data-bid="' + oi + '">'
+          + '<button class="on" data-bmode="model">Schema</button>'
+          + '<button data-bmode="example">Example</button></div>'
+          + '<div class="code" data-bbox="' + oi + '"><div class="codebar"><span class="fn">application/json</span>'
+          + '<button class="copybtn" data-rawid="' + stash(exRaw) + '">⧉ copy</button></div>'
+          + '<div class="schema" data-bview="' + oi + '">' + schemaTree(bSch) + "</div></div>";
+      }
+
+      // responses
+      const resps = op.responses || {};
+      body += '<div class="block-lbl">Responses</div>';
+      Object.keys(resps).forEach(code => {
+        const r = resps[code];
+        const cls = "rc-" + code.charAt(0);
+        const ex = responseExample(r);
+        body += '<div class="resp-row"><span class="resp-code ' + cls + '">' + esc(code) + "</span>"
+          + '<span class="resp-desc">' + esc(r.description || "") + "</span>"
+          + '<span class="resp-chev">›</span></div>';
+        if (ex !== null) {
+          const raw = JSON.stringify(ex, null, 2);
+          body += '<div class="resp-body"><div class="code"><div class="codebar"><span class="fn">200 example</span>'
+            .replace("200", esc(code))
+            + '<button class="copybtn" data-rawid="' + stash(raw) + '">⧉ copy</button></div>'
+            + "<pre><code>" + hlJson(ex) + "</code></pre></div></div>";
+        } else {
+          body += '<div class="resp-body"></div>';
+        }
+      });
+
+      // code samples (cURL | fetch)
+      const curl = buildCurl(method, path, op), fetchS = buildFetch(method, path, op);
+      SAMP[oi] = { curl, fetch: fetchS };
+      body += '<div class="block-lbl">Code</div>'
+        + '<div class="samples sampletoggle" data-sid="' + oi + '">'
+        + '<button class="on" data-mode="curl">cURL</button>'
+        + '<button data-mode="fetch">fetch()</button></div>'
+        + '<div class="code"><div class="codebar"><span class="fn" data-sfn="' + oi + '">terminal</span>'
+        + '<button class="copybtn" data-copysamp="' + oi + '">⧉ copy</button></div>'
+        + '<pre><code data-sbox="' + oi + '">' + hlCode(curl) + "</code></pre></div>";
+
+      body += "</div>"; // op-body
+
+      groupHtml += '<div class="op" id="' + id + '" data-search="' + esc(searchStr) + '">'
+        + '<div class="op-sum"><span class="mtag ' + mcls + '">' + method + "</span>"
+        + '<span class="op-path">' + esc(path) + "</span>"
+        + '<span class="op-desc">' + esc(op.summary || "") + "</span>"
+        + '<span class="op-chev">›</span></div>' + body + "</div>";
+      oi++;
+    });
+
+    groupHtml += "</section>";
+    mainParts.push(groupHtml);
+  });
+
+  $("#apiNav").innerHTML = navParts.join("");
+  $("#apiMain").innerHTML = mainParts.join("");
+  wireApi();
+}
+
+function wireApi() {
+  const main = $("#apiMain");
+  main.addEventListener("click", (e) => {
+    const copy = e.target.closest(".copybtn");
+    if (copy) {
+      e.stopPropagation();
+      if (copy.dataset.copysamp !== undefined) {
+        const oi = copy.dataset.copysamp;
+        const box = main.querySelector('.sampletoggle[data-sid="' + oi + '"]');
+        const mode = box.querySelector("button.on").dataset.mode;
+        copyText(SAMP[oi][mode], copy);
+      } else if (copy.dataset.rawid !== undefined) {
+        copyText(RAW[+copy.dataset.rawid], copy);
+      }
+      return;
+    }
+    const sampBtn = e.target.closest(".sampletoggle button");
+    if (sampBtn) {
+      const wrap = sampBtn.closest(".sampletoggle"); const oi = wrap.dataset.sid;
+      $$("button", wrap).forEach(b => b.classList.remove("on"));
+      sampBtn.classList.add("on");
+      const mode = sampBtn.dataset.mode;
+      main.querySelector('[data-sbox="' + oi + '"]').innerHTML = hlCode(SAMP[oi][mode]);
+      main.querySelector('[data-sfn="' + oi + '"]').textContent = mode === "curl" ? "terminal" : "request.js";
+      return;
+    }
+    const bodyBtn = e.target.closest(".bodytoggle button");
+    if (bodyBtn) {
+      const wrap = bodyBtn.closest(".bodytoggle"); const oi = wrap.dataset.bid;
+      $$("button", wrap).forEach(b => b.classList.remove("on"));
+      bodyBtn.classList.add("on");
+      const view = main.querySelector('[data-bview="' + oi + '"]');
+      if (bodyBtn.dataset.bmode === "model") {
+        view.className = "schema"; view.innerHTML = BODY[oi].model;
+      } else {
+        view.className = ""; view.innerHTML = "<pre style='margin:0;padding:14px 16px'><code>" + BODY[oi].exampleHtml + "</code></pre>";
+      }
+      return;
+    }
+    const respRow = e.target.closest(".resp-row");
+    if (respRow) {
+      respRow.classList.toggle("open");
+      const b = respRow.nextElementSibling;
+      if (b && b.classList.contains("resp-body")) b.classList.toggle("open");
+      return;
+    }
+    const sum = e.target.closest(".op-sum");
+    if (sum) sum.parentElement.classList.toggle("open");
+  });
+
+  // nav: filter + deep link
+  $("#apiNav").addEventListener("click", (e) => {
+    const a = e.target.closest("a[data-target]"); if (!a) return;
+    e.preventDefault();
+    const op = document.getElementById(a.dataset.target);
+    if (op) { op.classList.add("open"); op.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  });
+  $("#apiSearch").addEventListener("input", (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    $$("#apiMain .op").forEach(o => { o.style.display = !q || o.dataset.search.includes(q) ? "" : "none"; });
+    $$("#apiNav a").forEach(a => { a.classList.toggle("hidden", !!q && !a.dataset.search.includes(q)); });
+    $$("#apiMain .op-group").forEach(g => {
+      const any = $$(".op", g).some(o => o.style.display !== "none");
+      g.style.display = any ? "" : "none";
+    });
+  });
+}
+
+/* ============================================================
+   Hero enclave canvas · facts ticker · lifecycle stepper
+   ============================================================ */
+const HEXC = "0123456789abcdef";
+const hex = (n) => { let s = ""; for (let i = 0; i < n; i++) s += HEXC[(Math.random() * 16) | 0]; return s; };
+const fmtHash = () => "0x" + hex(4) + "…" + hex(4);
+
+function initEnclave() {
+  const cv = $("#enclaveCanvas"); if (!cv) return;
+  const ctx = cv.getContext("2d");
+  const reduce = (typeof matchMedia === "function") && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const PAD = 14;
+  let W = 0, H = 0, DPR = 1, parts = [], sweep = -1;
+
+  function size() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    const r = cv.getBoundingClientRect();
+    W = r.width; H = r.height || 280;
+    cv.width = W * DPR; cv.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  function seed() {
+    parts = [];
+    const n = Math.max(10, Math.min(26, Math.floor(W / 16)));
+    for (let i = 0; i < n; i++)
+      parts.push({ x: PAD + Math.random() * (W - 2 * PAD), y: PAD + Math.random() * (H - 2 * PAD),
+        vx: (Math.random() - .5) * .5, vy: (Math.random() - .5) * .5, r: 1 + Math.random() * 1.6 });
+  }
+  function frame() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(47,230,168,.26)"; ctx.lineWidth = 1; ctx.setLineDash([4, 5]);
+    ctx.strokeRect(PAD, PAD, W - 2 * PAD, H - 2 * PAD); ctx.setLineDash([]);
+    for (let i = 0; i < parts.length; i++)
+      for (let j = i + 1; j < parts.length; j++) {
+        const a = parts[i], b = parts[j], d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (d < 58) { ctx.strokeStyle = "rgba(47,230,168," + (0.1 * (1 - d / 58)) + ")";
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+      }
+    parts.forEach(p => {
+      if (!reduce) {
+        p.x += p.vx; p.y += p.vy;
+        if (p.x < PAD || p.x > W - PAD) p.vx *= -1;
+        if (p.y < PAD || p.y > H - PAD) p.vy *= -1;
+        p.x = Math.max(PAD, Math.min(W - PAD, p.x)); p.y = Math.max(PAD, Math.min(H - PAD, p.y));
+      }
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 3, 0, 7); ctx.fillStyle = "rgba(47,230,168,.06)"; ctx.fill();
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fillStyle = "rgba(130,247,205,.95)"; ctx.fill();
+    });
+    if (sweep >= 0) {
+      const y = PAD + sweep * (H - 2 * PAD);
+      const g = ctx.createLinearGradient(0, y - 16, 0, y + 16);
+      g.addColorStop(0, "rgba(143,162,255,0)"); g.addColorStop(.5, "rgba(143,162,255,.45)"); g.addColorStop(1, "rgba(143,162,255,0)");
+      ctx.fillStyle = g; ctx.fillRect(PAD, y - 16, W - 2 * PAD, 32);
+      ctx.strokeStyle = "rgba(143,162,255,.85)"; ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(W - PAD, y); ctx.stroke();
+      sweep += 0.02;
+      if (sweep > 1) { sweep = -1; $("#measureHash").textContent = fmtHash();
+        const st = $("#enclaveState"); if (st) st.textContent = "sealed"; }
+    }
+    if (!reduce) requestAnimationFrame(frame);
+  }
+  function tick() {
+    sweep = 0; const st = $("#enclaveState"); if (st) st.textContent = "measuring";
+    setTimeout(tick, 3800 + Math.random() * 2800);
+  }
+  size(); seed(); $("#measureHash").textContent = fmtHash();
+  if (reduce) { frame(); }
+  else { requestAnimationFrame(frame); setTimeout(tick, 1600); }
+  let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { size(); seed(); if (reduce) frame(); }, 150); });
+}
+
+function initTicker() {
+  const t = $("#tickerTrack"); if (!t) return;
+  const items = [
+    ["Intel TDX", " + NVIDIA confidential computing"],
+    ["Per-second", " metering, settled on-chain"],
+    ["TLS", " terminates inside the enclave"],
+    ["H200", " · whole-GPU confidential computing"],
+    ["No accounts", " · no KYC · wallet-native"],
+    ["CORS-enabled", " · drive it from the browser"],
+    ["Per-tenant", " process isolation · VRAM wiped on rotation"],
+    ["Verify the quote", " before you connect"],
+    ["No custody", " · pay-per-deploy, top up to extend"]
+  ];
+  const one = items.map(([b, rest]) => '<span class="it"><b>' + esc(b) + "</b>" + esc(rest) + "</span>").join("");
+  t.innerHTML = one + one;
+}
+
+const STEPS = [
+  { t: "Sign in with your wallet", d: "Prove control of your address, with no email and no password.", method: "POST", path: "/auth/login" },
+  { t: "Create a deployment",      d: "Pick a share of the H200 and a port; get back a payment reference.", method: "POST", path: "/deployments" },
+  { t: "Pay for runtime",          d: "Approve USDC and pay the forwarder; the enclave provisions and starts the clock. Pay again to extend.", method: "POST", path: "/deployments/{id}/topup" },
+  { t: "Verify the enclave",       d: "Pull the TDX quote + GPU report and check them yourself.", method: "GET",  path: "/deployments/{id}/attestation" },
+  { t: "Stop (or let it expire)",  d: "Tear down and release the share. No held balance to reclaim.", method: "DELETE", path: "/deployments/{id}" }
+];
+
+function flowDetail(i) {
+  const s = STEPS[i], op = SPEC.paths[s.path][s.method.toLowerCase()];
+  let h = '<div style="padding:15px 18px;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;gap:12px;">'
+    + '<span class="mtag m-' + s.method.toLowerCase() + '">' + s.method + "</span>"
+    + '<span class="op-path">' + esc(s.path) + "</span></div><div style='padding:16px 18px;'>";
+  const be = bodyExample(op);
+  if (be) h += '<div class="block-lbl" style="margin-top:0">Request</div>'
+    + '<div class="code" style="margin-bottom:14px"><pre style="margin:0;padding:13px 16px"><code>' + hlJson(be) + "</code></pre></div>";
+  const codes = Object.keys(op.responses), ok = codes.find(c => c[0] === "2") || codes[0];
+  const re = responseExample(op.responses[ok]);
+  h += '<div class="block-lbl"' + (be ? "" : ' style="margin-top:0"') + ">Response · " + esc(ok) + "</div>"
+    + '<div class="code"><pre style="margin:0;padding:13px 16px"><code>'
+    + (re !== null ? hlJson(re) : esc(op.responses[ok].description || "")) + "</code></pre></div></div>";
+  $("#flowDetail").innerHTML = h;
+}
+function initFlow() {
+  const wrap = $("#flowSteps"); if (!wrap) return;
+  STEPS.forEach((s, i) => {
+    const el = document.createElement("button");
+    el.className = "step" + (i === 0 ? " active" : ""); el.type = "button"; el.setAttribute("role", "tab");
+    el.innerHTML = '<span class="num">' + (i + 1) + '</span><div><div class="st-t">' + esc(s.t)
+      + '</div><div class="st-d">' + esc(s.d) + "</div></div>";
+    el.addEventListener("click", () => {
+      $$(".step", wrap).forEach(x => x.classList.remove("active")); el.classList.add("active"); flowDetail(i);
+    });
+    wrap.appendChild(el);
+  });
+  flowDetail(0);
+}
+
+/* ============================================================
+   Live client (Nan) · wallet · deploy console · attestation
+   The same REST API documented below, called straight from the page.
+   ============================================================ */
+
+/* ---- persisted settings (guarded; degrades if storage is blocked) ---- */
+function lsGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+
+/* ---- typed error carrying HTTP status ---- */
+class NanError extends Error {
+  constructor(message, status, body){ super(message); this.name = "NanError"; this.status = status; this.body = body; }
+}
+
+/* ---- The exact client the page uses; mirrors the published HTTP API ---- */
+const Nan = {
+  base: (lsGet("nan_api_base") || BASE).replace(/\/+$/, ""),
+  token: null, address: null, chainId: null, provider: null,
+  setBase(u){ this.base = String(u || "").trim().replace(/\/+$/, "") || BASE; lsSet("nan_api_base", this.base); },
+  authed(){ return !!this.token; },
+  async _req(method, path, opts){
+    opts = opts || {};
+    let url = this.base + path;
+    if (opts.query){
+      const qs = Object.entries(opts.query)
+        .filter(([, v]) => v !== undefined && v !== null && v !== "")
+        .map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v)).join("&");
+      if (qs) url += "?" + qs;
+    }
+    const headers = { "Accept": "application/json" };
+    const hasBody = opts.body !== undefined;
+    if (hasBody) headers["Content-Type"] = "application/json";
+    if (opts.auth){
+      if (!this.token) throw new NanError("Not signed in. Connect your wallet first.", 401);
+      headers["Authorization"] = "Bearer " + this.token;
+    }
+    let res;
+    try {
+      res = await fetch(url, { method, headers, mode: "cors", body: hasBody ? JSON.stringify(opts.body) : undefined });
+    } catch(e){
+      throw new NanError("Could not reach " + url + ". Check the endpoint is live and returns CORS headers.", 0);
+    }
+    const text = await res.text();
+    let data = null;
+    if (text){ try { data = JSON.parse(text); } catch(e){ data = text; } }
+    if (!res.ok){
+      const msg = (data && data.message) ? data.message
+        : (typeof data === "string" && data) ? data
+        : ("HTTP " + res.status + " " + res.statusText);
+      throw new NanError(msg, res.status, data);
+    }
+    return data;
+  },
+  /* Auth (public) */
+  getNonce(address){ return this._req("GET", "/auth/nonce", { query: { address } }); },
+  login(message, signature){ return this._req("POST", "/auth/login", { body: { message, signature } }); },
+  /* Account */
+  getAccount(){ return this._req("GET", "/account", { auth: true }); },
+  topup(id){ return this._req("POST", "/deployments/" + encodeURIComponent(id) + "/topup", { auth: true }); },
+  /* Pricing (public) */
+  getPricing(){ return this._req("GET", "/pricing"); },
+  getAvailability(){ return this._req("GET", "/availability"); },
+  /* Deployments */
+  createDeployment(body){ return this._req("POST", "/deployments", { auth: true, body }); },
+  listDeployments(query){ return this._req("GET", "/deployments", { auth: true, query }); },
+  getDeployment(id){ return this._req("GET", "/deployments/" + encodeURIComponent(id), { auth: true }); },
+  terminateDeployment(id){ return this._req("DELETE", "/deployments/" + encodeURIComponent(id), { auth: true }); },
+  logs(id, query){ return this._req("GET", "/deployments/" + encodeURIComponent(id) + "/logs", { auth: true, query }); },
+  attestation(id){ return this._req("GET", "/deployments/" + encodeURIComponent(id) + "/attestation", { auth: true }); },
+  /* System (public) */
+  health(){ return this._req("GET", "/health"); },
+  version(){ return this._req("GET", "/version"); }
+};
+
+/* ---- wallet discovery: EIP-6963 multi-wallet, EIP-1193 fallback ---- */
+const Wallet = {
+  found: [],
+  started: false,
+  init(){
+    if (this.started) return; this.started = true;
+    window.addEventListener("eip6963:announceProvider", (e) => {
+      const d = e.detail; if (!d || !d.info || !d.provider) return;
+      const i = this.found.findIndex(x => x.info.uuid === d.info.uuid);
+      if (i === -1) this.found.push(d); else this.found[i] = d;
+    });
+    this.request();
+  },
+  request(){ try { window.dispatchEvent(new Event("eip6963:requestProvider")); } catch(e){} },
+  async discover(){
+    // wallets that weren't ready at page-load announce when we re-ask
+    this.request(); await new Promise(r => setTimeout(r, 180));
+    this.request(); await new Promise(r => setTimeout(r, 80));
+    return this.list();
+  },
+  list(){
+    const arr = this.found.slice();
+    const seen = new Set(arr.map(w => w.provider));
+    if (typeof window !== "undefined" && window.ethereum){
+      const eth = window.ethereum;
+      const provs = (eth.providers && eth.providers.length) ? eth.providers : [eth];
+      provs.forEach((p, i) => { if (p && !seen.has(p)){ seen.add(p); arr.push({
+        info: { uuid: "injected-" + i, name: p.isMetaMask ? "MetaMask" : p.isRabby ? "Rabby" : p.isCoinbaseWallet ? "Coinbase Wallet" : p.isBraveWallet ? "Brave Wallet" : "Injected wallet", icon: null },
+        provider: p
+      }); } });
+    }
+    return arr;
+  }
+};
+
+const BASE_CHAIN = 8453, BASE_CHAIN_HEX = "0x2105";
+const short = (a) => a ? a.slice(0, 6) + "\u2026" + a.slice(-4) : "";
+
+/* ---- assemble a canonical SIWE message only if the server didn't send one ---- */
+function buildSiwe(ch){
+  const L = [];
+  L.push((ch.domain || location.host) + " wants you to sign in with your Ethereum account:");
+  L.push(ch.address);
+  L.push("");
+  if (ch.statement) L.push(ch.statement);
+  L.push("");
+  L.push("URI: " + (ch.uri || location.origin));
+  L.push("Version: " + (ch.version || "1"));
+  L.push("Chain ID: " + (ch.chainId != null ? ch.chainId : BASE_CHAIN));
+  L.push("Nonce: " + ch.nonce);
+  if (ch.issuedAt) L.push("Issued At: " + ch.issuedAt);
+  if (ch.expirationTime) L.push("Expiration Time: " + ch.expirationTime);
+  return L.join("\n");
+}
+
+function noWalletReason(){
+  if (typeof location !== "undefined" && location.protocol === "file:")
+    return "This page is open as a local file (file://). Wallet extensions don't inject there. Serve it over http(s): run a local server, or open it from your nan.host / IPFS gateway.";
+  let framed = false; try { framed = window.top !== window.self; } catch(e){ framed = true; }
+  if (framed)
+    return "This page is in a sandboxed preview frame, where wallets can't be injected. Open it in its own browser tab.";
+  return "No Ethereum wallet detected. Install MetaMask, Rabby, Coinbase, or any EIP-6963 wallet, unlock it, and reload.";
+}
+
+async function pickWallet(){
+  let wallets = Wallet.list();
+  if (!wallets.length) wallets = await Wallet.discover();
+  if (!wallets.length) throw new NanError(noWalletReason(), 0);
+  if (wallets.length === 1) return wallets[0];
+  return await new Promise((resolve, reject) => {
+    const host = $("#walletPick"); if (!host){ resolve(wallets[0]); return; }
+    host.innerHTML = '<div class="wp-card"><div class="wp-h">Choose a wallet</div>' +
+      wallets.map((w, i) => '<button class="wp-item" data-i="' + i + '">' +
+        (w.info.icon ? '<img src="' + w.info.icon + '" alt=""/>' : '<span class="wp-dot"></span>') +
+        esc(w.info.name) + '</button>').join("") +
+      '<button class="wp-cancel">Cancel</button></div>';
+    host.hidden = false;
+    const close = () => { host.hidden = true; host.innerHTML = ""; };
+    host.onclick = (e) => {
+      const it = e.target.closest(".wp-item");
+      if (it){ const w = wallets[+it.dataset.i]; close(); resolve(w); return; }
+      if (e.target.closest(".wp-cancel") || e.target === host){ close(); reject(new NanError("Wallet selection cancelled.", 0)); }
+    };
+  });
+}
+
+async function ensureBaseChain(provider){
+  let cid;
+  try { cid = await provider.request({ method: "eth_chainId" }); } catch(e){ return; }
+  if (parseInt(cid, 16) === BASE_CHAIN) return;
+  try {
+    await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] });
+  } catch(e){
+    if (e && e.code === 4902){
+      try {
+        await provider.request({ method: "wallet_addEthereumChain", params: [{
+          chainId: BASE_CHAIN_HEX, chainName: "Base",
+          nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+          rpcUrls: ["https://mainnet.base.org"], blockExplorerUrls: ["https://basescan.org"]
+        }] });
+      } catch(_){}
+    }
+  }
+}
+
+async function connectWallet(){
+  const chosen = await pickWallet();
+  const provider = chosen.provider;
+  const accounts = await provider.request({ method: "eth_requestAccounts" });
+  if (!accounts || !accounts.length) throw new NanError("Wallet returned no accounts.", 0);
+  await ensureBaseChain(provider);
+  let cid; try { cid = await provider.request({ method: "eth_chainId" }); } catch(e){}
+  Nan.provider = provider; Nan.address = accounts[0]; Nan.chainId = cid ? parseInt(cid, 16) : null;
+  if (provider.on){
+    provider.on("accountsChanged", (acc) => { if (!acc || !acc.length){ disconnectWallet(); } else { Nan.address = acc[0]; Nan.token = null; refreshWallet(); } });
+    provider.on("chainChanged", (c) => { Nan.chainId = parseInt(c, 16); refreshWallet(); });
+  }
+  refreshWallet();
+  return provider;
+}
+
+async function authenticate(){
+  if (!Nan.provider) await connectWallet();
+  const ch = await Nan.getNonce(Nan.address);
+  const message = (ch && ch.message) ? ch.message : buildSiwe(ch);
+  let signature;
+  try {
+    signature = await Nan.provider.request({ method: "personal_sign", params: [message, Nan.address] });
+  } catch(e){
+    throw new NanError((e && e.code === 4001) ? "Signature rejected." : ("Could not sign in: " + (e.message || e)), 0);
+  }
+  const sess = await Nan.login(message, signature);
+  Nan.token = sess && sess.token;
+  if (!Nan.token) throw new NanError("Login did not return a token.", 0);
+  refreshWallet();
+  refreshEnclaves({ spinner: true });
+  return sess;
+}
+
+function disconnectWallet(){
+  Nan.token = null; Nan.address = null; Nan.provider = null; Nan.chainId = null;
+  const pop = $("#walletPop"); if (pop){ pop.hidden = true; pop.innerHTML = ""; }
+  refreshWallet();
+  stopEncPoll();
+  if (typeof refreshEnclaves === "function") refreshEnclaves();
+}
+
+/* ---- wallet button + popover ---- */
+function refreshWallet(){
+  const btn = $("#walletBtn"); if (!btn) return;
+  if (Nan.address){
+    btn.classList.add("connected");
+    btn.innerHTML = '<span class="wdot"></span>' + esc(short(Nan.address)) + (Nan.authed() ? "" : ' <span class="lock">unlocked</span>');
+    const rh = $("#runHint"); if (rh) rh.textContent = Nan.authed() ? "ready to deploy" : "click Deploy to sign in";
+  } else {
+    btn.classList.remove("connected");
+    btn.innerHTML = 'Connect wallet <span class="arr">\u2192</span>';
+    const rh = $("#runHint"); if (rh) rh.textContent = "connect a wallet to deploy";
+  }
+}
+
+function toggleWalletPop(){
+  const pop = $("#walletPop"); if (!pop) return;
+  if (!pop.hidden){ pop.hidden = true; pop.innerHTML = ""; return; }
+  renderWalletPop();
+}
+
+async function renderWalletPop(){
+  const pop = $("#walletPop"); if (!pop || !Nan.address) return;
+  const offBase = Nan.chainId && Nan.chainId !== BASE_CHAIN;
+  pop.innerHTML =
+    '<div class="wp-row"><span class="wp-k">Wallet</span><button class="wp-addr" id="wpCopy">' + esc(short(Nan.address)) + ' \u29c9</button></div>' +
+    '<div class="wp-row"><span class="wp-k">Network</span><span class="wp-v">' + (Nan.chainId === BASE_CHAIN ? "Base" : ("chain " + (Nan.chainId || "\u2014"))) + (offBase ? ' <button class="wp-mini" id="wpSwitch">switch to Base</button>' : "") + '</span></div>' +
+    '<div class="wp-row"><span class="wp-k">Session</span><span class="wp-v">' + (Nan.authed() ? '<span class="ok">signed in</span>' : '<button class="wp-mini" id="wpAuth">sign in</button>') + '</span></div>' +
+    '<div class="wp-bal" id="wpBal">' + (Nan.authed() ? "loading balance\u2026" : "sign in to load balance") + '</div>' +
+    '<button class="wp-disc" id="wpDisc">Disconnect</button>';
+  pop.hidden = false;
+  const c = $("#wpCopy"); if (c) c.addEventListener("click", () => copyText(Nan.address));
+  const d = $("#wpDisc"); if (d) d.addEventListener("click", disconnectWallet);
+  const s = $("#wpSwitch"); if (s) s.addEventListener("click", () => Nan.provider && ensureBaseChain(Nan.provider).then(renderWalletPop));
+  const a = $("#wpAuth"); if (a) a.addEventListener("click", async () => { try { await authenticate(); renderWalletPop(); } catch(e){ showToast(e.message); } });
+  if (Nan.authed()){
+    try {
+      const acc = await Nan.getAccount();
+      const dp = acc.deployments || {};
+      const rows = '<div class="bl"><span>running</span><span>' + esc(String(dp.running != null ? dp.running : 0)) + '</span></div>'
+                 + '<div class="bl"><span>awaiting payment</span><span>' + esc(String(dp.awaitingPayment != null ? dp.awaitingPayment : 0)) + '</span></div>'
+                 + '<div class="bl"><span>time funded</span><span>' + esc(fmtDur(dp.totalTimeRemainingSec || 0)) + '</span></div>';
+      const el = $("#wpBal"); if (el) el.innerHTML = '<div class="bl-h">Deployments</div>' + rows;
+    } catch(e){ const el = $("#wpBal"); if (el) el.textContent = e.message; }
+  }
+}
+
+/* ============================================================
+   Deploy console
+   ============================================================ */
+const FULL_RATE = 0.0016667;        // whole-H200 USDC/sec ($6.00/hr)
+const CARD_GB = 141;                // whole-card VRAM
+const NODE_VCPUS = 16;              // host vCPUs on the enclave (confirm vs real Tinfoil spec)
+const NODE_RAM_GB = 64;             // host RAM GB on the enclave (confirm vs real Tinfoil spec)
+const MIN_COMPUTE_PCT = 1;    // compute is dialed in whole percent (CUDA MPS grain); 1% floor, no fixed 1/7
+// Billed at the share x whole-card rate. One share sets VRAM and compute together.
+// One dial: a share of the whole card. That share gives a matching slice of BOTH
+// VRAM and compute, so neither can be stranded. Rate = share x whole-card rate.
+function gpuRate(sharePct){
+  const pct = Math.min(100, Math.max(MIN_COMPUTE_PCT, Math.round(sharePct)));
+  const share = pct / 100;
+  // one share -> a matching slice of VRAM, compute, CPU and host RAM (nothing stranded)
+  return { rate: share * FULL_RATE, share, pct,
+           vramGb: share * CARD_GB, vcpus: share * NODE_VCPUS, ramGb: share * NODE_RAM_GB };
+}
+function bucketFor(sharePct){
+  if (sharePct > 100) return "over";   // exceeds the whole card
+  return "gpu";
+}
+const dep = { sharePct: 25, asset: "USDC" };
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+function fmtNum(n){ return (Math.round(n * 10) / 10).toString(); }   // drop trailing .0
+function fmtDur(s){
+  s = Math.floor(s); if (!isFinite(s) || s <= 0) return "\u2014";
+  const d = Math.floor(s / 86400); s -= d * 86400;
+  const h = Math.floor(s / 3600); s -= h * 3600;
+  const m = Math.floor(s / 60); s -= m * 60;
+  if (d > 0) return d + "d " + h + "h";
+  if (h > 0) return h + "h " + m + "m";
+  if (m > 0) return m + "m " + s + "s";
+  return s + "s";
+}
+function deployBody(){
+  const img = $("#cfgImage").value.trim() || "debian:bookworm-slim";
+  const cmd = $("#cfgCmd").value.trim();
+  const ssh = ($("#cfgSsh") ? $("#cfgSsh").value : "").trim();
+  const port = parseInt($("#cfgPort").value, 10) || 8080;
+  const budget = parseFloat($("#cfgBudget").value) || 0;
+  const body = { image: { reference: img } };
+  if (cmd) body.command = cmd.split(/\s+/).filter(Boolean);
+  if (ssh) body.sshPublicKey = ssh;
+  body.port = port;
+  body.resources = (dep.sharePct > 0)
+    ? { share: Math.min(1, Math.max(0.01, Math.round(dep.sharePct) / 100)) }
+    : {};
+  body.budget = undefined; // pay-per-deploy: no budget cap; runtime is bought via USDC payment
+  if (dep.sharePct > 0) body.attestationPolicy = { requireGpuAttestation: true };
+  body.region = "auto";
+  return body;
+}
+function deployFetch(b){
+  return '// 1) SIWE handshake (once): GET /auth/nonce -> wallet.personal_sign -> POST /auth/login -> { token }\n'
+    + 'const res = await fetch("' + Nan.base + '/deployments", {\n'
+    + '  method: "POST",\n'
+    + '  headers: {\n'
+    + '    "Authorization": `Bearer ${token}`,\n'
+    + '    "Content-Type": "application/json"\n'
+    + '  },\n'
+    + '  body: JSON.stringify(' + JSON.stringify(b, null, 2) + ')\n'
+    + '});\n'
+    + 'const deployment = await res.json();   // 201 -> { id, status, network, ... }\n'
+    + 'console.log(deployment.id, deployment.status);';
+}
+function deployCurl(b){
+  return "curl -X POST " + Nan.base + "/deployments \\\n"
+    + '  -H "Authorization: Bearer $NAN_TOKEN" \\\n'
+    + '  -H "Content-Type: application/json" \\\n'
+    + "  -d '" + JSON.stringify(b, null, 2) + "'";
+}
+function renderDeploy(){
+  const body = deployBody();
+  $("#outReq").innerHTML = hlJson(body);
+  $("#outFetch").innerHTML = hlCode(deployFetch(body));
+  $("#outCurl").innerHTML = hlCode(deployCurl(body));
+  const b = bucketFor(dep.sharePct), budget = parseFloat($("#cfgBudget").value) || 0;
+  let rate, readout;
+  if (b === "over") { rate = 0; readout = "✕ " + dep.sharePct + "% exceeds the whole card (100%)"; }
+  else {
+    const g = gpuRate(dep.sharePct); rate = g.rate;
+    readout = "→ " + g.pct + "% of card · ≈" + g.vramGb.toFixed(0) + " GB VRAM · " + g.pct + "% compute · ≈"
+            + fmtNum(g.vcpus) + " vCPU · ≈" + fmtNum(g.ramGb) + " GB RAM · $" + (rate * 3600).toFixed(2) + "/hr";
+  }
+  const t = $("#tierOut"); if (t) t.textContent = readout;
+  $("#estRuntime").textContent = rate > 0 ? fmtDur(budget / rate) : "\u2014";
+}
+function switchPane(name){
+  $$(".console-tabs button").forEach(b => b.classList.toggle("on", b.dataset.pane === name));
+  $$(".console-body .pane").forEach(p => p.classList.toggle("on", p.dataset.pane === name));
+}
+
+/* ---- terminal helpers ---- */
+function termLine(term, cls, txt){
+  const s = document.createElement("span");
+  s.className = "ln " + cls; s.textContent = txt;
+  term.appendChild(s); term.scrollTop = term.scrollHeight;
+  return s;
+}
+function statusCls(st){
+  return (st === "running") ? "ok" : (st === "failed" || st === "error" || st === "stopped") ? "warn" : "info";
+}
+
+let encPoll = null;
+
+/* ---- minimal ABI encoding for USDC approve + NanPay pay (no web3 lib) ---- */
+const SEL_APPROVE = "095ea7b3";   // approve(address,uint256)
+const SEL_PAY     = "d0ee4de0";   // pay(bytes32,uint256)
+const pad32 = (h) => h.replace(/^0x/, "").toLowerCase().padStart(64, "0");
+const encAddr = (a) => pad32(a.replace(/^0x/, ""));
+const encUint = (n) => pad32(BigInt(n).toString(16));
+const encBytes32 = (h) => { const x = h.replace(/^0x/, "").toLowerCase(); if (x.length !== 64) throw new NanError("bad payment reference", 0); return x; };
+const usdc6 = (amt) => BigInt(Math.round(parseFloat(amt) * 1e6));
+const dataApprove = (spender, amt6) => "0x" + SEL_APPROVE + encAddr(spender) + encUint(amt6);
+const dataPay = (ref, amt6) => "0x" + SEL_PAY + encBytes32(ref) + encUint(amt6);
+
+async function ensureBaseChain(){
+  let cur;
+  try { cur = await Nan.provider.request({ method: "eth_chainId" }); } catch { cur = null; }
+  if (cur && String(cur).toLowerCase() === BASE_CHAIN_HEX) return;
+  try { await Nan.provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] }); }
+  catch(e){ throw new NanError("Switch your wallet to Base to pay in USDC.", 0); }
+}
+async function sendTx(to, data){
+  return Nan.provider.request({ method: "eth_sendTransaction", params: [{ from: Nan.address, to, data, value: "0x0" }] });
+}
+
+/* pay (or top up) a deployment: approve USDC to the forwarder, then call pay() */
+async function payForRuntime(term, pay, fundUsdc){
+  if (!pay || !pay.forwarder) throw new NanError("This enclave returned no payment instructions (forwarder not configured).", 0);
+  const amt6 = usdc6(fundUsdc);
+  if (amt6 <= 0n) throw new NanError("Enter a USDC amount to fund.", 0);
+  await ensureBaseChain();
+  termLine(term, "info", "[*] approve " + fundUsdc + " USDC to the forwarder\u2026 (wallet)");
+  const ah = await sendTx(pay.usdc, dataApprove(pay.forwarder, amt6));
+  termLine(term, "dimln", "    approve tx " + ah);
+  termLine(term, "info", "[*] pay " + fundUsdc + " USDC \u2014 buys runtime\u2026 (wallet)");
+  const ph = await sendTx(pay.forwarder, dataPay(pay.deploymentRef, amt6));
+  termLine(term, "ok", "[\u2713] payment sent " + ph);
+  termLine(term, "dimln", "    funds go straight to NAN; nothing is custodied");
+  return ph;
+}
+
+/* ---- real deploy: create -> pay -> provisioned, all from the browser ---- */
+async function runDeploy(){
+  const btn = $("#deployBtn"); if (btn.disabled) return;
+  const term = $("#termOut"); term.innerHTML = ""; switchPane("run");
+  const body = deployBody();
+  const fund = parseFloat($("#cfgBudget").value) || 0;
+  const dry = $("#dryRun") && $("#dryRun").checked;
+
+  if (dry){
+    termLine(term, "warn", "// dry run \u2014 nothing is sent");
+    termLine(term, "p", "POST " + Nan.base + "/deployments");
+    JSON.stringify(body, null, 2).split("\n").forEach(l => termLine(term, "dimln", "  " + l));
+    termLine(term, "info", "then: approve " + fund + " USDC + pay() the forwarder to fund runtime");
+    termLine(term, "info", "uncheck \u201cDry run\u201d to deploy for real");
+    return;
+  }
+
+  btn.disabled = true; const lbl = btn.textContent; btn.textContent = "working\u2026";
+  try {
+    if (!Nan.token){
+      termLine(term, "info", "[*] connecting wallet + signing in (SIWE)\u2026");
+      await authenticate();
+      termLine(term, "ok", "[\u2713] signed in as " + short(Nan.address));
+    }
+    termLine(term, "p", "$ POST " + Nan.base + "/deployments");
+    let created;
+    try {
+      created = await Nan.createDeployment(body);
+    } catch(e){
+      if (e.status === 401){ termLine(term, "warn", "[!] session expired \u2014 re-signing\u2026"); Nan.token = null; await authenticate(); created = await Nan.createDeployment(body); }
+      else if (e.status === 409){ termLine(term, "warn", "[!] no capacity: " + e.message); return; }
+      else if (e.status === 422){ termLine(term, "warn", "[!] invalid spec: " + e.message); return; }
+      else throw e;
+    }
+    termLine(term, "dimln", "  \u21b3 201 " + created.id + " \u00b7 status=" + created.status);
+
+    const ssh = created.ssh;
+    if (ssh){
+      if (ssh.privateKey) showPrivateKeyOnce(created.id, ssh.privateKey);
+      if (ssh.hostKeyFingerprint) termLine(term, "dimln", "    ssh host key " + ssh.hostKeyFingerprint + " (verify vs attestation)");
+    }
+
+    // pay-per-deploy: fund runtime; the enclave provisions once it sees the payment
+    if (created.status === "awaiting_payment"){
+      const rate = parseFloat((created.payment && created.payment.ratePerSecondUsdc) || "0");
+      if (rate > 0) termLine(term, "info", "    " + fund + " USDC \u2248 " + fmtDur(fund / rate) + " of runtime at $" + (rate*3600).toFixed(2) + "/hr");
+      try {
+        await payForRuntime(term, created.payment, fund);
+      } catch(e){
+        termLine(term, "warn", "[x] payment failed: " + (e.message || e));
+        termLine(term, "dimln", "    " + created.id + " stays awaiting_payment \u2014 pay later to start it (Top up).");
+        return;
+      }
+      termLine(term, "info", "[*] waiting for the enclave to confirm payment + provision\u2026");
+    }
+
+    const final = await pollDeployment(created.id, term);
+    refreshEnclaves({ highlight: (final || created).id });
+  } catch(e){
+    termLine(term, "warn", "[x] " + (e.message || String(e)));
+    if (e.status === 0) termLine(term, "dimln", "    set a reachable endpoint above, then retry.");
+  } finally {
+    btn.disabled = false; btn.textContent = lbl;
+    refreshWallet();
+  }
+}
+async function pollDeployment(id, term){
+  const done = { running: 1, failed: 1, stopped: 1, error: 1 };
+  let last = null, d = null;
+  for (let i = 0; i < 180; i++){
+    try { d = await Nan.getDeployment(id); }
+    catch(e){ termLine(term, "dimln", "  \u2026 " + e.message); await wait(2500); continue; }
+    if (d.status !== last){ last = d.status; termLine(term, statusCls(d.status), "  \u2022 " + d.status); }
+    if (done[d.status]){
+      if (d.status === "running"){
+        const ep = d.network && d.network.endpoint;
+        termLine(term, "ok", "[\u2713] running" + (ep ? " \u00b7 " + ep : ""));
+        if (d.ratePerSecondUsdc) termLine(term, "dimln", "    rate " + d.ratePerSecondUsdc + " USDC/s · " + (d.timeRemainingSec != null ? fmtDur(d.timeRemainingSec) + " funded" : "funded"));
+        termLine(term, "warn", "\u2192 verify the attestation before sending data");
+      } else {
+        termLine(term, "warn", "  \u2039 ended: " + d.status + " \u203a");
+      }
+      return d;
+    }
+    await wait(2500);
+  }
+  termLine(term, "dimln", "  (still provisioning \u2014 track it in the panel below)");
+  return d;
+}
+
+/* offerDeposit removed: escrow deposits no longer exist (pay-per-deploy) */
+/* ---- active deployment panel ---- */
+function shortImg(s){ if (!s) return ""; return s.length > 44 ? s.slice(0, 42) + "\u2026" : s; }
+function encTier(d){ const s = d.resources && d.resources.share; return s ? (Math.round(s * 100) + "% card") : "CPU"; }
+
+function downloadText(name, text){
+  try {
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch(e){ showToast("download failed: " + e.message); }
+}
+
+function showPrivateKeyOnce(id, key){
+  const host = $("#keyOnce"); if (!host) return;
+  host.hidden = false;
+  host.innerHTML =
+    '<div class="ko-head">\u26a0 SSH private key for ' + esc(id) + ' \u2014 shown once. We don\u2019t store it; save it now or you\u2019ll lose access.</div>' +
+    '<pre class="ko-key">' + esc(key) + '</pre>' +
+    '<div class="ko-acts"><button class="btn btn-sm" id="koCopy">\u29c9 copy</button><button class="btn btn-sm" id="koDl">download</button><button class="btn btn-sm" id="koDone">I saved it</button></div>';
+  $("#koCopy").addEventListener("click", () => copyText(key));
+  $("#koDl").addEventListener("click", () => downloadText(id + ".key", key));
+  $("#koDone").addEventListener("click", () => { host.hidden = true; host.innerHTML = ""; });
+}
+
+async function refreshEnclaves(opts){
+  opts = opts || {};
+  const body = $("#encBody"), count = $("#encCount"); if (!body) return;
+  const setCount = t => { if (count) count.textContent = t || ""; };
+  if (!Nan.address){
+    setCount(""); stopEncPoll();
+    body.innerHTML = '<div class="enc-empty">Connect your wallet (above) to see your enclaves.</div>'; return;
+  }
+  if (!Nan.authed()){
+    setCount(""); stopEncPoll();
+    body.innerHTML = '<div class="enc-empty">Sign in with your wallet to load your enclaves \u2014 <button class="wp-mini" id="encSignin">sign in</button></div>';
+    const b = $("#encSignin"); if (b) b.addEventListener("click", async () => { try { await authenticate(); } catch(e){ showToast(e.message); } });
+    return;
+  }
+  if (!body.querySelector(".enc-row") || opts.spinner) body.innerHTML = '<div class="enc-empty">loading your enclaves\u2026</div>';
+  try {
+    const res = await Nan.listDeployments();
+    const list = Array.isArray(res) ? res : ((res && (res.deployments || res.items || res.data)) || []);
+    renderEnclaveRows(list, opts.highlight);
+    startEncPoll();
+  } catch(e){
+    if (e.status === 401){ Nan.token = null; refreshWallet(); stopEncPoll();
+      body.innerHTML = '<div class="enc-empty">session expired \u2014 <button class="wp-mini" id="encSignin">sign in</button></div>';
+      const b = $("#encSignin"); if (b) b.addEventListener("click", async () => { try { await authenticate(); } catch(_){} });
+      return;
+    }
+    body.innerHTML = '<div class="enc-empty">couldn\u2019t load enclaves: ' + esc(e.message || String(e)) + '</div>';
+  }
+}
+
+function renderEnclaveRows(list, highlight){
+  const body = $("#encBody"), count = $("#encCount");
+  list = (list || []).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const running = list.filter(d => d.status === "running").length;
+  if (count) count.textContent = list.length ? (running + " running \u00b7 " + list.length + " total") : "";
+  if (!list.length){ body.innerHTML = '<div class="enc-empty">No enclaves yet \u2014 build one above.</div>'; return; }
+  body.innerHTML = list.map(d => {
+    const ep = d.network && d.network.endpoint, st = d.status || "\u2014";
+    const bud = (d.paidUsdc != null)
+      ? (esc(d.paidUsdc) + " USDC paid" + (d.timeRemainingSec != null ? " · " + esc(fmtDur(d.timeRemainingSec)) + " left" : ""))
+      : "\u2014";
+    const live = ["running", "provisioning", "queued", "pending"].indexOf(st) !== -1;
+    return '<div class="enc-row' + (highlight && d.id === highlight ? " enc-new" : "") + '">' +
+      '<div class="enc-main">' +
+        '<span class="ap-badge ' + statusCls(st) + '">' + esc(st) + '</span>' +
+        '<button class="enc-id" data-copy="' + esc(d.id) + '">' + esc(d.id) + ' \u29c9</button>' +
+        '<span class="enc-meta">' + esc(encTier(d)) + (d.image ? ' \u00b7 <span class="dim">' + esc(shortImg(d.image)) + '</span>' : '') + '</span>' +
+        '<span class="enc-spend">' + bud + '</span>' +
+        '<span class="enc-acts">' +
+          '<button class="btn btn-sm enc-verify" data-id="' + esc(d.id) + '">Verify</button>' +
+          (live ? '<button class="btn btn-sm danger enc-kill" data-id="' + esc(d.id) + '">Terminate</button>' : '') +
+        '</span>' +
+      '</div>' +
+      (ep ? '<button class="enc-ep" data-ep="' + esc(ep) + '">' + esc(ep) + ' \u29c9</button>' : '') +
+      (d.ssh && d.ssh.command ? '<button class="enc-ssh" data-ssh="' + esc(d.ssh.command) + '" title="' + (d.ssh.hostKeyFingerprint ? 'host key ' + esc(d.ssh.hostKeyFingerprint) : '') + '">$ ' + esc(d.ssh.command) + ' \u29c9</button>' : '') +
+      '<div class="enc-att" hidden></div>' +
+    '</div>';
+  }).join("");
+  $$("#encBody .enc-id").forEach(b => b.addEventListener("click", () => copyText(b.dataset.copy)));
+  $$("#encBody .enc-ep").forEach(b => b.addEventListener("click", () => copyText(b.dataset.ep)));
+  $$("#encBody .enc-ssh").forEach(b => b.addEventListener("click", () => copyText(b.dataset.ssh)));
+  $$("#encBody .enc-verify").forEach(b => b.addEventListener("click", () => encVerify(b.dataset.id, b)));
+  $$("#encBody .enc-kill").forEach(b => b.addEventListener("click", () => encKill(b.dataset.id, b)));
+}
+
+async function encVerify(id, btn){
+  const row = btn.closest(".enc-row"), box = row && row.querySelector(".enc-att"); if (!box) return;
+  if (!box.hidden){ box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false; box.innerHTML = '<div class="ap-attbar">attestation \u00b7 ' + esc(id) + '</div><pre class="ap-attpre">fetching\u2026</pre>';
+  try { const att = await Nan.attestation(id); const pre = box.querySelector(".ap-attpre"); if (pre) pre.innerHTML = hlJson(att); }
+  catch(e){ const pre = box.querySelector(".ap-attpre"); if (pre) pre.textContent = e.message; }
+}
+
+async function encKill(id, btn){
+  if (btn){ btn.disabled = true; btn.textContent = "terminating\u2026"; }
+  try { await Nan.terminateDeployment(id); showToast("terminating " + id); setTimeout(() => refreshEnclaves(), 900); }
+  catch(e){ showToast(e.message); if (btn){ btn.disabled = false; btn.textContent = "Terminate"; } }
+}
+
+function startEncPoll(){
+  if (encPoll) return;
+  encPoll = setInterval(() => {
+    if (currentView !== "deploy" || !Nan.authed()){ stopEncPoll(); return; }
+    if ($("#encBody .enc-att:not([hidden])")) return;   // don't clobber an open attestation view
+    refreshEnclaves();
+  }, 10000);
+}
+function stopEncPoll(){ if (encPoll){ clearInterval(encPoll); encPoll = null; } }
+
+let availPoll = null;
+async function refreshAvailability(){
+  const sin = $("#cfgShare"), capS = $("#shareCap");
+  if (!sin) return;
+  try {
+    const a = await Nan.getAvailability();
+    const cardGb = (a.cardVramGb != null) ? a.cardVramGb : CARD_GB;
+    // free share of the card: prefer maxShare; else the smaller of free VRAM and free compute
+    let freePct;
+    if (a.maxShare != null){
+      freePct = Math.floor(a.maxShare * 100);
+    } else {
+      const vPct = ((a.maxVramGb != null ? a.maxVramGb : (a.vramFreeGb != null ? a.vramFreeGb : cardGb)) / cardGb) * 100;
+      const cPct = ((a.maxComputeShare != null ? a.maxComputeShare : 1)) * 100;
+      freePct = Math.floor(Math.min(vPct, cPct));
+    }
+    sin.max = String(Math.max(0, freePct));
+    if (capS) capS.textContent = "· " + freePct + "% of the card free now (≈" + Math.round(freePct / 100 * cardGb) + " GB)";
+    // clamp if the current pick now exceeds capacity, but don't yank the field the user is editing
+    if (dep.sharePct > freePct && document.activeElement !== sin){ dep.sharePct = freePct; sin.value = String(freePct); }
+    renderDeploy();
+  } catch(e){
+    if (capS) capS.textContent = "· live capacity unavailable, showing whole-card max (100%)";
+  }
+}
+function startAvailPoll(){
+  refreshAvailability();
+  if (availPoll) return;
+  availPoll = setInterval(() => { if ($("#deploy")) refreshAvailability(); }, 20000);
+}
+
+function initDeploy(){
+  if (!$("#deploy")) return;
+  $("#cfgShare").addEventListener("input", e => { dep.sharePct = parseFloat(e.target.value) || 0; renderDeploy(); });
+  $("#cfgAsset").addEventListener("click", e => {
+    const b = e.target.closest("button[data-asset]"); if (!b) return;
+    dep.asset = b.dataset.asset; $$("#cfgAsset button").forEach(x => x.classList.toggle("on", x === b));
+    $("#assetLabel").textContent = dep.asset; renderDeploy();
+  });
+  ["#cfgImage", "#cfgCmd", "#cfgSsh", "#cfgPort", "#cfgBudget"].forEach(s => { const el = $(s); if (el) el.addEventListener("input", renderDeploy); });
+  $$(".console-tabs button").forEach(b => b.addEventListener("click", () => switchPane(b.dataset.pane)));
+  $("#deployBtn").addEventListener("click", runDeploy);
+  $("#resetBtn").addEventListener("click", () => {
+    $("#cfgImage").value = "debian:bookworm-slim";
+    $("#cfgCmd").value = "";
+    if ($("#cfgSsh")) $("#cfgSsh").value = "";
+    $("#cfgPort").value = "8080"; $("#cfgBudget").value = "50";
+    $("#cfgShare").value = "25"; dep.sharePct = 25; dep.asset = "USDC";
+    $$("#cfgAsset button").forEach(x => x.classList.toggle("on", x.dataset.asset === "USDC"));
+    $("#assetLabel").textContent = "USDC";
+    $("#termOut").innerHTML = '<span class="ln dimln">// press \u201cDeploy\u201d to provision a confidential enclave\u2026</span>';
+    switchPane("req"); renderDeploy(); refreshAvailability();
+  });
+  const er = $("#encRefresh"); if (er) er.addEventListener("click", () => refreshEnclaves({ spinner: true }));
+  renderDeploy();
+  refreshEnclaves();
+  startAvailPoll();
+}
+
+/* ============================================================
+   App wiring: endpoint config, wallet button, health probe
+   ============================================================ */
+async function checkHealth(){
+  const ind = $("#epState");
+  if (ind){ ind.className = "ep-state"; ind.textContent = "checking\u2026"; }
+  try {
+    await Nan.health();
+    if (ind){ ind.className = "ep-state ok"; ind.textContent = "reachable"; }
+  } catch(e){
+    if (ind){ ind.className = "ep-state down"; ind.textContent = "unreachable \u2014 set a live endpoint"; }
+  }
+}
+
+function initApp(){
+  injectLiveStyles();
+  Wallet.init();
+
+  const ep = $("#apiBase");
+  if (ep){
+    ep.value = Nan.base;
+    ep.addEventListener("change", () => { Nan.setBase(ep.value); ep.value = Nan.base; renderDeploy(); checkHealth(); });
+    ep.addEventListener("keydown", (e) => { if (e.key === "Enter") ep.blur(); });
+  }
+
+  const wb = $("#walletBtn");
+  if (wb) wb.addEventListener("click", async () => {
+    if (Nan.address){ toggleWalletPop(); return; }
+    const o = wb.innerHTML; wb.disabled = true; wb.innerHTML = "connecting\u2026";
+    try { await connectWallet(); await authenticate(); }
+    catch(e){ showToast(e.message); }
+    finally { wb.disabled = false; if (!Nan.address) wb.innerHTML = o; }
+  });
+
+  document.addEventListener("click", (e) => {
+    const pop = $("#walletPop"); if (!pop || pop.hidden) return;
+    if (e.target.closest("#walletPop") || e.target.closest("#walletBtn")) return;
+    pop.hidden = true; pop.innerHTML = "";
+  });
+
+  refreshWallet();
+  checkHealth();
+}
+
+function injectLiveStyles(){
+  if ($("#liveStyles")) return;
+  const s = document.createElement("style"); s.id = "liveStyles";
+  s.textContent = [
+    "[hidden]{display:none !important;}",
+    ".nav-links a[data-view]{position:relative;} .nav-links a.active{color:var(--jade);background:var(--surface);}",
+    ".nav-links a.active::after{content:'';position:absolute;left:.7em;right:.7em;bottom:-1px;height:2px;background:var(--jade);border-radius:2px;}",
+    "@media(max-width:640px){.nav-inner{flex-wrap:wrap;row-gap:9px;justify-content:space-between;}.nav-links{display:flex !important;position:static;transform:none;left:auto;order:3;width:100%;justify-content:center;gap:4px;border-top:1px solid var(--line-soft);padding-top:9px;}.nav-links a{flex:1;text-align:center;padding:.55em .4em;font-size:.8rem;}}",
+    ".field .tier-readout{margin-top:7px;font-family:var(--font-mono);font-size:.72rem;color:var(--jade-2);min-height:1em;}",
+    ".mig-table-wrap{max-width:760px;margin:0 auto;}",
+    ".mig-table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:.82rem;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;}",
+    ".mig-table th,.mig-table td{text-align:left;padding:11px 16px;border-bottom:1px solid var(--line-soft);}",
+    ".mig-table thead th{font-size:.64rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);background:#0b1119;}",
+    ".mig-table tbody td{color:var(--text);} .mig-table tbody td .mono{color:var(--jade-2);}",
+    ".mig-table tbody tr:last-child td{border-bottom:0;} .mig-table tr.full td{background:rgba(47,230,168,.05);}",
+    ".mig-table tbody tr:hover td{background:rgba(143,162,255,.05);}",
+    ".mig-note{max-width:760px;margin:14px auto 0;font-size:.8rem;line-height:1.6;color:var(--text-muted);}",
+    "@media(max-width:560px){.mig-table th:nth-child(6),.mig-table td:nth-child(6){display:none;}}",
+    "#walletBtn.connected{font-family:var(--font-mono);letter-spacing:.01em;display:inline-flex;align-items:center;gap:.5em;}",
+    "#walletBtn .wdot{width:7px;height:7px;border-radius:50%;background:var(--jade);box-shadow:0 0 8px var(--jade);}",
+    "#walletBtn .lock{font-size:.62rem;color:var(--amber);border:1px solid var(--amber-dim);border-radius:4px;padding:.05em .3em;}",
+    ".nav-inner{position:relative;}",
+    ".wallet-mount{position:relative;display:inline-block;}",
+    ".wallet-pop{position:absolute;top:calc(100% + 10px);left:0;z-index:60;width:300px;background:#0b1119;border:1px solid var(--line);border-radius:12px;box-shadow:0 30px 60px -28px rgba(0,0,0,.9);padding:14px;font-family:var(--font-mono);}",
+    ".wp-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line-soft);font-size:.78rem;}",
+    ".wp-k{color:var(--text-muted);} .wp-v{color:var(--text);} .wp-v .ok{color:var(--jade);}",
+    ".wp-addr{background:none;border:0;color:var(--jade);cursor:pointer;font-family:inherit;font-size:.8rem;}",
+    ".wp-mini{background:#101a24;border:1px solid var(--line);color:var(--iris);border-radius:6px;padding:.15em .5em;cursor:pointer;font-family:inherit;font-size:.7rem;}",
+    ".wp-bal{margin:10px 0;font-size:.76rem;color:var(--text-muted);} .wp-bal .bl-h{color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;font-size:.62rem;margin-bottom:5px;}",
+    ".wp-bal .bl{display:flex;justify-content:space-between;color:var(--text);padding:2px 0;} .wp-bal .bl.dim{color:var(--text-muted);}",
+    ".wp-disc{width:100%;background:#16111a;border:1px solid #3a2230;color:#ff8a8a;border-radius:8px;padding:.55em;cursor:pointer;font-family:inherit;font-size:.76rem;margin-top:4px;}",
+    ".wp-disc:hover{border-color:#ff6b6b;}",
+    ".wallet-pick{position:fixed;inset:0;z-index:120;background:rgba(4,6,10,.74);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);}",
+    ".wp-card{width:300px;background:#0c121b;border:1px solid var(--line);border-radius:14px;padding:16px;font-family:var(--font-mono);}",
+    ".wp-h{font-size:.82rem;color:var(--text);margin-bottom:12px;}",
+    ".wp-item{display:flex;align-items:center;gap:10px;width:100%;background:#0a0f17;border:1px solid var(--line);border-radius:9px;padding:.7em;margin-bottom:8px;cursor:pointer;color:var(--text);font-family:inherit;font-size:.82rem;}",
+    ".wp-item:hover{border-color:rgba(47,230,168,.5);} .wp-item img{width:20px;height:20px;border-radius:5px;}",
+    ".wp-dot{width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,var(--jade),var(--iris));}",
+    ".wp-cancel{width:100%;background:none;border:1px solid var(--line);color:var(--text-muted);border-radius:8px;padding:.5em;cursor:pointer;font-family:inherit;font-size:.76rem;margin-top:2px;}",
+    ".endpoint-row{display:flex;align-items:center;gap:10px;margin-top:16px;flex-wrap:wrap;}",
+    ".endpoint-row label{font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted);letter-spacing:.02em;}",
+    ".endpoint-row input{flex:1;min-width:240px;background:#080C12;border:1px solid var(--line);color:var(--jade-2);font-family:var(--font-mono);font-size:.8rem;padding:.5em .7em;border-radius:8px;}",
+    ".endpoint-row input:focus{border-color:var(--jade);outline:none;box-shadow:0 0 0 3px rgba(47,230,168,.12);}",
+    ".ep-state{font-family:var(--font-mono);font-size:.7rem;color:var(--text-muted);} .ep-state.ok{color:var(--jade);} .ep-state.down{color:var(--amber);}",
+    ".run-row .dry{display:inline-flex;align-items:center;gap:.45em;font-family:var(--font-mono);font-size:.74rem;color:var(--text-muted);cursor:pointer;user-select:none;}",
+    ".run-row .dry input{accent-color:var(--jade);width:14px;height:14px;cursor:pointer;}",
+    ".btn.danger{border-color:#3a2230;color:#ff8a8a;} .btn.danger:hover{border-color:#ff6b6b;background:rgba(255,107,107,.08);}",
+    ".ap-badge{font-family:var(--font-mono);font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;padding:.2em .6em;border-radius:5px;border:1px solid var(--line);}",
+    ".ap-badge.ok{color:var(--jade);border-color:rgba(47,230,168,.45);background:rgba(47,230,168,.08);}",
+    ".ap-badge.info{color:var(--iris);border-color:rgba(143,162,255,.4);background:rgba(143,162,255,.07);}",
+    ".ap-badge.warn{color:var(--amber);border-color:var(--amber-dim);background:rgba(255,145,77,.08);}",
+    ".ap-actions{margin-left:auto;display:flex;gap:8px;}",
+    ".ap-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1px;background:var(--line);}",
+    ".ap-cell{background:#0a0f17;padding:13px 18px;display:flex;flex-direction:column;gap:5px;}",
+    ".ap-k{font-family:var(--font-mono);font-size:.64rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);}",
+    ".ap-v{font-family:var(--font-mono);font-size:.84rem;color:var(--text);}",
+    ".ap-link{background:none;border:0;color:var(--jade-2);font-family:var(--font-mono);font-size:.82rem;cursor:pointer;text-align:left;padding:0;}",
+    ".ap-att{border-top:1px solid var(--line);}",
+    ".ap-attbar{font-family:var(--font-mono);font-size:.66rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;padding:9px 18px;background:#0b1119;border-bottom:1px solid var(--line-soft);}",
+    ".ap-attpre{margin:0;padding:14px 18px;max-height:320px;overflow:auto;font-family:var(--font-mono);font-size:.76rem;line-height:1.55;white-space:pre-wrap;word-break:break-word;}",
+    ".enclaves{margin-top:22px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,#0c131c,#0a0f17);overflow:hidden;}",
+    ".enc-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 18px;border-bottom:1px solid var(--line);}",
+    ".enc-head h4{margin:0;font-family:var(--font-mono);font-size:.92rem;font-weight:600;}",
+    ".enc-tools{display:flex;align-items:center;gap:12px;}",
+    ".enc-count{font-family:var(--font-mono);font-size:.7rem;color:var(--text-muted);}",
+    ".enc-empty{padding:20px 18px;font-family:var(--font-mono);font-size:.8rem;color:var(--text-muted);}",
+    ".enc-row{border-bottom:1px solid var(--line-soft);padding:12px 18px;}",
+    ".enc-row:last-child{border-bottom:0;}",
+    ".enc-row.enc-new{box-shadow:inset 3px 0 0 var(--jade);background:rgba(47,230,168,.04);}",
+    ".enc-main{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}",
+    ".enc-id{background:none;border:0;color:var(--jade-2);font-family:var(--font-mono);font-size:.84rem;cursor:pointer;padding:0;}",
+    ".enc-meta{font-family:var(--font-mono);font-size:.76rem;color:var(--text);} .enc-meta .dim{color:var(--text-muted);}",
+    ".enc-spend{font-family:var(--font-mono);font-size:.76rem;color:var(--text-muted);}",
+    ".enc-acts{margin-left:auto;display:flex;gap:8px;}",
+    ".enc-ep{display:block;margin-top:9px;background:#080c12;border:1px solid var(--line-soft);color:var(--jade-2);font-family:var(--font-mono);font-size:.76rem;cursor:pointer;text-align:left;padding:.5em .7em;border-radius:8px;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    ".enc-ssh{display:block;margin-top:7px;background:#080c12;border:1px solid var(--line-soft);color:var(--iris);font-family:var(--font-mono);font-size:.76rem;cursor:pointer;text-align:left;padding:.5em .7em;border-radius:8px;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    ".enc-att{border:1px solid var(--line-soft);border-radius:8px;margin-top:10px;overflow:hidden;}",
+    ".key-once{margin-top:22px;border:1px solid var(--amber);border-radius:var(--radius);background:linear-gradient(180deg,#1a120a,#120c06);padding:16px 18px;}",
+    ".ko-head{color:var(--amber);font-size:.86rem;font-weight:600;line-height:1.4;margin-bottom:11px;}",
+    ".ko-key{background:#070a0f;border:1px solid var(--line-soft);border-radius:8px;padding:.7em .8em;font-family:var(--font-mono);font-size:.72rem;color:var(--text);max-height:180px;overflow:auto;white-space:pre;margin:0 0 12px;}",
+    ".ko-acts{display:flex;gap:8px;flex-wrap:wrap;}",
+    "@media(max-width:560px){.enc-spend{width:100%;order:5;}.enc-acts{margin-left:0;}}",
+    "@media(max-width:760px){.wallet-pop{left:0;right:auto;width:min(300px,84vw);}}"
+  ].join("\n");
+  document.head.appendChild(s);
+}
+
+let attestRaw = "";
+const LINKS = [
+  { t: "Hardware root of trust", fn: "policy.json",
+    d: "Intel TDX and the NVIDIA GPU hold keys fused at manufacture. NAN can't extract or forge them. The silicon vendor is the root of trust, not the operator.",
+    j: { tdx: { mrtd: "0x5a3c…91ef", minTcb: "2026.05" }, gpu: { approvedDrivers: ["565.57.01"], approvedVbios: ["96.00.AE.00.01"] } } },
+  { t: "The VM measures itself", fn: "vm.json",
+    d: "On boot the CPU emits a DCAP quote over MRTD + RTMR0–3, binding firmware, kernel, and your exact image digest. Change one byte and the quote changes.",
+    j: { technology: "intel-tdx", quote: "BAACAIEAAAAA…", measurements: { mrtd: "0x5a3c…91ef", rtmr3: "0x9f86…0a08" }, verified: true } },
+  { t: "The GPU attests too", fn: "gpu.json",
+    d: "With confidential computing on, the H200 produces a signed report countersigned by NVIDIA's NRAS, proving CC mode, driver, and vBIOS before any data reaches VRAM.",
+    j: { technology: "nvidia-cc", driverVersion: "565.57.01", vbiosVersion: "96.00.AE.00.01", attestationService: "nvidia-nras", verified: true } },
+  { t: "TLS is born inside", fn: "tls.json",
+    d: "The enclave generates its TLS keypair in sealed memory and folds the public-key hash into the quote. The private key never leaves the boundary, so nobody can sit in the middle.",
+    j: { tlsKeyFingerprint: "sha256:4b8c…e2a1", boundTo: "rtmr3" } },
+  { t: "Your browser verifies", fn: "verify.js",
+    d: "The dapp pulls the bundle, checks the quote and report against published measurements, pins the TLS fingerprint, then connects. Trust ends in your client, not on our word.",
+    code: "const att = await (await fetch(`/v1/deployments/${id}/attestation`)).json();\n\nverifyTdxQuote(att.vm.quote,  POLICY.tdx);   // Intel DCAP collateral\nverifyGpuReport(att.gpu.report, POLICY.gpu); // NVIDIA NRAS\npinTls(att.tlsKeyFingerprint);               // only now: connect" }
+];
+function showAttest(i) {
+  const l = LINKS[i];
+  $("#attestFn").textContent = l.fn;
+  if (l.code) { $("#attestOut").innerHTML = hlCode(l.code); attestRaw = l.code; }
+  else { $("#attestOut").innerHTML = hlJson(l.j); attestRaw = JSON.stringify(l.j, null, 2); }
+}
+function initAttest() {
+  const wrap = $("#attestChain"); if (!wrap) return;
+  LINKS.forEach((l, i) => {
+    const el = document.createElement("div");
+    el.className = "link" + (i === 0 ? " active" : "");
+    el.innerHTML = '<div class="lk-h"><span class="lk-n">0' + (i + 1) + '</span><span class="lk-t">'
+      + esc(l.t) + '</span></div><p class="lk-d">' + esc(l.d) + "</p>";
+    el.addEventListener("click", () => {
+      $$(".link", wrap).forEach(x => x.classList.remove("active")); el.classList.add("active"); showAttest(i);
+    });
+    wrap.appendChild(el);
+  });
+  showAttest(0);
+}
+
+/* ============================================================
+   Clipboard · spec download · mobile menu · init
+   ============================================================ */
+let toastT;
+function showToast(msg) {
+  const t = $("#toast"); if (!t) return;
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 1700);
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.top = "-9999px"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  try { document.execCommand("copy"); } catch (e) {}
+  document.body.removeChild(ta); done();
+}
+function copyText(text, btn) {
+  const done = () => {
+    if (btn) {
+      const o = btn.innerHTML; btn.innerHTML = "\u2713 copied"; btn.classList.add("ok");
+      setTimeout(() => { btn.innerHTML = o; btn.classList.remove("ok"); }, 1300);
+    }
+    showToast("copied to clipboard");
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  else fallbackCopy(text, done);
+}
+function downloadSpec() {
+  const blob = new Blob([JSON.stringify(SPEC, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "openapi.json"; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast("openapi.json downloaded");
+}
+function initMenu() {
+  const btn = $("#menuBtn"), links = $(".nav-links"); if (!btn || !links) return;
+  const st = document.createElement("style");
+  st.textContent = "@media(max-width:640px){.nav-links.open{display:flex !important;position:absolute;top:100%;left:0;right:0;flex-direction:column;align-items:stretch;gap:0;background:#0b1119;border-bottom:1px solid var(--line);box-shadow:0 24px 50px -24px rgba(0,0,0,.85);padding:6px 20px 14px;}.nav-links.open a{padding:12px 2px;border-bottom:1px solid var(--line-soft);}}";
+  document.head.appendChild(st);
+  btn.addEventListener("click", () => links.classList.toggle("open"));
+  links.addEventListener("click", e => { if (e.target.tagName === "A") links.classList.remove("open"); });
+}
+/* ============================================================
+   Views: Overview · Deploy · API  (deploy + api live on their own tabs)
+   ============================================================ */
+let currentView = "overview";
+function setView(view, anchor){
+  currentView = view;
+  $$("section[data-view]").forEach(s => { s.hidden = s.dataset.view !== view; });
+  $$(".nav-links a[data-view]").forEach(t => t.classList.toggle("active", t.dataset.view === view));
+  const links = $(".nav-links"); if (links) links.classList.remove("open");
+  if (anchor){ const el = document.getElementById(anchor); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  else if (window.scrollTo) { window.scrollTo({ top: 0, behavior: "auto" }); }
+  try { history.replaceState(null, "", view === "overview" ? (anchor ? "#" + anchor : "#top") : "#" + view); } catch(e){}
+  if (view === "deploy"){ if (typeof refreshEnclaves === "function") refreshEnclaves(); }
+  else if (typeof stopEncPoll === "function"){ stopEncPoll(); }
+}
+function viewOf(id){
+  const el = id && document.getElementById(id);
+  const sec = el && el.closest ? el.closest("[data-view]") : null;
+  return sec ? sec.dataset.view : null;
+}
+function initViews(){
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest('a[href^="#"]'); if (!a) return;
+    const href = a.getAttribute("href"); if (!href || href.length < 2) return;
+    const id = href.slice(1);
+    const v = a.dataset.view || viewOf(id);   // a tab declares its own view; fall back to the target's section
+    if (!v) return;                            // not a view anchor, leave default
+    if (v !== currentView){ e.preventDefault(); setView(v, v === "overview" ? id : null); }
+  });
+  const id0 = (location.hash || "").slice(1);
+  const v0 = viewOf(id0) || "overview";
+  setView(v0, (v0 === "overview" && id0 && id0 !== "top") ? id0 : null);
+}
+
+function init() {
+  const gs = document.createElement("style");
+  gs.textContent = "html{scroll-behavior:smooth;scroll-padding-top:80px;}";
+  document.head.appendChild(gs);
+
+  const run = (fn) => { try { fn(); } catch (e) { console.warn("[init] " + (fn.name || "step") + " failed:", e); } };
+  run(renderApi);
+  run(initEnclave);
+  run(initTicker);
+  run(initFlow);
+  run(initDeploy);
+  run(initAttest);
+  run(initMenu);
+  run(initApp);
+  run(initViews);
+
+  run(() => {
+    $$(".copybtn[data-copy]").forEach(b => b.addEventListener("click", () => {
+      const k = b.dataset.copy;
+      const txt = k === "req"   ? $("#outReq").textContent
+                : k === "fetch" ? $("#outFetch").textContent
+                : k === "curl"  ? $("#outCurl").textContent
+                : k === "attest" ? attestRaw : "";
+      copyText(txt, b);
+    }));
+    const d1 = $("#dlSpec"); if (d1) d1.addEventListener("click", downloadSpec);
+    const d2 = $("#dlSpec2"); if (d2) d2.addEventListener("click", e => { e.preventDefault(); downloadSpec(); });
+  });
+}
+if (document.readyState !== "loading") init();
+else document.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>

@@ -25,7 +25,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
-import { verifyMessage, createPublicClient, http as viemHttp, getAddress } from "viem";
+import { verifyMessage, createPublicClient, createWalletClient, http as viemHttp, getAddress, keccak256, toHex, stringToBytes } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { SignJWT, jwtVerify } from "jose";
 
@@ -39,8 +40,14 @@ const SIWE_DOMAIN    = process.env.SIWE_DOMAIN || "nan.host";
 const SIWE_URI       = process.env.SIWE_URI || "https://nan.host";
 const CHAIN_ID       = parseInt(process.env.CHAIN_ID || "8453", 10);
 const CORS_ORIGINS   = (process.env.CORS_ORIGINS || "https://nan.host").split(",").map(s => s.trim()).filter(Boolean);
-const ESCROW_ENABLED = /^(1|true|on)$/i.test(process.env.ESCROW_ENABLED || "");
-const ESCROW_ADDRESS = process.env.ESCROW_ADDRESS || "";
+// --- pay-per-deploy (no custody): users pay the NanPay forwarder; the supervisor
+//     WATCHES it for Paid events and converts each payment to runtime. No held
+//     balance, no escrow contract, no key in the enclave that can move funds.
+const FORWARDER_ADDRESS  = process.env.FORWARDER_ADDRESS || "";   // NanPay contract (watch-only)
+const USDC_ADDRESS       = process.env.USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // USDC on Base
+const PAYMENT_WINDOW_SEC = parseInt(process.env.PAYMENT_WINDOW_SEC || "600", 10); // unpaid awaiting_payment TTL
+const GRACE_SEC          = parseInt(process.env.GRACE_SEC || "90", 10);           // post-expiry grace before teardown
+const PAY_POLL_SEC       = parseInt(process.env.PAY_POLL_SEC || "12", 10);        // Base log poll interval
 const BASE_RPC       = process.env.BASE_RPC || "https://mainnet.base.org";
 const SESSION_TTL    = parseInt(process.env.SESSION_TTL || "43200", 10); // 12h: long enough to cover a deployment's data-path use
 const SSH_USER       = process.env.SSH_USER || "instance"; // login user the supervisor's sshd drops into
@@ -77,6 +84,55 @@ async function mgrHealth(timeoutMs = 3000) {
   const r = await mgrReq("GET", "/health", null, timeoutMs);
   if (r.status !== 200) throw new Error(`manager /health ${r.status}`);
   return r.body;
+}
+
+// ---- on-chain discovery: self-register in NanRegistry (no trusted gateway) --
+// On boot the enclave publishes itself (endpoint + attestation repo) to the
+// registry contract on Base, then heartbeats. Callers read the registry from
+// any RPC and connect DIRECTLY, verifying attestation themselves. Entirely
+// opt-in: if REGISTRY_ENABLED isn't set, the enclave just doesn't advertise.
+const REGISTRY_ENABLED  = /^(1|true|on)$/i.test(process.env.REGISTRY_ENABLED || "");
+const REGISTRY_ADDRESS  = process.env.REGISTRY_ADDRESS || "";
+const REGISTRY_PK       = process.env.REGISTRY_PRIVATE_KEY || "";        // operator key (enclave secret); needs a little Base ETH for gas
+const ENCLAVE_ENDPOINT  = (process.env.ENCLAVE_ENDPOINT || PUBLIC_URL || "").replace(/\/+$/, "");
+const ENCLAVE_REPO      = process.env.ENCLAVE_REPO || "";                // e.g. "SteveDeFacto/Nan" — what callers attest against
+const ENCLAVE_MEASUREMENT = process.env.ENCLAVE_MEASUREMENT || ("0x" + "0".repeat(64)); // optional cross-check
+const HEARTBEAT_SEC     = parseInt(process.env.REGISTRY_HEARTBEAT_SEC || "900", 10);
+const REGISTRY_ABI = [
+  { type: "function", name: "register", stateMutability: "nonpayable",
+    inputs: [{ name: "endpoint", type: "string" }, { name: "repo", type: "string" }, { name: "measurement", type: "bytes32" }],
+    outputs: [{ name: "id", type: "bytes32" }] },
+  { type: "function", name: "heartbeat", stateMutability: "nonpayable",
+    inputs: [{ name: "id", type: "bytes32" }], outputs: [] },
+];
+
+async function registerOnChain() {
+  if (!REGISTRY_ENABLED) return;
+  for (const [k, v] of [["REGISTRY_ADDRESS", REGISTRY_ADDRESS], ["REGISTRY_PRIVATE_KEY", REGISTRY_PK],
+                        ["ENCLAVE_ENDPOINT", ENCLAVE_ENDPOINT], ["ENCLAVE_REPO", ENCLAVE_REPO]]) {
+    if (!v) { console.warn(`[registry] disabled: missing ${k}`); return; }
+  }
+  try {
+    const account = privateKeyToAccount(REGISTRY_PK.startsWith("0x") ? REGISTRY_PK : `0x${REGISTRY_PK}`);
+    const wallet  = createWalletClient({ account, chain: base, transport: viemHttp(BASE_RPC) });
+    const id = keccak256(stringToBytes(ENCLAVE_ENDPOINT));
+    const hash = await wallet.writeContract({
+      address: REGISTRY_ADDRESS, abi: REGISTRY_ABI, functionName: "register",
+      args: [ENCLAVE_ENDPOINT, ENCLAVE_REPO, ENCLAVE_MEASUREMENT],
+    });
+    console.log(`[registry] registered ${ENCLAVE_ENDPOINT} repo=${ENCLAVE_REPO} id=${id} tx=${hash}`);
+    // heartbeat loop — refresh liveness so readers don't treat us as down
+    setInterval(async () => {
+      try {
+        const h = await wallet.writeContract({ address: REGISTRY_ADDRESS, abi: REGISTRY_ABI,
+                                               functionName: "heartbeat", args: [id] });
+        console.log(`[registry] heartbeat tx=${h}`);
+      } catch (e) { console.warn(`[registry] heartbeat failed: ${e.shortMessage || e.message}`); }
+    }, Math.max(60, HEARTBEAT_SEC) * 1000).unref();
+  } catch (e) {
+    // never fatal — a failed advertisement must not take down the enclave
+    console.warn(`[registry] self-registration failed: ${e.shortMessage || e.message}`);
+  }
 }
 // The sandbox sshd host key is GENERATED ONCE AT BOOT inside the enclave and
 // measured into a TDX RTMR (see initSshHostKey) — so its fingerprint is
@@ -575,113 +631,210 @@ app.post("/v1/auth/login", async (req, res) => {
 });
 
 // ============================================================================
-// account / escrow (outbound Base RPC — confirm CVM egress allows BASE_RPC)
+// payments (pay-per-deploy) — the supervisor WATCHES the NanPay forwarder on
+// Base for Paid events and converts each payment into runtime. No held balance.
+// (outbound Base RPC required — confirm the CVM egress allows BASE_RPC.)
 // ============================================================================
-const ESCROW_ABI = [{ type: "function", name: "available", stateMutability: "view",
-  inputs: [{ name: "account", type: "address" }, { name: "asset", type: "uint8" }],
-  outputs: [{ name: "", type: "uint256" }] }]; // match to SealCoordinator once finalized
+const PAY_EVENT = { type: "event", name: "Paid", inputs: [
+  { name: "deploymentId", type: "bytes32", indexed: true },
+  { name: "payer",        type: "address", indexed: true },
+  { name: "amount",       type: "uint256", indexed: false } ] };
 
-async function readEscrow(address) {
-  if (!ESCROW_ENABLED || !ESCROW_ADDRESS)
-    return [{ asset: "USDC", deposited: "0", reserved: "0", available: "999999.00" }]; // dev: treat as funded
-  const usdc = await chainClient.readContract({ address: getAddress(ESCROW_ADDRESS), abi: ESCROW_ABI,
-    functionName: "available", args: [getAddress(address), 0] });
-  const avail = (Number(usdc) / 1e6).toFixed(2);
-  return [{ asset: "USDC", deposited: avail, reserved: "0", available: avail }];
+const payRefIndex = new Map();   // payRef (hex, lowercase) -> deployment id
+
+// USDC (6dp) funded at `rate` USDC/sec buys this many seconds of runtime.
+const usdcToSeconds = (amountRaw, rate) => (Number(amountRaw) / 1e6) / (rate || 1);
+
+function paymentInstructions(rec) {
+  return {
+    chainId: CHAIN_ID, asset: "USDC", usdc: USDC_ADDRESS,
+    forwarder: FORWARDER_ADDRESS || null,
+    deploymentRef: rec.payRef,                       // bytes32 to pass to pay()
+    ratePerSecondUsdc: (rec.rate || 0).toFixed(7),
+    method: "pay(bytes32 deploymentId, uint256 amount)",
+    note: "approve USDC to the forwarder, then call pay(deploymentRef, amount). amount(6dp)/rate = seconds added.",
+  };
 }
 
-app.get("/v1/account", authed, async (req, res) => {
-  try {
-    const balances = await readEscrow(req.address);
-    const mine = [...deployments.values()].filter(d => d.owner === req.address);
-    res.json({ address: req.address, escrow: { contract: ESCROW_ADDRESS || null, chainId: CHAIN_ID }, balances,
-               deployments: { active: mine.filter(d => d.status === "running").length, total: mine.length } });
-  } catch (e) { fail(res, 502, "escrow_error", e.message); }
+app.get("/v1/account", authed, (req, res) => {
+  const mine = [...deployments.values()].filter(d => d.owner === req.address);
+  res.json({
+    address: req.address, chainId: CHAIN_ID,
+    payment: { forwarder: FORWARDER_ADDRESS || null, usdc: USDC_ADDRESS, asset: "USDC" },
+    deployments: {
+      running: mine.filter(d => d.status === "running").length,
+      awaitingPayment: mine.filter(d => d.status === "awaiting_payment").length,
+      total: mine.length,
+      totalTimeRemainingSec: mine.reduce((s, d) => s + timeRemainingSec(d), 0),
+    },
+  });
 });
 
 // ============================================================================
 // deployments
 // ============================================================================
+const timeRemainingSec = (rec) => rec.expiresAt ? Math.max(0, Math.round((rec.expiresAt - Date.now()) / 1000)) : 0;
 const spentOf = (rec) => {
   if (!rec.startedAt) return "0.00";
-  const cap = parseFloat(rec.budget.limit);
-  const raw = ((Date.now() - rec.startedAt) / 1000) * (rec.rate || 0);
-  return Math.min(raw, cap).toFixed(2);
+  return (((Date.now() - rec.startedAt) / 1000) * (rec.rate || 0)).toFixed(2);
 };
-const view = (rec) => { const o = { ...rec }; delete o._port; delete o._gpu; delete o.rate;
-                        delete o._sshPort; delete o._sshKeySource; delete o._authorizedKey;
-                        o.ssh = sshAccessOf(rec);
-                        o.budget = { ...rec.budget, spent: spentOf(rec) }; return o; };
+const view = (rec) => {
+  const o = { ...rec };
+  for (const k of ["_port", "_gpu", "_gpuSpec", "rate", "_sshPort", "_sshKeySource", "_authorizedKey", "_payTimer"]) delete o[k];
+  o.ssh = sshAccessOf(rec);
+  o.ratePerSecondUsdc = (rec.rate || 0).toFixed(7);
+  o.spentUsdc = spentOf(rec);
+  o.paidUsdc = ((rec.paidUsdc || 0) / 1e6).toFixed(2);
+  o.timeRemainingSec = timeRemainingSec(rec);
+  o.expiresAt = rec.expiresAt ? new Date(rec.expiresAt).toISOString() : null;
+  o.payment = paymentInstructions(rec);
+  return o;
+};
 
 app.post("/v1/deployments", authed, async (req, res) => {
   const b = req.body || {};
-  if (!b.budget || !b.budget.asset || !b.budget.limit) return fail(res, 422, "invalid_spec", "budget {asset, limit} is required.");
   const image = (b.image && b.image.reference) ? b.image : { reference: DEFAULT_IMAGE };
   const appPort = Number(b.port) || 8080;
   if (b.sshPublicKey != null && !/^(ssh-ed25519|ssh-rsa|ecdsa-sha2-|sk-ssh-|sk-ecdsa-)/.test(String(b.sshPublicKey).trim()))
     return fail(res, 422, "invalid_spec", "sshPublicKey must be an OpenSSH public key (ssh-ed25519 / ssh-rsa / ecdsa / sk-*).");
-  const vramGb0 = Number((b.resources && b.resources.vramGb) || 0);
-  if (!(vramGb0 >= 0) || vramGb0 > 100000) return fail(res, 422, "invalid_spec", "resources.vramGb out of range.");
-  let computeShare0 = (b.resources && b.resources.computeShare != null) ? Number(b.resources.computeShare) : null;
-  if (computeShare0 != null && !(computeShare0 > 0 && computeShare0 <= 1))
-    return fail(res, 422, "invalid_spec", "resources.computeShare must be in (0, 1].");
 
-  // allocate an ARBITRARY GPU slice (vramGb + compute share); 0 VRAM => CPU-only
-  let gpu = null, rate = CPU_RATE, slice = null;
-  if (vramGb0 > 0) {
-    slice = normalizeReq(vramGb0, computeShare0);
-    if (slice.vramGb > maxFreeVram() + 1e-9)
-      return fail(res, 422, "invalid_spec", `requested ${slice.vramGb}GB VRAM exceeds the largest free slice (${round1(maxFreeVram())}GB on a ${CARD_VRAM_GB}GB card).`);
-    gpu = allocGpu(slice.vramGb, slice.computeShare);
-    if (!gpu) return fail(res, 409, "no_capacity",
-      `No single card has ${slice.vramGb}GB VRAM and ${round3(slice.computeShare)} compute share free together (max free: ${round1(maxFreeVram())}GB, ${round3(maxFreeCompute())} share).`);
-    rate = rateFor(slice.vramGb, slice.computeShare);
+  // resource request: single `share` (0..1) preferred; legacy vramGb/computeShare still accepted.
+  let vramGb0, computeShare0;
+  if (b.resources && b.resources.share != null) {
+    const s = Number(b.resources.share);
+    if (!(s > 0 && s <= 1)) return fail(res, 422, "invalid_spec", "resources.share must be in (0, 1].");
+    vramGb0 = s * CARD_VRAM_GB; computeShare0 = s;
+  } else {
+    vramGb0 = Number((b.resources && b.resources.vramGb) || 0);
+    if (!(vramGb0 >= 0) || vramGb0 > 100000) return fail(res, 422, "invalid_spec", "resources.vramGb out of range.");
+    computeShare0 = (b.resources && b.resources.computeShare != null) ? Number(b.resources.computeShare) : null;
+    if (computeShare0 != null && !(computeShare0 > 0 && computeShare0 <= 1))
+      return fail(res, 422, "invalid_spec", "resources.computeShare must be in (0, 1].");
   }
-  const release = () => { if (gpu) { releaseGpu(gpu); gpu = null; } };
+  if (!(vramGb0 > 0)) return fail(res, 422, "invalid_spec", "a GPU share is required (CPU-only is not supported).");
 
-  try {
-    const bal = await readEscrow(req.address);
-    const avail = parseFloat(bal.find(x => x.asset === b.budget.asset)?.available || "0");
-    if (avail < parseFloat(b.budget.limit)) { release(); return fail(res, 402, "insufficient_balance", `Escrow ${avail} ${b.budget.asset} < budget ${b.budget.limit}.`); }
-  } catch (e) { release(); return fail(res, 502, "escrow_error", e.message); }
+  // reserve an arbitrary GPU slice; the worker isn't spawned until payment lands
+  const slice = normalizeReq(vramGb0, computeShare0);
+  if (slice.vramGb > maxFreeVram() + 1e-9)
+    return fail(res, 422, "invalid_spec", `requested ${slice.vramGb}GB VRAM exceeds the largest free slice (${round1(maxFreeVram())}GB on a ${CARD_VRAM_GB}GB card).`);
+  const gpu = allocGpu(slice.vramGb, slice.computeShare);
+  if (!gpu) return fail(res, 409, "no_capacity",
+    `No single card has ${slice.vramGb}GB VRAM and ${round3(slice.computeShare)} compute share free together (max free: ${round1(maxFreeVram())}GB, ${round3(maxFreeCompute())} share).`);
+  const rate = rateFor(slice.vramGb, slice.computeShare);
 
-  // SSH: install the caller's key, or mint one in-enclave and return it ONCE.
+  // SSH: install the caller's key, or mint one in-enclave and return it ONCE (now, at create).
   let keySource = "provided", authorizedKey = (b.sshPublicKey || "").trim(), oneTimePrivateKey = null;
   if (!authorizedKey) {
     try { const kp = generateSshKeypair(`nan:${req.address.slice(0, 10)}`);
           authorizedKey = kp.publicKey; oneTimePrivateKey = kp.privateKey; keySource = "generated"; }
-    catch (e) { release(); return fail(res, 500, "keygen_error", "Could not generate an SSH key: " + e.message); }
+    catch (e) { releaseGpu(gpu); return fail(res, 500, "keygen_error", "Could not generate an SSH key: " + e.message); }
   }
 
   const id = rid("dep_");
-  let internalPort, sshPort;
-  try { ({ internalPort, sshPort } = await spawnContainer({ deploymentId: id, owner: req.address, image,
-            command: b.command || [], env: b.env || {}, port: appPort,
-            gpu: gpu ? { cardId: gpu.cardId, cardUuid: gpuCards[gpu.cardId]?.uuid || null,
-                         vramCapGb: gpu.vramGb, computeShare: gpu.computeShare } : null,
-            budget: b.budget, authorizedKey })); }
-  catch (e) { release(); return fail(res, 502, "enclave_error", e.message); }
-
-  const now = new Date().toISOString();
+  const payRef = keccak256(stringToBytes(id));          // the bytes32 to pass to NanPay.pay()
   const rec = {
-    id, owner: req.address, status: "running",
+    id, owner: req.address, status: "awaiting_payment",
     image, command: b.command || [],
-    resources: gpu ? { vramGb: slice.vramGb, computeShare: round3(slice.computeShare), cardId: gpu.cardId }
-                   : { vramGb: 0 },
+    resources: { vramGb: slice.vramGb, computeShare: round3(slice.computeShare), share: round3(slice.computeShare), cardId: gpu.cardId },
     network: { port: appPort, protocol: "https", endpoint: `${originOf(req)}/x/${id}` },
-    budget: { asset: b.budget.asset, limit: b.budget.limit, spent: "0.00", ratePerSecond: rate.toFixed(7) },
-    attestation: { available: true, vmTechnology: "intel-tdx", gpuTechnology: gpu ? "nvidia-cc" : null,
-                   href: `/v1/deployments/${id}/attestation` },
-    region: "tinfoil", createdAt: now, startedAt: Date.now(), expiresAt: null,
-    digest: image.digest || null, rate, _gpu: gpu, _port: internalPort,
-    _sshPort: sshPort, _sshKeySource: keySource, _authorizedKey: authorizedKey,
+    attestation: { available: true, vmTechnology: "intel-tdx", gpuTechnology: "nvidia-cc", href: `/v1/deployments/${id}/attestation` },
+    region: "tinfoil", createdAt: new Date().toISOString(), startedAt: null, expiresAt: null,
+    digest: image.digest || null, rate, payRef, paidUsdc: 0,
+    _gpu: gpu, _gpuSpec: { cardId: gpu.cardId, cardUuid: gpuCards[gpu.cardId]?.uuid || null, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare },
+    _port: 0, _sshPort: 0, _sshKeySource: keySource, _authorizedKey: authorizedKey, _payTimer: null,
   };
   deployments.set(id, rec);
-  // No separate access token: the browser reuses its session Bearer on /x/:id (and the SSH tunnel).
-  const out = view(rec);
+  payRefIndex.set(payRef.toLowerCase(), id);
+
+  // release the reservation if it goes unpaid within the window
+  rec._payTimer = setTimeout(() => {
+    if (rec.status === "awaiting_payment") {
+      if (rec._gpu) { releaseGpu(rec._gpu); rec._gpu = null; }
+      rec.status = "expired"; rec.error = "unpaid";
+      console.log(`[pay] ${id} reservation released (unpaid after ${PAYMENT_WINDOW_SEC}s)`);
+    }
+  }, PAYMENT_WINDOW_SEC * 1000);
+  if (rec._payTimer.unref) rec._payTimer.unref();
+
+  const out = view(rec);                                  // includes payment instructions + ssh
   if (oneTimePrivateKey) out.ssh.privateKey = oneTimePrivateKey; // shown once; never persisted
   res.status(201).json(out);
 });
+
+// Spawn the tenant's MPS-capped worker process (called once, on first payment).
+async function provisionTenant(rec) {
+  try {
+    const { internalPort, sshPort } = await spawnContainer({ deploymentId: rec.id, gpu: rec._gpuSpec });
+    rec._port = internalPort; rec._sshPort = sshPort;
+    rec.startedAt = Date.now(); rec.status = "running";
+    return true;
+  } catch (e) {
+    rec.status = "failed"; rec.error = e.message;
+    if (rec._gpu) { releaseGpu(rec._gpu); rec._gpu = null; }
+    console.error(`[provision] ${rec.id} failed: ${e.message}`);
+    return false;
+  }
+}
+
+// A Paid event landed: provision on first payment, extend expiry on top-ups.
+async function onPaid(payRefHex, payer, amountRaw) {
+  const id = payRefIndex.get(String(payRefHex).toLowerCase());
+  if (!id) { console.warn(`[pay] payment for unknown ref ${payRefHex} (${amountRaw})`); return; }
+  const rec = deployments.get(id); if (!rec) return;
+  const seconds = usdcToSeconds(amountRaw, rec.rate);
+  rec.paidUsdc = (rec.paidUsdc || 0) + Number(amountRaw);
+  if (rec.status === "awaiting_payment") {
+    if (rec._payTimer) { clearTimeout(rec._payTimer); rec._payTimer = null; }
+    if (!(await provisionTenant(rec))) return;           // failed provisioning surfaces in the record
+    rec.expiresAt = Date.now() + seconds * 1000;
+    console.log(`[pay] ${id} funded ${(Number(amountRaw)/1e6).toFixed(2)} USDC -> +${Math.round(seconds)}s, provisioned`);
+  } else if (rec.status === "running") {
+    rec.expiresAt = Math.max(Date.now(), rec.expiresAt || Date.now()) + seconds * 1000;
+    console.log(`[pay] ${id} top-up ${(Number(amountRaw)/1e6).toFixed(2)} USDC -> +${Math.round(seconds)}s (expires ${new Date(rec.expiresAt).toISOString()})`);
+  } else {
+    console.warn(`[pay] ${id} payment ${(Number(amountRaw)/1e6).toFixed(2)} USDC but status=${rec.status}; ignored (no refunds in pay-per-deploy)`);
+  }
+}
+
+// Watch the forwarder for Paid events (poll getLogs; robust on public RPC).
+let _payFromBlock = null;
+async function pollPayments() {
+  if (!FORWARDER_ADDRESS) return;
+  try {
+    const latest = await chainClient.getBlockNumber();
+    if (_payFromBlock == null) { _payFromBlock = latest; return; }   // start at the tip; don't replay history
+    if (latest < _payFromBlock) return;
+    const logs = await chainClient.getLogs({ address: getAddress(FORWARDER_ADDRESS),
+      event: PAY_EVENT, fromBlock: _payFromBlock, toBlock: latest });
+    for (const lg of logs) {
+      const a = lg.args || {};
+      await onPaid(a.deploymentId, a.payer, a.amount);
+    }
+    _payFromBlock = latest + 1n;
+  } catch (e) { console.warn(`[pay] poll error: ${e.shortMessage || e.message}`); }
+}
+function startPaymentWatcher() {
+  if (!FORWARDER_ADDRESS) { console.warn("[pay] FORWARDER_ADDRESS unset — payments disabled (deployments will sit awaiting_payment)"); return; }
+  console.log(`[pay] watching ${FORWARDER_ADDRESS} for Paid events every ${PAY_POLL_SEC}s`);
+  const t = setInterval(pollPayments, PAY_POLL_SEC * 1000); if (t.unref) t.unref();
+  pollPayments();
+}
+
+// Tear down deployments past their funded expiry (+ grace), reclaiming the slice.
+function startReaper() {
+  const t = setInterval(async () => {
+    const now = Date.now();
+    for (const rec of deployments.values()) {
+      if (rec.status === "running" && rec.expiresAt && now > rec.expiresAt + GRACE_SEC * 1000) {
+        console.log(`[reaper] ${rec.id} expired ${Math.round((now - rec.expiresAt) / 1000)}s ago -> teardown`);
+        try { await stopContainer(rec); } catch {}
+        if (rec._gpu) { releaseGpu(rec._gpu); rec._gpu = null; }
+        rec.status = "expired";
+      }
+    }
+  }, 15000);
+  if (t.unref) t.unref();
+}
 
 app.get("/v1/deployments", authed, (req, res) =>
   res.json({ data: [...deployments.values()].filter(d => d.owner === req.address).map(view), cursor: null }));
@@ -695,12 +848,23 @@ app.get("/v1/deployments/:id", authed, (req, res) => {
 app.delete("/v1/deployments/:id", authed, async (req, res) => {
   const rec = deployments.get(req.params.id);
   if (!rec || rec.owner !== req.address) return fail(res, 404, "not_found", "No such deployment.");
+  if (rec._payTimer) { clearTimeout(rec._payTimer); rec._payTimer = null; }
   try { await stopContainer(rec); } catch {}
-  if (rec._gpu) { releaseGpu(rec._gpu); rec._gpu = null; } // return the slice (vram + compute) to the card
-  const settled = spentOf(rec); rec.status = "stopping";
+  if (rec._gpu) { releaseGpu(rec._gpu); rec._gpu = null; }
+  rec.status = "stopping";
   res.json({ id: rec.id, status: "stopping",
-             settled:  { asset: rec.budget.asset, amount: settled },
-             released: { asset: rec.budget.asset, amount: (parseFloat(rec.budget.limit) - parseFloat(settled)).toFixed(2) } });
+             paidUsdc: ((rec.paidUsdc || 0) / 1e6).toFixed(2),
+             ranSeconds: rec.startedAt ? Math.round((Date.now() - rec.startedAt) / 1000) : 0,
+             note: "Pay-per-deploy: no balance is held, so unused funded time is forfeit on early stop." });
+});
+
+// Top-up instructions: just call NanPay.pay(deploymentRef, amount) again to extend.
+app.post("/v1/deployments/:id/topup", authed, (req, res) => {
+  const rec = deployments.get(req.params.id);
+  if (!rec || rec.owner !== req.address) return fail(res, 404, "not_found", "No such deployment.");
+  if (!["running", "awaiting_payment"].includes(rec.status))
+    return fail(res, 409, "not_toppable", `Deployment is ${rec.status}.`);
+  res.json({ id: rec.id, status: rec.status, timeRemainingSec: timeRemainingSec(rec), payment: paymentInstructions(rec) });
 });
 
 app.get("/v1/deployments/:id/attestation", authed, async (req, res) => {
@@ -772,3 +936,10 @@ server.on("upgrade", async (req, socket, head) => {
 });
 
 server.listen(PORT, () => console.log(`nan supervisor on :${PORT} · ${GPU_COUNT}×GPU @ ${CARD_VRAM_GB}GB (arbitrary split) · ssh host key ${SSH_HOST_KEY_FP}`));
+
+// advertise this enclave on-chain (opt-in, non-blocking, never fatal)
+registerOnChain();
+
+// pay-per-deploy: watch the forwarder for payments + reap expired deployments
+startPaymentWatcher();
+startReaper();
