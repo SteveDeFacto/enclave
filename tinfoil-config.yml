@@ -106,7 +106,7 @@ containers:
   # this claims no GPU. When that lands, add 'runtime: nvidia', 'gpus: all', 'ipc: host',
   # and the /mnt/ramdisk/nvidia-mps volume.
   - name: "vmmanager"
-    image: "ghcr.io/stevedefacto/nan-vmmanager:placeholder"
+    image: "ghcr.io/stevedefacto/nan-vmmanager:sha256:345a409f8cd56b9300908fbd5beef8eaa02ca241e099e4f16689014973d1252f"
     restart: always
     # devices:
     #   - /dev/kvm                 # uncomment once Tinfoil exposes it (see prerequisite 2)
