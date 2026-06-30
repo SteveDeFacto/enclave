@@ -16,7 +16,7 @@ set -euo pipefail
 REGISTRY="ghcr.io"
 ORG="stevedefacto"
 PLATFORM="linux/amd64"          # Tinfoil enclave is x86; guest kernel/qemu are x86
-DIGEST_SEP="${DIGEST_SEP:-:}"   # repo uses ':'. If Tinfoil rejects it, set DIGEST_SEP=@
+DIGEST_SEP="${DIGEST_SEP:-@}"   # OCI digest pin form: name@sha256:HEX. (':' is invalid and Tinfoil rejects it.)
 TAG="${TAG:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
