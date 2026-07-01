@@ -4,7 +4,7 @@
 # not by tag. Run from anywhere inside the repo.
 #
 #   ./scripts/release.sh                        # all images
-#   ./scripts/release.sh nan nan-runsc-manager  # just these
+#   ./scripts/release.sh nan nan-wasm-manager   # just these
 #   DRY_RUN=1 ./scripts/release.sh        # no docker; repin with a fake digest (test)
 #
 # Auth: set CR_PAT (classic PAT with write:packages) or be logged in to ghcr.io.
@@ -29,14 +29,13 @@ declare -A CONTEXT=(
   [nan-mps]="mps-daemon"
   [nan-worker]="worker"
   [nan]="."
-  [nan-runsc-manager]="vm"
+  [nan-wasm-manager]="wasm"
 )
-# per-image Dockerfile override (default: <context>/Dockerfile). The runsc manager
-# shares the vm/ context with the dead qemu image, so it needs an explicit file.
+# per-image Dockerfile override (default: <context>/Dockerfile).
 declare -A DOCKERFILE=(
-  [nan-runsc-manager]="vm/Dockerfile.runsc"
+  [nan-wasm-manager]="wasm/Dockerfile.wasm"
 )
-ORDER=(nan-mps nan-worker nan nan-runsc-manager)   # deterministic build order
+ORDER=(nan-mps nan-worker nan nan-wasm-manager)   # deterministic build order
 
 # pick the subset (positional args) or all
 TARGETS=("$@"); [ ${#TARGETS[@]} -eq 0 ] && TARGETS=("${ORDER[@]}")
