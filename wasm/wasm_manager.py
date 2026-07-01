@@ -49,7 +49,7 @@ PORT_LO      = int(os.environ.get("WASM_PORT_LO", "20000"))
 PORT_HI      = int(os.environ.get("WASM_PORT_HI", "40000"))
 NODE_VCPUS   = int(os.environ.get("NODE_VCPUS", "16"))
 NODE_RAM_GB  = int(os.environ.get("NODE_RAM_GB", "64"))
-DEF_MEM_MB   = int(os.environ.get("WASM_APP_MEM_MB", "512"))       # per-app RLIMIT_AS ceiling
+DEF_MEM_MB   = int(os.environ.get("WASM_APP_MEM_MB", "512"))       # per-app guest linear-memory ceiling (wasmtime -W max-memory-size)
 READY_SECS   = float(os.environ.get("WASM_READY_TIMEOUT", "20"))
 MOCK         = os.environ.get("WASM_MOCK", "") not in ("", "0", "false")
 LOG_DIR      = pathlib.Path(os.environ.get("WASM_LOG_DIR", "/tmp/nan-wasm-logs"))
@@ -114,21 +114,24 @@ def _capacity() -> dict:
             "apps": len(_apps)}
 
 
-def _rlimits(mem_mb: int):
-    """preexec: cap address space (unprivileged, no cgroups) and put the app in
-    its own session so teardown can kill the whole group cleanly."""
-    def _apply():
-        os.setsid()
-        soft = mem_mb * 1024 * 1024
-        try:
-            resource.setrlimit(resource.RLIMIT_AS, (soft, soft))
-        except (ValueError, OSError):
-            pass
-        try:
-            resource.setrlimit(resource.RLIMIT_NOFILE, (1024, 1024))
-        except (ValueError, OSError):
-            pass
-    return _apply
+def _preexec():
+    """preexec: put the app in its own session so teardown can kill the whole
+    group cleanly, and cap open files.
+
+    We deliberately do NOT cap RLIMIT_AS. `wasmtime` reserves an enormous
+    *virtual* address space (multi-TiB PROT_NONE guard/pooling regions) for fast
+    linear-memory bounds-checking while touching almost no physical RAM, and on a
+    many-core host it also reserves a worker-thread stack per CPU. Any RLIMIT_AS
+    small enough to bound real memory instead makes those reservations fail,
+    killing the runtime at startup (the "memory allocation of N bytes failed"
+    abort). The guest's real memory is bounded on its linear memory via
+    `wasmtime -W max-memory-size` in launch(); that is the only memory a tenant
+    can grow, so it is the meaningful per-app cap."""
+    os.setsid()
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (1024, 1024))
+    except (ValueError, OSError):
+        pass
 
 
 # ---- lifecycle ------------------------------------------------------------- #
@@ -159,11 +162,17 @@ def launch(app_ref: str, name: str, share: float, mem_mb: int) -> dict:
     # `wasmtime serve` runs a wasi:http component and owns the HTTP listener.
     # Default grants are minimal: no --dir (no fs), no --env (no host env),
     # only the served socket. That is the sandbox; we add nothing.
-    cmd = [WASMTIME, "serve", "-Scli", "-Shttp", "--addr", f"{HOST_IP}:{port}", str(wasm)]
+    # `-W max-memory-size` caps the guest's linear memory (the only RAM a tenant
+    # can grow) -- this is the real per-app memory ceiling, enforced by the
+    # runtime rather than by RLIMIT_AS (see _preexec for why RLIMIT_AS is wrong).
+    mem_bytes = max(mem_mb, 1) * 1024 * 1024
+    cmd = [WASMTIME, "serve", "-Scli", "-Shttp",
+           "-W", f"max-memory-size={mem_bytes}",
+           "--addr", f"{HOST_IP}:{port}", str(wasm)]
     logf = open(log_path, "wb")
     try:
         proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=logf,
-                                stderr=logf, preexec_fn=_rlimits(mem_mb))
+                                stderr=logf, preexec_fn=_preexec)
     except Exception as e:
         rec["status"], rec["error"] = "failed", f"spawn: {e}"
         logf.close()

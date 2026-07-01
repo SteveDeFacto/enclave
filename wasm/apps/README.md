@@ -30,8 +30,11 @@ catalog. Peer isolation = separate Wasm sandbox + separate OS process per app.
 
 - `id`     - what the frontend/user selects; what the supervisor sends as `image`.
 - `file`   - the `.wasm` in this directory.
-- `mem_mb` - per-instance address-space cap (RLIMIT_AS). Optional; defaults to
-             `WASM_APP_MEM_MB` (512).
+- `mem_mb` - per-instance guest memory cap, enforced on the Wasm linear memory
+             via `wasmtime -W max-memory-size` (not RLIMIT_AS — wasmtime reserves
+             terabytes of virtual space for bounds-checking, so an RLIMIT_AS
+             small enough to bound RAM would kill the runtime). Optional;
+             defaults to `WASM_APP_MEM_MB` (512).
 
 ## Building the sample `hello.wasm`
 
