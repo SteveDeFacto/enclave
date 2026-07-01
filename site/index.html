@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>NAN · Trustless Confidential Compute</title>
-<meta name="description" content="Trustless on-demand confidential compute. Deploy a container with an H200 GPU from your browser, pay in ETH or USDC, and verify the enclave yourself. CORS-friendly API." />
+<meta name="description" content="Trustless on-demand confidential GPU compute. Deploy a WebAssembly app onto a confidential H200 from your browser, pay in ETH or USDC, and verify the enclave yourself. CORS-friendly API." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 9v14L16 30 4 23V9z' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 10v12M11 13l5-3 5 3' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3C/svg%3E" />
 <style>
 /* ============================================================
@@ -448,14 +448,14 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="hero-copy">
       <span class="eyebrow">Confidential compute · API v1</span>
       <h1>Trustless compute<br>you can&nbsp;actually <span class="hl">verify</span>.</h1>
-      <p class="lede">Deploy a container with an <b>H200 GPU</b> straight from your browser. Pay per second in <b>ETH or USDC</b>, with no account and no KYC. Then check the cryptographic attestation <b>yourself</b> before you send a single byte of data.</p>
+      <p class="lede">Deploy a <b>WebAssembly app</b> onto a confidential <b>H200 GPU</b> straight from your browser. Pay per second in <b>ETH or USDC</b>, with no account and no KYC. Then check the cryptographic attestation <b>yourself</b> before you send a single byte of data.</p>
       <div class="hero-cta">
-        <a href="#deploy" class="btn btn-primary">Deploy a container <span class="arr">→</span></a>
+        <a href="#deploy" class="btn btn-primary">Deploy an app <span class="arr">→</span></a>
         <a href="#api" class="btn btn-ghost">Read the API</a>
       </div>
       <div class="hero-foot">
         <span>H200 · confidential (TDX + NVIDIA&nbsp;CC)</span>
-        <span>per-tenant process isolation</span>
+        <span>per-tenant Wasm sandbox + process isolation</span>
         <span>VRAM zeroed on rotation</span>
         <span>CORS-friendly</span>
       </div>
@@ -489,7 +489,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="sec-head">
       <span class="eyebrow">The model</span>
       <h2>Don't trust the operator. Measure it.</h2>
-      <p>NAN runs your workload inside a hardware-isolated, attested enclave, so the operator can't read your memory, your keys, or your traffic, and you don't have to take our word for it. Every claim on this page is something you can check on-chain or in a signed attestation. We're equally explicit about the part that <i>isn't</i> hardware-enforced: how tenants are kept apart from each other on a shared GPU. <a href="#isolation">See exactly how isolation works ↓</a></p>
+      <p>NAN runs your WebAssembly app inside a hardware-isolated, attested enclave with a confidential H200 GPU wired into it, so the operator can't read your memory, your keys, or your traffic, and you don't have to take our word for it. Every claim on this page is something you can check on-chain or in a signed attestation. We're equally explicit about the part that <i>isn't</i> hardware-enforced: how tenants are kept apart from each other on a shared GPU. <a href="#isolation">See exactly how isolation works ↓</a></p>
     </div>
     <div class="cards">
       <div class="card jade">
@@ -514,7 +514,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/><path d="M9 4V2M15 4V2M9 22v-2M15 22v-2M4 9H2M4 15H2M22 9h-2M22 15h-2"/></svg></div>
         <span class="tag">h200</span>
         <h3>Real GPUs</h3>
-        <p>Full H200s in NVIDIA confidential-computing mode. The whole GPU is one attested trust domain (CC disables MIG, so there's no hardware sub-slicing). You buy a VRAM slice and a compute share; tenants share the card by time, isolated from each other at the process level. <a href="#isolation">How that's enforced →</a></p>
+        <p>Full H200s in NVIDIA confidential-computing mode, exposed to your Wasm app through a GPU interface. The whole GPU is one attested trust domain (CC disables MIG, so there's no hardware sub-slicing). You buy a VRAM slice and a compute share; tenants share the card by time, isolated from each other by a Wasm sandbox and a separate process. <a href="#isolation">How that's enforced →</a></p>
       </div>
     </div>
   </div>
@@ -540,7 +540,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="sec-head">
       <span class="eyebrow">Deploy · live on Base</span>
       <h2>Build a deployment.</h2>
-      <p>Configure a container, connect your wallet, and provision a real confidential enclave. This console calls the same public REST API documented below. The request body and browser <span class="mono">fetch()</span> shown here are exactly what gets sent. Use <span class="mono">Dry run</span> to inspect the call before spending anything.</p>
+      <p>Pick a Wasm app, connect your wallet, and provision a real confidential enclave. This console calls the same public REST API documented below. The request body and browser <span class="mono">fetch()</span> shown here are exactly what gets sent. Use <span class="mono">Dry run</span> to inspect the call before spending anything.</p>
       <div class="endpoint-row">
         <label for="apiBase">API endpoint</label>
         <input type="text" id="apiBase" spellcheck="false" autocapitalize="off" autocomplete="off" />
@@ -558,27 +558,15 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="console">
       <!-- config -->
       <div class="cfg">
-        <h4>Instance</h4>
+        <h4>App</h4>
         <div class="field">
-          <label for="cfgImage">Image <span class="dim">(optional · any stock image · default debian:bookworm-slim)</span></label>
-          <input type="text" id="cfgImage" value="debian:bookworm-slim" spellcheck="false" />
-        </div>
-        <div class="field">
-          <label for="cfgCmd">Start command <span class="dim">(optional)</span></label>
-          <input type="text" id="cfgCmd" value="" placeholder="leave empty for a plain SSH instance" spellcheck="false" />
-        </div>
-        <div class="field">
-          <label for="cfgSsh">SSH public key <span class="dim">(optional · blank = we generate one)</span></label>
-          <input type="text" id="cfgSsh" value="" placeholder="ssh-ed25519 AAAA… you@laptop" spellcheck="false" autocapitalize="off" autocomplete="off" />
+          <label for="cfgImage">Wasm app <span class="dim">(wasi:http component · catalog id, e.g. hello)</span></label>
+          <input type="text" id="cfgImage" value="hello" spellcheck="false" autocapitalize="off" autocomplete="off" />
         </div>
         <div class="field">
           <label for="cfgShare">Share <span class="dim">(% of card · 1 to 100)</span> <span class="dim" id="shareCap">· checking live capacity…</span></label>
           <input type="number" id="cfgShare" value="25" min="1" max="100" step="1" />
           <div class="tier-readout" id="tierOut"></div>
-        </div>
-        <div class="field">
-          <label for="cfgPort">App port <span class="dim">(optional · for a service behind /x/{id})</span></label>
-          <input type="number" id="cfgPort" value="8080" min="1" max="65535" />
         </div>
         <div class="field">
           <label>Pay with</label>
@@ -619,7 +607,6 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         </div>
       </div>
     </div>
-    <div class="key-once" id="keyOnce" hidden></div>
     <div class="enclaves" id="enclaves">
       <div class="enc-head">
         <h4>My enclaves</h4>
@@ -665,15 +652,16 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         <p>Your enclave runs in a CPU TEE (Intel TDX) with the H200 in NVIDIA confidential-computing mode. The CPU↔GPU link is encrypted and the GPU is walled off from the host. NAN, the operator, cannot read your VRAM, RAM, keys, or traffic. This is enforced by hardware and proven by an attestation you verify in your browser <b>before</b> sending data. This is the strong guarantee, and it's the one you can check cryptographically.</p>
       </div>
       <div class="card amber">
-        <span class="tag">software · process-level</span>
+        <span class="tag">software · Wasm sandbox + process</span>
         <h3>You vs. other tenants</h3>
-        <p>CC seals the <i>whole</i> GPU as a single trust domain and disables MIG, so there's no hardware partition between tenants on one card. We isolate tenants the way an OS isolates processes: each tenant runs in its own dedicated worker <b>process</b>, never sharing one with another tenant. That boundary, not a hardware slice, is what keeps tenants apart, and we don't pretend otherwise.</p>
+        <p>CC seals the <i>whole</i> GPU as a single trust domain and disables MIG, so there's no hardware partition between tenants on one card. We isolate tenants with two software layers at once: each tenant's app runs inside a <b>WebAssembly sandbox</b> (memory-safe, no ambient authority, no host filesystem or environment) and in its own dedicated OS worker <b>process</b>, never sharing either with another tenant. Those boundaries, not a hardware slice, are what keep tenants apart, and we don't pretend otherwise.</p>
       </div>
     </div>
 
     <div class="iso-mech">
-      <h4>What the process boundary actually buys you, with each point measured on our own hardware:</h4>
+      <h4>What the Wasm sandbox and process boundary actually buy you, with each GPU-level point measured on our own hardware:</h4>
       <ul class="iso-list">
+        <li><b>No host reach.</b> The Wasm app can't open files, read the host environment, spawn processes, or make outbound connections. WASI grants it only the HTTP socket the runtime serves it on. There's no shell and no SSH into it: a Wasm app isn't an OS, so the usual container-escape surface simply isn't there.</li>
         <li><b>No cross-tenant reads.</b> Separate processes get separate GPU address spaces. A kernel in one tenant's process that tries to read another tenant's memory faults. The address simply isn't mapped. (Verified: the cross-process read attempt raised an illegal-access fault.)</li>
         <li><b>Blast radius of one.</b> A tenant whose kernel crashes or runs illegal memory access takes down only their own worker. A co-tenant running on the same GPU kept executing without a single error, and the GPU stayed healthy. (Verified under a live fault.)</li>
         <li><b>Memory wiped on rotation.</b> When a worker exits (normally, on idle, or by crashing), the driver zeroes its VRAM before those pages are handed to anyone else. We confirmed a fresh allocation came back fully zeroed even after a tenant wrote ~117&nbsp;GB and was killed without cleaning up. A tenant rotation <i>is</i> a process exit, so the scrub is structural, not best-effort.</li>
@@ -683,7 +671,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
 
     <div class="iso-honest">
       <h4>What we do <u>not</u> claim</h4>
-      <p>Inter-tenant isolation is enforced by the operating system and the NVIDIA GPU driver, the one component every tenant's workload passes through. So tenants are isolated from each other <b>at the process level, modulo the integrity of that shared driver</b>, not by per-tenant hardware partitioning (which this GPU generation does not offer with confidential computing on). If your threat model requires hardware-enforced isolation from <i>other tenants</i> specifically, run a dedicated full-GPU deployment instead of a shared one. Isolation from <i>us</i>, the operator, is hardware-enforced and attested either way.</p>
+      <p>Inter-tenant isolation is enforced by the WebAssembly sandbox, the operating system, and the NVIDIA GPU driver, the one component every tenant's app passes through to reach the card. So tenants are isolated from each other <b>at the sandbox-and-process level, modulo the integrity of that shared driver</b>, not by per-tenant hardware partitioning (which this GPU generation does not offer with confidential computing on). If your threat model requires hardware-enforced isolation from <i>other tenants</i> specifically, run a dedicated full-GPU deployment instead of a shared one. Isolation from <i>us</i>, the operator, is hardware-enforced and attested either way.</p>
     </div>
   </div>
 </section>
@@ -798,8 +786,8 @@ const SPEC = {
   "info": {
     "title": "NAN API",
     "version": "1.0.0",
-    "summary": "Trustless on-demand confidential compute.",
-    "description": "Deploy confidential GPU workloads into hardware-isolated enclaves with an H200 in NVIDIA confidential-computing mode. Authenticate with an Ethereum signature (SIWE), pay USDC per deployment (no accounts, no held balance), and verify the enclave yourself. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
+    "summary": "Trustless on-demand confidential GPU compute for WebAssembly apps.",
+    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority — just the request/response socket the runtime hands it. The app catalog is baked into the attested enclave image, so what runs is exactly what the attestation measured. Authenticate with an Ethereum signature (SIWE), pay USDC per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
   },
   "servers": [
     {
@@ -827,7 +815,7 @@ const SPEC = {
     },
     {
       "name": "Deployments",
-      "description": "Create, fund, inspect, and tear down confidential workloads."
+      "description": "Create, fund, inspect, and tear down confidential Wasm apps."
     },
     {
       "name": "Attestation",
@@ -1040,7 +1028,7 @@ const SPEC = {
         ],
         "operationId": "createDeployment",
         "summary": "Create a deployment (awaiting payment)",
-        "description": "Reserves a GPU share and returns a deployment in `awaiting_payment` with a `payment` block. The workload is NOT provisioned yet: approve USDC to the forwarder and call pay(deploymentRef, amount); the enclave sees the payment, provisions your MPS-capped worker process, and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. The share is a software cap (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles).",
+        "description": "Reserves a GPU share and returns a deployment in `awaiting_payment` with a `payment` block. The Wasm app is NOT started yet: approve USDC to the forwarder and call pay(deploymentRef, amount); the enclave sees the payment, launches your app as its own sandboxed, MPS-capped worker process on the confidential GPU, and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. The share is a software cap (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles).",
         "requestBody": {
           "required": true,
           "content": {
@@ -1053,7 +1041,7 @@ const SPEC = {
         },
         "responses": {
           "201": {
-            "description": "Created, awaiting payment. (ssh.privateKey, if generated, is returned ONCE.)",
+            "description": "Created, awaiting payment. Fund it to start the app.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1805,22 +1793,20 @@ const SPEC = {
       },
       "ImageRef": {
         "type": "object",
+        "description": "Reference to the Wasm app to run. The app is a wasi:http component baked into the attested enclave image, so it is covered by the enclave measurement.",
         "required": [
           "reference"
         ],
         "properties": {
           "reference": {
             "type": "string",
-            "example": "debian:bookworm-slim"
+            "description": "Catalog id of a wasi:http component baked into the attested enclave image (e.g. `hello`). The catalog is measured at deploy, so what runs is exactly what attestation covers. No arbitrary registry pull.",
+            "example": "hello"
           },
           "digest": {
             "type": "string",
-            "description": "Optional sha256. If set, it is pinned and folded into the measurement.",
+            "description": "Optional sha256 of the wasm component. If set, it is pinned and folded into the measurement.",
             "example": "sha256:9f86..."
-          },
-          "registryAuth": {
-            "type": "string",
-            "description": "Base64 docker auth for private images. Encrypted to the enclave; never stored in plaintext."
           }
         }
       },
@@ -1865,29 +1851,6 @@ const SPEC = {
           }
         }
       },
-      "SshAccess": {
-        "type": "object",
-        "properties": {
-          "command": {
-            "type": "string",
-            "example": "ssh ..."
-          },
-          "keySource": {
-            "type": "string",
-            "enum": [
-              "provided",
-              "generated"
-            ]
-          },
-          "hostKeyFingerprint": {
-            "type": "string"
-          },
-          "privateKey": {
-            "type": "string",
-            "description": "Returned ONCE at create if NAN generated the key. Never persisted."
-          }
-        }
-      },
       "AttestationSummary": {
         "type": "object",
         "properties": {
@@ -1914,31 +1877,12 @@ const SPEC = {
       "CreateDeployment": {
         "type": "object",
         "required": [
+          "image",
           "resources"
         ],
         "properties": {
           "image": {
             "$ref": "#/components/schemas/ImageRef"
-          },
-          "command": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "env": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
-          },
-          "port": {
-            "type": "integer",
-            "default": 8080
-          },
-          "sshPublicKey": {
-            "type": "string",
-            "description": "OpenSSH public key. If omitted, NAN generates one and returns the private key once."
           },
           "resources": {
             "$ref": "#/components/schemas/ResourceSpec"
@@ -1958,9 +1902,8 @@ const SPEC = {
         },
         "example": {
           "image": {
-            "reference": "debian:bookworm-slim"
+            "reference": "hello"
           },
-          "port": 8080,
           "resources": {
             "share": 0.25
           },
@@ -1985,12 +1928,6 @@ const SPEC = {
           },
           "image": {
             "$ref": "#/components/schemas/ImageRef"
-          },
-          "command": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           },
           "resources": {
             "type": "object",
@@ -2065,9 +2002,6 @@ const SPEC = {
           "timeRemainingSec": {
             "type": "integer",
             "example": 21600
-          },
-          "ssh": {
-            "$ref": "#/components/schemas/SshAccess"
           },
           "payment": {
             "$ref": "#/components/schemas/PaymentInstructions"
@@ -2675,9 +2609,10 @@ function initTicker() {
     ["Per-second", " metering, settled on-chain"],
     ["TLS", " terminates inside the enclave"],
     ["H200", " · whole-GPU confidential computing"],
+    ["Wasm apps", " · wasi:http, sandboxed in the enclave"],
     ["No accounts", " · no KYC · wallet-native"],
     ["CORS-enabled", " · drive it from the browser"],
-    ["Per-tenant", " process isolation · VRAM wiped on rotation"],
+    ["Per-tenant", " Wasm sandbox + process isolation · VRAM wiped on rotation"],
     ["Verify the quote", " before you connect"],
     ["No custody", " · pay-per-deploy, top up to extend"]
   ];
@@ -2687,7 +2622,7 @@ function initTicker() {
 
 const STEPS = [
   { t: "Sign in with your wallet", d: "Prove control of your address, with no email and no password.", method: "POST", path: "/auth/login" },
-  { t: "Create a deployment",      d: "Pick a share of the H200 and a port; get back a payment reference.", method: "POST", path: "/deployments" },
+  { t: "Create a deployment",      d: "Pick a Wasm app and a share of the H200; get back a payment reference.", method: "POST", path: "/deployments" },
   { t: "Pay for runtime",          d: "Approve USDC and pay the forwarder; the enclave provisions and starts the clock. Pay again to extend.", method: "POST", path: "/deployments/{id}/topup" },
   { t: "Verify the enclave",       d: "Pull the TDX quote + GPU report and check them yourself.", method: "GET",  path: "/deployments/{id}/attestation" },
   { t: "Stop (or let it expire)",  d: "Tear down and release the share. No held balance to reclaim.", method: "DELETE", path: "/deployments/{id}" }
@@ -3026,19 +2961,13 @@ function fmtDur(s){
   return s + "s";
 }
 function deployBody(){
-  const img = $("#cfgImage").value.trim() || "debian:bookworm-slim";
-  const cmd = $("#cfgCmd").value.trim();
-  const ssh = ($("#cfgSsh") ? $("#cfgSsh").value : "").trim();
-  const port = parseInt($("#cfgPort").value, 10) || 8080;
-  const budget = parseFloat($("#cfgBudget").value) || 0;
-  const body = { image: { reference: img } };
-  if (cmd) body.command = cmd.split(/\s+/).filter(Boolean);
-  if (ssh) body.sshPublicKey = ssh;
-  body.port = port;
+  // `image.reference` is the Wasm app to run: a wasi:http component baked into
+  // the attested enclave image, selected by its catalog id (e.g. "hello").
+  const app = $("#cfgImage").value.trim() || "hello";
+  const body = { image: { reference: app } };
   body.resources = (dep.sharePct > 0)
     ? { share: Math.min(1, Math.max(0.01, Math.round(dep.sharePct) / 100)) }
     : {};
-  body.budget = undefined; // pay-per-deploy: no budget cap; runtime is bought via USDC payment
   if (dep.sharePct > 0) body.attestationPolicy = { requireGpuAttestation: true };
   body.region = "auto";
   return body;
@@ -3170,12 +3099,6 @@ async function runDeploy(){
     }
     termLine(term, "dimln", "  \u21b3 201 " + created.id + " \u00b7 status=" + created.status);
 
-    const ssh = created.ssh;
-    if (ssh){
-      if (ssh.privateKey) showPrivateKeyOnce(created.id, ssh.privateKey);
-      if (ssh.hostKeyFingerprint) termLine(term, "dimln", "    ssh host key " + ssh.hostKeyFingerprint + " (verify vs attestation)");
-    }
-
     // pay-per-deploy: fund runtime; the enclave provisions once it sees the payment
     if (created.status === "awaiting_payment"){
       const rate = parseFloat((created.payment && created.payment.ratePerSecondUsdc) || "0");
@@ -3229,27 +3152,6 @@ async function pollDeployment(id, term){
 function shortImg(s){ if (!s) return ""; return s.length > 44 ? s.slice(0, 42) + "\u2026" : s; }
 function encTier(d){ const s = d.resources && d.resources.share; return s ? (Math.round(s * 100) + "% card") : "CPU"; }
 
-function downloadText(name, text){
-  try {
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  } catch(e){ showToast("download failed: " + e.message); }
-}
-
-function showPrivateKeyOnce(id, key){
-  const host = $("#keyOnce"); if (!host) return;
-  host.hidden = false;
-  host.innerHTML =
-    '<div class="ko-head">\u26a0 SSH private key for ' + esc(id) + ' \u2014 shown once. We don\u2019t store it; save it now or you\u2019ll lose access.</div>' +
-    '<pre class="ko-key">' + esc(key) + '</pre>' +
-    '<div class="ko-acts"><button class="btn btn-sm" id="koCopy">\u29c9 copy</button><button class="btn btn-sm" id="koDl">download</button><button class="btn btn-sm" id="koDone">I saved it</button></div>';
-  $("#koCopy").addEventListener("click", () => copyText(key));
-  $("#koDl").addEventListener("click", () => downloadText(id + ".key", key));
-  $("#koDone").addEventListener("click", () => { host.hidden = true; host.innerHTML = ""; });
-}
-
 async function refreshEnclaves(opts){
   opts = opts || {};
   const body = $("#encBody"), count = $("#encCount"); if (!body) return;
@@ -3296,7 +3198,7 @@ function renderEnclaveRows(list, highlight){
       '<div class="enc-main">' +
         '<span class="ap-badge ' + statusCls(st) + '">' + esc(st) + '</span>' +
         '<button class="enc-id" data-copy="' + esc(d.id) + '">' + esc(d.id) + ' \u29c9</button>' +
-        '<span class="enc-meta">' + esc(encTier(d)) + (d.image ? ' \u00b7 <span class="dim">' + esc(shortImg(d.image)) + '</span>' : '') + '</span>' +
+        '<span class="enc-meta">' + esc(encTier(d)) + ((d.image && d.image.reference) ? ' \u00b7 <span class="dim">' + esc(shortImg(d.image.reference)) + '</span>' : '') + '</span>' +
         '<span class="enc-spend">' + bud + '</span>' +
         '<span class="enc-acts">' +
           '<button class="btn btn-sm enc-verify" data-id="' + esc(d.id) + '">Verify</button>' +
@@ -3304,13 +3206,11 @@ function renderEnclaveRows(list, highlight){
         '</span>' +
       '</div>' +
       (ep ? '<button class="enc-ep" data-ep="' + esc(ep) + '">' + esc(ep) + ' \u29c9</button>' : '') +
-      (d.ssh && d.ssh.command ? '<button class="enc-ssh" data-ssh="' + esc(d.ssh.command) + '" title="' + (d.ssh.hostKeyFingerprint ? 'host key ' + esc(d.ssh.hostKeyFingerprint) : '') + '">$ ' + esc(d.ssh.command) + ' \u29c9</button>' : '') +
       '<div class="enc-att" hidden></div>' +
     '</div>';
   }).join("");
   $$("#encBody .enc-id").forEach(b => b.addEventListener("click", () => copyText(b.dataset.copy)));
   $$("#encBody .enc-ep").forEach(b => b.addEventListener("click", () => copyText(b.dataset.ep)));
-  $$("#encBody .enc-ssh").forEach(b => b.addEventListener("click", () => copyText(b.dataset.ssh)));
   $$("#encBody .enc-verify").forEach(b => b.addEventListener("click", () => encVerify(b.dataset.id, b)));
   $$("#encBody .enc-kill").forEach(b => b.addEventListener("click", () => encKill(b.dataset.id, b)));
 }
@@ -3378,14 +3278,12 @@ function initDeploy(){
     dep.asset = b.dataset.asset; $$("#cfgAsset button").forEach(x => x.classList.toggle("on", x === b));
     $("#assetLabel").textContent = dep.asset; renderDeploy();
   });
-  ["#cfgImage", "#cfgCmd", "#cfgSsh", "#cfgPort", "#cfgBudget"].forEach(s => { const el = $(s); if (el) el.addEventListener("input", renderDeploy); });
+  ["#cfgImage", "#cfgBudget"].forEach(s => { const el = $(s); if (el) el.addEventListener("input", renderDeploy); });
   $$(".console-tabs button").forEach(b => b.addEventListener("click", () => switchPane(b.dataset.pane)));
   $("#deployBtn").addEventListener("click", runDeploy);
   $("#resetBtn").addEventListener("click", () => {
-    $("#cfgImage").value = "debian:bookworm-slim";
-    $("#cfgCmd").value = "";
-    if ($("#cfgSsh")) $("#cfgSsh").value = "";
-    $("#cfgPort").value = "8080"; $("#cfgBudget").value = "50";
+    $("#cfgImage").value = "hello";
+    $("#cfgBudget").value = "10";
     $("#cfgShare").value = "25"; dep.sharePct = 25; dep.asset = "USDC";
     $$("#cfgAsset button").forEach(x => x.classList.toggle("on", x.dataset.asset === "USDC"));
     $("#assetLabel").textContent = "USDC";
@@ -3517,12 +3415,7 @@ function injectLiveStyles(){
     ".enc-spend{font-family:var(--font-mono);font-size:.76rem;color:var(--text-muted);}",
     ".enc-acts{margin-left:auto;display:flex;gap:8px;}",
     ".enc-ep{display:block;margin-top:9px;background:#080c12;border:1px solid var(--line-soft);color:var(--jade-2);font-family:var(--font-mono);font-size:.76rem;cursor:pointer;text-align:left;padding:.5em .7em;border-radius:8px;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
-    ".enc-ssh{display:block;margin-top:7px;background:#080c12;border:1px solid var(--line-soft);color:var(--iris);font-family:var(--font-mono);font-size:.76rem;cursor:pointer;text-align:left;padding:.5em .7em;border-radius:8px;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
     ".enc-att{border:1px solid var(--line-soft);border-radius:8px;margin-top:10px;overflow:hidden;}",
-    ".key-once{margin-top:22px;border:1px solid var(--amber);border-radius:var(--radius);background:linear-gradient(180deg,#1a120a,#120c06);padding:16px 18px;}",
-    ".ko-head{color:var(--amber);font-size:.86rem;font-weight:600;line-height:1.4;margin-bottom:11px;}",
-    ".ko-key{background:#070a0f;border:1px solid var(--line-soft);border-radius:8px;padding:.7em .8em;font-family:var(--font-mono);font-size:.72rem;color:var(--text);max-height:180px;overflow:auto;white-space:pre;margin:0 0 12px;}",
-    ".ko-acts{display:flex;gap:8px;flex-wrap:wrap;}",
     "@media(max-width:560px){.enc-spend{width:100%;order:5;}.enc-acts{margin-left:0;}}",
     "@media(max-width:760px){.wallet-pop{left:0;right:auto;width:min(300px,84vw);}}"
   ].join("\n");
@@ -3535,7 +3428,7 @@ const LINKS = [
     d: "Intel TDX and the NVIDIA GPU hold keys fused at manufacture. NAN can't extract or forge them. The silicon vendor is the root of trust, not the operator.",
     j: { tdx: { mrtd: "0x5a3c…91ef", minTcb: "2026.05" }, gpu: { approvedDrivers: ["565.57.01"], approvedVbios: ["96.00.AE.00.01"] } } },
   { t: "The VM measures itself", fn: "vm.json",
-    d: "On boot the CPU emits a DCAP quote over MRTD + RTMR0–3, binding firmware, kernel, and your exact image digest. Change one byte and the quote changes.",
+    d: "On boot the CPU emits a DCAP quote over MRTD + RTMR0–3, binding the firmware, the kernel, and the exact enclave image — including the Wasm app catalog baked into it. Change one byte and the quote changes.",
     j: { technology: "intel-tdx", quote: "BAACAIEAAAAA…", measurements: { mrtd: "0x5a3c…91ef", rtmr3: "0x9f86…0a08" }, verified: true } },
   { t: "The GPU attests too", fn: "gpu.json",
     d: "With confidential computing on, the H200 produces a signed report countersigned by NVIDIA's NRAS, proving CC mode, driver, and vBIOS before any data reaches VRAM.",

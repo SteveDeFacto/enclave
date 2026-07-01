@@ -3,8 +3,8 @@
   "info": {
     "title": "NAN API",
     "version": "1.0.0",
-    "summary": "Trustless on-demand confidential compute.",
-    "description": "Deploy confidential GPU workloads into hardware-isolated enclaves with an H200 in NVIDIA confidential-computing mode. Authenticate with an Ethereum signature (SIWE), pay USDC per deployment (no accounts, no held balance), and verify the enclave yourself. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
+    "summary": "Trustless on-demand confidential GPU compute for WebAssembly apps.",
+    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority — just the request/response socket the runtime hands it. The app catalog is baked into the attested enclave image, so what runs is exactly what the attestation measured. Authenticate with an Ethereum signature (SIWE), pay USDC per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
   },
   "servers": [
     {
@@ -32,7 +32,7 @@
     },
     {
       "name": "Deployments",
-      "description": "Create, fund, inspect, and tear down confidential workloads."
+      "description": "Create, fund, inspect, and tear down confidential Wasm apps."
     },
     {
       "name": "Attestation",
@@ -245,7 +245,7 @@
         ],
         "operationId": "createDeployment",
         "summary": "Create a deployment (awaiting payment)",
-        "description": "Reserves a GPU share and returns a deployment in `awaiting_payment` with a `payment` block. The workload is NOT provisioned yet: approve USDC to the forwarder and call pay(deploymentRef, amount); the enclave sees the payment, provisions your MPS-capped worker process, and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. The share is a software cap (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles).",
+        "description": "Reserves a GPU share and returns a deployment in `awaiting_payment` with a `payment` block. The Wasm app is NOT started yet: approve USDC to the forwarder and call pay(deploymentRef, amount); the enclave sees the payment, launches your app as its own sandboxed, MPS-capped worker process on the confidential GPU, and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. The share is a software cap (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles).",
         "requestBody": {
           "required": true,
           "content": {
@@ -258,7 +258,7 @@
         },
         "responses": {
           "201": {
-            "description": "Created, awaiting payment. (ssh.privateKey, if generated, is returned ONCE.)",
+            "description": "Created, awaiting payment. Fund it to start the app.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1010,22 +1010,20 @@
       },
       "ImageRef": {
         "type": "object",
+        "description": "Reference to the Wasm app to run. The app is a wasi:http component baked into the attested enclave image, so it is covered by the enclave measurement.",
         "required": [
           "reference"
         ],
         "properties": {
           "reference": {
             "type": "string",
-            "example": "debian:bookworm-slim"
+            "description": "Catalog id of a wasi:http component baked into the attested enclave image (e.g. `hello`). The catalog is measured at deploy, so what runs is exactly what attestation covers. No arbitrary registry pull.",
+            "example": "hello"
           },
           "digest": {
             "type": "string",
-            "description": "Optional sha256. If set, it is pinned and folded into the measurement.",
+            "description": "Optional sha256 of the wasm component. If set, it is pinned and folded into the measurement.",
             "example": "sha256:9f86..."
-          },
-          "registryAuth": {
-            "type": "string",
-            "description": "Base64 docker auth for private images. Encrypted to the enclave; never stored in plaintext."
           }
         }
       },
@@ -1070,29 +1068,6 @@
           }
         }
       },
-      "SshAccess": {
-        "type": "object",
-        "properties": {
-          "command": {
-            "type": "string",
-            "example": "ssh ..."
-          },
-          "keySource": {
-            "type": "string",
-            "enum": [
-              "provided",
-              "generated"
-            ]
-          },
-          "hostKeyFingerprint": {
-            "type": "string"
-          },
-          "privateKey": {
-            "type": "string",
-            "description": "Returned ONCE at create if NAN generated the key. Never persisted."
-          }
-        }
-      },
       "AttestationSummary": {
         "type": "object",
         "properties": {
@@ -1119,31 +1094,12 @@
       "CreateDeployment": {
         "type": "object",
         "required": [
+          "image",
           "resources"
         ],
         "properties": {
           "image": {
             "$ref": "#/components/schemas/ImageRef"
-          },
-          "command": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "env": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
-          },
-          "port": {
-            "type": "integer",
-            "default": 8080
-          },
-          "sshPublicKey": {
-            "type": "string",
-            "description": "OpenSSH public key. If omitted, NAN generates one and returns the private key once."
           },
           "resources": {
             "$ref": "#/components/schemas/ResourceSpec"
@@ -1163,9 +1119,8 @@
         },
         "example": {
           "image": {
-            "reference": "debian:bookworm-slim"
+            "reference": "hello"
           },
-          "port": 8080,
           "resources": {
             "share": 0.25
           },
@@ -1190,12 +1145,6 @@
           },
           "image": {
             "$ref": "#/components/schemas/ImageRef"
-          },
-          "command": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           },
           "resources": {
             "type": "object",
@@ -1270,9 +1219,6 @@
           "timeRemainingSec": {
             "type": "integer",
             "example": 21600
-          },
-          "ssh": {
-            "$ref": "#/components/schemas/SshAccess"
           },
           "payment": {
             "$ref": "#/components/schemas/PaymentInstructions"
