@@ -409,6 +409,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
   .foot-grid{grid-template-columns:1fr 1fr;}
 }
 @media (max-width:640px){
+  .nav-inner{height:auto;min-height:64px;padding-top:10px;padding-bottom:12px;}
   .nav-links{display:none;}
   .menu-btn{display:inline-flex;}
   .cards{grid-template-columns:1fr;}
@@ -687,7 +688,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="sec-head">
       <span class="eyebrow">App store · on-chain catalog</span>
       <h2>Browse and publish Wasm apps.</h2>
-      <p>Every app here is a <b>wasi:http</b> component whose bytes live on <b>IPFS</b>, addressed by their <b>CID</b>. The catalog itself is a smart contract on <b>Base</b> (<span class="mono">NanAppCatalog</span>): anyone can publish, each listing is attributed on-chain to the publisher's wallet, and because a CID is a hash of the exact wasm you can pull it from any IPFS peer and verify the bytes yourself. Reading needs no wallet; publishing is one Base transaction. Deploying a community app by CID is <b>rolling out</b> — today the <a href="#deploy">Deploy console</a> runs the attested, baked-in catalog (e.g. <span class="mono">hello</span>).</p>
+      <p>Every app here is a <b>wasi:http</b> component whose bytes live on <b>IPFS</b>, addressed by their <b>CID</b>. The catalog itself is a smart contract on <b>Base</b> (<span class="mono">NanAppCatalog</span>): anyone can publish, each listing is attributed on-chain to the publisher's wallet, and because a CID is a hash of the exact wasm you can pull it from any IPFS peer and verify the bytes yourself. Reading needs no wallet; publishing is one Base transaction.</p>
       <div class="store-meta">
         <a class="chip" id="catAddrLink" target="_blank" rel="noopener">contract <b id="catAddrShort">…</b></a>
         <span class="chip">chain <b id="catChain">Base · 8453</b></span>
