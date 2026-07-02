@@ -1421,14 +1421,37 @@ const SPEC = {
         }
       }
     },
+    "/attestation": {
+      "get": {
+        "tags": [
+          "Attestation"
+        ],
+        "operationId": "getEnclaveAttestation",
+        "summary": "Get the enclave attestation (public)",
+        "description": "Enclave-level attestation, no auth: the Tinfoil Remote Attestation Document (live Intel TDX quote binding this origin's TLS key), parsed measurement registers, and NVIDIA GPU CC evidence from a short server-side cache. Verify client-side BEFORE logging in or sending data. For a fresh GPU nonce challenge, use the per-deployment endpoint.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Attestation material.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attestation"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/deployments/{id}/attestation": {
       "get": {
         "tags": [
           "Attestation"
         ],
         "operationId": "getAttestation",
-        "summary": "Get the enclave attestation",
-        "description": "The Intel TDX quote and NVIDIA GPU attestation report plus the measurements to check them against. Verify client-side before sending data.",
+        "summary": "Get a deployment's attestation",
+        "description": "The live Intel TDX quote (relayed Tinfoil Remote Attestation Document plus parsed registers) and the NVIDIA GPU attestation report signed over your nonce, with honest per-app coverage notes. Verify client-side before sending data.",
         "parameters": [
           {
             "name": "id",
@@ -1436,6 +1459,16 @@ const SPEC = {
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "nonce",
+            "in": "query",
+            "required": false,
+            "description": "32-byte hex freshness challenge folded into the GPU attestation report. Random if omitted.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{64}$"
             }
           }
         ],
@@ -1643,15 +1676,36 @@ const SPEC = {
             "type": "string",
             "example": "0.0004167"
           },
-          "assets": {"type": "array", "items": {"type": "string"}, "example": ["USDC", "ETH"], "description": "Accepted payment assets."},
-          "payEthMethod": {"type": "string", "example": "payEth(bytes32 deploymentId) payable", "description": "Native-ETH alternative: one payable call, no approve. The enclave watches PaidEth and credits the wei as USDC-equivalent at the live Chainlink ETH/USD rate."},
-          "ethUsd": {"type": ["string", "null"], "example": "1630.31", "description": "The enclave's cached Chainlink ETH/USD read (use to size msg.value); null until first refresh."},
           "method": {
             "type": "string",
             "example": "pay(bytes32 deploymentId, uint256 amount)"
           },
           "note": {
             "type": "string"
+          },
+          "assets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "USDC",
+              "ETH"
+            ],
+            "description": "Accepted payment assets."
+          },
+          "payEthMethod": {
+            "type": "string",
+            "example": "payEth(bytes32 deploymentId) payable",
+            "description": "Native-ETH alternative: one payable call, no approve. The enclave watches PaidEth and credits the wei as USDC-equivalent at the live Chainlink ETH/USD rate."
+          },
+          "ethUsd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "1630.31",
+            "description": "The enclave's cached Chainlink ETH/USD read (use to size msg.value); null until first refresh."
           }
         }
       },
@@ -2036,28 +2090,28 @@ const SPEC = {
             "type": "string",
             "example": "auto"
           },
-          "firewall": {
-                    "type": "object",
-                    "description": "Ports the app may bind, from its catalog version's firewall config (the store's Use-in-Deploy prefills this). Entries: `http` (default — standard wasi:http web app), `http:N` (app serves HTTP on N itself), `tcp:N`, `udp:N`; N in 1-19999 excluding 8080/8091 (labels below 1024, e.g. udp:53, are always remapped to an unprivileged actual). Omitted/empty = standard web app with NO socket capability. Ports are LOGICAL: each deployment gets its own actual loopback bind (see `portMap`; passed to the app as `NAN_PORTS=tcp:5432=31245`), so multiple tenants can run the same app simultaneously without conflicts. When ports are declared the app gets wasi:sockets and the enclave audits its binds — binding an unassigned port kills the app. Declared TCP ports are reached through the attested origin as a WebSocket bridge at `/x/{id}/tcp/{logical-port}` (auth follows `public`).",
-                    "properties": {
-                              "ports": {
-                                        "type": "array",
-                                        "maxItems": 8,
-                                        "items": {
-                                                  "type": "string",
-                                                  "pattern": "^(http|http:\\d{1,5}|tcp:\\d{1,5}|udp:\\d{1,5})$"
-                                        },
-                                        "example": [
-                                                  "tcp:5432",
-                                                  "udp:9053"
-                                        ]
-                              }
-                    }
-          },
           "public": {
             "type": "boolean",
             "default": false,
             "description": "If true, anyone can reach the app's data path (`/x/{id}/*`) with no authentication — for hosting public websites, APIs, and servers. If false (default), only the owner's SIWE bearer token can reach it. SSH and management endpoints are always owner-only regardless. Confidentiality is unaffected: the TEE still hides the app from the operator; `public` only governs who may send it requests."
+          },
+          "firewall": {
+            "type": "object",
+            "description": "Ports the app may bind, from its catalog version's firewall config (the store's Use-in-Deploy prefills this). Entries: `http` (default — standard wasi:http web app), `http:N` (app serves HTTP on N itself), `tcp:N`, `udp:N`; N in 1-19999 excluding 8080/8091 (labels below 1024, e.g. udp:53, are always remapped to an unprivileged actual). Omitted/empty = standard web app with NO socket capability. Ports are LOGICAL: each deployment gets its own actual loopback bind (see `portMap`; passed to the app as `NAN_PORTS=tcp:5432=31245`), so multiple tenants can run the same app simultaneously without conflicts. When ports are declared the app gets wasi:sockets and the enclave audits its binds — binding an unassigned port kills the app. Declared TCP ports are reached through the attested origin as a WebSocket bridge at `/x/{id}/tcp/{logical-port}` (auth follows `public`).",
+            "properties": {
+              "ports": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "pattern": "^(http|http:\\d{1,5}|tcp:\\d{1,5}|udp:\\d{1,5})$"
+                },
+                "example": [
+                  "tcp:5432",
+                  "udp:9053"
+                ]
+              }
+            }
           }
         },
         "example": {
@@ -2086,14 +2140,6 @@ const SPEC = {
           },
           "status": {
             "$ref": "#/components/schemas/DeploymentStatus"
-          },
-          "portMap": {"type": "object", "additionalProperties": {"type": "integer"}, "description": "Logical firewall entry -> actual loopback port this deployment bound (e.g. {\"tcp:5432\": 31245}). Set once provisioned. The bridge URL always uses the logical port; this mapping is informational.", "example": {"tcp:5432": 31245}},
-          "firewall": {
-                    "type": "array",
-                    "items": {
-                              "type": "string"
-                    },
-                    "description": "Normalized firewall config this deployment runs with ([] = standard web app). Declared TCP ports are bridgeable at /x/{id}/tcp/{port}."
           },
           "public": {
             "type": "boolean",
@@ -2146,7 +2192,7 @@ const SPEC = {
               "null"
             ],
             "format": "date-time",
-            "description": "Funded through this time; extended by top-ups."
+            "description": "ESTIMATED wall-clock expiry (now + timeRemainingSec) while running and healthy; null when the clock is frozen (paused) or awaiting payment. The balance in timeRemainingSec is authoritative."
           },
           "digest": {
             "type": [
@@ -2173,11 +2219,45 @@ const SPEC = {
             "example": "10.00"
           },
           "timeRemainingSec": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Funded runtime balance in seconds (null = unlimited pilot deployment). Drains only while the platform is healthy; frozen (see paused) during outages, so it never shrinks while service is down.",
             "example": 21600
+          },
+          "paused": {
+            "type": "boolean",
+            "description": "True while the billing clock is FROZEN because the platform is not serving (enclave backend down, payment watcher blind, or the app instance is being respawned). Time resumes automatically when service is restored; users are never billed for downtime.",
+            "example": false
+          },
+          "pauseReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the clock is frozen: backend_down | watcher_stale | instance_missing | restart_recovery.",
+            "example": null
           },
           "payment": {
             "$ref": "#/components/schemas/PaymentInstructions"
+          },
+          "firewall": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Normalized firewall config this deployment runs with ([] = standard web app). Declared TCP ports are bridgeable at /x/{id}/tcp/{port}."
+          },
+          "portMap": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Logical firewall entry -> actual loopback port this deployment bound (e.g. {\"tcp:5432\": 31245}). Set once provisioned. The bridge URL always uses the logical port; this mapping is informational.",
+            "example": {
+              "tcp:5432": 31245
+            }
           }
         }
       },
@@ -2242,21 +2322,127 @@ const SPEC = {
       },
       "Measurements": {
         "type": "object",
-        "description": "Expected measurements to check the quote/report against.",
+        "description": "Registers parsed out of the quote (Intel TDX: mrTd + rtmr0-3; AMD SEV-SNP: measurement). Compare against the Sigstore-signed measurements published on the enclave repo's release.",
         "additionalProperties": true
       },
       "VmAttestation": {
         "type": "object",
-        "description": "Intel TDX quote material.",
+        "description": "Live CPU-TEE evidence. `quote` is the raw hardware quote (base64, decompressed) — feed it to any DCAP/SNP verifier. `reportData` binds the enclave TLS key: bytes 0-31 are sha256 of the TLS public key (SPKI DER) this origin presents.",
+        "properties": {
+          "technology": {
+            "type": "string",
+            "example": "intel-tdx"
+          },
+          "quote": {
+            "type": "string",
+            "description": "Base64 raw quote."
+          },
+          "quoteVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "example": 4
+          },
+          "measurements": {
+            "$ref": "#/components/schemas/Measurements"
+          },
+          "reportData": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "64-byte report_data, hex."
+          }
+        },
         "additionalProperties": true
       },
       "GpuAttestation": {
         "type": "object",
-        "description": "NVIDIA GPU attestation report.",
+        "description": "NVIDIA confidential-computing evidence, signed by the GPU over `nonce`. Verify `report` + `certChain` with NVIDIA NRAS or nvtrust's local_gpu_verifier and confirm it signs your nonce.",
+        "properties": {
+          "technology": {
+            "type": "string",
+            "example": "nvidia-cc"
+          },
+          "ccMode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "on"
+          },
+          "nonce": {
+            "type": "string",
+            "description": "32-byte hex freshness challenge folded into the report."
+          },
+          "driverVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "report": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base64 GPU attestation report (first card)."
+          },
+          "certChain": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base64 attestation cert chain (first card)."
+          },
+          "gpus": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "EnclaveAttestation": {
+        "type": "object",
+        "description": "The Tinfoil Remote Attestation Document relayed verbatim from /.well-known/tinfoil-attestation — feed `attestationDocument` to github.com/tinfoilsh/verifier. This copy is a convenience: fetch the document over your OWN connection for the binding to mean anything.",
+        "properties": {
+          "attestationDocument": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "type": "string",
+                "example": "https://tinfoil.sh/predicate/tdx-guest/v2"
+              },
+              "body": {
+                "type": "string",
+                "description": "Base64 (gzip-compressed) hardware attestation report."
+              }
+            }
+          },
+          "fetchedFrom": {
+            "type": "string"
+          },
+          "fetchedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "observedTlsKeyFingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "sha256 (hex) of the TLS public key the shim presented when this copy was fetched."
+          }
+        },
         "additionalProperties": true
       },
       "Attestation": {
         "type": "object",
+        "description": "Live attestation material. `verified` is ALWAYS false: verification is performed by the client against the hardware vendors' roots of trust and the repo's published measurements — a server cannot meaningfully vouch for itself.",
         "properties": {
           "deploymentId": {
             "type": "string"
@@ -2266,7 +2452,25 @@ const SPEC = {
             "format": "date-time"
           },
           "verified": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Always false — verify client-side.",
+            "example": false
+          },
+          "verify": {
+            "type": "object",
+            "description": "How to verify: instructions, the enclave repo whose release holds the signed measurements, and the well-known attestation endpoint.",
+            "additionalProperties": true
+          },
+          "tlsKeyFingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "sha256:<hex> of the enclave TLS public key, extracted from the quote's report_data.",
+            "example": "sha256:4b8c…e2a1"
+          },
+          "enclave": {
+            "$ref": "#/components/schemas/EnclaveAttestation"
           },
           "vm": {
             "$ref": "#/components/schemas/VmAttestation"
@@ -2274,8 +2478,15 @@ const SPEC = {
           "gpu": {
             "$ref": "#/components/schemas/GpuAttestation"
           },
-          "measurements": {
-            "$ref": "#/components/schemas/Measurements"
+          "app": {
+            "type": "object",
+            "description": "What app ran, with an honest `coverage` note: catalog apps are covered by the enclave measurement; ipfs apps are CID-verified by attested code but not in a hardware register.",
+            "additionalProperties": true
+          },
+          "sshHostKey": {
+            "type": "object",
+            "description": "Boot-generated in-enclave sshd host key fingerprint; asserted by attested code, not hardware-measured (measured: false).",
+            "additionalProperties": true
           },
           "guideUrl": {
             "type": "string",
@@ -3756,16 +3967,16 @@ const LINKS = [
     j: { tdx: { mrtd: "0x5a3c…91ef", minTcb: "2026.05" }, gpu: { approvedDrivers: ["565.57.01"], approvedVbios: ["96.00.AE.00.01"] } } },
   { t: "The VM measures itself", fn: "vm.json",
     d: "On boot the CPU emits a DCAP quote over MRTD + RTMR0–3, binding the firmware, the kernel, and the exact enclave image — including the Wasm app catalog baked into it. Change one byte and the quote changes.",
-    j: { technology: "intel-tdx", quote: "BAACAIEAAAAA…", measurements: { mrtd: "0x5a3c…91ef", rtmr3: "0x9f86…0a08" }, verified: true } },
+    j: { technology: "intel-tdx", quote: "BAACAIEAAAAA…", measurements: { mrTd: "5a3c…91ef", rtmr0: "83d5…44aa", rtmr1: "12fc…09b3", rtmr2: "0000…0000", rtmr3: "9f86…0a08" }, reportData: "4b8c…e2a1" } },
   { t: "The GPU attests too", fn: "gpu.json",
-    d: "With confidential computing on, the H200 produces a signed report countersigned by NVIDIA's NRAS, proving CC mode, driver, and vBIOS before any data reaches VRAM.",
-    j: { technology: "nvidia-cc", driverVersion: "565.57.01", vbiosVersion: "96.00.AE.00.01", attestationService: "nvidia-nras", verified: true } },
+    d: "With confidential computing on, the H200 signs an attestation report over your nonce, proving CC mode, driver, and vBIOS before any data reaches VRAM. Check it against NVIDIA's NRAS or nvtrust.",
+    j: { technology: "nvidia-cc", ccMode: "on", driverVersion: "565.57.01", nonce: "e37b…52c9", report: "SFVMQ…", certChain: "LS0tL…" } },
   { t: "TLS is born inside", fn: "tls.json",
-    d: "The enclave generates its TLS keypair in sealed memory and folds the public-key hash into the quote. The private key never leaves the boundary, so nobody can sit in the middle.",
-    j: { tlsKeyFingerprint: "sha256:4b8c…e2a1", boundTo: "rtmr3" } },
+    d: "The enclave generates its TLS keypair in sealed memory and folds the public-key hash into the quote's report_data. The private key never leaves the boundary, so nobody can sit in the middle.",
+    j: { tlsKeyFingerprint: "sha256:4b8c…e2a1", boundTo: "reportData[0:32] = sha256(TLS pubkey SPKI)" } },
   { t: "Your browser verifies", fn: "verify.js",
-    d: "The dapp pulls the bundle, checks the quote and report against published measurements, pins the TLS fingerprint, then connects. Trust ends in your client, not on our word.",
-    code: "const att = await (await fetch(`/v1/deployments/${id}/attestation`)).json();\n\nverifyTdxQuote(att.vm.quote,  POLICY.tdx);   // Intel DCAP collateral\nverifyGpuReport(att.gpu.report, POLICY.gpu); // NVIDIA NRAS\npinTls(att.tlsKeyFingerprint);               // only now: connect" }
+    d: "The dapp pulls the bundle, checks the quote and report against published measurements, pins the TLS fingerprint, then connects. Trust ends in your client, not on our word — the API's verified field is always false by design.",
+    code: "const att = await (await fetch(`/v1/attestation`)).json(); // public: verify BEFORE login\n\nverifyTdxQuote(att.vm.quote,  POLICY.tdx);   // Intel DCAP collateral\nverifyGpuReport(att.gpu.report, POLICY.gpu); // NVIDIA NRAS / nvtrust\npinTls(att.tlsKeyFingerprint);               // only now: connect" }
 ];
 function showAttest(i) {
   const l = LINKS[i];

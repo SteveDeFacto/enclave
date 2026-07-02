@@ -8,7 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-pip curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --break-system-packages --no-cache-dir cupy-cuda12x
+# nvidia-ml-py: NVML bindings for the CC attestation report (/attestation);
+# report generation is pure NVML, so the manager still never holds a CUDA context.
+RUN pip3 install --break-system-packages --no-cache-dir cupy-cuda12x nvidia-ml-py
 
 COPY worker.py /worker.py
 ENV WORKER_PORT=8090

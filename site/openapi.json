@@ -504,14 +504,37 @@
         }
       }
     },
+    "/attestation": {
+      "get": {
+        "tags": [
+          "Attestation"
+        ],
+        "operationId": "getEnclaveAttestation",
+        "summary": "Get the enclave attestation (public)",
+        "description": "Enclave-level attestation, no auth: the Tinfoil Remote Attestation Document (live Intel TDX quote binding this origin's TLS key), parsed measurement registers, and NVIDIA GPU CC evidence from a short server-side cache. Verify client-side BEFORE logging in or sending data. For a fresh GPU nonce challenge, use the per-deployment endpoint.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Attestation material.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attestation"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/deployments/{id}/attestation": {
       "get": {
         "tags": [
           "Attestation"
         ],
         "operationId": "getAttestation",
-        "summary": "Get the enclave attestation",
-        "description": "The Intel TDX quote and NVIDIA GPU attestation report plus the measurements to check them against. Verify client-side before sending data.",
+        "summary": "Get a deployment's attestation",
+        "description": "The live Intel TDX quote (relayed Tinfoil Remote Attestation Document plus parsed registers) and the NVIDIA GPU attestation report signed over your nonce, with honest per-app coverage notes. Verify client-side before sending data.",
         "parameters": [
           {
             "name": "id",
@@ -519,6 +542,16 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "nonce",
+            "in": "query",
+            "required": false,
+            "description": "32-byte hex freshness challenge folded into the GPU attestation report. Random if omitted.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{64}$"
             }
           }
         ],
@@ -1366,21 +1399,55 @@
       },
       "Measurements": {
         "type": "object",
-        "description": "Expected measurements to check the quote/report against.",
+        "description": "Registers parsed out of the quote (Intel TDX: mrTd + rtmr0-3; AMD SEV-SNP: measurement). Compare against the Sigstore-signed measurements published on the enclave repo's release.",
         "additionalProperties": true
       },
       "VmAttestation": {
         "type": "object",
-        "description": "Intel TDX quote material.",
+        "description": "Live CPU-TEE evidence. `quote` is the raw hardware quote (base64, decompressed) — feed it to any DCAP/SNP verifier. `reportData` binds the enclave TLS key: bytes 0-31 are sha256 of the TLS public key (SPKI DER) this origin presents.",
+        "properties": {
+          "technology": { "type": "string", "example": "intel-tdx" },
+          "quote": { "type": "string", "description": "Base64 raw quote." },
+          "quoteVersion": { "type": ["integer", "null"], "example": 4 },
+          "measurements": { "$ref": "#/components/schemas/Measurements" },
+          "reportData": { "type": ["string", "null"], "description": "64-byte report_data, hex." }
+        },
         "additionalProperties": true
       },
       "GpuAttestation": {
         "type": "object",
-        "description": "NVIDIA GPU attestation report.",
+        "description": "NVIDIA confidential-computing evidence, signed by the GPU over `nonce`. Verify `report` + `certChain` with NVIDIA NRAS or nvtrust's local_gpu_verifier and confirm it signs your nonce.",
+        "properties": {
+          "technology": { "type": "string", "example": "nvidia-cc" },
+          "ccMode": { "type": ["string", "null"], "example": "on" },
+          "nonce": { "type": "string", "description": "32-byte hex freshness challenge folded into the report." },
+          "driverVersion": { "type": ["string", "null"] },
+          "report": { "type": ["string", "null"], "description": "Base64 GPU attestation report (first card)." },
+          "certChain": { "type": ["string", "null"], "description": "Base64 attestation cert chain (first card)." },
+          "gpus": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+        },
+        "additionalProperties": true
+      },
+      "EnclaveAttestation": {
+        "type": "object",
+        "description": "The Tinfoil Remote Attestation Document relayed verbatim from /.well-known/tinfoil-attestation — feed `attestationDocument` to github.com/tinfoilsh/verifier. This copy is a convenience: fetch the document over your OWN connection for the binding to mean anything.",
+        "properties": {
+          "attestationDocument": {
+            "type": "object",
+            "properties": {
+              "format": { "type": "string", "example": "https://tinfoil.sh/predicate/tdx-guest/v2" },
+              "body": { "type": "string", "description": "Base64 (gzip-compressed) hardware attestation report." }
+            }
+          },
+          "fetchedFrom": { "type": "string" },
+          "fetchedAt": { "type": "string", "format": "date-time" },
+          "observedTlsKeyFingerprint": { "type": ["string", "null"], "description": "sha256 (hex) of the TLS public key the shim presented when this copy was fetched." }
+        },
         "additionalProperties": true
       },
       "Attestation": {
         "type": "object",
+        "description": "Live attestation material. `verified` is ALWAYS false: verification is performed by the client against the hardware vendors' roots of trust and the repo's published measurements — a server cannot meaningfully vouch for itself.",
         "properties": {
           "deploymentId": {
             "type": "string"
@@ -1390,7 +1457,22 @@
             "format": "date-time"
           },
           "verified": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Always false — verify client-side.",
+            "example": false
+          },
+          "verify": {
+            "type": "object",
+            "description": "How to verify: instructions, the enclave repo whose release holds the signed measurements, and the well-known attestation endpoint.",
+            "additionalProperties": true
+          },
+          "tlsKeyFingerprint": {
+            "type": ["string", "null"],
+            "description": "sha256:<hex> of the enclave TLS public key, extracted from the quote's report_data.",
+            "example": "sha256:4b8c…e2a1"
+          },
+          "enclave": {
+            "$ref": "#/components/schemas/EnclaveAttestation"
           },
           "vm": {
             "$ref": "#/components/schemas/VmAttestation"
@@ -1398,8 +1480,15 @@
           "gpu": {
             "$ref": "#/components/schemas/GpuAttestation"
           },
-          "measurements": {
-            "$ref": "#/components/schemas/Measurements"
+          "app": {
+            "type": "object",
+            "description": "What app ran, with an honest `coverage` note: catalog apps are covered by the enclave measurement; ipfs apps are CID-verified by attested code but not in a hardware register.",
+            "additionalProperties": true
+          },
+          "sshHostKey": {
+            "type": "object",
+            "description": "Boot-generated in-enclave sshd host key fingerprint; asserted by attested code, not hardware-measured (measured: false).",
+            "additionalProperties": true
           },
           "guideUrl": {
             "type": "string",

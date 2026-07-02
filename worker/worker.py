@@ -26,7 +26,7 @@ ISOLATION — what Layer 2 gives and what it does NOT (no faking):
     Layer 4 (fence_ptx stub + the adversarial probe). Until then children run
     ONLY trusted PTX (REQUIRE_FENCE gate). <-- do not weaken this lightly.
 """
-import os, sys, json, time, base64, threading, subprocess, urllib.request, urllib.error
+import os, sys, json, time, base64, threading, subprocess, urllib.request, urllib.error, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # -------- shared config (both roles) ----------------------------------------
@@ -203,6 +203,77 @@ def _capacity():
             "smFree": round(free * 132), "vramFreeGb": round(free * VRAM_GB, 1)}
 
 
+# ---- GPU attestation (NVIDIA confidential computing) ------------------------
+# This container holds the card, so IT produces the hardware evidence: the CC
+# attestation report the GPU signs over a caller-supplied 32-byte nonce, plus
+# the cert chains to verify it (NRAS or nvtrust's local_gpu_verifier). Pure
+# NVML — no CUDA context, so the manager stays GPU-context-free. We only ship
+# evidence; verification is the caller's job, never asserted here.
+NONCE_BYTES = 32
+
+def _cbytes(arr, size):
+    return bytes(bytearray(arr[:size]))
+
+def _gpu_attestation(nonce_hex):
+    try:
+        nonce = bytes.fromhex(nonce_hex)
+    except ValueError:
+        return 422, {"error": "nonce must be hex"}
+    if len(nonce) != NONCE_BYTES:
+        return 422, {"error": f"nonce must be {NONCE_BYTES} bytes of hex"}
+    try:
+        import pynvml
+    except Exception as e:                                       # noqa: BLE001
+        return 501, {"available": False, "error": f"nvidia-ml-py not installed: {e}"}
+    try:
+        pynvml.nvmlInit()
+    except Exception as e:                                       # noqa: BLE001
+        return 502, {"available": False, "error": f"NVML init failed: {e}"}
+    try:
+        out = {"available": True, "nonce": nonce_hex, "gpus": []}
+        try:
+            out["driverVersion"] = _s(pynvml.nvmlSystemGetDriverVersion())
+        except Exception:                                        # noqa: BLE001
+            out["driverVersion"] = None
+        # system CC state: report honestly, including devtools mode (weaker) or off
+        try:
+            st = pynvml.nvmlSystemGetConfComputeState()
+            out["ccMode"] = {0: "off", 1: "on"}.get(getattr(st, "ccFeature", None), str(getattr(st, "ccFeature", None)))
+            out["devToolsMode"] = {0: "off", 1: "on"}.get(getattr(st, "devToolsMode", None), None)
+        except Exception as e:                                   # noqa: BLE001
+            out["ccMode"], out["ccModeError"] = None, str(e)
+        for i in range(pynvml.nvmlDeviceGetCount()):
+            h = pynvml.nvmlDeviceGetHandleByIndex(i)
+            g = {"index": i, "uuid": _s(pynvml.nvmlDeviceGetUUID(h))}
+            try:
+                g["vbiosVersion"] = _s(pynvml.nvmlDeviceGetVbiosVersion(h))
+            except Exception:                                    # noqa: BLE001
+                pass
+            rep = pynvml.nvmlDeviceGetConfComputeGpuAttestationReport(h, nonce)
+            g["attestationReport_b64"] = base64.b64encode(
+                _cbytes(rep.attestationReport, rep.attestationReportSize)).decode()
+            if getattr(rep, "isCecAttestationReportPresent", 0):
+                g["cecAttestationReport_b64"] = base64.b64encode(
+                    _cbytes(rep.cecAttestationReport, rep.cecAttestationReportSize)).decode()
+            cert = pynvml.nvmlDeviceGetConfComputeGpuCertificate(h)
+            g["attestationCertChain_b64"] = base64.b64encode(
+                _cbytes(cert.attestationCertChain, cert.attestationCertChainSize)).decode()
+            g["gpuCertChain_b64"] = base64.b64encode(
+                _cbytes(cert.certChain, cert.certChainSize)).decode()
+            out["gpus"].append(g)
+        return 200, out
+    except Exception as e:                                       # noqa: BLE001
+        return 502, {"available": False, "error": f"NVML attestation failed: {e}"}
+    finally:
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:                                        # noqa: BLE001
+            pass
+
+def _s(v):
+    return v.decode() if isinstance(v, bytes) else str(v)
+
+
 class MGR(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _send(self, code, obj):
@@ -218,6 +289,11 @@ class MGR(BaseHTTPRequestHandler):
                                     "capacity": _capacity()})
         if self.path == "/tenants":
             return self._send(200, {"tenants": [_pub(r) for r in _tenants.values()]})
+        if self.path.split("?", 1)[0] == "/attestation":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            nonce_hex = (q.get("nonce") or [os.urandom(NONCE_BYTES).hex()])[0]
+            code, obj = _gpu_attestation(nonce_hex)
+            return self._send(code, obj)
         if self.path.startswith("/tenants/"):
             tid = self.path.split("/", 2)[2]
             rec = _tenants.get(tid)

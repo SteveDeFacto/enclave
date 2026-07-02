@@ -83,6 +83,11 @@ containers:
       - GRACE_SEC: "90"                                  # grace after expiry before teardown (top-up window)
       - PAY_POLL_SEC: "12"
       - SESSION_TTL: "43200"
+      # attestation: /v1/attestation relays the shim's Remote Attestation Document
+      # (fetched from /.well-known/tinfoil-attestation on loopback; ATTESTATION_URL
+      # overrides discovery if the shim binds elsewhere). ENCLAVE_REPO is the repo
+      # whose Sigstore-signed release measurements verifiers compare the quote to.
+      - ENCLAVE_REPO: "SteveDeFacto/Nan"
       - GPU_COUNT: "1"
       - GPU_VRAM_GB: "141"
       - SM_TOTAL: "132"

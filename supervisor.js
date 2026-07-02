@@ -17,7 +17,10 @@
 import express from "express";
 import cors from "cors";
 import http from "node:http";
+import https from "node:https";
 import net from "node:net";
+import { createHash, randomBytes } from "node:crypto";
+import { gunzipSync } from "node:zlib";
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
 const pexec = promisify(execFile);
@@ -352,8 +355,9 @@ async function initSshHostKey() {
     const out  = execFileSync("ssh-keygen", ["-lf", `${path}.pub`]).toString(); // "256 SHA256:… comment (ED25519)"
     SSH_HOST_KEY_PATH = path;
     SSH_HOST_KEY_FP   = (out.match(/SHA256:\S+/) || ["SHA256:<unknown>"])[0];
-    // TODO: extend SSH_HOST_KEY_FP (or the raw pubkey) into a TDX RTMR here so
-    // getMeasurements() reports a measured, not just asserted, host key.
+    // Tinfoil exposes no guest RTMR-extend, so this key cannot be folded into a
+    // hardware register; getMeasurements() reports it as measured:false
+    // (asserted by attested code) rather than pretending otherwise.
   } catch (e) {
     console.warn("ssh host key not generated (ssh-keygen missing?):", e.message);
   }
@@ -470,11 +474,10 @@ function sshAccessOf(rec) {
 
 // ============================================================================
 // >>> IMPLEMENT THESE for your CVM launch mechanism (e.g. the app manager on
-//     VMMGR_URL). Contract: one ingress port, no sibling reach,
-//     and BEFORE launch extend a TDX RTMR with image.digest so getMeasurements()
-//     is honest. If the CVM can't extend an RTMR from the guest, attestation
-//     covers this supervisor only - say so in /attestation rather than implying
-//     the user image is measured.
+//     VMMGR_URL). Contract: one ingress port, no sibling reach.
+//     Tinfoil exposes no guest RTMR-extend, so a launched image's digest cannot
+//     be folded into the hardware measurements; /attestation reports exactly
+//     that (per-app `coverage` in getMeasurements) instead of implying it.
 //     SSH: the sandbox runs ANY stock image and needs NO sshd of its own. The
 //     supervisor hosts sshd (measured host key from initSshHostKey); spawn starts
 //     a loopback sshd for this deployment using SSH_HOST_KEY_PATH, installs
@@ -486,9 +489,10 @@ function sshAccessOf(rec) {
 // thing giving memory isolation + fault containment + VRAM scrub-on-exit at once
 // (all empirically confirmed). Compute + VRAM are capped by MPS, also confirmed
 // enforced under CC. Never co-locate two tenants in one process.
-//   STILL TODO (separate steps): (#3) extend a TDX RTMR with image.digest before
-//   launch so getMeasurements() is honest; SSH data-plane (returns sshPort 0 here
+//   STILL TODO (separate steps): SSH data-plane (returns sshPort 0 here
 //   - the HTTP data path is the real channel; SSH is unwired in this revision).
+//   Image digests are NOT RTMR-extended (no guest extend interface) - the
+//   attestation endpoint reports that coverage gap explicitly, never fakes it.
 // ============================================================================
 const containerName = (id) => WORKER_PREFIX + String(id).replace(/[^a-zA-Z0-9_.-]/g, "");
 // resolve the pinned image ref: prefer name@sha256:digest when a digest is given
@@ -605,19 +609,191 @@ async function stopContainer(rec) {
 function appMeasurement(rec) {
   const ref = (rec.image && rec.image.reference) || null;
   const m = /^ipfs:\/\/([^/?#]+)/.exec(ref || "");
-  return m ? { kind: "ipfs", reference: ref, cid: m[1], verifiedAgainstCid: true }
-           : { kind: "catalog", reference: ref };   // baked-in id -> covered by the image measurement
+  return m ? { kind: "ipfs", reference: ref, cid: m[1], verifiedAgainstCid: true,
+               coverage: "Bytes were verified against this CID inside the enclave by the attested "
+                       + "wasm-manager before launch. The CID itself is NOT in a hardware register." }
+           : { kind: "catalog", reference: ref,
+               coverage: "Baked into the attested enclave image, so it is covered by the enclave "
+                       + "measurement registers below." };
 }
-async function getMeasurements(rec) {
-  // TODO: return the live TDX quote (+ whole-card NVIDIA CC report) folding in image.digest.
-  return {
-    tlsKeyFingerprint: "sha256:<enclave-tls-pubkey-hash>",
-    sshHostKeyFingerprint: SSH_HOST_KEY_FP, // boot-generated; measured into an RTMR (see initSshHostKey TODO)
-    app: appMeasurement(rec),
-    vm:  { technology: "intel-tdx", quote: "<base64 tdx quote>", measurements: { rtmr3: rec.digest }, verified: true },
-    gpu: rec._gpu ? { technology: "nvidia-cc", ccMode: "on", vramCapGb: rec.resources.vramGb,
-                      computeShare: rec.resources.computeShare, report: "<base64 nvidia report>", verified: true } : null,
+// ---- REAL ATTESTATION -------------------------------------------------------
+// The Tinfoil shim generates the enclave TLS key, obtains an Intel TDX quote
+// whose report_data[0:32] = sha256(TLS pubkey, SPKI DER), and serves the signed
+// Remote Attestation Document at /.well-known/tinfoil-attestation. We RELAY that
+// document verbatim and PARSE the quote so the registers are inspectable - but
+// we never claim "verified": the party being verified cannot vouch for itself.
+// Clients verify with github.com/tinfoilsh/verifier against the Sigstore-signed
+// measurements published on ENCLAVE_REPO's releases, over their OWN connection.
+const RAD_PATH        = "/.well-known/tinfoil-attestation";
+const ATTESTATION_URL = process.env.ATTESTATION_URL || "";                 // explicit RAD URL override
+const RAD_CACHE_MS    = parseInt(process.env.RAD_CACHE_MS || "300000", 10); // convenience-copy staleness bound
+const sha256Hex = (b) => createHash("sha256").update(b).digest("hex");
+
+// GET url, tolerate the shim's cert (the RAD is SELF-verifying: the quote binds
+// the TLS key, so transport trust adds nothing), and capture the peer key so we
+// can report the fingerprint exactly as tinfoilsh/verifier computes it.
+function fetchRad(url, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = (u.protocol === "https:" ? https : http).request(u,
+      { method: "GET", timeout: timeoutMs, rejectUnauthorized: false }, (res) => {
+        // grab the peer key NOW - the socket detaches from res once the body ends
+        let liveTlsKeyFP = null;
+        try { const x = res.socket.getPeerX509Certificate?.();
+              if (x) liveTlsKeyFP = sha256Hex(x.publicKey.export({ type: "spki", format: "der" })); } catch {}
+        let buf = ""; res.on("data", (c) => (buf += c));
+        res.on("end", () => {
+          if (res.statusCode !== 200) return reject(new Error(`${u.host}${u.pathname}: HTTP ${res.statusCode}`));
+          let doc; try { doc = JSON.parse(buf); } catch { return reject(new Error(`${u.host}: not JSON`)); }
+          if (typeof doc.format !== "string" || typeof doc.body !== "string")
+            return reject(new Error(`${u.host}: not a Tinfoil attestation document`));
+          resolve({ doc, liveTlsKeyFP, url });
+        });
+      });
+    req.on("error", reject);
+    req.on("timeout", () => req.destroy(new Error(`${u.host}: timeout`)));
+    req.end();
+  });
+}
+let _radCache = null;                 // { doc, liveTlsKeyFP, url, at }
+let _radInflight = null;
+async function fetchEnclaveRad(origin) {
+  if (_radCache && Date.now() - _radCache.at < RAD_CACHE_MS) return _radCache;
+  if (_radInflight) return _radInflight;
+  // the shim terminates TLS inside this CVM, so loopback is tried first; the
+  // public origin (hairpin through ingress) is the fallback.
+  const candidates = ATTESTATION_URL ? [ATTESTATION_URL]
+    : ["https://127.0.0.1" + RAD_PATH, "http://127.0.0.1" + RAD_PATH,
+       ...(origin ? [origin + RAD_PATH] : [])];
+  _radInflight = (async () => {
+    let lastErr = null;
+    for (const url of candidates) {
+      try { const r = await fetchRad(url); _radCache = { ...r, at: Date.now() }; return _radCache; }
+      catch (e) { lastErr = e; }
+    }
+    throw new Error(`attestation document unreachable (${lastErr?.message || "no candidates"})`);
+  })();
+  try { return await _radInflight; } finally { _radInflight = null; }
+}
+
+// Parse a raw Intel TDX quote (DCAP QuoteV4/V5). Offsets are the fixed TD-report
+// layout; report_data is what binds the TLS key. Returns null on anything odd -
+// the verbatim document is still returned, clients parse it themselves anyway.
+function parseTdxQuote(q) {
+  try {
+    if (q.length < 48 + 584) return null;
+    const version = q.readUInt16LE(0), teeType = q.readUInt32LE(4);
+    if (teeType !== 0x81) return null;                                  // TDX
+    let body;
+    if (version === 4) body = q.subarray(48, 48 + 584);
+    else if (version === 5) {
+      const bodyType = q.readUInt16LE(48);
+      if (bodyType !== 2 && bodyType !== 3) return null;                // TD 1.0 / 1.5
+      body = q.subarray(54);
+    } else return null;
+    if (body.length < 584) return null;
+    const hx = (o, n) => body.subarray(o, o + n).toString("hex");
+    return { quoteVersion: version,
+             mrSeam: hx(16, 48), mrTd: hx(136, 48),
+             rtmr0: hx(328, 48), rtmr1: hx(376, 48), rtmr2: hx(424, 48), rtmr3: hx(472, 48),
+             reportData: hx(520, 64) };
+  } catch { return null; }
+}
+// AMD SEV-SNP report (in case a CVM lands on SNP hardware): fixed offsets too.
+function parseSnpReport(r) {
+  try {
+    if (r.length < 0x90 + 48) return null;
+    return { measurement: r.subarray(0x90, 0x90 + 48).toString("hex"),
+             reportData:  r.subarray(0x50, 0x50 + 64).toString("hex") };
+  } catch { return null; }
+}
+function parseRad(doc) {
+  let raw = Buffer.from(doc.body, "base64");
+  if (raw[0] === 0x1f && raw[1] === 0x8b) raw = gunzipSync(raw);         // predicate v2 bodies are gzipped
+  const fmt = doc.format || "";
+  if (fmt.includes("tdx-guest")) {
+    const p = parseTdxQuote(raw);
+    return { technology: "intel-tdx", quote: raw.toString("base64"),
+             measurements: p && { mrTd: p.mrTd, rtmr0: p.rtmr0, rtmr1: p.rtmr1, rtmr2: p.rtmr2, rtmr3: p.rtmr3 },
+             reportData: p?.reportData ?? null, quoteVersion: p?.quoteVersion };
+  }
+  if (fmt.includes("sev-snp-guest")) {
+    const p = parseSnpReport(raw);
+    return { technology: "amd-sev-snp", quote: raw.toString("base64"),
+             measurements: p && { measurement: p.measurement }, reportData: p?.reportData ?? null };
+  }
+  return { technology: fmt, quote: raw.toString("base64"), measurements: null, reportData: null };
+}
+
+// GPU evidence comes from the worker manager (the container that holds the card):
+// NVML's conf-compute attestation report, signed by the GPU, over OUR nonce.
+async function fetchGpuEvidence(nonceHex, timeoutMs = 30000) {
+  const r = await mgrReq("GET", `/attestation?nonce=${nonceHex}`, null, timeoutMs);
+  if (r.status !== 200 || r.body.available === false)
+    throw new Error(r.body.error || `worker manager /attestation ${r.status}`);
+  return r.body;
+}
+
+async function getMeasurements(rec, { origin = ENCLAVE_ENDPOINT, nonce } = {}) {
+  const out = {
+    // ALWAYS false here: verification is the CLIENT's act, on its own connection.
+    // A "verified: true" asserted by the machine being verified proves nothing.
+    verified: false,
+    verify: {
+      how: "Fetch " + RAD_PATH + " from this origin over your OWN TLS connection, verify the quote "
+         + "against the Intel/AMD root of trust (github.com/tinfoilsh/verifier does both), compare the "
+         + "registers to the Sigstore-signed measurements on the release page of `repo`, and check that "
+         + "reportData[0:32] equals sha256 of the TLS public key (SPKI DER) your connection presents.",
+      repo: ENCLAVE_REPO || null,
+      attestationEndpoint: (origin || "") + RAD_PATH,
+    },
+    tlsKeyFingerprint: null,
+    sshHostKeyFingerprint: SSH_HOST_KEY_FP,
+    sshHostKey: { fingerprint: SSH_HOST_KEY_FP, measured: false,
+                  note: "Generated at boot inside the enclave by the attested supervisor and served over "
+                      + "the attested origin, but NOT folded into a hardware register (Tinfoil exposes no "
+                      + "guest RTMR-extend), so it is asserted by measured code rather than measured itself." },
+    app: rec ? appMeasurement(rec) : null,
+    vm: null,
+    gpu: null,
   };
+  try {
+    const { doc, liveTlsKeyFP, url } = await fetchEnclaveRad(origin);
+    const parsed = parseRad(doc);
+    const attestedTlsFP = parsed.reportData ? parsed.reportData.slice(0, 64) : null;
+    out.tlsKeyFingerprint = attestedTlsFP ? `sha256:${attestedTlsFP}` : null;
+    out.enclave = {
+      attestationDocument: doc,               // verbatim Tinfoil RAD - feed to tinfoilsh/verifier
+      fetchedFrom: url, fetchedAt: new Date(_radCache.at).toISOString(),
+      // fingerprint of the key the shim ACTUALLY presented when we fetched; equals
+      // the quote-bound one unless the shim rotated its key mid-cache-window.
+      observedTlsKeyFingerprint: liveTlsKeyFP,
+    };
+    out.vm = { technology: parsed.technology, quote: parsed.quote, quoteVersion: parsed.quoteVersion,
+               measurements: parsed.measurements, reportData: parsed.reportData };
+  } catch (e) {
+    out.enclave = { available: false, error: e.message,
+                    note: "Fetch " + RAD_PATH + " from this origin yourself - the shim serves it directly." };
+  }
+  if (rec?._gpu) {
+    const n = nonce || randomBytes(32).toString("hex");
+    try {
+      const ev = await fetchGpuEvidence(n);
+      out.gpu = { technology: "nvidia-cc", ccMode: ev.ccMode ?? null, nonce: ev.nonce || n,
+                  driverVersion: ev.driverVersion ?? null,
+                  // first card's material at the top level (single-card enclaves); all cards in gpus[]
+                  report: ev.gpus?.[0]?.attestationReport_b64 ?? null,
+                  certChain: ev.gpus?.[0]?.attestationCertChain_b64 ?? null,
+                  gpus: ev.gpus || [],
+                  vramCapGb: rec.resources.vramGb, computeShare: rec.resources.computeShare,
+                  verify: "Check the report + cert chain with NVIDIA NRAS or nvtrust's local_gpu_verifier; "
+                        + "confirm it signs YOUR nonce. The whole card is one CC trust domain - the VRAM/compute "
+                        + "split is enforced by the attested supervisor+MPS, not by the hardware report." };
+    } catch (e) {
+      out.gpu = { technology: "nvidia-cc", available: false, error: e.message };
+    }
+  }
+  return out;
 }
 function capacity() {
   return {
@@ -1309,11 +1485,46 @@ app.post("/v1/deployments/:id/topup", authed, (req, res) => {
   res.json({ id: rec.id, status: rec.status, timeRemainingSec: timeRemainingSec(rec), payment: paymentInstructions(rec) });
 });
 
+// Optional ?nonce=<64 hex chars>: freshness challenge folded into the GPU report
+// (the TDX quote needs none - it binds the long-lived TLS key, and freshness
+// comes from fetching the RAD over your own connection).
+function attestNonce(req, res) {
+  const n = req.query.nonce;
+  if (n == null) return randomBytes(32).toString("hex");
+  if (!/^[0-9a-fA-F]{64}$/.test(n)) { fail(res, 422, "bad_nonce", "nonce must be 32 bytes of hex."); return null; }
+  return n.toLowerCase();
+}
 app.get("/v1/deployments/:id/attestation", authed, async (req, res) => {
   const rec = deployments.get(req.params.id);
   if (!rec || rec.owner !== req.address) return fail(res, 404, "not_found", "No such deployment.");
-  try { res.json({ deploymentId: rec.id, generatedAt: new Date().toISOString(), ...(await getMeasurements(rec)), guideUrl: "https://nan.host/#attest" }); }
+  const nonce = attestNonce(req, res); if (nonce == null) return;
+  try { res.json({ deploymentId: rec.id, generatedAt: new Date().toISOString(),
+                   ...(await getMeasurements(rec, { origin: originOf(req), nonce })),
+                   guideUrl: "https://nan.host/#attest" }); }
   catch (e) { fail(res, 502, "attestation_error", e.message); }
+});
+
+// Enclave-level attestation, PUBLIC: verify the enclave before logging in or
+// sending a byte. GPU evidence is included from a short cache (refreshed with a
+// self-chosen nonce) so an unauthenticated caller can't spam NVML report
+// generation; pass a nonce on the per-deployment endpoint for a fresh challenge.
+let _gpuEvCache = null;                       // { ev?, err?, at } - failures cached briefly too
+app.get("/v1/attestation", async (req, res) => {
+  const out = await getMeasurements(null, { origin: originOf(req) });
+  try {
+    const ttl = _gpuEvCache?.err ? 10_000 : 60_000;
+    if (!_gpuEvCache || Date.now() - _gpuEvCache.at > ttl) {
+      try { _gpuEvCache = { ev: await fetchGpuEvidence(randomBytes(32).toString("hex"), 15000), at: Date.now() }; }
+      catch (e) { _gpuEvCache = { err: e, at: Date.now() }; }
+    }
+    if (_gpuEvCache.err) throw _gpuEvCache.err;
+    const ev = _gpuEvCache.ev;
+    out.gpu = { technology: "nvidia-cc", ccMode: ev.ccMode ?? null, nonce: ev.nonce,
+                driverVersion: ev.driverVersion ?? null, generatedAt: new Date(_gpuEvCache.at).toISOString(),
+                report: ev.gpus?.[0]?.attestationReport_b64 ?? null,
+                certChain: ev.gpus?.[0]?.attestationCertChain_b64 ?? null, gpus: ev.gpus || [] };
+  } catch (e) { out.gpu = { technology: "nvidia-cc", available: false, error: e.message }; }
+  res.json({ generatedAt: new Date().toISOString(), ...out, guideUrl: "https://nan.host/#attest" });
 });
 
 // Tail the worker's stdout/stderr (owner only). ?tail=N (default 200, max 2000).
