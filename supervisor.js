@@ -982,6 +982,19 @@ async function onPaid(payRefHex, payer, amountRaw) {
 }
 
 // Watch the forwarder for Paid events (poll getLogs; robust on public RPC).
+// Robust log watch on a public RPC. Two failure modes the naive "scan to tip,
+// advance past it" loop hits, and how we kill both:
+//  (1) MISSED LOGS -> lost payments. mainnet.base.org is load-balanced; getBlockNumber()
+//      and getLogs() can hit different nodes at different heights, so a log in the newest
+//      blocks can be absent from the response — and advancing past it drops the payment
+//      forever. Fix: only finalize up to tip - PAY_CONFIRMATIONS, and re-scan a trailing
+//      overlap every poll so a momentarily-behind node gets a second look.
+//  (2) DOUBLE-CREDIT. Re-scanning would re-run onPaid (a top-up) for the same event.
+//      Fix: dedup on txHash:logIndex — each payment log is handled exactly once, which
+//      also makes a mid-poll RPC failure safe to retry.
+const PAY_CONFIRMATIONS = parseInt(process.env.PAY_CONFIRMATIONS || "3", 10);    // blocks of lag before trusting a log
+const PAY_RESCAN_BLOCKS = parseInt(process.env.PAY_RESCAN_BLOCKS || "20", 10);   // trailing overlap re-scanned each poll (~40s on Base)
+const _seenLogs = new Map();   // "txHash:logIndex" -> blockNumber (pruned as the window advances)
 let _payFromBlock = null;
 async function pollPayments() {
   if (!FORWARDER_ADDRESS) return;
@@ -991,22 +1004,26 @@ async function pollPayments() {
       const q = _pendingEth.splice(0);
       for (const p of q) await onPaidEth(p.payRefHex, p.payer, p.wei);
     }
-    const latest = await chainClient.getBlockNumber();
-    if (_payFromBlock == null) { _payFromBlock = latest; return; }   // start at the tip; don't replay history
-    if (latest < _payFromBlock) return;
-    const logs = await chainClient.getLogs({ address: getAddress(FORWARDER_ADDRESS),
-      event: PAY_EVENT, fromBlock: _payFromBlock, toBlock: latest });
-    for (const lg of logs) {
-      const a = lg.args || {};
-      await onPaid(a.deploymentId, a.payer, a.amount);
+    const tip = await chainClient.getBlockNumber();
+    const safe = tip - BigInt(PAY_CONFIRMATIONS);                    // don't finalize logs newer than this
+    if (safe < 0n) return;
+    if (_payFromBlock == null) _payFromBlock = safe + 1n;            // first run: start at the (confirmed) tip
+    if (safe < _payFromBlock) return;                               // no new confirmed blocks yet
+    const from = _payFromBlock > BigInt(PAY_RESCAN_BLOCKS) ? _payFromBlock - BigInt(PAY_RESCAN_BLOCKS) : 0n;
+    for (const [k, b] of _seenLogs) if (b < from) _seenLogs.delete(k);   // prune dedup set below the window
+    for (const [evt, isEth] of [[PAY_EVENT, false], [PAY_ETH_EVENT, true]]) {
+      const logs = await chainClient.getLogs({ address: getAddress(FORWARDER_ADDRESS),
+        event: evt, fromBlock: from, toBlock: safe });
+      for (const lg of logs) {
+        const key = `${lg.transactionHash}:${lg.logIndex}`;
+        if (_seenLogs.has(key)) continue;                            // exactly-once, even across re-scans / partial failures
+        _seenLogs.set(key, lg.blockNumber);
+        const a = lg.args || {};
+        if (isEth) await onPaidEth(a.deploymentId, a.payer, a.amountWei);
+        else       await onPaid(a.deploymentId, a.payer, a.amount);
+      }
     }
-    const ethLogs = await chainClient.getLogs({ address: getAddress(FORWARDER_ADDRESS),
-      event: PAY_ETH_EVENT, fromBlock: _payFromBlock, toBlock: latest });
-    for (const lg of ethLogs) {
-      const a = lg.args || {};
-      await onPaidEth(a.deploymentId, a.payer, a.amountWei);
-    }
-    _payFromBlock = latest + 1n;
+    _payFromBlock = safe + 1n;
   } catch (e) { console.warn(`[pay] poll error: ${e.shortMessage || e.message}`); }
 }
 function startPaymentWatcher() {
