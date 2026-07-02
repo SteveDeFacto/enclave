@@ -69,12 +69,15 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 IPFS_GATEWAY   = os.environ.get("IPFS_GATEWAY", "https://ipfs.nan.host").rstrip("/")
 WASM_MAX_BYTES = int(os.environ.get("WASM_MAX_BYTES", str(256 * 1024 * 1024)))  # cap on a fetched app
 IPFS_TIMEOUT   = float(os.environ.get("IPFS_FETCH_TIMEOUT", "120"))
-# firewall: per-version ports config from the catalog. Declarable range keeps tenant
-# apps off the supervisor (8080), this manager (8091), and the manager-assigned
-# serve range (PORT_LO..PORT_HI), so a declared port can never shadow infrastructure
-# or another tenant's assigned HTTP socket.
-PORT_MIN_DECL  = 1024
+# firewall: per-version ports config from the catalog. Logical ports are LABELS
+# (each deployment binds a remapped actual), so classic low numbers are allowed —
+# a DNS app may advertise udp:53. The ceiling keeps labels out of the manager-
+# assigned serve range; reserved keeps them off infrastructure (supervisor 8080,
+# this manager 8091). Privileged actuals are never attempted: logical < 1024 is
+# ALWAYS remapped to a free high port (unprivileged processes can't bind them).
+PORT_MIN_DECL  = 1
 PORT_MAX_DECL  = 19999
+PRIV_PORT_MAX  = 1023
 RESERVED_PORTS = {8080, 8091}
 AUDIT_SECS     = float(os.environ.get("WASM_AUDIT_INTERVAL", "10"))
 
@@ -216,7 +219,7 @@ def _parse_ports(entries):
             raise ValueError(f"bad port spec '{e}' (use http[:N] | tcp:N | udp:N)")
         n = int(m.group(2))
         if not (PORT_MIN_DECL <= n <= PORT_MAX_DECL) or n in RESERVED_PORTS:
-            raise ValueError(f"port {n} not allowed (declare {PORT_MIN_DECL}-{PORT_MAX_DECL}, "
+            raise ValueError(f"port {n} not allowed (labels are {PORT_MIN_DECL}-{PORT_MAX_DECL}, "
                              f"excluding {sorted(RESERVED_PORTS)})")
         if m.group(1) == "http":
             if http_port is not None:
@@ -232,44 +235,89 @@ def _parse_ports(entries):
             "declared": declared, "norm": norm}
 
 
-def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int):
+def _port_free(p: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind((HOST_IP, p))
+            return True
+        except OSError:
+            return False
+
+
+def _alloc_ports(pspec) -> dict:
+    """Map each LOGICAL port entry ('tcp:5432') to an ACTUAL loopback port.
+
+    Declared ports are the app's stable interface (what the bridge URL and
+    NAN_PORTS reference); the actual bind is per-deployment, so two tenants can
+    both run "the 5432 app" at the same time with no conflict — the URL routes
+    by deployment id, never by the raw port. We prefer the logical number when
+    it's free (apps that hardcode their port keep working while they can);
+    otherwise the OS assigns a free one. NAN_PORTS always carries the truth."""
+    with _lock:
+        claimed = set()
+        for r in _apps.values():
+            if r["status"] in ("starting", "running"):
+                claimed |= set((r.get("portMap") or {}).values())
+    out = {}
+    for entry in pspec["norm"]:
+        logical = int(entry.split(":")[1])
+        # privileged labels (<1024, e.g. udp:53) are never bound literally
+        keep = logical > PRIV_PORT_MAX and logical not in claimed and _port_free(logical)
+        actual = logical if keep else _free_port()
+        claimed.add(actual)
+        out[entry] = actual
+    return out
+
+
+def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None):
     """The wasmtime invocation for a ports spec. Returns (cmd, host_port, wait_ports).
 
     serve mode: `wasmtime serve` owns the one HTTP listener; no sockets granted.
     run mode:   `wasmtime run` with wasi:sockets granted (-Stcp/-Sudp/
                 -Sinherit-network/-Sallow-ip-name-lookup, verified against
-                wasmtime 45) so the app binds its declared ports itself. The
-                grant is coarse (wasmtime can't allowlist per port), so the
-                audit sweep below enforces the per-port firewall: bind an
-                undeclared low port and the app is killed."""
+                wasmtime 45). The app binds the ACTUAL ports from the mapping;
+                NAN_PORTS tells it which ("tcp:5432=31245" = logical=actual —
+                bind the actual). The grant is coarse (wasmtime can't allowlist
+                per port), so the audit sweep enforces the firewall: bind an
+                unassigned low port and the app is killed."""
     if pspec["serve"]:
         return ([WASMTIME, "serve", "-Scli", "-Shttp",
                  "-W", f"max-memory-size={mem_bytes}",
                  "--addr", f"{HOST_IP}:{serve_port}", str(wasm)],
                 serve_port, [serve_port])
+    port_map = port_map or {}
+    nan_ports = ",".join(f"{e}={port_map[e]}" for e in pspec["norm"])
     cmd = [WASMTIME, "run", "-Scli", "-Stcp", "-Sudp",
            "-Sinherit-network", "-Sallow-ip-name-lookup",
            "-W", f"max-memory-size={mem_bytes}",
-           "--env", "NAN_PORTS=" + ",".join(pspec["norm"]), str(wasm)]
-    host_port = pspec["http"] or 0
-    wait = [pspec["http"]] if pspec["http"] else sorted(pspec["tcp"])[:1]  # udp-only: no waitable port
+           "--env", "NAN_PORTS=" + nan_ports, str(wasm)]
+    http_entry = f"http:{pspec['http']}" if pspec["http"] else None
+    host_port = port_map.get(http_entry, 0) if http_entry else 0
+    if host_port:
+        wait = [host_port]
+    else:
+        tcp_actuals = sorted(port_map[e] for e in pspec["norm"] if e.startswith("tcp:"))
+        wait = tcp_actuals[:1]                               # udp-only: no waitable port
     return cmd, host_port, wait
 
 
 def launch(app_ref: str, name: str, share: float, mem_mb: int, pspec=None) -> dict:
     pspec = pspec or _parse_ports([])
+    port = _free_port() if pspec["serve"] else 0
+    port_map = {} if pspec["serve"] else _alloc_ports(pspec)   # logical entry -> actual bind
     vid = "app_" + uuid.uuid4().hex[:9]
-    port = _free_port() if pspec["serve"] else (pspec["http"] or 0)
     log_path = LOG_DIR / f"{vid}.log"
+    assigned = set(port_map.values()) | ({port} if port else set())
     rec = {"id": vid, "name": name or vid, "app": app_ref, "share": share,
            "hostPort": port, "sshHostPort": 0,
            "endpoint": f"http://{HOST_IP}:{port}" if port else None, "status": "starting",
            "createdAt": time.time(), "_proc": None, "_log": str(log_path),
            "error": None, "mem_mb": mem_mb,
-           "ports": pspec["norm"], "boundPorts": [],
-           "_declared": pspec["declared"],
-           # what the audit allows: declared ports + the manager-assigned serve port
-           "_allowed_ports": pspec["declared"] | ({port} if port else set())}
+           "ports": pspec["norm"],           # logical (the app's advertised interface)
+           "portMap": port_map,              # logical entry -> actual loopback bind
+           "boundPorts": [],                 # actuals confirmed bound (the bridge checks this)
+           "_assigned": assigned}            # what the audit allows
     with _lock:
         _apps[vid] = rec
 
@@ -293,7 +341,7 @@ def launch(app_ref: str, name: str, share: float, mem_mb: int, pspec=None) -> di
     # can grow) -- this is the real per-app memory ceiling, enforced by the
     # runtime rather than by RLIMIT_AS (see _preexec for why RLIMIT_AS is wrong).
     mem_bytes = max(mem_mb, 1) * 1024 * 1024
-    cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes)
+    cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map)
     rec["hostPort"] = host_port
     rec["endpoint"] = f"http://{HOST_IP}:{host_port}" if host_port else None
     logf = open(log_path, "wb")
@@ -367,20 +415,22 @@ def _bound_ports(pid) -> set:
 def _audit_rec(rec):
     """Enforce the per-port firewall on one app. The wasmtime sockets grant is
     all-or-nothing, so this is the fine-grained half: any bind in the policed
-    space (<= PORT_MAX_DECL, or reserved) that wasn't declared kills the app.
+    space (<= PORT_MAX_DECL, or reserved) that wasn't assigned kills the app.
     Ephemeral outbound ports (32768+) are out of scope on purpose."""
     proc = rec.get("_proc")
     pid = getattr(proc, "pid", None)
     if pid is None or (hasattr(proc, "poll") and proc.poll() is not None):
         return
     bound = _bound_ports(pid)
-    rec["boundPorts"] = sorted(bound & rec.get("_declared", set()))  # what the bridge may target
+    assigned = set(rec.get("_assigned") or [])
+    rec["boundPorts"] = sorted(bound & assigned)   # actuals the bridge may target
     policed = {p for p in bound if p <= PORT_MAX_DECL or p in RESERVED_PORTS}
-    extra = policed - set(rec.get("_allowed_ports") or [])
+    extra = policed - assigned
     if extra:
         rec["status"] = "failed"
-        rec["error"] = f"firewall: bound undeclared port(s) {sorted(extra)}; app killed"
-        print(f"[audit] {rec['id']} killed: undeclared ports {sorted(extra)}", flush=True)
+        rec["error"] = (f"firewall: bound unassigned port(s) {sorted(extra)}; app killed. "
+                        f"Apps must bind the ACTUAL ports from NAN_PORTS (logical=actual), not hardcode.")
+        print(f"[audit] {rec['id']} killed: unassigned ports {sorted(extra)}", flush=True)
         _kill(rec)
 
 
@@ -510,17 +560,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pspec = _parse_ports(b.get("ports") or [])
         except ValueError as e:
             return self._json(400, {"error": str(e)})
-        # declared ports are first-come-first-served on shared loopback: reject a
-        # launch whose declared ports collide with another live tenant's.
-        if pspec["declared"]:
-            with _lock:
-                taken = set()
-                for r in _apps.values():
-                    if r["status"] in ("starting", "running"):
-                        taken |= set(r.get("_declared") or set())
-            clash = pspec["declared"] & taken
-            if clash:
-                return self._json(409, {"error": f"port(s) {sorted(clash)} already claimed by another tenant"})
+        # No cross-tenant port conflicts by construction: declared ports are LOGICAL;
+        # _alloc_ports gives each deployment its own actual bind (NAN_PORTS tells the
+        # app which), so two tenants can both run "the tcp:5432 app" simultaneously.
         cat = _load_catalog()
         mem_mb = int(cat.get(app_ref, {}).get("mem_mb", DEF_MEM_MB))
         rec = launch(app_ref, b.get("name", ""), share, mem_mb, pspec)

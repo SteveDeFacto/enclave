@@ -171,9 +171,12 @@ Manager env: `IPFS_GATEWAY` (default `https://ipfs.nan.host`), `WASM_MAX_BYTES`
   change from version to version. The store's **Use in Deploy** defaults the
   deployment's firewall from it; the enclave's wasm-manager grants wasi:sockets
   only when ports are declared, audits actual binds, and kills an app that binds
-  an undeclared port. Declared range is 1024-19999 (8080/8091 infra-reserved);
-  declared TCP ports are reached through the attested origin as a WebSocket
-  bridge at `/x/{id}/tcp/{port}`.
+  an unassigned port. Ports are **logical** (labels 1-19999; 8080/8091
+  infra-reserved; below 1024, e.g. `udp:53`, always remapped internally): every deployment gets its own actual loopback bind (passed to
+  the app as `NAN_PORTS=tcp:5432=31245`, logical=actual), so any number of
+  tenants can run the same app simultaneously with no port conflicts. Declared
+  TCP ports are reached through the attested origin as a WebSocket bridge at
+  `/x/{id}/tcp/{logical-port}`.
 - `verified` is an OPTIONAL owner-curated signal, set **per version** (you verify a
   specific CID; a new release starts unverified and must be re-checked). It does
   **not** gate execution — the CID does. The site can filter to verified.

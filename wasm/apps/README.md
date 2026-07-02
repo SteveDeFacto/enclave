@@ -26,13 +26,27 @@ socket.
 config (`http:N` / `tcp:N` / `udp:N`) runs differently: the manager launches it
 with `wasmtime run` and grants **wasi:sockets** (`-Stcp -Sudp -Sinherit-network
 -Sallow-ip-name-lookup`), and the app is a long-running *command* component that
-binds its declared ports itself (Rust `std::net` on `wasm32-wasip2` maps to
-wasi:sockets). The declared spec is passed in as `NAN_PORTS`. Enforcement: an
-audit sweep reads the app's actually-bound ports from /proc and kills it if it
-binds an undeclared port ≤19999; declared range is 1024-19999 (8080/8091
-reserved), first-come-first-served across tenants. `http:N` means "the app
-serves HTTP on N" and the supervisor proxies `/x/:id` to it; plain `tcp:N` ports
-are reached via the WebSocket bridge `/x/:id/tcp/:port` (e.g. `websocat -b`).
+binds its ports itself (Rust `std::net` on `wasm32-wasip2` maps to wasi:sockets).
+
+Declared ports are **logical** — the app's stable, advertised interface, like a
+container's EXPOSE. Each deployment gets its own **actual** loopback bind, so two
+tenants can run "the tcp:5432 app" at the same time with zero conflicts; the URL
+routes by deployment id, never by raw port. The mapping is handed to the app as
+
+```
+NAN_PORTS=tcp:5432=31245,udp:9053=31246     # logical=actual — BIND THE ACTUAL
+```
+
+**The one rule for app authors: read `NAN_PORTS` and bind the actual ports.
+Never hardcode.** (When the logical number is free the manager assigns it
+unchanged, so hardcoded apps limp along single-instance — until the audit kills
+them for binding an unassigned port when it isn't.) Enforcement: a /proc audit
+sweep kills any app binding an unassigned port ≤19999; logical labels are
+1-19999 (8080/8091 reserved; below 1024 — e.g. `udp:53` — always remapped, since
+privileged actuals are never bound). `http:N` means "the app serves HTTP on N" and
+the supervisor proxies `/x/:id` to its actual bind; `tcp:N` ports are reached
+via the WebSocket bridge `/x/:id/tcp/N` — always the logical N; the supervisor
+resolves it to the deployment's actual (see `portMap` on the deployment record).
 
 Sandbox defaults (nothing to configure): no filesystem, no host environment, no
 network beyond the served HTTP socket, memory capped per app via `mem_mb` in the

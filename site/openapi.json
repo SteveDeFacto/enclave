@@ -1147,7 +1147,7 @@
           },
           "firewall": {
             "type": "object",
-            "description": "Ports the app may bind, from its catalog version's firewall config (the store's Use-in-Deploy prefills this). Entries: `http` (default — standard wasi:http web app), `http:N` (app serves HTTP on N itself), `tcp:N`, `udp:N`; N in 1024-19999 excluding 8080/8091. Omitted/empty = standard web app with NO socket capability. When ports are declared the app gets wasi:sockets and the enclave audits its binds — binding an undeclared port kills the app. Declared TCP ports are reached through the attested origin as a WebSocket bridge at `/x/{id}/tcp/{port}` (auth follows `public`).",
+            "description": "Ports the app may bind, from its catalog version's firewall config (the store's Use-in-Deploy prefills this). Entries: `http` (default — standard wasi:http web app), `http:N` (app serves HTTP on N itself), `tcp:N`, `udp:N`; N in 1-19999 excluding 8080/8091 (labels below 1024, e.g. udp:53, are always remapped to an unprivileged actual). Omitted/empty = standard web app with NO socket capability. Ports are LOGICAL: each deployment gets its own actual loopback bind (see `portMap`; passed to the app as `NAN_PORTS=tcp:5432=31245`), so multiple tenants can run the same app simultaneously without conflicts. When ports are declared the app gets wasi:sockets and the enclave audits its binds — binding an unassigned port kills the app. Declared TCP ports are reached through the attested origin as a WebSocket bridge at `/x/{id}/tcp/{logical-port}` (auth follows `public`).",
             "properties": {
               "ports": {
                 "type": "array",
@@ -1281,6 +1281,16 @@
               "type": "string"
             },
             "description": "Normalized firewall config this deployment runs with ([] = standard web app). Declared TCP ports are bridgeable at /x/{id}/tcp/{port}."
+          },
+          "portMap": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Logical firewall entry -> actual loopback port this deployment bound (e.g. {\"tcp:5432\": 31245}). Set once provisioned. The bridge URL always uses the logical port; this mapping is informational.",
+            "example": {
+              "tcp:5432": 31245
+            }
           }
         }
       },

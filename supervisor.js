@@ -485,7 +485,8 @@ async function spawnContainer({ deploymentId, gpu, image, share, appPort, ports 
     console.log(`[spawn-vm] ${deploymentId} image=${ref} share=${s} `
               + `vm=${r.body.id} hostPort=${r.body.hostPort} status=${r.body.status}`);
     // The VM boots asynchronously; the data path 502s until its server is up.
-    return { internalPort: r.body.hostPort || 0, sshPort: 0, vmId: r.body.id, hostPort: r.body.hostPort };
+    return { internalPort: r.body.hostPort || 0, sshPort: 0, vmId: r.body.id, hostPort: r.body.hostPort,
+             portMap: r.body.portMap || {} };   // logical "tcp:5432" -> actual loopback bind
   }
 
   // worker backend (GPU)
@@ -571,9 +572,9 @@ async function addrFromAuth(req) {
 // ---------------------------------------------------------------------------
 // Firewall config validation. Mirrors the wasm-manager's rules so a bad spec fails
 // fast at create (422) instead of at provision: entries are "http" (default serve
-// mode) | "http:N" | "tcp:N" | "udp:N"; N in 1024..19999, excluding infra ports
+// mode) | "http:N" | "tcp:N" | "udp:N"; N in 1..19999 (logical labels; <1024 always remapped), excluding infra ports
 // (8080 supervisor, 8091 manager) and the manager-assigned serve range (20000+).
-const FW_MIN = 1024, FW_MAX = 19999, FW_RESERVED = new Set([8080, 8091]);
+const FW_MIN = 1, FW_MAX = 19999, FW_RESERVED = new Set([8080, 8091]);   // logical labels; <1024 is always remapped to an unprivileged actual by the manager
 function parseFirewall(fw) {
   const raw = (fw && Array.isArray(fw.ports)) ? fw.ports : [];
   if (raw.length > 8) throw new Error("firewall.ports: at most 8 entries.");
@@ -940,6 +941,7 @@ async function provisionTenant(rec) {
       image: rec.image, share: rec.resources.share, appPort: rec.network.port, ports: rec.firewall });
     rec._port = sp.internalPort; rec._sshPort = sp.sshPort;
     if (sp.vmId) { rec._vmId = sp.vmId; rec._vmHostPort = sp.hostPort; }
+    if (sp.portMap) rec.portMap = sp.portMap;   // logical -> actual (public: clients see their mapping)
     rec.startedAt = Date.now(); rec.status = "running";
     return true;
   } catch (e) {
@@ -1149,7 +1151,7 @@ server.on("upgrade", async (req, socket, head) => {
   // tenant could declare-but-not-bind a port and bridge into a sibling's socket.
   const t = (req.url || "").match(/^\/x\/([^/?]+)\/tcp\/(\d{1,5})(?:\?|$)/);
   if (t) {
-    const rec = deployments.get(t[1]), port = +t[2];
+    const rec = deployments.get(t[1]), port = +t[2];        // `port` is the LOGICAL port (the app's advertised one)
     if (!rec)                                 return deny("404 Not Found");
     if (!fwTcpPorts(rec).includes(port))      return deny("404 Not Found");
     if (!rec.public) {
@@ -1158,10 +1160,13 @@ server.on("upgrade", async (req, socket, head) => {
       if (rec.owner !== addr) return deny("403 Forbidden");
     }
     if (rec.status !== "running" || !rec._vmId) return deny("409 Conflict");
+    // resolve logical -> actual bind for THIS deployment (two tenants can both be
+    // "the 5432 app"; each has its own actual port), then confirm the app bound it.
+    const actual = (rec.portMap && rec.portMap["tcp:" + port]) || port;
     const vr = await vmReq("GET", `/vms/${encodeURIComponent(rec._vmId)}`).catch(() => null);
     const bound = (vr && vr.body && vr.body.boundPorts) || [];
-    if (!bound.includes(port)) return deny("409 Conflict");   // app hasn't bound it (yet)
-    return wsTcpBridge(req, socket, head, port);
+    if (!bound.includes(actual)) return deny("409 Conflict");   // app hasn't bound it (yet)
+    return wsTcpBridge(req, socket, head, actual);
   }
 
   // ---- SSH: always owner-only, regardless of `public` ----
