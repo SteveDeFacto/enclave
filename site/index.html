@@ -438,6 +438,10 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
       <a href="#apps" data-view="apps">Apps</a>
       <a href="#api" data-view="api">API</a>
     </nav>
+    <div class="wallet-mount" id="walletMount">
+      <button class="btn btn-primary btn-sm" id="walletBtn" type="button">Connect wallet <span class="arr">→</span></button>
+      <div class="wallet-pop" id="walletPop" hidden></div>
+    </div>
   </div>
   <div class="wallet-pick" id="walletPick" hidden></div>
 </header>
@@ -547,14 +551,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         <input type="text" id="apiBase" spellcheck="false" autocapitalize="off" autocomplete="off" />
         <span class="ep-state" id="epState"></span>
       </div>
-      <div class="endpoint-row">
-        <label>Wallet</label>
-        <div class="wallet-mount">
-          <button class="btn btn-primary btn-sm" id="walletBtn" type="button">Connect wallet <span class="arr">→</span></button>
-          <div class="wallet-pop" id="walletPop" hidden></div>
-        </div>
-        <span class="dim" style="font-family:var(--font-mono);font-size:.7rem;">used only to sign in &amp; pay, with no account or KYC</span>
-      </div>
+      <p class="dim" style="font-family:var(--font-mono);font-size:.7rem;margin:.2em 0 0;">Connect your wallet from the header — used only to sign in &amp; pay, with no account or KYC.</p>
     </div>
     <div class="console">
       <!-- config -->
@@ -2796,7 +2793,7 @@ class NanError extends Error {
 /* ---- The exact client the page uses; mirrors the published HTTP API ---- */
 const Nan = {
   base: (lsGet("nan_api_base") || BASE).replace(/\/+$/, ""),
-  token: null, address: null, chainId: null, provider: null,
+  token: null, address: null, chainId: null, provider: null, walletRdns: null,
   setBase(u){ this.base = String(u || "").trim().replace(/\/+$/, "") || BASE; lsSet("nan_api_base", this.base); },
   authed(){ return !!this.token; },
   async _req(method, path, opts){
@@ -2958,6 +2955,17 @@ async function ensureBaseChainOnConnect(provider){
   }
 }
 
+// wire provider events once per provider (survives silent reconnect on refresh)
+function wireProviderEvents(provider){
+  if (!provider || !provider.on || provider._nanWired) return;
+  provider._nanWired = true;
+  provider.on("accountsChanged", (acc) => {
+    if (!acc || !acc.length){ disconnectWallet(); }
+    else { Nan.address = acc[0]; Nan.token = null; saveSession(); refreshWallet(); if (typeof renderApps === "function" && STORE.loaded) renderApps(); }
+  });
+  provider.on("chainChanged", (c) => { Nan.chainId = parseInt(c, 16); refreshWallet(); });
+}
+
 async function connectWallet(){
   const chosen = await pickWallet();
   const provider = chosen.provider;
@@ -2966,10 +2974,9 @@ async function connectWallet(){
   await ensureBaseChainOnConnect(provider);
   let cid; try { cid = await provider.request({ method: "eth_chainId" }); } catch(e){}
   Nan.provider = provider; Nan.address = accounts[0]; Nan.chainId = cid ? parseInt(cid, 16) : null;
-  if (provider.on){
-    provider.on("accountsChanged", (acc) => { if (!acc || !acc.length){ disconnectWallet(); } else { Nan.address = acc[0]; Nan.token = null; refreshWallet(); } });
-    provider.on("chainChanged", (c) => { Nan.chainId = parseInt(c, 16); refreshWallet(); });
-  }
+  Nan.walletRdns = (chosen.info && chosen.info.rdns) || null;
+  wireProviderEvents(provider);
+  saveSession();
   refreshWallet();
   return provider;
 }
@@ -2987,17 +2994,62 @@ async function authenticate(){
   const sess = await Nan.login(message, signature);
   Nan.token = sess && sess.token;
   if (!Nan.token) throw new NanError("Login did not return a token.", 0);
+  saveSession();
   refreshWallet();
+  if (typeof renderApps === "function" && STORE.loaded) renderApps();
   refreshEnclaves({ spinner: true });
   return sess;
 }
 
 function disconnectWallet(){
-  Nan.token = null; Nan.address = null; Nan.provider = null; Nan.chainId = null;
+  Nan.token = null; Nan.address = null; Nan.provider = null; Nan.chainId = null; Nan.walletRdns = null;
+  clearSession();
   const pop = $("#walletPop"); if (pop){ pop.hidden = true; pop.innerHTML = ""; }
   refreshWallet();
   stopEncPoll();
   if (typeof refreshEnclaves === "function") refreshEnclaves();
+  if (typeof renderApps === "function" && STORE.loaded) renderApps();
+}
+
+/* ---- session persistence: survive a page refresh (localStorage bearer token) ---- */
+function saveSession(){
+  if (!Nan.address){ lsSet("nan_session", ""); return; }
+  try { lsSet("nan_session", JSON.stringify({ address: Nan.address, rdns: Nan.walletRdns || null, token: Nan.token || null })); } catch(e){}
+}
+function clearSession(){ lsSet("nan_session", ""); }
+// pull the exp (seconds) out of a JWT; null if not a JWT / no exp
+function jwtExp(token){
+  try {
+    let s = String(token).split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    s += "=".repeat((4 - s.length % 4) % 4);
+    const p = JSON.parse(atob(s));
+    return typeof p.exp === "number" ? p.exp : null;
+  } catch(e){ return null; }
+}
+// on load: silently reconnect the prior wallet (no popup) and restore a still-valid token
+async function restoreSession(){
+  let raw; try { raw = lsGet("nan_session"); } catch(e){ return; }
+  if (!raw) return;
+  let s; try { s = JSON.parse(raw); } catch(e){ clearSession(); return; }
+  if (!s || !s.address) return;
+  if (s.token){ const exp = jwtExp(s.token); if (exp && exp * 1000 <= Date.now()) s.token = null; }  // drop an expired token
+  let wallets = Wallet.list(); if (!wallets.length) wallets = await Wallet.discover();
+  let chosen = s.rdns ? wallets.find(w => w.info && w.info.rdns === s.rdns) : null;
+  if (!chosen && wallets.length === 1) chosen = wallets[0];
+  if (!chosen) return;                                            // can't reconnect silently; leave it to a manual Connect
+  const provider = chosen.provider;
+  let accounts = []; try { accounts = await provider.request({ method: "eth_accounts" }); } catch(e){ return; }
+  const addr = accounts && accounts[0];
+  if (!addr || addr.toLowerCase() !== String(s.address).toLowerCase()) return;   // permission revoked / different account
+  let cid; try { cid = await provider.request({ method: "eth_chainId" }); } catch(e){}
+  Nan.provider = provider; Nan.address = addr; Nan.chainId = cid ? parseInt(cid, 16) : null;
+  Nan.walletRdns = (chosen.info && chosen.info.rdns) || null;
+  Nan.token = s.token || null;
+  wireProviderEvents(provider);
+  saveSession();                                                  // re-persist (drops any expired token, refreshes rdns)
+  refreshWallet();
+  if (typeof renderApps === "function" && STORE.loaded) renderApps();
+  if (Nan.token && typeof refreshEnclaves === "function") refreshEnclaves({ spinner: true });
 }
 
 /* ---- wallet button + popover ---- */
@@ -3294,7 +3346,7 @@ async function refreshEnclaves(opts){
     renderEnclaveRows(list, opts.highlight);
     startEncPoll();
   } catch(e){
-    if (e.status === 401){ Nan.token = null; refreshWallet(); stopEncPoll();
+    if (e.status === 401){ Nan.token = null; saveSession(); refreshWallet(); stopEncPoll();
       body.innerHTML = '<div class="enc-empty">session expired \u2014 <button class="wp-mini" id="encSignin">sign in</button></div>';
       const b = $("#encSignin"); if (b) b.addEventListener("click", async () => { try { await authenticate(); } catch(_){} });
       return;
@@ -3459,6 +3511,7 @@ function initApp(){
 
   refreshWallet();
   checkHealth();
+  restoreSession();   // silently restore a prior wallet + sign-in across refreshes
 }
 
 function injectLiveStyles(){
@@ -3484,7 +3537,10 @@ function injectLiveStyles(){
     "#walletBtn .lock{font-size:.62rem;color:var(--amber);border:1px solid var(--amber-dim);border-radius:4px;padding:.05em .3em;}",
     ".nav-inner{position:relative;}",
     ".wallet-mount{position:relative;display:inline-block;}",
+    ".nav-inner .wallet-mount{margin-left:auto;}",   // sit at the right of the header
     ".wallet-pop{position:absolute;top:calc(100% + 10px);left:0;z-index:60;width:300px;background:#0b1119;border:1px solid var(--line);border-radius:12px;box-shadow:0 30px 60px -28px rgba(0,0,0,.9);padding:14px;font-family:var(--font-mono);}",
+    ".nav-inner .wallet-pop{left:auto;right:0;}",   // drop down aligned to the header's right edge
+
     ".wp-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line-soft);font-size:.78rem;}",
     ".wp-k{color:var(--text-muted);} .wp-v{color:var(--text);} .wp-v .ok{color:var(--jade);}",
     ".wp-addr{background:none;border:0;color:var(--jade);cursor:pointer;font-family:inherit;font-size:.8rem;}",
