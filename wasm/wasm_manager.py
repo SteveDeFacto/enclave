@@ -37,6 +37,7 @@ import os
 import pathlib
 import re
 import resource
+import shutil
 import signal
 import socket
 import subprocess
@@ -88,6 +89,26 @@ AUDIT_SECS     = float(os.environ.get("WASM_AUDIT_INTERVAL", "10"))
 # WASM_P3=0 drops the flag fleet-wide (operator kill-switch, e.g. if a
 # wasmtime upgrade regresses p3) without rebuilding the image.
 P3_FLAGS       = [] if os.environ.get("WASM_P3", "1").lower() in ("0", "false", "no") else ["-Sp3"]
+
+# App scratch filesystem: each deployment gets its own private, writable /data
+# preopen (wasi:filesystem via `wasmtime --dir`), so off-the-shelf code that
+# expects to read/write files ports to wasm with no changes -- the point is to
+# make apps EASIER TO CONVERT, not to store anything. It is a RAM-backed scratch
+# dir on the enclave's (already encrypted) ramdisk: strictly ephemeral, torn down
+# with the deployment, no persistence, no host paths exposed. Isolation is the
+# wasi capability model -- an app sees ONLY its own dir; a path escaping the
+# preopen (`/data/../../etc/...`) is refused by the runtime, and no preopen means
+# no visibility at all. A per-app size cap bounds RAM use, since `-W
+# max-memory-size` covers linear memory only, NOT files; we can't mount a sized
+# tmpfs (the enclave blocks mounts), so the audit sweep polices it -- same shape
+# as the port bind audit. Global kill-switch WASM_FS=0; per-app opt-out is
+# `storage_mb: 0` in the catalog.
+FS_ENABLED     = os.environ.get("WASM_FS", "1").lower() not in ("0", "false", "no")
+FS_DIR         = pathlib.Path(os.environ.get("WASM_FS_DIR", "/tmp/nan-wasm-fs"))  # base for per-deployment scratch dirs (ramdisk)
+FS_GUEST_PATH  = os.environ.get("WASM_FS_GUEST", "/data")                          # where it shows up inside the guest
+DEF_STORAGE_MB = int(os.environ.get("WASM_APP_STORAGE_MB", "256"))                 # per-app /data ceiling; catalog can override
+if FS_ENABLED:
+    FS_DIR.mkdir(parents=True, exist_ok=True)
 
 _lock = threading.Lock()
 _apps = {}    # id -> record
@@ -278,7 +299,7 @@ def _alloc_ports(pspec) -> dict:
     return out
 
 
-def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None):
+def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdir=None):
     """The wasmtime invocation for a ports spec. Returns (cmd, host_port, wait_ports).
 
     serve mode: `wasmtime serve` owns the one HTTP listener; no sockets granted.
@@ -290,16 +311,19 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None):
                 per port), so the audit sweep enforces the firewall: bind an
                 unassigned low port and the app is killed.
     Both modes add -Sp3 (unless WASM_P3=0) so apps may target the WASIp3
-    async APIs as well as wasip2; socket permissions are identical either way."""
+    async APIs as well as wasip2; socket permissions are identical either way.
+    `fsdir`, when set, is preopened as the guest's /data (a private ramdisk
+    scratch space); the app sees only that subtree."""
+    fs_args = ["--dir", f"{fsdir}::{FS_GUEST_PATH}"] if fsdir else []
     if pspec["serve"]:
-        return ([WASMTIME, "serve", "-Scli", "-Shttp", *P3_FLAGS,
+        return ([WASMTIME, "serve", "-Scli", "-Shttp", *P3_FLAGS, *fs_args,
                  "-W", f"max-memory-size={mem_bytes}",
                  "--addr", f"{HOST_IP}:{serve_port}", str(wasm)],
                 serve_port, [serve_port])
     port_map = port_map or {}
     nan_ports = ",".join(f"{e}={port_map[e]}" for e in pspec["norm"])
     cmd = [WASMTIME, "run", "-Scli", *P3_FLAGS, "-Stcp", "-Sudp",
-           "-Sinherit-network", "-Sallow-ip-name-lookup",
+           "-Sinherit-network", "-Sallow-ip-name-lookup", *fs_args,
            "-W", f"max-memory-size={mem_bytes}",
            "--env", "NAN_PORTS=" + nan_ports, str(wasm)]
     http_entry = f"http:{pspec['http']}" if pspec["http"] else None
@@ -312,22 +336,38 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None):
     return cmd, host_port, wait
 
 
-def launch(app_ref: str, name: str, share: float, mem_mb: int, pspec=None) -> dict:
+def launch(app_ref: str, name: str, share: float, mem_mb: int, pspec=None, storage_mb=None) -> dict:
     pspec = pspec or _parse_ports([])
+    if storage_mb is None:
+        storage_mb = DEF_STORAGE_MB
     port = _free_port() if pspec["serve"] else 0
     port_map = {} if pspec["serve"] else _alloc_ports(pspec)   # logical entry -> actual bind
     vid = "app_" + uuid.uuid4().hex[:9]
     log_path = LOG_DIR / f"{vid}.log"
     assigned = set(port_map.values()) | ({port} if port else set())
+    # Per-deployment scratch fs: private /data on the ramdisk. `storage_mb: 0`
+    # (or WASM_FS=0) opts out; a mkdir failure is non-fatal (run without /data
+    # rather than fail the deploy).
+    fsdir = None
+    if FS_ENABLED and storage_mb > 0:
+        cand = FS_DIR / vid
+        try:
+            cand.mkdir(parents=True, exist_ok=True)
+            fsdir = cand
+        except OSError as e:
+            print(f"[fs] {vid} could not create scratch dir: {e}", flush=True)
     rec = {"id": vid, "name": name or vid, "app": app_ref, "share": share,
            "hostPort": port, "sshHostPort": 0,
            "endpoint": f"http://{HOST_IP}:{port}" if port else None, "status": "starting",
            "createdAt": time.time(), "_proc": None, "_log": str(log_path),
            "error": None, "mem_mb": mem_mb,
+           "storageMb": storage_mb if fsdir else 0,   # 0 = no /data (opted out or disabled)
+           "storageBytes": 0,                         # last measured /data usage (audit sweep)
            "ports": pspec["norm"],           # logical (the app's advertised interface)
            "portMap": port_map,              # logical entry -> actual loopback bind
            "boundPorts": [],                 # actuals confirmed bound (the bridge checks this)
-           "_assigned": assigned}            # what the audit allows
+           "_assigned": assigned,            # what the audit allows
+           "_fsdir": str(fsdir) if fsdir else None}
     with _lock:
         _apps[vid] = rec
 
@@ -345,13 +385,14 @@ def launch(app_ref: str, name: str, share: float, mem_mb: int, pspec=None) -> di
         rec["status"], rec["error"] = "failed", str(e)
         return rec
 
-    # Default grants are minimal: no --dir (no fs), no --env beyond NAN_PORTS,
-    # and sockets only when the version's firewall config asks for them.
-    # `-W max-memory-size` caps the guest's linear memory (the only RAM a tenant
-    # can grow) -- this is the real per-app memory ceiling, enforced by the
-    # runtime rather than by RLIMIT_AS (see _preexec for why RLIMIT_AS is wrong).
+    # Grants are minimal: a private /data preopen only (no host paths), no --env
+    # beyond NAN_PORTS, and sockets only when the version's firewall config asks
+    # for them. `-W max-memory-size` caps the guest's linear memory (the only RAM
+    # a tenant can grow) -- this is the real per-app memory ceiling, enforced by
+    # the runtime rather than by RLIMIT_AS (see _preexec for why RLIMIT_AS is
+    # wrong); the /data ramdisk usage is capped separately by the audit sweep.
     mem_bytes = max(mem_mb, 1) * 1024 * 1024
-    cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map)
+    cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir)
     rec["hostPort"] = host_port
     rec["endpoint"] = f"http://{HOST_IP}:{host_port}" if host_port else None
     logf = open(log_path, "wb")
@@ -444,6 +485,35 @@ def _audit_rec(rec):
         _kill(rec)
 
 
+def _dir_size(path) -> int:
+    """Bytes used under `path` (files only, symlinks not followed)."""
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.stat(os.path.join(root, f), follow_symlinks=False).st_size
+            except OSError:
+                pass
+    return total
+
+
+def _audit_storage(rec):
+    """Enforce the per-app /data ceiling. We can't mount a sized tmpfs (the
+    enclave blocks mounts), so -- like the port firewall -- we measure and kill
+    on breach. `storageBytes` is refreshed each sweep so callers can see usage."""
+    fsdir, cap_mb = rec.get("_fsdir"), rec.get("storageMb") or 0
+    if not fsdir or cap_mb <= 0:
+        return
+    used = _dir_size(fsdir)
+    rec["storageBytes"] = used
+    if used > cap_mb * 1024 * 1024:
+        rec["status"] = "failed"
+        rec["error"] = (f"storage: /data used {used // (1024*1024)}MiB exceeds the {cap_mb}MiB cap; "
+                        f"app killed. Raise storage_mb in the catalog if the app needs more scratch space.")
+        print(f"[audit] {rec['id']} killed: storage {used} bytes > {cap_mb}MiB", flush=True)
+        _kill(rec)
+
+
 def _audit_sweep():
     while True:
         time.sleep(AUDIT_SECS)
@@ -452,6 +522,8 @@ def _audit_sweep():
         for r in recs:
             try:
                 _audit_rec(r)
+                if r["status"] == "running":
+                    _audit_storage(r)
             except Exception:
                 pass
 
@@ -493,12 +565,19 @@ def _kill(rec):
         pass
 
 
+def _rm_fsdir(rec):
+    d = rec.get("_fsdir")
+    if d:
+        shutil.rmtree(d, ignore_errors=True)   # ephemeral scratch: nothing to preserve
+
+
 def teardown(vid: str) -> bool:
     with _lock:
         rec = _apps.pop(vid, None)
     if rec is None:
         return False
     _kill(rec)
+    _rm_fsdir(rec)
     return True
 
 
@@ -574,8 +653,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # _alloc_ports gives each deployment its own actual bind (NAN_PORTS tells the
         # app which), so two tenants can both run "the tcp:5432 app" simultaneously.
         cat = _load_catalog()
-        mem_mb = int(cat.get(app_ref, {}).get("mem_mb", DEF_MEM_MB))
-        rec = launch(app_ref, b.get("name", ""), share, mem_mb, pspec)
+        meta = cat.get(app_ref, {})
+        mem_mb = int(meta.get("mem_mb", DEF_MEM_MB))
+        storage_mb = int(meta.get("storage_mb", DEF_STORAGE_MB))   # per-app /data cap; 0 opts out
+        rec = launch(app_ref, b.get("name", ""), share, mem_mb, pspec, storage_mb)
         code = 201 if rec["status"] in ("starting", "running") else 500
         return self._json(code, _public(rec))
 
@@ -599,7 +680,9 @@ def _wasmtime_version() -> str:
 def _debug_env() -> dict:
     out = {"runtime": "wasmtime", "mock": MOCK, "apps_dir": str(APPS_DIR),
            "catalog": sorted(_load_catalog().keys()), "version": _wasmtime_version(),
-           "p3": bool(P3_FLAGS)}
+           "p3": bool(P3_FLAGS),
+           "fs": FS_ENABLED, "fs_guest": FS_GUEST_PATH if FS_ENABLED else None,
+           "default_storage_mb": DEF_STORAGE_MB if FS_ENABLED else 0}
     try:
         out["uname"] = " ".join(os.uname())
     except Exception as e:
@@ -615,9 +698,16 @@ def _debug_env() -> dict:
 
 
 def main():
+    # Clear stale scratch dirs from a previous run: /data is strictly ephemeral,
+    # and a manager restart has already lost track of any prior deployments.
+    if FS_ENABLED:
+        for child in FS_DIR.iterdir() if FS_DIR.exists() else []:
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
     httpd = http.server.ThreadingHTTPServer((HOST_IP if HOST_IP else "0.0.0.0", PORT), Handler)
-    threading.Thread(target=_audit_sweep, daemon=True).start()   # firewall bind audit
-    print(f"wasm-manager on :{PORT} runtime=wasmtime mock={MOCK} apps_dir={APPS_DIR}", flush=True)
+    threading.Thread(target=_audit_sweep, daemon=True).start()   # firewall bind + storage audit
+    print(f"wasm-manager on :{PORT} runtime=wasmtime mock={MOCK} apps_dir={APPS_DIR} "
+          f"p3={bool(P3_FLAGS)} fs={FS_ENABLED}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

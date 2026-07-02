@@ -58,9 +58,29 @@ the supervisor proxies `/x/:id` to its actual bind; `tcp:N` ports are reached
 via the WebSocket bridge `/x/:id/tcp/N` — always the logical N; the supervisor
 resolves it to the deployment's actual (see `portMap` on the deployment record).
 
-Sandbox defaults (nothing to configure): no filesystem, no host environment, no
-network beyond the served HTTP socket, memory capped per app via `mem_mb` in the
-catalog. Peer isolation = separate Wasm sandbox + separate OS process per app.
+Sandbox defaults (nothing to configure): a private writable `/data` (see below),
+no host environment, no network beyond the served HTTP socket, memory capped per
+app via `mem_mb` in the catalog. Peer isolation = separate Wasm sandbox +
+separate OS process per app.
+
+**Scratch filesystem (`/data`).** Every deployment is launched with a private,
+writable `/data` preopen (wasi:filesystem via `wasmtime --dir`), so off-the-shelf
+code that reads and writes files — a SQLite DB, a cache, config, logs — ports to
+wasm without being rewritten. In Rust it's just `std::fs`/`std::path` under
+`/data`; other languages' stdlib file I/O maps to the same wasi interface.
+
+It is **RAM-backed and strictly ephemeral**: the enclave's whole filesystem is a
+ramdisk (already inside the TEE's encrypted memory), and `/data` is torn down
+when the deployment ends. There is no persistence and no shared storage — treat
+it as scratch space, not a database of record. Isolation is the wasi capability
+model: an app sees *only* its own `/data`; there is no preopen for anything else,
+and a path escaping the tree (`/data/../../etc/...`) is refused by the runtime.
+
+Usage is capped per app by `storage_mb` (default 256; the audit sweep kills an
+app that exceeds it, since a ramdisk file tree consumes RAM that `mem_mb` doesn't
+cover). Set `storage_mb: 0` to opt an app out of `/data` entirely (back to the
+old no-filesystem sandbox). Operators can disable the feature fleet-wide with
+`WASM_FS=0` on the wasm-manager, or relocate the backing dir with `WASM_FS_DIR`.
 
 ## catalog.json
 
@@ -68,7 +88,7 @@ catalog. Peer isolation = separate Wasm sandbox + separate OS process per app.
 {
   "apps": [
     { "id": "hello", "name": "Hello", "file": "hello.wasm",
-      "description": "…", "mem_mb": 128 }
+      "description": "…", "mem_mb": 128, "storage_mb": 64 }
   ]
 }
 ```
@@ -80,6 +100,9 @@ catalog. Peer isolation = separate Wasm sandbox + separate OS process per app.
              terabytes of virtual space for bounds-checking, so an RLIMIT_AS
              small enough to bound RAM would kill the runtime). Optional;
              defaults to `WASM_APP_MEM_MB` (512).
+- `storage_mb` - ceiling on the app's `/data` scratch filesystem (see above),
+             enforced by the audit sweep. Optional; defaults to
+             `WASM_APP_STORAGE_MB` (256). `0` disables `/data` for this app.
 
 ## Building the sample `hello.wasm`
 
