@@ -22,7 +22,7 @@ gpus: 1            # whole H200 attached to the enclave (CC allows 1 or 8)
 containers:
   # --- MPS daemon: makes per-tenant SM%/VRAM caps enforceable in prod -----------
   - name: "mps-control"
-    image: "ghcr.io/stevedefacto/nan-mps@sha256:fd2498053541f0eb3f9bdc6ddc469d4a1d1785dae94a6a5c93ea19f02e537350"
+    image: "ghcr.io/stevedefacto/nan-mps@sha256:e3d2b214aeb40a3ab1e8bae8753bc297d5a2973b6f6cae1d3b09a7d1450b88c7"
     runtime: nvidia
     gpus: all
     ipc: host
@@ -39,7 +39,7 @@ containers:
 
   # --- GPU worker: forks MPS-capped CUDA processes per tenant, runs submitted jobs
   - name: "worker"
-    image: "ghcr.io/stevedefacto/nan-worker@sha256:e3b11ef52eb578e7f82a1bfa0bd5987a9706e0fa33fbef82a71a6de0fd022fb2"
+    image: "ghcr.io/stevedefacto/nan-worker@sha256:9ae1ac8f5d591721d4fa36d9996f179daa3f21401b5afc38b22ad9ecaeccd08e"
     runtime: nvidia
     gpus: all
     ipc: host
@@ -59,7 +59,7 @@ containers:
 
   # --- supervisor: control plane (no GPU), public ingress -----------------------
   - name: "supervisor"
-    image: "ghcr.io/stevedefacto/nan@sha256:d6820097a9abb9f3b5b7748306cb14858cb22f06e68fcfd1926c46e52dffe965"
+    image: "ghcr.io/stevedefacto/nan@sha256:e6d4f692a45421ed08a83e40a7b67f3072ad3a5bc81033d9ac3782f44fab06a4"
     restart: always
     env:
       - PORT: "8080"
@@ -92,7 +92,10 @@ containers:
       # (fetched from /.well-known/tinfoil-attestation on loopback; ATTESTATION_URL
       # overrides discovery if the shim binds elsewhere). ENCLAVE_REPO is the repo
       # whose Sigstore-signed release measurements verifiers compare the quote to.
-      - ENCLAVE_REPO: "SteveDeFacto/Nan"
+      # MUST match the canonical GitHub casing exactly: Sigstore's policy check
+      # compares it verbatim to the cert's GitHubWorkflowRepository claim, and
+      # "SteveDeFacto/Nan" vs "SteveDeFacto/nan" fails verification.
+      - ENCLAVE_REPO: "SteveDeFacto/nan"
       # on-chain discovery: with these set, the supervisor self-registers this
       # enclave in NanRegistry and heartbeats every 15 min (registerOnChain in
       # supervisor.js), so callers discover enclaves from the chain with no
@@ -158,7 +161,7 @@ containers:
   # The app catalog is baked into the image (apps/*.wasm + catalog.json), so what
   # runs is exactly what Tinfoil attested. Apps are wasi:http components.
   - name: "wasm-manager"
-    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:f51bdb9366693575a58072dce6c3c01b6fac1dbd2131e8fd76f4e74deef3f605"
+    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:aa692245f7fa8ce3e0f9164671396eaa6960d31deb14f536bcc45094ca6b58b1"
     restart: always
     env:
       - WASM_MANAGER_PORT: "8091"   # same port the supervisor's VMMGR_URL already targets

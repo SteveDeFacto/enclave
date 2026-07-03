@@ -52,7 +52,7 @@ env:
   REGISTRY_ENABLED: "1"
   REGISTRY_ADDRESS: ""       # written by scripts/deploy-registry.mjs
   ENCLAVE_ENDPOINT: ""       # per enclave, e.g. "https://enclave1.nan.containers.tinfoil.dev"; empty = don't advertise
-  ENCLAVE_REPO: "SteveDeFacto/Nan"          # what callers attest against (Sigstore-measured)
+  ENCLAVE_REPO: "SteveDeFacto/nan"          # what callers attest against (Sigstore-measured; exact GitHub casing — Sigstore compares it verbatim)
   # REGISTRY_HEARTBEAT_SEC: "900"           # optional, default 15 min
 ```
 

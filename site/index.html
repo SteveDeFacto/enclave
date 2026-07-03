@@ -276,6 +276,22 @@ section{padding:84px 0;position:relative;}
 .attest-side{border:1px solid var(--line);border-radius:var(--radius);background:#080C12;position:sticky;top:84px;overflow:hidden;}
 .attest-side .as-h{padding:13px 16px;border-bottom:1px solid var(--line-soft);font-family:var(--font-mono);font-size:.74rem;color:var(--text-muted);display:flex;justify-content:space-between;}
 .verified-pill{color:var(--jade);display:inline-flex;align-items:center;gap:.4em;}
+.lv{margin-top:26px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0B121A);padding:20px 22px;}
+.lv-h{display:flex;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap;}
+.lv-txt{max-width:660px;}
+.lv-txt h4{margin:0 0 6px;font-family:var(--font-mono);font-size:.98rem;}
+.lv-txt p{margin:0;color:var(--text-muted);font-size:.86rem;}
+.lv-steps{list-style:none;margin:18px 0 0;padding:0;display:flex;flex-direction:column;gap:7px;font-family:var(--font-mono);font-size:.8rem;}
+.lv-steps li{display:flex;gap:.6em;align-items:baseline;color:var(--text-muted);}
+.lv-steps li .st{flex:none;width:1.2em;text-align:center;}
+.lv-steps li.ok{color:var(--text);} .lv-steps li.ok .st{color:var(--jade);}
+.lv-steps li.bad{color:var(--amber);} .lv-steps li.bad .st{color:var(--amber);}
+.lv-steps li .err{color:var(--amber);opacity:.9;}
+.lv-verdict{margin-top:16px;font-family:var(--font-mono);font-size:.9rem;color:var(--text-muted);}
+.lv-verdict.ok{color:var(--jade);} .lv-verdict.bad{color:var(--amber);}
+.lv-meta{margin-top:10px;font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);word-break:break-all;display:flex;flex-direction:column;gap:4px;}
+.lv-note{margin:14px 0 0;font-size:.74rem;color:var(--text-dim);font-family:var(--font-mono);}
+.lv-note a{color:var(--jade-2);}
 
 /* ---------- pricing ---------- */
 .price-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
@@ -769,6 +785,21 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         <div class="as-h"><span>GET /v1/deployments/{id}/attestation</span></div>
         <div class="code" style="border:0;border-radius:0;"><div class="codebar"><span class="fn" id="attestFn">attestation.json</span><button class="copybtn" data-copy="attest">⧉ copy</button></div><pre><code id="attestOut"></code></pre></div>
       </div>
+    </div>
+    <div class="lv" id="liveVerify">
+      <div class="lv-h">
+        <div class="lv-txt">
+          <h4>Don't take this page's word for it — run the check now</h4>
+          <p>Your browser loads Tinfoil's open-source verifier (<code>@tinfoilsh/verifier</code>), fetches the enclave's attestation over your own connection, validates the AMD SEV-SNP report up to AMD's root key, verifies the release's Sigstore code provenance, and compares the two measurements. Exactly what the API's <code>verify</code> field tells every client to do.</p>
+        </div>
+        <button class="btn btn-primary" id="lvRun" type="button">Verify enclave <span class="arr">→</span></button>
+      </div>
+      <div class="lv-body" id="lvBody" hidden>
+        <ul class="lv-steps" id="lvSteps"></ul>
+        <div class="lv-verdict" id="lvVerdict"></div>
+        <div class="lv-meta" id="lvMeta"></div>
+      </div>
+      <p class="lv-note">The verifier module loads from esm.sh; Sigstore bundles and AMD KDS certificates come through Tinfoil's CORS proxies. Fully independent path: <code id="lvCli">tinfoil attestation verify -e &lt;enclave-host&gt; -r &lt;repo&gt;</code> — <a href="https://github.com/tinfoilsh/tinfoil-cli" target="_blank" rel="noopener">tinfoil-cli</a>.</p>
     </div>
   </div>
 </section>
@@ -2436,7 +2467,7 @@ const SPEC = {
       },
       "EnclaveAttestation": {
         "type": "object",
-        "description": "The Tinfoil Remote Attestation Document relayed verbatim from /.well-known/tinfoil-attestation — feed `attestationDocument` to github.com/tinfoilsh/verifier. This copy is a convenience: fetch the document over your OWN connection for the binding to mean anything.",
+        "description": "The Tinfoil Remote Attestation Document relayed verbatim from /.well-known/tinfoil-attestation — feed `attestationDocument` to Tinfoil's verifier (tinfoil-cli `attestation verify`, or the @tinfoilsh/verifier npm package). This copy is a convenience: fetch the document over your OWN connection for the binding to mean anything.",
         "properties": {
           "attestationDocument": {
             "type": "object",
@@ -2486,7 +2517,7 @@ const SPEC = {
           },
           "verify": {
             "type": "object",
-            "description": "How to verify: instructions, the enclave repo whose release holds the signed measurements, and the well-known attestation endpoint.",
+            "description": "How to verify: instructions (`how`), a ready-to-run tinfoil-cli command (`cli`, from github.com/tinfoilsh/tinfoil-cli), the npm verifier package (`npm`, @tinfoilsh/verifier — works in Node and browsers), the enclave repo whose release holds the signed measurements (`repo`, exact GitHub casing), and the well-known attestation endpoint.",
             "additionalProperties": true
           },
           "tlsKeyFingerprint": {
@@ -4057,8 +4088,8 @@ const LINKS = [
     d: "The enclave generates its TLS keypair in sealed memory and folds the public-key hash into the quote's report_data. The private key never leaves the boundary, so nobody can sit in the middle.",
     j: { tlsKeyFingerprint: "sha256:4b8c…e2a1", boundTo: "reportData[0:32] = sha256(TLS pubkey SPKI)" } },
   { t: "Your browser verifies", fn: "verify.js",
-    d: "The dapp pulls the bundle, checks the quote and report against published measurements, pins the TLS fingerprint, then connects. Trust ends in your client, not on our word — the API's verified field is always false by design.",
-    code: "const att = await (await fetch(`/v1/attestation`)).json(); // public: verify BEFORE login\n\nverifyTdxQuote(att.vm.quote,  POLICY.tdx);   // Intel DCAP collateral\nverifyGpuReport(att.gpu.report, POLICY.gpu); // NVIDIA NRAS / nvtrust\npinTls(att.tlsKeyFingerprint);               // only now: connect" }
+    d: "Tinfoil's open-source verifier runs the whole chain client-side: hardware report against the vendor root, Sigstore provenance of the release, measurement comparison, TLS binding. Trust ends in your client, not on our word — the API's verified field is always false by design. Try it live below.",
+    code: "import { Verifier } from '@tinfoilsh/verifier';\n// or from a shell: tinfoil attestation verify -e <enclave-host> -r <repo>\n\nconst att = await (await fetch(`/v1/attestation`)).json(); // public: verify BEFORE login\nawait new Verifier({\n  serverURL:  new URL(att.verify.attestationEndpoint).origin,\n  configRepo: att.verify.repo,       // exact GitHub casing — Sigstore compares verbatim\n}).verify();  // hardware report → vendor root · Sigstore release provenance · measurements match\n\npinTls(att.tlsKeyFingerprint);       // only now: connect" }
 ];
 function showAttest(i) {
   const l = LINKS[i];
@@ -4079,6 +4110,73 @@ function initAttest() {
     wrap.appendChild(el);
   });
   showAttest(0);
+  const lvBtn = $("#lvRun");
+  if (lvBtn) lvBtn.addEventListener("click", () => lvVerify(lvBtn));
+}
+
+/* ---- live in-browser enclave verification (@tinfoilsh/verifier) ----
+   Runs the exact client-side check the attestation's `verify` field describes:
+   AMD SEV-SNP report → VCEK → AMD root, Sigstore provenance of the release,
+   measurement comparison, certificate binding. The dead-honest counterpart to
+   the API's always-false `verified` flag. */
+const LV_VERIFIER_URL = "https://esm.sh/@tinfoilsh/verifier@1.1.7?bundle";
+const LV_STEP_ORDER = ["fetchDigest", "verifyEnclave", "verifyCode", "compareMeasurements", "verifyCertificate"];
+const LV_LABELS = {
+  fetchDigest:         "fetch attestation, signed release digest + Sigstore bundle",
+  verifyEnclave:       "verify AMD SEV-SNP report (VCEK chain → AMD root of trust)",
+  verifyCode:          "verify release provenance (Sigstore: Fulcio + Rekor)",
+  compareMeasurements: "compare signed code measurement to live enclave measurement",
+  verifyCertificate:   "bind the served certificate to the attested report",
+};
+async function lvVerify(btn) {
+  const body = $("#lvBody"), steps = $("#lvSteps"), verdict = $("#lvVerdict"), meta = $("#lvMeta");
+  body.hidden = false; btn.disabled = true;
+  steps.innerHTML = ""; meta.innerHTML = "";
+  const status = (t) => { verdict.className = "lv-verdict"; verdict.textContent = t; };
+  try {
+    status("fetching " + Nan.base + "/attestation …");
+    const att = await Nan._req("GET", "/attestation");
+    let repo = att.verify && att.verify.repo;
+    const ep = att.verify && att.verify.attestationEndpoint;
+    if (!repo || !ep) throw new Error("attestation is missing verify.repo / verify.attestationEndpoint");
+    const enclave = new URL(ep);
+    // Sigstore compares the repo string verbatim against the signing cert's
+    // GitHubWorkflowRepository claim, so normalize to GitHub's canonical casing.
+    try { const gh = await fetch("https://api.github.com/repos/" + repo); if (gh.ok) repo = (await gh.json()).full_name || repo; } catch (e) {}
+    const cliEl = $("#lvCli"); if (cliEl) cliEl.textContent = "tinfoil attestation verify -e " + enclave.host + " -r " + repo;
+    status("loading @tinfoilsh/verifier …");
+    const mod = await import(LV_VERIFIER_URL);
+    status("verifying " + enclave.host + " against " + repo + " … (fetches AMD + Sigstore material, takes a few seconds)");
+    const v = new mod.Verifier({ serverURL: enclave.origin, configRepo: repo });
+    let failure = null;
+    try { await v.verify(); } catch (e) { failure = e; }
+    const doc = v.getVerificationDocument();
+    LV_STEP_ORDER.forEach((k) => {
+      const st = doc && doc.steps && doc.steps[k];
+      const cls = !st || st.status === "pending" ? "" : st.status === "success" ? "ok" : "bad";
+      const li = document.createElement("li");
+      li.className = cls;
+      li.innerHTML = '<span class="st">' + (cls === "ok" ? "✓" : cls === "bad" ? "✗" : "·") + '</span><span>'
+        + esc(LV_LABELS[k]) + (st && st.error ? ' — <span class="err">' + esc(st.error) + "</span>" : "") + "</span>";
+      steps.appendChild(li);
+    });
+    if (doc && doc.securityVerified) {
+      verdict.className = "lv-verdict ok";
+      verdict.textContent = "✓ VERIFIED — this enclave is running the exact code signed on " + repo + "'s latest release";
+      const apiFp = String(att.tlsKeyFingerprint || "").replace(/^sha256:/, "");
+      meta.innerHTML = [
+        "measurement   " + doc.enclaveFingerprint,
+        "release       sha256:" + doc.releaseDigest,
+        "tls key       sha256:" + doc.tlsPublicKey + (apiFp ? (apiFp === doc.tlsPublicKey ? "  (matches the API's copy)" : "  ⚠ API reported sha256:" + apiFp) : ""),
+      ].map((x) => "<span>" + esc(x) + "</span>").join("");
+    } else {
+      verdict.className = "lv-verdict bad";
+      verdict.textContent = "✗ NOT VERIFIED — " + (failure && failure.message ? failure.message : "verification incomplete");
+    }
+  } catch (e) {
+    verdict.className = "lv-verdict bad";
+    verdict.textContent = "✗ could not run verification — " + (e && e.message ? e.message : e);
+  } finally { btn.disabled = false; }
 }
 
 /* ============================================================

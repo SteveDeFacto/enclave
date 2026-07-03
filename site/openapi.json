@@ -1475,7 +1475,7 @@
       },
       "EnclaveAttestation": {
         "type": "object",
-        "description": "The Tinfoil Remote Attestation Document relayed verbatim from /.well-known/tinfoil-attestation — feed `attestationDocument` to github.com/tinfoilsh/verifier. This copy is a convenience: fetch the document over your OWN connection for the binding to mean anything.",
+        "description": "The Tinfoil Remote Attestation Document relayed verbatim from /.well-known/tinfoil-attestation — feed `attestationDocument` to Tinfoil's verifier (tinfoil-cli `attestation verify`, or the @tinfoilsh/verifier npm package). This copy is a convenience: fetch the document over your OWN connection for the binding to mean anything.",
         "properties": {
           "attestationDocument": {
             "type": "object",
@@ -1508,7 +1508,7 @@
           },
           "verify": {
             "type": "object",
-            "description": "How to verify: instructions, the enclave repo whose release holds the signed measurements, and the well-known attestation endpoint.",
+            "description": "How to verify: instructions (`how`), a ready-to-run tinfoil-cli command (`cli`, from github.com/tinfoilsh/tinfoil-cli), the npm verifier package (`npm`, @tinfoilsh/verifier — works in Node and browsers), the enclave repo whose release holds the signed measurements (`repo`, exact GitHub casing), and the well-known attestation endpoint.",
             "additionalProperties": true
           },
           "tlsKeyFingerprint": {

@@ -147,7 +147,7 @@ async function vmHealth(timeoutMs = 3000) {
 const REGISTRY_ENABLED  = /^(1|true|on)$/i.test(process.env.REGISTRY_ENABLED || "");
 const REGISTRY_ADDRESS  = process.env.REGISTRY_ADDRESS || "";
 const REGISTRY_PK       = process.env.REGISTRY_PRIVATE_KEY || "";        // operator key (enclave secret); needs a little Base ETH for gas
-const ENCLAVE_REPO      = process.env.ENCLAVE_REPO || "";                // e.g. "SteveDeFacto/Nan" - what callers attest against
+const ENCLAVE_REPO      = process.env.ENCLAVE_REPO || "";                // e.g. "SteveDeFacto/nan" - what callers attest against; MUST match GitHub's canonical casing (Sigstore compares it verbatim)
 const ENCLAVE_MEASUREMENT = process.env.ENCLAVE_MEASUREMENT || ("0x" + "0".repeat(64)); // optional cross-check
 const HEARTBEAT_SEC     = parseInt(process.env.REGISTRY_HEARTBEAT_SEC || "900", 10);
 // The endpoint we advertise is NOT configured — it is derived from the request
@@ -639,8 +639,9 @@ function appMeasurement(rec) {
 // Remote Attestation Document at /.well-known/tinfoil-attestation. We RELAY that
 // document verbatim and PARSE the quote so the registers are inspectable - but
 // we never claim "verified": the party being verified cannot vouch for itself.
-// Clients verify with github.com/tinfoilsh/verifier against the Sigstore-signed
-// measurements published on ENCLAVE_REPO's releases, over their OWN connection.
+// Clients verify with Tinfoil's verifier (tinfoil-cli's `attestation verify`, or
+// the @tinfoilsh/verifier npm package in Node/browsers) against the Sigstore-
+// signed measurements on ENCLAVE_REPO's releases, over their OWN connection.
 const RAD_PATH        = "/.well-known/tinfoil-attestation";
 const ATTESTATION_URL = process.env.ATTESTATION_URL || "";                 // explicit RAD URL override
 const RAD_CACHE_MS    = parseInt(process.env.RAD_CACHE_MS || "300000", 10); // convenience-copy staleness bound
@@ -648,7 +649,7 @@ const sha256Hex = (b) => createHash("sha256").update(b).digest("hex");
 
 // GET url, tolerate the shim's cert (the RAD is SELF-verifying: the quote binds
 // the TLS key, so transport trust adds nothing), and capture the peer key so we
-// can report the fingerprint exactly as tinfoilsh/verifier computes it.
+// can report the fingerprint exactly as Tinfoil's verifier computes it.
 function fetchRad(url, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
@@ -752,15 +753,20 @@ async function fetchGpuEvidence(nonceHex, timeoutMs = 30000) {
 }
 
 async function getMeasurements(rec, { origin = PUBLIC_URL, nonce } = {}) {
+  let enclaveHost = null; try { enclaveHost = origin ? new URL(origin).host : null; } catch {}
   const out = {
     // ALWAYS false here: verification is the CLIENT's act, on its own connection.
     // A "verified: true" asserted by the machine being verified proves nothing.
     verified: false,
     verify: {
       how: "Fetch " + RAD_PATH + " from this origin over your OWN TLS connection, verify the quote "
-         + "against the Intel/AMD root of trust (github.com/tinfoilsh/verifier does both), compare the "
-         + "registers to the Sigstore-signed measurements on the release page of `repo`, and check that "
-         + "reportData[0:32] equals sha256 of the TLS public key (SPKI DER) your connection presents.",
+         + "against the Intel/AMD root of trust, compare the registers to the Sigstore-signed "
+         + "measurements on the release page of `repo` (exact casing - Sigstore compares it verbatim), "
+         + "and check that reportData[0:32] equals sha256 of the TLS public key (SPKI DER) your "
+         + "connection presents. Tinfoil's verifier does all of this for you:",
+      cli: enclaveHost && ENCLAVE_REPO
+         ? `tinfoil attestation verify -e ${enclaveHost} -r ${ENCLAVE_REPO}` : null,  // github.com/tinfoilsh/tinfoil-cli
+      npm: "@tinfoilsh/verifier",  // Node + browsers: await new Verifier({ serverURL, configRepo: repo }).verify()
       repo: ENCLAVE_REPO || null,
       attestationEndpoint: (origin || "") + RAD_PATH,
     },
@@ -780,7 +786,7 @@ async function getMeasurements(rec, { origin = PUBLIC_URL, nonce } = {}) {
     const attestedTlsFP = parsed.reportData ? parsed.reportData.slice(0, 64) : null;
     out.tlsKeyFingerprint = attestedTlsFP ? `sha256:${attestedTlsFP}` : null;
     out.enclave = {
-      attestationDocument: doc,               // verbatim Tinfoil RAD - feed to tinfoilsh/verifier
+      attestationDocument: doc,               // verbatim Tinfoil RAD - feed to Tinfoil's verifier (tinfoil-cli / @tinfoilsh/verifier)
       fetchedFrom: url, fetchedAt: new Date(_radCache.at).toISOString(),
       // fingerprint of the key the shim ACTUALLY presented when we fetched; equals
       // the quote-bound one unless the shim rotated its key mid-cache-window.
