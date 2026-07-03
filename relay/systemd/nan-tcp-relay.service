@@ -14,7 +14,9 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-# only needed if you add a listen port below 1024 (e.g. 443)
+# RELAY_PORTS=1-19999 binds ~20k listen sockets + one fd per live connection
+LimitNOFILE=65536
+# lets the range include ports below 1024
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 

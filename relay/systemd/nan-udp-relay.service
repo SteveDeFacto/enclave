@@ -1,0 +1,28 @@
+[Unit]
+Description=NAN UDP relay (per-deployment IPv6; datagrams tunneled to the enclave)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/nan-relay/udp-relay.env
+WorkingDirectory=/opt/nan-relay
+# AnyIP: make the whole routed /64 bind-able without configuring each address.
+# Two parts, both as root (the +): the local route delivers packets for the
+# range, and ip_nonlocal_bind lets the daemon bind addresses it hasn't
+# configured. Both ignore failure (the - prefix): the route re-add is harmless
+# if present, and the sysctl may already be set. `ip` lives in /usr/sbin on
+# recent Ubuntu, so resolve by name via env rather than hardcoding a path.
+ExecStartPre=+-/usr/bin/env sysctl -w net.ipv6.ip_nonlocal_bind=1
+ExecStartPre=+-/usr/bin/env ip -6 route add local ${UDP_PREFIX} dev lo
+ExecStart=/usr/bin/node /opt/nan-relay/udp-relay.js
+Restart=always
+RestartSec=2
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

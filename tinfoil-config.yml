@@ -22,7 +22,7 @@ gpus: 1            # whole H200 attached to the enclave (CC allows 1 or 8)
 containers:
   # --- MPS daemon: makes per-tenant SM%/VRAM caps enforceable in prod -----------
   - name: "mps-control"
-    image: "ghcr.io/stevedefacto/nan-mps@sha256:db81a6bf9ffaa9c6dcfdcd78ec22a2a746e221c17a384146a6453fe000925f53"
+    image: "ghcr.io/stevedefacto/nan-mps@sha256:c7b68f52d588527527f6c0955133b996d868e8f944bf9590ca3888ada8b08220"
     runtime: nvidia
     gpus: all
     ipc: host
@@ -39,7 +39,7 @@ containers:
 
   # --- GPU worker: forks MPS-capped CUDA processes per tenant, runs submitted jobs
   - name: "worker"
-    image: "ghcr.io/stevedefacto/nan-worker@sha256:f897d08b6e66fb5ba131c612d616a27207f3a3195808e1a80f45aa7a67affafc"
+    image: "ghcr.io/stevedefacto/nan-worker@sha256:138259d7715bbeecc7862614d1b8d5cf98a8a4b2e980322c42d87cbd12b7d2a2"
     runtime: nvidia
     gpus: all
     ipc: host
@@ -59,7 +59,7 @@ containers:
 
   # --- supervisor: control plane (no GPU), public ingress -----------------------
   - name: "supervisor"
-    image: "ghcr.io/stevedefacto/nan@sha256:558d7c501f4f40edbb9b18fbefd357c9d6f4d09cab2794eef8d02f5092ee3089"
+    image: "ghcr.io/stevedefacto/nan@sha256:ed359a9e2fc93781a0c354ec97d36a5e49e6a49a771c02fd71b85b509562ae58"
     restart: always
     env:
       - PORT: "8080"
@@ -112,6 +112,11 @@ containers:
       - MIN_COMPUTE_PCT: "1"
       - VRAM_GRANULARITY_GB: "1"
       - CTX_OVERHEAD_GB: "0.5"
+      # public UDP: the UDP relay box's routed /64. Each deployment declaring a
+      # udp:N port gets its own IPv6 from this prefix (deterministic from the id),
+      # advertised in the deploy response and /v1/udp-map. Empty = udp ports stay
+      # in-enclave-only (no public datagram path). See relay/README.md.
+      - UDP_ADDR_PREFIX: "2a01:4f9:c013:9b52::/64"       # nan-relay's routed /64 (46.62.128.36); MUST match the udp-relay box
       # manual-billing / pilot: boot deployments without an on-chain payment.
       # AUTO_PROVISION="1" provisions EVERY deploy for free (use only for a closed
       # pilot). Leave "" and use the ADMIN_TOKEN-gated provision endpoint instead to
@@ -154,7 +159,7 @@ containers:
   # The app catalog is baked into the image (apps/*.wasm + catalog.json), so what
   # runs is exactly what Tinfoil attested. Apps are wasi:http components.
   - name: "wasm-manager"
-    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:6aaef59c96fc12a35fa0cdcacdb8078f3577784ec81e567e11a34bc3adc8e775"
+    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:fba11ef01f296b3d6b23baa96fed8c7d1764297bb56694c4265496249e3db830"
     restart: always
     env:
       - WASM_MANAGER_PORT: "8091"   # same port the supervisor's VMMGR_URL already targets

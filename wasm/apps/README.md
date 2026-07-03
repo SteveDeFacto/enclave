@@ -69,6 +69,15 @@ assigned port; TLS is platform dressing. Verifying clients can bind the
 session to the attestation: `GET /v1/tls-bridge` (served over the attested
 origin) publishes the platform cert's fingerprints to pin.
 
+**Public UDP (`udp:N`).** A declared `udp:N` is bridged at `/x/:id/udp/N`
+(datagrams over the WS, 1 message = 1 datagram). Because UDP has no SNI, each
+deployment gets its **own IPv6** (from the box's /64; the deploy response's
+`network.udp` shows `[address]:port`), and the UDP relay routes by address.
+The app just binds its assigned actual UDP port as normal. Two limits worth
+knowing: it's **IPv6-only** (a box has one v4), and the relay sees **cleartext**
+(it's not a confidentiality boundary — encrypt at the app, e.g. DTLS, if you
+need privacy). See `relay/README.md`.
+
 Sandbox defaults (nothing to configure): a private writable `/data` (see below),
 no host environment, no network beyond the served HTTP socket, memory capped per
 app via `mem_mb` in the catalog. Peer isolation = separate Wasm sandbox +

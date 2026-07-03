@@ -18,9 +18,15 @@
 //                                     (point *.tcp.nan.host at this box)
 //   ENCLAVE_URL             required  enclave origin, e.g.
 //                                     https://enclave1.nan.containers.tinfoil.dev
-//   RELAY_PORTS             required  comma list of "public[:logical]" TCP ports,
-//                                     e.g. "6667,5432" or "6697:6667" (public 6697
-//                                     bridges to the app's declared tcp:6667)
+//   RELAY_PORTS             required  comma list of "public[:logical]" ports and
+//                                     "lo-hi" ranges (range = pass-through, public
+//                                     == logical). "1-19999" serves every logical
+//                                     port the platform allows — the box needs no
+//                                     firewall, and a tenant's new tcp:N works with
+//                                     no relay config change. e.g.:
+//                                       RELAY_PORTS=1-19999            all apps
+//                                       RELAY_PORTS=6667,6697:6667     just IRC
+//   RELAY_EXCLUDE           optional  ports never bound (default "22"; sshd)
 //   RELAY_MAX_CONNS         optional  concurrent client connection cap (1024)
 //   RELAY_HELLO_TIMEOUT_MS  optional  ms to wait for a full ClientHello (10000)
 
@@ -37,11 +43,19 @@ const DOMAIN    = need("RELAY_DOMAIN").toLowerCase().replace(/^\.+|\.+$/g, "");
 const ENCLAVE   = need("ENCLAVE_URL").replace(/\/+$/, "").replace(/^http/, "ws"); // http(s):// -> ws(s)://
 const MAX_CONNS = parseInt(process.env.RELAY_MAX_CONNS || "1024", 10);
 const HELLO_MS  = parseInt(process.env.RELAY_HELLO_TIMEOUT_MS || "10000", 10);
-const PORTS = need("RELAY_PORTS").split(",").map((s) => {
-  const m = /^\s*(\d{1,5})(?::(\d{1,5}))?\s*$/.exec(s);
-  if (!m) { console.error(`fatal: RELAY_PORTS: bad entry "${s}" (use public[:logical])`); process.exit(1); }
-  return { public: +m[1], logical: +(m[2] || m[1]) };
-});
+const EXCLUDE = new Set((process.env.RELAY_EXCLUDE || "22").split(",").map((s) => +s.trim()).filter(Boolean));
+const PORTS = [];
+for (const s of need("RELAY_PORTS").split(",")) {
+  const range = /^\s*(\d{1,5})\s*-\s*(\d{1,5})\s*$/.exec(s);
+  const single = /^\s*(\d{1,5})(?::(\d{1,5}))?\s*$/.exec(s);
+  if (range) {
+    for (let p = +range[1]; p <= +range[2]; p++) if (!EXCLUDE.has(p)) PORTS.push({ public: p, logical: p, quiet: true });
+  } else if (single) {
+    PORTS.push({ public: +single[1], logical: +(single[2] || single[1]) });
+  } else {
+    console.error(`fatal: RELAY_PORTS: bad entry "${s}" (use public[:logical] or lo-hi)`); process.exit(1);
+  }
+}
 
 // Extract the SNI server_name from a TLS ClientHello.
 //   string -> hostname (lowercased)   null -> need more bytes   false -> reject
@@ -125,9 +139,20 @@ function splice(client, dep, port, hello) {
   });
 }
 
+// Range entries skip ports that are busy or privileged-and-denied (a box that
+// also runs sshd etc. keeps working); explicitly listed ports stay fatal so a
+// typo'd config can't silently serve nothing.
+let bound = 0, skipped = 0, pending = PORTS.length;
+const summary = () => console.log(
+  `[relay] listening on ${bound} port(s) (${skipped} skipped) -> ${ENCLAVE}/x/<sni>.${DOMAIN}/tls/<port>`);
 for (const p of PORTS) {
   const srv = net.createServer((c) => handle(c, p.logical));
-  srv.on("error", (e) => { console.error(`fatal: listen :${p.public}: ${e.message}`); process.exit(1); });
-  srv.listen(p.public, () =>
-    console.log(`[relay] :${p.public} -> ${ENCLAVE}/x/<sni>.${DOMAIN}/tls/${p.logical}`));
+  srv.on("error", (e) => {
+    if (!p.quiet) { console.error(`fatal: listen :${p.public}: ${e.message}`); process.exit(1); }
+    skipped++; if (--pending === 0) summary();
+  });
+  srv.listen(p.public, () => {
+    if (!p.quiet) console.log(`[relay] :${p.public} -> ${ENCLAVE}/x/<sni>.${DOMAIN}/tls/${p.logical}`);
+    bound++; if (--pending === 0) summary();
+  });
 }

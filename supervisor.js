@@ -20,6 +20,7 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import tls from "node:tls";
+import dgram from "node:dgram";
 import { createHash, randomBytes, X509Certificate } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { execFileSync, execFile } from "node:child_process";
@@ -861,6 +862,54 @@ function parseFirewall(fw) {
   return out;                                               // [] = classic wasi:http serve mode
 }
 const fwTcpPorts = (rec) => (rec.firewall || []).filter((x) => x.startsWith("tcp:")).map((x) => +x.slice(4));
+const fwUdpPorts = (rec) => (rec.firewall || []).filter((x) => x.startsWith("udp:")).map((x) => +x.slice(4));
+
+// ---------------------------------------------------------------------------
+// UDP addressing — a per-deployment IPv6 out of the relay box's /64.
+// UDP carries no SNI, so a shared public port can't tell tenants apart; instead
+// each deployment gets its OWN address and the relay routes by destination IP.
+// The address is DETERMINISTIC from the deployment id (sha256 → low 64 host
+// bits), so supervisor and relay derive the identical value with no shared
+// state. UDP_ADDR_PREFIX is the relay box's routed /64 (e.g.
+// "2a01:4f9:c013:bdfd::/64"); unset = UDP addressing off (the /udp bridge still
+// works for direct callers, but no address is advertised). See relay/README.md.
+const UDP_ADDR_PREFIX = (process.env.UDP_ADDR_PREFIX || "").trim();
+function v6ToBig(s) {                                       // parse an IPv6 (incl. "::") to a 128-bit BigInt
+  const [head, tail] = s.split("::");
+  const hi = head ? head.split(":").filter(Boolean) : [];
+  const lo = tail ? tail.split(":").filter(Boolean) : [];
+  const mid = Array(8 - hi.length - lo.length).fill("0");
+  const groups = s.includes("::") ? [...hi, ...mid, ...lo] : s.split(":");
+  if (groups.length !== 8) throw new Error(`bad IPv6 "${s}"`);
+  return groups.reduce((a, g) => (a << 16n) | BigInt(parseInt(g || "0", 16)), 0n);
+}
+function bigToV6(n) {                                       // 128-bit BigInt → compressed IPv6 string
+  const g = [];
+  for (let i = 0; i < 8; i++) g[i] = Number((n >> BigInt((7 - i) * 16)) & 0xffffn);  // g[0] = most significant group
+  let best = { i: -1, len: 0 }, cur = { i: -1, len: 0 };    // longest zero-run for "::"
+  g.forEach((v, i) => {
+    if (v === 0) { if (cur.i < 0) cur = { i, len: 0 }; cur.len++; if (cur.len > best.len) best = { ...cur }; }
+    else cur = { i: -1, len: 0 };
+  });
+  const hex = g.map((v) => v.toString(16));
+  if (best.len > 1) { hex.splice(best.i, best.len, ""); if (best.i === 0) hex.unshift(""); if (best.i + best.len === 8) hex.push(""); }
+  return hex.join(":").replace(/:{3,}/, "::");
+}
+// Deterministic host part: sha256(id) low 64 bits, kept clear of the low range
+// so it never lands on the box's own ::1 / infrastructure addresses.
+function udpAddrFor(id) {
+  if (!UDP_ADDR_PREFIX) return null;
+  const [prefix] = UDP_ADDR_PREFIX.split("/");
+  const net128 = v6ToBig(prefix) & (~0n << 64n);            // zero the low 64 (host) bits
+  let host = BigInt("0x" + createHash("sha256").update(id).digest("hex").slice(0, 16)) & ((1n << 64n) - 1n);
+  if (host < 0x10000n) host += 0x10000n;                    // reserve the low range for infra
+  return bigToV6(net128 | host);
+}
+// public deployments exposing udp ports, with their address + logical ports —
+// the relay reads this to know what to bind and where to route.
+const udpMap = () => [...deployments.values()]
+  .filter((r) => r.public && r.status === "running" && fwUdpPorts(r).length)
+  .map((r) => ({ id: r.id, address: udpAddrFor(r.id), ports: fwUdpPorts(r) }));
 
 app.use("/x/:id", async (req, res) => {
   const rec = deployments.get(req.params.id);
@@ -1139,6 +1188,10 @@ const view = (rec) => {
   o.expiresAt = (rec.remainingMs != null && rec.status === "running" && !rec.paused)
     ? new Date(Date.now() + Math.max(0, rec.remainingMs)).toISOString() : null;
   o.payment = paymentInstructions(rec);
+  // declared udp ports get a per-deployment IPv6 (via the udp-relay). Surface
+  // it so the dashboard can show a ready-to-use endpoint, e.g. [addr]:53.
+  const udpPorts = fwUdpPorts(rec);
+  if (udpPorts.length) o.network = { ...o.network, udp: { address: udpAddrFor(rec.id), ports: udpPorts } };
   return o;
 };
 
@@ -1635,6 +1688,13 @@ app.get("/v1/tls-bridge", (_req, res) => {
                    + "<dep-id>.tcp.<domain> connections to match fingerprint256 (or pin spkiPinSha256)." });
 });
 
+// UDP routing map, PUBLIC: the udp-relay (relay/udp-relay.js) polls this to learn
+// which per-deployment IPv6 to bind and which logical ports to route into the
+// /x/:id/udp/:port bridge. Only public+running deployments with udp ports; the
+// addresses are the deterministic ones the relay also derives from the id.
+app.get("/v1/udp-map", (_req, res) =>
+  res.json({ enabled: !!UDP_ADDR_PREFIX, prefix: UDP_ADDR_PREFIX || null, deployments: udpMap() }));
+
 // Tail the worker's stdout/stderr (owner only). ?tail=N (default 200, max 2000).
 app.get("/v1/deployments/:id/logs", authed, async (req, res) => {
   const rec = deployments.get(req.params.id);
@@ -1734,6 +1794,25 @@ function wsTlsBridge(req, socket, head, port) {
   });
 }
 
+// UDP bridge: one WebSocket carries one client's datagram flow. WebSocket
+// messages are already framed, so 1 binary message == 1 datagram, both ways —
+// no length prefixing. Each flow gets its own loopback dgram socket toward the
+// app's actual port, so replies fan back to the right client. UDP has no close,
+// so an idle timer tears the flow down.
+const UDP_IDLE_MS = parseInt(process.env.UDP_IDLE_MS || "120000", 10);
+function wsUdpBridge(req, socket, head, port) {
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    const udp = dgram.createSocket("udp4");
+    let timer = null;
+    const close = () => { clearTimeout(timer); try { ws.close(); } catch {} try { udp.close(); } catch {} };
+    const bump = () => { clearTimeout(timer); timer = setTimeout(close, UDP_IDLE_MS); };
+    ws.on("message", (d, isBinary) => { if (isBinary) { udp.send(d, port, "127.0.0.1"); bump(); } });
+    udp.on("message", (d) => { if (ws.readyState === ws.OPEN) { ws.send(d); bump(); } });
+    ws.on("close", close); ws.on("error", close); udp.on("error", close);
+    bump();
+  });
+}
+
 server.on("upgrade", async (req, socket, head) => {
   const deny = (line) => { socket.write(`HTTP/1.1 ${line}\r\n\r\n`); socket.destroy(); };
 
@@ -1764,6 +1843,28 @@ server.on("upgrade", async (req, socket, head) => {
     const bound = (vr && vr.body && vr.body.boundPorts) || [];
     if (!bound.includes(actual)) return deny("409 Conflict");   // app hasn't bound it (yet)
     return (mode === "tls" ? wsTlsBridge : wsTcpBridge)(req, socket, head, actual);
+  }
+
+  // ---- app UDP ports: /x/:id/udp/:port — datagrams tunneled over the WS ----
+  // Same gates as the tcp path (declared + bound), but bridged as datagrams.
+  // The udp-relay routes here by the deployment's per-tenant IPv6, so it only
+  // reaches public deployments; private udp is not exposed in v1.
+  const u = (req.url || "").match(/^\/x\/([^/?]+)\/udp\/(\d{1,5})(?:\?|$)/);
+  if (u) {
+    const rec = deployments.get(u[1]), port = +u[2];
+    if (!rec)                            return deny("404 Not Found");
+    if (!fwUdpPorts(rec).includes(port)) return deny("404 Not Found");
+    if (!rec.public) {
+      const addr = await authUpgrade(req);
+      if (!addr)              return deny("401 Unauthorized");
+      if (rec.owner !== addr) return deny("403 Forbidden");
+    }
+    if (rec.status !== "running" || !rec._vmId) return deny("409 Conflict");
+    const actual = (rec.portMap && rec.portMap["udp:" + port]) || port;
+    const vr = await vmReq("GET", `/vms/${encodeURIComponent(rec._vmId)}`).catch(() => null);
+    const bound = (vr && vr.body && vr.body.boundPorts) || [];
+    if (!bound.includes(actual)) return deny("409 Conflict");
+    return wsUdpBridge(req, socket, head, actual);
   }
 
   // ---- SSH: always owner-only, regardless of `public` ----

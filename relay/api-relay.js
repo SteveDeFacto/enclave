@@ -28,6 +28,8 @@
 //   ENCLAVES           required*   *instead of the registry: static comma list
 //                                  of enclave origins (pilot / local dev)
 //   API_RELAY_PORT     optional    listen port (default 8100)
+//   API_RELAY_BIND     optional    bind address (default all interfaces; set
+//                                  127.0.0.1 when fronted by a local reverse proxy)
 //   AVAIL_POLL_SEC     optional    availability poll cadence (default 10)
 //   REGISTRY_POLL_SEC  optional    registry re-read cadence (default 300)
 //   STALE_AFTER_SEC    optional    drop enclaves silent on-chain > this (3600)
@@ -166,5 +168,5 @@ await pollAvailability();
 setInterval(pollRegistry, REGISTRY_POLL_SEC * 1000);
 setInterval(pollAvailability, AVAIL_POLL_SEC * 1000);
 
-server.listen(PORT, () => console.log(
+server.listen(PORT, process.env.API_RELAY_BIND || undefined, () => console.log(
   `[api-relay] :${PORT} · ${STATIC_ENCLAVES.length ? `static list (${STATIC_ENCLAVES.length})` : `NanRegistry ${REGISTRY_ADDRESS}`} · ${live.length}/${registry.length} live`));

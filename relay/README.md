@@ -9,6 +9,8 @@ without ever entering the trust boundary:
 - [`api-relay.js`](api-relay.js) — **API relay**: fleet discovery + placement.
   Reads NanRegistry on Base for live enclaves, polls their `/availability`,
   and steers new work to the most available one.
+- [`udp-relay.js`](udp-relay.js) — **UDP relay**: public reach for apps'
+  declared `udp:N` ports, one IPv6 per deployment. Details below.
 
 ## API relay
 
@@ -43,6 +45,58 @@ Notes:
 - Config: `REGISTRY_ADDRESS` or `ENCLAVES` (required), `BASE_RPC`,
   `API_RELAY_PORT` (8100), `AVAIL_POLL_SEC` (10), `REGISTRY_POLL_SEC` (300),
   `STALE_AFTER_SEC` (3600).
+
+## UDP relay
+
+Gives an app's declared `udp:N` ports a reachable public endpoint. UDP carries
+no SNI, so a shared port can't disambiguate tenants — instead **every
+deployment gets its own IPv6** out of the box's routed /64, and the relay
+routes by destination address:
+
+```
+client ──UDP──> [<per-deployment IPv6>]:N ──WS (1 msg = 1 datagram)──> enclave
+                                              /x/<id>/udp/N ──UDP──> app
+```
+
+The supervisor derives each deployment's address deterministically from its id
+(`/v1/udp-map` publishes the list); the relay polls that map, binds each live
+`[address]:port`, and tunnels datagrams over the same WSS bridge the TCP relay
+uses. A new tenant's `udp:N` appears within one poll — no relay config change.
+
+### Setup
+
+1. **Enclave**: set `UDP_ADDR_PREFIX` on the supervisor to this box's routed /64
+   (e.g. `2a01:4f9:c013:bdfd::/64`). Unset = UDP addressing off.
+2. **Box, AnyIP** (once): make the whole /64 bind-able without configuring 2^64
+   addresses. The systemd unit does this in `ExecStartPre`; manually it's
+   `ip -6 route add local 2a01:4f9:c013:bdfd::/64 dev lo`.
+3. **Relay**:
+
+```bash
+UDP_PREFIX=2a01:4f9:c013:bdfd::/64 \
+ENCLAVE_URL=https://enclave1... node udp-relay.js
+```
+
+Clients then reach a deployment at its advertised `[2a01:4f9:c013:bdfd:…]:N`
+(shown in the deploy response's `network.udp`). Public deployments only in v1.
+
+### Caveats (read these)
+
+- **IPv6 only.** A box has one IPv4; there aren't enough v4 addresses to give
+  each app its own. v4-only clients can't reach a v6 endpoint. For stock v4
+  UDP clients, the fallback is an exclusive-port claim on the single v4 (not
+  built yet — ask when a tenant needs it).
+- **The relay sees plaintext.** Unlike the TCP path (TLS terminates
+  in-enclave), a stock UDP client sends cleartext, so this relay can read/drop
+  datagrams — it holds no keys and no state beyond live flows, but it is *not*
+  a confidentiality boundary. Apps needing privacy must encrypt themselves
+  (e.g. DTLS). Consider marking UDP apps ⚠ in the catalog.
+- **TCP under the hood** means loss becomes head-of-line *delay*, not drop.
+  Fine for request/response (DNS-style); realtime/loss-tolerant protocols feel
+  it. Datagram boundaries are preserved (1 WS message = 1 datagram).
+- Config: `ENCLAVE_URL` (required), `UDP_POLL_SEC` (5), `UDP_IDLE_MS`
+  (120000), `UDP_MAX_FLOWS` (4096). `UDP_PREFIX` is only read by the systemd
+  unit's AnyIP step, not the daemon.
 
 ## TCP relay
 
