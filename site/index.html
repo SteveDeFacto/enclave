@@ -453,6 +453,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
       <a href="#top" data-view="overview" class="active">Overview</a>
       <a href="#deploy" data-view="deploy">Deploy</a>
       <a href="#apps" data-view="apps">Apps</a>
+      <a href="#docs" data-view="docs">Docs</a>
       <a href="#api" data-view="api">API</a>
     </nav>
     <div class="wallet-mount" id="walletMount">
@@ -562,7 +563,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="sec-head">
       <span class="eyebrow">Deploy · live on Base</span>
       <h2>Build a deployment.</h2>
-      <p>Pick a Wasm app, connect your wallet, and provision a real confidential enclave. This console calls the same public REST API documented below. The request body and browser <span class="mono">fetch()</span> shown here are exactly what gets sent. Use <span class="mono">Dry run</span> to inspect the call before spending anything.</p>
+      <p>Pick a Wasm app, connect your wallet, and provision a real confidential enclave. This console calls the same public REST API documented below. The request body and browser <span class="mono">fetch()</span> shown here are exactly what gets sent. Use <span class="mono">Dry run</span> to inspect the call before spending anything. Want to deploy your own code? The <a href="#docs" data-view="docs">developer guide</a> walks you through building it.</p>
       <div class="endpoint-row">
         <label for="apiBase">API endpoint</label>
         <input type="text" id="apiBase" spellcheck="false" autocapitalize="off" autocomplete="off" />
@@ -727,7 +728,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
 
     <div class="publish-panel" id="publishPanel" hidden>
       <h4>Publish a Wasm app version</h4>
-      <p class="pub-sub">Add a <span class="mono">wasi:http</span> component release to the on-chain catalog. Its bytes go on IPFS; the CID and metadata go on Base. An app is keyed by <b>slug</b> in your wallet's namespace — publish the same slug again to cut a new <b>version</b>. Only you (<span class="mono">msg.sender</span>) can add versions, edit, or delist it.</p>
+      <p class="pub-sub">Add a <span class="mono">wasi:http</span> component release to the on-chain catalog. Its bytes go on IPFS; the CID and metadata go on Base. An app is keyed by <b>slug</b> in your wallet's namespace — publish the same slug again to cut a new <b>version</b>. Only you (<span class="mono">msg.sender</span>) can add versions, edit, or delist it. New to building components? The <a href="#docs" data-view="docs">developer guide</a> takes you from an empty directory to a published app.</p>
       <div class="pub-grid">
         <div>
           <label for="pubSlug">App slug <span class="dim">(stable id · a–z0–9-, ≤ 40)</span></label>
@@ -870,6 +871,584 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     </div>
   </div>
 </section>
+<!-- ===================== DEVELOPER GUIDE (docs view) ===================== -->
+<style>
+.docs-layout{display:grid;grid-template-columns:250px 1fr;gap:30px;align-items:start;}
+.docs-side{position:sticky;top:80px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);overflow:hidden;max-height:calc(100vh - 100px);display:flex;flex-direction:column;}
+.docs-nav{overflow:auto;padding:8px;flex:1;}
+.docs-nav .grp{font-family:var(--font-mono);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);padding:12px 8px 6px;}
+.docs-nav a{display:flex;align-items:baseline;gap:8px;padding:6px 8px;border-radius:7px;font-family:var(--font-mono);font-size:.76rem;color:var(--text-muted);transition:.12s;}
+.docs-nav a:hover{background:var(--bg-1);color:var(--text);}
+.docs-nav a.on{color:var(--jade);background:var(--bg-1);}
+.docs-nav a .n{color:var(--text-dim);font-size:.66rem;flex:none;width:1.6em;}
+.docs-main{min-width:0;display:grid;gap:56px;}
+.doc{min-width:0;}
+.doc > h3{font-family:var(--font-mono);font-size:1.25rem;letter-spacing:-.01em;margin:0 0 6px;padding-top:6px;border-top:1px solid var(--line-soft);}
+.doc:first-child > h3{border-top:0;padding-top:0;}
+.doc > h3 .n{color:var(--text-dim);font-size:.8rem;margin-right:.7em;}
+.doc h4{font-family:var(--font-mono);font-size:.95rem;margin:26px 0 4px;color:var(--text);}
+.doc p{color:var(--text-muted);font-size:.95rem;line-height:1.65;margin:.6em 0;max-width:78ch;}
+.doc p b,.doc li b{color:var(--text);}
+.doc code{font-family:var(--font-mono);font-size:.86em;color:var(--jade-2);background:var(--bg-1);border:1px solid var(--line-soft);border-radius:5px;padding:.08em .35em;}
+.doc .code{margin:14px 0;}
+.doc .code code{color:#C7D3E2;background:none;border:0;padding:0;font-size:1em;}
+.doc ul,.doc ol{color:var(--text-muted);font-size:.95rem;line-height:1.65;padding-left:1.3em;max-width:78ch;margin:.6em 0;}
+.doc li{margin:.35em 0;}
+.doc-note{border:1px solid var(--jade-dim);border-left-width:3px;border-radius:var(--radius-sm);background:linear-gradient(180deg,rgba(47,230,168,.06),transparent);padding:14px 18px;margin:16px 0;max-width:78ch;}
+.doc-note p{margin:.2em 0;font-size:.9rem;}
+.doc-note .nt{font-family:var(--font-mono);font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--jade);display:block;margin-bottom:4px;}
+.doc-note.warn{border-color:var(--amber-dim);background:linear-gradient(180deg,var(--amber-deep),transparent);}
+.doc-note.warn .nt{color:var(--amber);}
+.doc .tbl{overflow-x:auto;margin:14px 0;border:1px solid var(--line-soft);border-radius:var(--radius-sm);}
+.doc table.params td{color:var(--text-muted);font-size:.86rem;line-height:1.55;}
+.doc table.params td.pname{color:var(--text);}
+@media(max-width:960px){.docs-layout{grid-template-columns:1fr;}.docs-side{position:static;max-height:none;}.docs-nav{max-height:260px;}}
+</style>
+<section id="docs" data-view="docs" aria-label="App development guide" hidden>
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Developer guide · build → publish → deploy</span>
+      <h2>Build your first Wasm app.</h2>
+      <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code — HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, and attestation your users can check themselves. Everything here runs against the same <a href="#api" data-view="api">public API</a> the <a href="#deploy" data-view="deploy">Deploy console</a> uses.</p>
+    </div>
+
+    <div class="docs-layout">
+      <aside class="docs-side">
+        <nav class="docs-nav" aria-label="Guide chapters">
+          <div class="grp">Get started</div>
+          <a href="#docs-model" class="on"><span class="n">01</span>The app model</a>
+          <a href="#docs-toolchain"><span class="n">02</span>Toolchain setup</a>
+          <a href="#docs-hello"><span class="n">03</span>Hello, enclave</a>
+          <div class="grp">Ship it</div>
+          <a href="#docs-publish"><span class="n">04</span>Publish to the store</a>
+          <a href="#docs-deploy"><span class="n">05</span>Deploy it</a>
+          <a href="#docs-call"><span class="n">06</span>Call your app</a>
+          <div class="grp">Capabilities</div>
+          <a href="#docs-http"><span class="n">07</span>HTTP in depth</a>
+          <a href="#docs-data"><span class="n">08</span>The /data filesystem</a>
+          <a href="#docs-ports"><span class="n">09</span>Service apps &amp; ports</a>
+          <a href="#docs-tcp"><span class="n">10</span>TCP &amp; in-enclave TLS</a>
+          <a href="#docs-udp"><span class="n">11</span>UDP</a>
+          <div class="grp">Reference</div>
+          <a href="#docs-attest"><span class="n">12</span>Attestation for users</a>
+          <a href="#docs-langs"><span class="n">13</span>Other languages</a>
+          <a href="#docs-limits"><span class="n">14</span>Limits &amp; sandbox</a>
+          <a href="#docs-troubleshoot"><span class="n">15</span>Troubleshooting</a>
+        </nav>
+      </aside>
+
+      <div class="docs-main">
+
+        <!-- 01 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-model">
+          <h3><span class="n">01</span>The app model</h3>
+          <p>A NaN app is a <b>WebAssembly component</b> that targets <code>wasi:http</code> — the format <code>wasmtime serve</code> runs. It exports one interface, <code>wasi:http/incoming-handler</code>: the runtime hands your code an HTTP request, your code returns a response. Like a serverless function, except it runs inside a hardware-attested confidential enclave, and anyone can verify that.</p>
+          <p>Inside the enclave your app runs in a strict capability sandbox, in its own OS process, launched by the exact same <code>wasmtime</code> command you can run locally:</p>
+          <ul>
+            <li><b>Filesystem</b> — a single private, writable <code>/data</code> directory (RAM-backed scratch, torn down with the deployment). Nothing else is visible, and paths that escape it (<code>/data/../..</code>) are refused by the runtime. <a href="#docs-data">Chapter 08 →</a></li>
+            <li><b>Environment</b> — empty, except <code>NAN_PORTS</code> for service apps. No host env ever leaks in.</li>
+            <li><b>Network</b> — none by default beyond the HTTP socket the runtime serves for you. Declaring firewall ports switches the app to service mode with <code>wasi:sockets</code>. <a href="#docs-ports">Chapter 09 →</a></li>
+            <li><b>Memory</b> — the guest's linear memory is capped at the app's <code>mem_mb</code>, enforced by the runtime.</li>
+            <li><b>No host reach</b> — no processes, no exec, no SSH (a Wasm app isn't an OS; there's nothing to SSH into).</li>
+          </ul>
+          <p>Two kinds of app, one format:</p>
+          <ul>
+            <li><b>Web apps</b> (the default, and this guide's walkthrough) — export the handler; the platform owns the listener and routes requests to you.</li>
+            <li><b>Service apps</b> — declare firewall ports (<code>http:N</code> / <code>tcp:N</code> / <code>udp:N</code>) and run as a long-lived command component that binds its own sockets: databases, IRC servers, DNS resolvers. <a href="#docs-ports">Chapter 09 →</a></li>
+          </ul>
+          <p>And two catalogs your app reference can point at:</p>
+          <ul>
+            <li><b>Baked-in catalog</b> — curated sample apps compiled into the measured enclave image, referenced by id (<code>hello</code>). Covered directly by attestation.</li>
+            <li><b>On-chain app store</b> — the <a href="#apps" data-view="apps">Apps</a> tab: anyone publishes, bytes live on IPFS addressed by CID, listings live in the <code>NanAppCatalog</code> contract on Base. This is where <i>your</i> app goes. <a href="#docs-publish">Chapter 04 →</a></li>
+          </ul>
+          <div class="doc-note">
+            <span class="nt">The contract</span>
+            <p>If <code>wasmtime serve</code> runs your <code>.wasm</code> locally, the enclave runs it too — the manager launches the identical command per tenant. That's the whole compatibility story, and it's why every chapter here ends with a local command you can verify before spending a cent.</p>
+          </div>
+        </article>
+
+        <!-- 02 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-toolchain">
+          <h3><span class="n">02</span>Toolchain setup</h3>
+          <p>The walkthrough uses <b>Rust</b>, the most mature component toolchain today (other languages in <a href="#docs-langs">chapter 13</a>). You need the WASI 0.2 target, <code>cargo-component</code>, and — for local testing — the same <code>wasmtime</code> runtime the enclave uses:</p>
+          <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code># Rust component toolchain
+rustup target add wasm32-wasip2
+cargo install cargo-component
+
+# the runtime the enclave runs (wasmtime 45+) — for local testing
+curl https://wasmtime.dev/install.sh -sSf | bash
+wasmtime --version</code></pre></div>
+        </article>
+
+        <!-- 03 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-hello">
+          <h3><span class="n">03</span>Hello, enclave</h3>
+          <p>Five steps from nothing to a running app: scaffold, declare the world, write the handler, build, run. The result is byte-for-byte the kind of component the platform's own <code>hello</code> sample is.</p>
+
+          <h4>Step 1 — scaffold a component crate</h4>
+          <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>cargo component new hello --lib &amp;&amp; cd hello
+cargo add wasi        # WASI 0.2 bindings</code></pre></div>
+
+          <h4>Step 2 — declare the world</h4>
+          <p>The world tells the toolchain what your component imports and exports. A NaN web app exports exactly one thing:</p>
+          <div class="code"><div class="codebar"><span class="fn">wit/world.wit</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>package nan:hello;
+
+world hello {
+  export wasi:http/incoming-handler@0.2.0;
+}</code></pre></div>
+
+          <h4>Step 3 — write the handler</h4>
+          <div class="code"><div class="codebar"><span class="fn">src/lib.rs</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>use wasi::http::types::{
+    Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
+};
+
+wasi::http::proxy::export!(Component);
+
+struct Component;
+
+impl wasi::exports::http::incoming_handler::Guest for Component {
+    fn handle(_req: IncomingRequest, out: ResponseOutparam) {
+        // 1. make a response and take its body handle
+        let resp = OutgoingResponse::new(Fields::new());
+        let body = resp.body().unwrap();
+
+        // 2. hand the response to the host FIRST, then stream the body
+        ResponseOutparam::set(out, Ok(resp));
+        let stream = body.write().unwrap();
+        stream.blocking_write_and_flush(b"hello from NaN\n").unwrap();
+        drop(stream);
+
+        // 3. finishing the body is what completes the response
+        OutgoingBody::finish(body, None).unwrap();
+    }
+}</code></pre></div>
+          <div class="doc-note warn">
+            <span class="nt">Version drift</span>
+            <p>The <code>wasi</code> crate's binding APIs shift between releases. Pin the version documented for your <code>cargo-component</code> and let the compiler guide the exact handler signature — the shape above (<code>proxy::export!</code>, set the outparam, write, finish) is the stable <code>wasi:http</code> pattern.</p>
+          </div>
+
+          <h4>Step 4 — build</h4>
+          <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>cargo component build --release --target wasm32-wasip2
+# artifact: target/wasm32-wasip2/release/hello.wasm</code></pre></div>
+          <p>This emits a <b>component</b> (layer 1 in the wasm preamble), not a plain core module — the upload gateway and the enclave both check that field and reject core modules, so anything that builds this way is already in the right format.</p>
+
+          <h4>Step 5 — run it locally</h4>
+          <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>wasmtime serve --addr 127.0.0.1:8080 target/wasm32-wasip2/release/hello.wasm
+curl 127.0.0.1:8080/          # → hello from NaN</code></pre></div>
+          <p>Works? Then it works in the enclave. For a full dress rehearsal, add the exact flags the enclave launches with — the same sandbox, memory cap, and <code>/data</code> preopen your deployment will get:</p>
+          <div class="code"><div class="codebar"><span class="fn">terminal · enclave parity</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>mkdir -p scratch
+wasmtime serve -Scli -Shttp -Sp3 \
+  --dir scratch::/data \
+  -W max-memory-size=134217728 \
+  --addr 127.0.0.1:8080 target/wasm32-wasip2/release/hello.wasm</code></pre></div>
+        </article>
+
+        <!-- 04 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-publish">
+          <h3><span class="n">04</span>Publish to the app store</h3>
+          <p>Your app's bytes go on <b>IPFS</b>, addressed by their CID (a hash of the exact wasm). The listing goes on <b>Base</b>, in the <code>NanAppCatalog</code> contract. Publishing is one wallet transaction on the <a href="#apps" data-view="apps">Apps</a> tab:</p>
+          <ol>
+            <li>Connect your wallet (header button) and hit <b>+ Publish app</b>.</li>
+            <li>Pick a <b>slug</b> — your app's stable id, e.g. <code>my-hello</code> (a–z, 0–9, hyphens, ≤ 40 chars). Slugs live in <i>your wallet's namespace</i>: the on-chain app id is <code>keccak256(publisher, slug)</code>, so nobody can squat or write to your lineage. The slug doesn't have to match your crate name.</li>
+            <li>Set a <b>version</b> label (e.g. <code>1.0.0</code>) and choose your <code>hello.wasm</code>. The file is validated (component check, ≤ 256 MB), uploaded, pinned to IPFS, and the <b>CID</b> field fills in — or paste a CID you pinned yourself.</li>
+            <li>Set the display name, a description, the per-instance <b>memory cap</b> (MB of guest linear memory; the Hello app is fine at the default), and — only for service apps — the <b>firewall ports</b> the version may bind (<a href="#docs-ports">chapter 09</a>). Leave ports empty for a standard web app.</li>
+            <li><b>Publish to Base</b> — one transaction, signed by your wallet, attributed on-chain to you.</li>
+          </ol>
+          <h4>Versioning rules (enforced by the contract)</h4>
+          <ul>
+            <li>Versions are <b>append-only history</b>: you never edit a release, you publish the same slug again with a new version label and CID. <code>editApp</code> changes display metadata; <code>setActive</code> delists the app; <code>yankVersion</code> pulls a bad release (kept for history, hidden from browsing).</li>
+            <li>A CID can be listed <b>once across the whole catalog</b>, so a CID maps unambiguously to one app version.</li>
+            <li>Each version carries its own firewall config — it can change from release to release.</li>
+          </ul>
+          <div class="doc-note warn">
+            <span class="nt">Approval gates deploys</span>
+            <p>Publishing is permissionless, but every version starts <b>Pending</b> and the enclave refuses to deploy its CID (<code>403 not_approved</code>) until the catalog owner approves that exact CID on-chain. A new release starts Pending again. Your app card on the Apps tab shows the per-version status badge. The separate <b>verified</b> badge is a curation signal only — it never gates execution; the CID does.</p>
+          </div>
+        </article>
+
+        <!-- 05 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-deploy">
+          <h3><span class="n">05</span>Deploy it</h3>
+          <p>A deployment names an app, a slice of the card, and who may reach it. The app reference takes three forms:</p>
+          <div class="tbl"><table class="params">
+            <thead><tr><th>reference</th><th>meaning</th></tr></thead>
+            <tbody>
+              <tr><td class="pname">hello</td><td>A baked-in catalog id — compiled into the measured enclave image, covered directly by attestation.</td></tr>
+              <tr><td class="pname">my-hello:1.0.0</td><td>A store app by slug and version (or <code>&lt;publisher&gt;/my-hello:1.0.0</code> to disambiguate). The <i>browser</i> resolves this against the on-chain catalog to the version's CID; the API itself takes the resolved form below.</td></tr>
+              <tr><td class="pname">ipfs://&lt;cid&gt;</td><td>An exact wasm by CID. The enclave fetches it, verifies every block hashes to the CID (a tampering gateway fails the check), confirms it's a component, and runs it. The verified CID is folded into the attestation.</td></tr>
+            </tbody>
+          </table></div>
+          <p>The easy path is the <a href="#deploy" data-view="deploy">Deploy console</a> — your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and firewall. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
+
+          <h4>Sign in — an Ethereum signature, no account</h4>
+          <div class="code"><div class="codebar"><span class="fn">deploy.js · SIWE handshake</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>const API = "https://api.nan.host/v1";
+
+const addr  = (await ethereum.request({ method: "eth_requestAccounts" }))[0];
+const { message } = await (await fetch(`${API}/auth/nonce?address=${addr}`)).json();
+const signature   = await ethereum.request({ method: "personal_sign", params: [message, addr] });
+const { token }   = await (await fetch(`${API}/auth/login`, {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ message, signature }),
+})).json();          // short-lived bearer token, bound to your address</code></pre></div>
+
+          <h4>Create the deployment</h4>
+          <div class="code"><div class="codebar"><span class="fn">deploy.js · POST /v1/deployments</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>const dep = await (await fetch(`${API}/deployments`, {
+  method: "POST",
+  headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+  body: JSON.stringify({
+    image:     { reference: "ipfs://bafybei…" },   // your published CID — or "hello"
+    resources: { share: 0.25 },                    // 25% of the card: VRAM+compute+CPU+RAM together
+    public:    true,                               // anyone may call it (false = owner-token only)
+    region:    "auto",
+  }),
+})).json();
+
+console.log(dep.id, dep.status);   // dep_… awaiting_payment
+console.log(dep.payment);          // how to fund it ↓</code></pre></div>
+
+          <h4>Fund it — pay-per-second, straight through, no custody</h4>
+          <p>The deployment comes back <code>awaiting_payment</code> with a <code>payment</code> block: the <code>NanPay</code> forwarder address on Base, a <code>deploymentRef</code>, the USDC EIP-712 domain, and your <code>ratePerSecondUsdc</code> (your share × the $6/hr full-card rate). Pay either way:</p>
+          <div class="code"><div class="codebar"><span class="fn">NanPay · two ways to pay</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>// USDC — sign an EIP-3009 ReceiveWithAuthorization (gas-free wallet signature,
+// to = forwarder, nonce prefixed with deploymentRef's first 16 bytes), then ONE tx:
+payWithAuthorization(bytes32 deploymentId, address from, uint256 value,
+                     uint256 validAfter, uint256 validBefore,
+                     bytes32 nonce, bytes signature)
+
+// ETH — one payable call; the enclave credits the wei at the live Chainlink ETH/USD rate:
+payEth(bytes32 deploymentId) payable</code></pre></div>
+          <p>The enclave watches the chain, sees the payment, launches your app, and starts the clock: <code>amount / ratePerSecondUsdc</code> seconds of runtime. Unpaid reservations are released after a window. The console does all of the signing and encoding for you.</p>
+
+          <h4>Watch it come up</h4>
+          <div class="code"><div class="codebar"><span class="fn">deploy.js · poll until running</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>let d;
+do {
+  await new Promise(r =&gt; setTimeout(r, 2000));
+  d = await (await fetch(`${API}/deployments/${dep.id}`, {
+    headers: { "Authorization": `Bearer ${token}` },
+  })).json();
+} while (d.status !== "running");
+
+console.log(d.network.endpoint);     // https://…/x/dep_…
+console.log(d.timeRemainingSec);     // funded runtime balance</code></pre></div>
+          <h4>Keep it alive, or stop it</h4>
+          <ul>
+            <li><b>Top up</b>: <code>POST /v1/deployments/{id}/topup</code> returns fresh payment instructions; each payment adds <code>amount / rate</code> seconds. Send it before expiry (a short grace period covers in-flight top-ups).</li>
+            <li><b>Terminate</b>: <code>DELETE /v1/deployments/{id}</code> tears the app down immediately.</li>
+            <li><b>Fair clock</b>: if the platform itself isn't serving, your balance freezes (<code>paused: true</code> with a reason) and resumes automatically — funded time never drains during an outage.</li>
+          </ul>
+        </article>
+
+        <!-- 06 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-call">
+          <h3><span class="n">06</span>Call your app</h3>
+          <p>Every deployment serves HTTP on its own path — and, through the gateway, its own origin (so one app can never touch another app's cookies or storage, or the site's):</p>
+          <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code># public deployment — anyone, no auth
+curl https://3xk9f2qa.app.nan.host/            # per-deployment origin (id without "dep_")
+curl https://&lt;enclave-host&gt;/x/dep_3xK9f2Qa/    # same app, direct to its enclave
+
+# private deployment (public: false) — owner's bearer token only
+curl -H "Authorization: Bearer $NAN_TOKEN" https://&lt;enclave-host&gt;/x/dep_3xK9f2Qa/</code></pre></div>
+          <ul>
+            <li>Any method, any subpath, headers and body pass through to your handler. The one exception: the <code>Authorization</code> header authenticates at the platform and is <b>stripped before your app sees the request</b> — the token never reaches tenant code.</li>
+            <li><code>public</code> only governs who may <i>send requests</i>. Confidentiality is unaffected either way — the operator can't see inside the enclave regardless.</li>
+            <li>Your app's <code>println!</code> / stderr output lands in the deployment log: <code>GET /v1/deployments/{id}/logs</code> (owner-only).</li>
+          </ul>
+        </article>
+
+        <!-- 07 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-http">
+          <h3><span class="n">07</span>HTTP in depth — routing, headers, body</h3>
+          <p>Everything a web app needs beyond hello: reading the method, path and headers, consuming the request body, and writing a status, headers, and a streamed response. This drop-in <code>src/lib.rs</code> shows all of it:</p>
+          <div class="code"><div class="codebar"><span class="fn">src/lib.rs · echo app</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>use wasi::http::types::{
+    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
+};
+
+wasi::http::proxy::export!(Component);
+struct Component;
+
+fn read_body(req: IncomingRequest) -&gt; Vec&lt;u8&gt; {
+    let body = req.consume().unwrap();
+    let stream = body.stream().unwrap();
+    let mut buf = Vec::new();
+    while let Ok(chunk) = stream.blocking_read(64 * 1024) {
+        if chunk.is_empty() { break; }
+        buf.extend_from_slice(&amp;chunk);
+    }
+    buf                       // a stream error here means end-of-body (Closed)
+}
+
+fn respond(out: ResponseOutparam, status: u16, ctype: &amp;str, payload: &amp;[u8]) {
+    let headers = Fields::new();
+    headers.set(&amp;"content-type".to_string(), &amp;[ctype.as_bytes().to_vec()]).unwrap();
+    let resp = OutgoingResponse::new(headers);
+    resp.set_status_code(status).unwrap();
+    let body = resp.body().unwrap();
+    ResponseOutparam::set(out, Ok(resp));
+    let stream = body.write().unwrap();
+    for chunk in payload.chunks(4096) {       // write in ≤ 4096-byte chunks
+        stream.blocking_write_and_flush(chunk).unwrap();
+    }
+    drop(stream);
+    OutgoingBody::finish(body, None).unwrap();
+}
+
+impl wasi::exports::http::incoming_handler::Guest for Component {
+    fn handle(req: IncomingRequest, out: ResponseOutparam) {
+        let method = req.method();                               // Method::Get, Method::Post, …
+        let path   = req.path_with_query().unwrap_or_default();  // "/echo?x=1"
+
+        match (method, path.as_str()) {
+            (Method::Get, "/") =&gt;
+                respond(out, 200, "text/plain", b"routes: GET /headers - POST /echo\n"),
+
+            (Method::Get, "/headers") =&gt; {                       // request headers
+                let mut s = String::new();
+                for (name, value) in req.headers().entries() {
+                    s.push_str(&amp;format!("{name}: {}\n", String::from_utf8_lossy(&amp;value)));
+                }
+                respond(out, 200, "text/plain", s.as_bytes());
+            }
+
+            (Method::Post, p) if p.starts_with("/echo") =&gt; {     // request body
+                let body = read_body(req);
+                respond(out, 200, "application/octet-stream", &amp;body);
+            }
+
+            _ =&gt; respond(out, 404, "text/plain", b"not found\n"),
+        }
+    }
+}</code></pre></div>
+          <div class="code"><div class="codebar"><span class="fn">terminal · test it</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>wasmtime serve --addr 127.0.0.1:8080 target/wasm32-wasip2/release/hello.wasm
+curl 127.0.0.1:8080/headers
+curl -X POST --data-binary 'round trip' 127.0.0.1:8080/echo</code></pre></div>
+          <div class="doc-note warn">
+            <span class="nt">Fresh instance per request</span>
+            <p><code>wasmtime serve</code> instantiates your component <b>per request</b> — globals and statics do not survive from one request to the next. State that must outlive a request goes in <code>/data</code> (next chapter). Also note the 4096-byte ceiling per <code>blocking_write_and_flush</code> call — chunk larger payloads as above.</p>
+          </div>
+        </article>
+
+        <!-- 08 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-data">
+          <h3><span class="n">08</span>The /data scratch filesystem</h3>
+          <p>Every deployment gets a private, writable <code>/data</code> directory, so ordinary file-using code — a SQLite database, a cache, config, logs — ports to wasm without a rewrite. In Rust it's plain <code>std::fs</code>; every language's stdlib file I/O maps to the same <code>wasi:filesystem</code> interface. Extending the echo app with a hit counter:</p>
+          <div class="code"><div class="codebar"><span class="fn">src/lib.rs · add a route</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>use std::fs;
+
+// (Method::Get, "/hits") — a per-deployment counter that survives across requests
+(Method::Get, "/hits") =&gt; {
+    let hits: u64 = fs::read_to_string("/data/hits")
+        .ok().and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0) + 1;
+    fs::write("/data/hits", hits.to_string()).unwrap();
+    respond(out, 200, "text/plain", format!("visit #{hits}\n").as_bytes());
+}</code></pre></div>
+          <p>Test locally with the parity flag from chapter 03 (<code>--dir scratch::/data</code>). Know exactly what <code>/data</code> is:</p>
+          <ul>
+            <li><b>Private</b> — your app sees only its own <code>/data</code>; there is no preopen for anything else, and escaping paths are refused by the runtime. Isolation is the wasi capability model, not a convention.</li>
+            <li><b>Ephemeral</b> — it's RAM-backed scratch inside the enclave's already-encrypted memory, torn down when the deployment ends. No persistence, no shared storage: treat it as scratch, not a database of record.</li>
+            <li><b>Capped</b> — usage is limited by the version's <code>storage_mb</code> (default 256 MB); an app that exceeds it is killed by the audit sweep, since ramdisk files consume RAM the memory cap doesn't cover. Publish with <code>storage_mb: 0</code> to opt out of <code>/data</code> entirely.</li>
+          </ul>
+        </article>
+
+        <!-- 09 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-ports">
+          <h3><span class="n">09</span>Service apps — the firewall &amp; NAN_PORTS</h3>
+          <p>Declaring firewall ports (on the version you publish, prefilled into the deploy request by <b>Use in Deploy</b>) changes how your app runs: instead of <code>wasmtime serve</code> calling your handler, the enclave launches it with <code>wasmtime run</code> as a <b>long-running command component</b> — a <code>main()</code> — granted <code>wasi:sockets</code>: it binds its declared ports itself, and may also make outbound TCP/UDP connections and DNS lookups. Rust's <code>std::net</code> on <code>wasm32-wasip2</code> maps straight onto it.</p>
+          <div class="tbl"><table class="params">
+            <thead><tr><th>entry</th><th>meaning</th><th>reached at</th></tr></thead>
+            <tbody>
+              <tr><td class="pname">http:N</td><td>your app serves HTTP on port N itself (max one entry)</td><td><code>/x/{id}/…</code> — same URL as a web app</td></tr>
+              <tr><td class="pname">tcp:N</td><td>a raw TCP listener</td><td><code>/x/{id}/tcp/N</code> bridge · <code>/x/{id}/tls/N</code> + public relay (<a href="#docs-tcp">ch. 10</a>)</td></tr>
+              <tr><td class="pname">udp:N</td><td>a datagram socket</td><td><code>/x/{id}/udp/N</code> bridge · per-deployment IPv6 (<a href="#docs-udp">ch. 11</a>)</td></tr>
+            </tbody>
+          </table></div>
+          <p>Declared ports are <b>logical</b> — your app's stable, advertised interface, like a container's <code>EXPOSE</code>. Each deployment gets its own <b>actual</b> loopback bind, so any number of tenants can run "the <code>tcp:5432</code> app" simultaneously with zero conflicts; URLs always use the logical number and route by deployment id. The mapping arrives in one environment variable:</p>
+          <div class="code"><div class="codebar"><span class="fn">the NAN_PORTS contract</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>NAN_PORTS=tcp:5432=31245,udp:9053=31246     # logical=actual — BIND THE ACTUAL</code></pre></div>
+          <div class="doc-note warn">
+            <span class="nt">The one rule</span>
+            <p><b>Read <code>NAN_PORTS</code> and bind the actual ports. Never hardcode.</b> The socket grant is coarse, so an audit sweep polices the fine print: an app that binds a port it wasn't assigned is killed on the spot. Labels are 1–19999 (8080/8091 reserved for infrastructure); labels below 1024 — say <code>udp:53</code> — are always remapped to an unprivileged actual. Up to 8 entries per version.</p>
+          </div>
+          <p>Parsing the contract is a few lines — every service example below uses this helper:</p>
+          <div class="code"><div class="codebar"><span class="fn">src/main.rs · NAN_PORTS helper</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>/// "tcp:7000=31245,udp:9053=31246" → the actual port for a logical entry.
+fn actual_port(logical: &amp;str) -&gt; u16 {
+    std::env::var("NAN_PORTS").unwrap_or_default()
+        .split(',')
+        .find_map(|e| e.trim().strip_prefix(&amp;format!("{logical}="))?.parse().ok())
+        .unwrap_or_else(|| panic!("{logical} not in NAN_PORTS"))
+}</code></pre></div>
+          <p>Readiness: the enclave waits (~20 s) for your first <code>http:</code>/<code>tcp:</code> port to accept before marking the deployment running, so bind early in <code>main()</code>. Both launch modes also pass <code>-S p3</code>, so you may target the async <b>WASIp3</b> API surface instead of wasip2's poll-based one — same sandbox, same rules; guest toolchains for p3 are still young.</p>
+        </article>
+
+        <!-- 10 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-tcp">
+          <h3><span class="n">10</span>TCP — bridge, in-enclave TLS, public relay</h3>
+          <p>A complete TCP echo service. Note it's a <i>command</i> component (no <code>--lib</code>) — there's a <code>main()</code> that runs for the deployment's lifetime:</p>
+          <div class="code"><div class="codebar"><span class="fn">src/main.rs · tcp echo</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>use std::io::{Read, Write};
+use std::net::TcpListener;
+
+fn main() {
+    let port = actual_port("tcp:7000");             // ← the helper from chapter 09
+    let listener = TcpListener::bind(("0.0.0.0", port)).expect("bind");
+    println!("echo on {port}");                     // shows up in your deployment logs
+    for conn in listener.incoming() {               // wasip2 has no threads:
+        let Ok(mut sock) = conn else { continue };  // serve connections one at a time
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = sock.read(&amp;mut buf) {
+            if n == 0 || sock.write_all(&amp;buf[..n]).is_err() { break; }
+        }
+    }
+}</code></pre></div>
+          <div class="code"><div class="codebar"><span class="fn">terminal · build &amp; test in run mode</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>cargo component new tcp-echo &amp;&amp; cd tcp-echo     # no --lib: a command component
+cargo component build --release --target wasm32-wasip2
+
+# exactly how the enclave launches a service app:
+wasmtime run -Scli -Sp3 -Stcp -Sudp -Sinherit-network -Sallow-ip-name-lookup \
+  --env NAN_PORTS=tcp:7000=7000 \
+  target/wasm32-wasip2/release/tcp-echo.wasm
+printf 'ping\n' | nc 127.0.0.1 7000              # → ping   (another terminal)</code></pre></div>
+          <p>Publish it with firewall ports <code>tcp:7000</code>, deploy, and reach it three ways:</p>
+          <div class="code"><div class="codebar"><span class="fn">terminal · clients</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code># 1. WebSocket bridge on the attested origin (private deployments: append ?token=&lt;bearer&gt;)
+websocat --binary tcp-listen:127.0.0.1:7000 \
+  "wss://&lt;enclave-host&gt;/x/dep_3xK9f2Qa/tcp/7000"
+nc 127.0.0.1 7000                                # → your app, end to end
+
+# 2. Direct public TLS via the relay — stock clients, no websocat. Public deployments
+#    only; hostname = deployment id with its underscore hyphenated (dep_abc123 → dep-abc123)
+psql "host=dep-abc123.tcp.nan.host port=5432 sslmode=require"
+irssi -c dep-abc123.tcp.nan.host -p 6667 --tls</code></pre></div>
+          <p>Your app does <b>nothing</b> for the TLS path — keep speaking plain TCP on the assigned port. The platform mints its key + cert <i>inside the enclave</i> at boot; the untrusted relay only routes ciphertext by SNI, and the session terminates in-enclave at <code>/x/{id}/tls/{port}</code>. Verifying clients can bind the session to the attestation by pinning the cert published over the attested origin:</p>
+          <div class="code"><div class="codebar"><span class="fn">terminal · pin the bridge cert</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>curl -s https://&lt;enclave-host&gt;/v1/tls-bridge | jq -r .fingerprint256
+openssl s_client -connect dep-abc123.tcp.nan.host:6667 \
+  -servername dep-abc123.tcp.nan.host &lt;/dev/null 2&gt;/dev/null \
+  | openssl x509 -noout -fingerprint -sha256       # must match</code></pre></div>
+        </article>
+
+        <!-- 11 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-udp">
+          <h3><span class="n">11</span>UDP — datagrams &amp; per-deployment IPv6</h3>
+          <p>Same shape as TCP — bind the actual port, speak datagrams:</p>
+          <div class="code"><div class="codebar"><span class="fn">src/main.rs · udp echo</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>use std::net::UdpSocket;
+
+fn main() {
+    let port = actual_port("udp:9053");             // ← the helper from chapter 09
+    let sock = UdpSocket::bind(("0.0.0.0", port)).expect("bind");
+    let mut buf = [0u8; 65535];
+    loop {
+        let Ok((n, from)) = sock.recv_from(&amp;mut buf) else { continue };
+        let _ = sock.send_to(&amp;buf[..n], from);
+    }
+}</code></pre></div>
+          <p>Publish with firewall ports <code>udp:9053</code>. UDP has no SNI to route on, so instead of a shared hostname <b>every public deployment gets its own IPv6 address</b> — it's in the deploy response under <code>network.udp</code> as <code>[address]:port</code>:</p>
+          <div class="code"><div class="codebar"><span class="fn">terminal · clients</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code># 1. direct, via the deployment's own IPv6 (public deployments)
+printf 'ping' | socat -t2 - 'UDP6:[2a01:4f9:c013:bdfd:9c1e:…]:9053'
+
+# 2. the WebSocket bridge on the attested origin (1 message = 1 datagram)
+websocat --binary udp-listen:127.0.0.1:9053 \
+  "wss://&lt;enclave-host&gt;/x/dep_3xK9f2Qa/udp/9053?token=&lt;bearer&gt;"
+printf 'ping' | socat -t2 - UDP:127.0.0.1:9053</code></pre></div>
+          <ul>
+            <li><b>IPv6 only</b> — a box has one IPv4; v4-only clients can't reach the direct endpoint (the bridge still works anywhere WebSockets do).</li>
+            <li><b>The relay sees cleartext</b> — unlike the TCP path, the UDP relay is not a confidentiality boundary. If your protocol needs privacy, encrypt at the app layer (e.g. DTLS).</li>
+            <li>Datagram boundaries are preserved end to end; idle bridge flows close after 120 s.</li>
+          </ul>
+        </article>
+
+        <!-- 12 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-attest">
+          <h3><span class="n">12</span>Attestation for your users</h3>
+          <p>The platform's core promise extends to your app: a user can verify — cryptographically, before sending a byte of data — that they're talking to an attested enclave running exactly the code that was measured. For apps deployed by CID, the measurement includes <b>your app</b>: <code>measurements.app.cid</code> pins the exact bytes that ran.</p>
+          <div class="code"><div class="codebar"><span class="fn">verify.js · attested client</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>import { SecureClient } from "tinfoil";
+
+const c = new SecureClient({ baseURL: "https://&lt;enclave-host&gt;" });
+await c.ready();          // verifies the CPU TEE quote (SEV-SNP/TDX) + Sigstore
+                          // code provenance, compares measurements, pins TLS
+const res = await c.fetch("/x/dep_3xK9f2Qa/");   // provably served by attested code</code></pre></div>
+          <div class="code"><div class="codebar"><span class="fn">terminal · independent paths</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code># fully independent check with tinfoil-cli:
+tinfoil attestation verify -e &lt;enclave-host&gt; -r SteveDeFacto/nan
+
+# the enclave's attestation (public), and your deployment's view of it (owner):
+curl https://&lt;enclave-host&gt;/v1/attestation
+curl -H "Authorization: Bearer $NAN_TOKEN" \
+  https://&lt;enclave-host&gt;/v1/deployments/dep_3xK9f2Qa/attestation</code></pre></div>
+          <p>Point your users at the <a href="#attest">attestation walkthrough</a> for what each link in the chain proves — or embed the check in your own client as above. For raw-TCP services, add the <a href="#docs-tcp">bridge-cert pin</a> so even the TLS session is bound to the measured enclave.</p>
+        </article>
+
+        <!-- 13 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-langs">
+          <h3><span class="n">13</span>Other languages</h3>
+          <p>The platform runs <b>components</b>, not a language: anything that emits a <code>wasi:http</code> component works. Mature routes today:</p>
+          <ul>
+            <li><b>Rust</b> — <code>cargo-component</code>, as used throughout this guide. The most complete support, including <code>std::net</code> for service apps.</li>
+            <li><b>JavaScript / TypeScript</b> — <code>jco componentize</code> (ComponentizeJS) turns a JS module exporting a fetch-style handler into a <code>wasi:http</code> component.</li>
+            <li><b>Python</b> — <code>componentize-py</code> builds components from Python code implementing the same world.</li>
+            <li><b>Go</b> — TinyGo's <code>wasip2</code> target with the <code>wasi:http</code> bindings.</li>
+          </ul>
+          <p>The acceptance test is identical regardless of toolchain — if this runs, it deploys:</p>
+          <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>wasmtime serve --addr 127.0.0.1:8080 app.wasm &amp;&amp; curl 127.0.0.1:8080/</code></pre></div>
+          <p>One caveat for service apps: raw-socket support (<code>wasi:sockets</code>) varies by toolchain — Rust's stdlib maps today; check yours before designing around <code>tcp:</code>/<code>udp:</code> ports.</p>
+        </article>
+
+        <!-- 14 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-limits">
+          <h3><span class="n">14</span>Limits &amp; sandbox reference</h3>
+          <h4>What your code can touch</h4>
+          <div class="tbl"><table class="params">
+            <thead><tr><th>capability</th><th>web app (default)</th><th>service app (declared ports)</th></tr></thead>
+            <tbody>
+              <tr><td class="pname">inbound HTTP</td><td>your handler — fresh instance per request</td><td><code>http:N</code>: you bind and serve it yourself</td></tr>
+              <tr><td class="pname">sockets</td><td>none</td><td>bind assigned actuals · outbound TCP/UDP · DNS lookups</td></tr>
+              <tr><td class="pname">filesystem</td><td colspan="2"><code>/data</code> only — private, RAM-backed, ephemeral, capped by <code>storage_mb</code></td></tr>
+              <tr><td class="pname">environment</td><td>empty</td><td><code>NAN_PORTS</code> only</td></tr>
+              <tr><td class="pname">memory</td><td colspan="2">linear memory capped at <code>mem_mb</code>, enforced by the runtime</td></tr>
+              <tr><td class="pname">host / exec / SSH</td><td colspan="2">none — structurally absent, not merely denied</td></tr>
+            </tbody>
+          </table></div>
+          <h4>Numbers to know</h4>
+          <div class="tbl"><table class="params">
+            <thead><tr><th>limit</th><th>value</th><th>notes</th></tr></thead>
+            <tbody>
+              <tr><td class="pname">wasm artifact</td><td>≤ 256 MB</td><td>enforced at upload and again at fetch</td></tr>
+              <tr><td class="pname">memory cap (mem_mb)</td><td>1–8192 MB</td><td>set per published version; guest linear memory</td></tr>
+              <tr><td class="pname">/data cap (storage_mb)</td><td>256 MB default · 0 = no /data</td><td>audit sweep kills on breach</td></tr>
+              <tr><td class="pname">firewall ports</td><td>≤ 8 entries · labels 1–19999</td><td>8080/8091 reserved · labels &lt; 1024 always remapped</td></tr>
+              <tr><td class="pname">share</td><td>1–100% of the card</td><td>VRAM+compute+CPU+RAM in proportion · share × $6/hr, per second</td></tr>
+              <tr><td class="pname">readiness window</td><td>~20 s</td><td>first <code>http:</code>/<code>tcp:</code> port must accept, or the deploy fails</td></tr>
+              <tr><td class="pname">body writes</td><td>≤ 4096 bytes per call</td><td>chunk larger payloads (<a href="#docs-http">ch. 07</a>)</td></tr>
+              <tr><td class="pname">UDP bridge idle</td><td>120 s</td><td>per WebSocket flow</td></tr>
+            </tbody>
+          </table></div>
+        </article>
+
+        <!-- 15 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-troubleshoot">
+          <h3><span class="n">15</span>Troubleshooting</h3>
+          <div class="tbl"><table class="params">
+            <thead><tr><th>symptom</th><th>cause → fix</th></tr></thead>
+            <tbody>
+              <tr><td class="pname">"a core wasm module, not a wasi:http component"</td><td>You built a plain module. Build with <code>cargo component</code> (or a toolchain that emits components) — the upload gateway and the enclave both check the component layer field.</td></tr>
+              <tr><td class="pname">403 not_approved on deploy</td><td>That version is still Pending (or was Rejected) — the catalog owner approves each CID before it can run. Check the status badge on your app card in <a href="#apps" data-view="apps">Apps</a>.</td></tr>
+              <tr><td class="pname">"firewall: bound unassigned port(s) … app killed"</td><td>The app hardcoded a port. Read <code>NAN_PORTS</code> and bind the <i>actual</i> ports (<a href="#docs-ports">ch. 09</a>).</td></tr>
+              <tr><td class="pname">"did not open port in time"</td><td>Bind your first <code>http:</code>/<code>tcp:</code> port early in <code>main()</code> — the readiness window is ~20 s.</td></tr>
+              <tr><td class="pname">"storage: /data used … exceeds the cap; app killed"</td><td>Write less, or publish the next version with a larger <code>storage_mb</code>.</td></tr>
+              <tr><td class="pname">502 no_http at /x/{id}</td><td>The app declares only <code>tcp:</code>/<code>udp:</code> ports — there's no HTTP to proxy. Use the bridge or relay paths (<a href="#docs-tcp">ch. 10</a>–<a href="#docs-udp">11</a>).</td></tr>
+              <tr><td class="pname">409 when opening a tcp/udp bridge</td><td>The app hasn't actually bound that port (yet) — the bridge refuses until the enclave confirms the bind. Check the deployment logs.</td></tr>
+              <tr><td class="pname">state vanishes between requests</td><td>Web apps get a fresh instance per request. Persist in <code>/data</code> (<a href="#docs-data">ch. 08</a>).</td></tr>
+              <tr><td class="pname">runs locally, memory-traps deployed</td><td>Local wasmtime is uncapped unless you pass <code>-W max-memory-size</code>. Test with the parity command (<a href="#docs-hello">ch. 03</a>) at your published <code>mem_mb</code>.</td></tr>
+            </tbody>
+          </table></div>
+          <h4>Ship checklist</h4>
+          <ol>
+            <li><code>wasmtime serve</code> (or <code>run</code>, for service apps) runs it locally — including with the enclave-parity flags.</li>
+            <li>No hardcoded ports anywhere; everything comes from <code>NAN_PORTS</code>.</li>
+            <li>All writes go under <code>/data</code>, stay under the cap, and survive being wiped.</li>
+            <li>Publish on the <a href="#apps" data-view="apps">Apps</a> tab → wait for the version's <b>Approved</b> badge → <a href="#deploy" data-view="deploy">deploy</a> with <b>Use in Deploy</b>.</li>
+            <li>Verify your own deployment's <a href="#docs-attest">attestation</a> — then hand the same check to your users.</li>
+          </ol>
+        </article>
+
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ===================== API REFERENCE ===================== -->
 <section class="api" id="api" data-view="api" aria-label="API reference" hidden>
   <div class="wrap">
@@ -925,6 +1504,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
       </div>
       <div>
         <h5>Developers</h5>
+        <a href="#docs" data-view="docs">App development guide</a>
         <a href="#api">API reference</a>
         <a href="#" id="dlSpec2">OpenAPI spec</a>
         <a href="#attest">Attestation guide</a>
@@ -4287,6 +4867,36 @@ function initMenu() {
   links.addEventListener("click", e => { if (e.target.tagName === "A") links.classList.remove("open"); });
 }
 /* ============================================================
+   Developer guide (docs view): code-block copy buttons + a
+   scroll-spy that highlights the current chapter in the side nav.
+   ============================================================ */
+function initDocs(){
+  const sec = $("#docs"); if (!sec) return;
+  // copy buttons: docs blocks carry no data-copy key (that's the deploy console's
+  // scheme) — copy the text of the <pre> in the same .code block.
+  sec.addEventListener("click", (e) => {
+    const b = e.target.closest(".copybtn"); if (!b || b.dataset.copy) return;
+    const code = b.closest(".code"); const pre = code && code.querySelector("pre");
+    if (pre) copyText(pre.textContent, b);
+  });
+  const links = $$(".docs-nav a", sec);
+  const byEl = new Map();
+  links.forEach(a => {
+    const el = document.getElementById((a.getAttribute("href") || "").slice(1));
+    if (el) byEl.set(el, a);
+  });
+  if (!("IntersectionObserver" in window) || !byEl.size) return;
+  const spy = new IntersectionObserver((entries) => {
+    entries.forEach(en => {
+      if (!en.isIntersecting) return;
+      links.forEach(l => l.classList.remove("on"));
+      const a = byEl.get(en.target); if (a) a.classList.add("on");
+    });
+  }, { rootMargin: "-15% 0px -75% 0px" });
+  byEl.forEach((_a, el) => spy.observe(el));
+}
+
+/* ============================================================
    Views: Overview · Deploy · API  (deploy + api live on their own tabs)
    ============================================================ */
 let currentView = "overview";
@@ -4718,6 +5328,7 @@ function init() {
   run(initAttest);
   run(initMenu);
   run(initApp);
+  run(initDocs);
   run(initViews);
 
   run(() => {
