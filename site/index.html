@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>NAN · Trustless Confidential Compute</title>
+<title>NaN · Trustless Confidential Compute</title>
 <meta name="description" content="Trustless on-demand confidential GPU compute. Deploy a WebAssembly app onto a confidential H200 from your browser, pay in ETH or USDC, and verify the enclave yourself. CORS-friendly API." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 9v14L16 30 4 23V9z' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 10v12M11 13l5-3 5 3' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3C/svg%3E" />
 <style>
 /* ============================================================
-   NAN design tokens
+   NaN design tokens
    mono = product voice · jade = verified · amber = compute
    ============================================================ */
 :root{
@@ -441,13 +441,13 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
 <!-- ===================== NAV ===================== -->
 <header class="nav">
   <div class="wrap nav-inner">
-    <a href="#top" class="brand" aria-label="NAN home">
+    <a href="#top" class="brand" aria-label="NaN home">
       <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
         <path d="M16 2 28 9v14L16 30 4 23V9z" stroke="var(--jade)" stroke-width="1.6"/>
         <path d="M16 9.5 22 13v6l-6 3.5L10 19v-6z" stroke="var(--jade)" stroke-width="1.2" opacity=".55"/>
         <path d="M16 13.2v5.6M13.4 14.6 16 13l2.6 1.6" stroke="var(--jade)" stroke-width="1.4"/>
       </svg>
-      <span class="nm">NAN</span>
+      <span class="nm">NaN</span>
     </a>
     <nav class="nav-links" aria-label="Primary">
       <a href="#top" data-view="overview" class="active">Overview</a>
@@ -511,7 +511,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="sec-head">
       <span class="eyebrow">The model</span>
       <h2>Don't trust the operator. Measure it.</h2>
-      <p>NAN runs your WebAssembly app inside a hardware-isolated, attested enclave with a confidential H200 GPU wired into it, so the operator can't read your memory, your keys, or your traffic, and you don't have to take our word for it. Every claim on this page is something you can check on-chain or in a signed attestation. We're equally explicit about the part that <i>isn't</i> hardware-enforced: how tenants are kept apart from each other on a shared GPU. <a href="#isolation">See exactly how isolation works ↓</a></p>
+      <p>NaN runs your WebAssembly app inside a hardware-isolated, attested enclave with a confidential H200 GPU wired into it, so the operator can't read your memory, your keys, or your traffic, and you don't have to take our word for it. Every claim on this page is something you can check on-chain or in a signed attestation. We're equally explicit about the part that <i>isn't</i> hardware-enforced: how tenants are kept apart from each other on a shared GPU. <a href="#isolation">See exactly how isolation works ↓</a></p>
     </div>
     <div class="cards">
       <div class="card jade">
@@ -524,7 +524,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5h4a1.8 1.8 0 010 3.6H10a1.8 1.8 0 000 3.6h4.5"/></svg></div>
         <span class="tag">no accounts</span>
         <h3>Crypto-native</h3>
-        <p>No accounts, no deposits, no custody. You pay USDC or ETH per deployment straight through to NAN; each payment buys runtime by the second, and you top up to keep an instance alive. We never hold your balance.</p>
+        <p>No accounts, no deposits, no custody. You pay USDC or ETH per deployment straight through to NaN; each payment buys runtime by the second, and you top up to keep an instance alive. We never hold your balance.</p>
       </div>
       <div class="card jade">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></div>
@@ -810,14 +810,14 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="sec-head">
       <span class="eyebrow">How isolation is achieved</span>
       <h2>Two boundaries. One is hardware. One is not. We tell you which.</h2>
-      <p>Most "confidential GPU" pitches blur these together. NAN keeps them separate because they're enforced by different things and carry different guarantees. Here is precisely what protects you, and from whom.</p>
+      <p>Most "confidential GPU" pitches blur these together. NaN keeps them separate because they're enforced by different things and carry different guarantees. Here is precisely what protects you, and from whom.</p>
     </div>
 
     <div class="cards">
       <div class="card jade">
         <span class="tag">hardware · attested</span>
         <h3>You vs. the operator</h3>
-        <p>Your enclave runs in a CPU TEE (Intel TDX) with the H200 in NVIDIA confidential-computing mode. The CPU↔GPU link is encrypted and the GPU is walled off from the host. NAN, the operator, cannot read your VRAM, RAM, keys, or traffic. This is enforced by hardware and proven by an attestation you verify in your browser <b>before</b> sending data. This is the strong guarantee, and it's the one you can check cryptographically.</p>
+        <p>Your enclave runs in a CPU TEE (Intel TDX) with the H200 in NVIDIA confidential-computing mode. The CPU↔GPU link is encrypted and the GPU is walled off from the host. NaN, the operator, cannot read your VRAM, RAM, keys, or traffic. This is enforced by hardware and proven by an attestation you verify in your browser <b>before</b> sending data. This is the strong guarantee, and it's the one you can check cryptographically.</p>
       </div>
       <div class="card amber">
         <span class="tag">software · Wasm sandbox + process</span>
@@ -874,7 +874,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="api-head">
       <div class="sec-head" style="margin-bottom:0;">
         <span class="eyebrow">Reference</span>
-        <h2>The NAN API</h2>
+        <h2>The NaN API</h2>
         <p>Everything the service does, fully scoped. Authenticate with an Ethereum signature, pay USDC or ETH per deployment, and orchestrate confidential compute over plain HTTPS.</p>
       </div>
       <div class="api-meta">
@@ -905,7 +905,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
             <path d="M16 2 28 9v14L16 30 4 23V9z" stroke="var(--jade)" stroke-width="1.6"/>
             <path d="M16 13.2v5.6M13.4 14.6 16 13l2.6 1.6" stroke="var(--jade)" stroke-width="1.4"/>
           </svg>
-          <span class="nm">NAN</span>
+          <span class="nm">NaN</span>
         </a>
         <p>Trustless on-demand confidential compute, paid for exclusively in crypto.</p>
         <div class="foot-meta">
@@ -937,7 +937,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
       </div>
     </div>
     <div class="foot-bottom">
-      <span>© 2026 NAN · served from IPFS</span>
+      <span>© 2026 NaN · served from IPFS</span>
       <span>built for the open, verifiable web</span>
     </div>
   </div>
@@ -947,12 +947,12 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
 <script>
 "use strict";
 /* ============================================================
-   NAN API · OpenAPI 3.1 specification (source of truth)
+   NaN API · OpenAPI 3.1 specification (source of truth)
    ============================================================ */
 const SPEC = {
   "openapi": "3.1.0",
   "info": {
-    "title": "NAN API",
+    "title": "NaN API",
     "version": "1.0.0",
     "summary": "Trustless on-demand confidential GPU compute for WebAssembly apps.",
     "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority — just the request/response socket the runtime hands it. The app catalog is baked into the attested enclave image, so what runs is exactly what the attestation measured. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
@@ -1079,7 +1079,7 @@ const SPEC = {
         ],
         "operationId": "getAccount",
         "summary": "Account summary",
-        "description": "Your address, the USDC payment forwarder to pay, and counts of your running and awaiting-payment deployments plus total funded time remaining. No balances are held by NAN.",
+        "description": "Your address, the USDC payment forwarder to pay, and counts of your running and awaiting-payment deployments plus total funded time remaining. No balances are held by NaN.",
         "responses": {
           "200": {
             "description": "Account summary.",
@@ -1678,7 +1678,7 @@ const SPEC = {
       },
       "PaymentInstructions": {
         "type": "object",
-        "description": "How to fund (or top up) a deployment by paying the NanPay forwarder. Funds pass straight through to NAN; nothing is custodied.",
+        "description": "How to fund (or top up) a deployment by paying the NanPay forwarder. Funds pass straight through to NaN; nothing is custodied.",
         "properties": {
           "chainId": {
             "type": "integer",
@@ -2592,7 +2592,7 @@ const SPEC = {
 };
 
 /* ============================================================
-   NAN runtime · helpers, highlighters, schema tools
+   NaN runtime · helpers, highlighters, schema tools
    ============================================================ */
 const $  = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
@@ -3629,7 +3629,7 @@ async function payForRuntime(term, pay, fundUsdc){
     termLine(term, "info", "[*] payEth \u2248 " + eth + " ETH (\u2248 $" + usd + " @ $" + pay.ethUsd + "/ETH)\u2026 (wallet \u00b7 one tx)");
     const ph = await sendTx(pay.forwarder, dataPayEth(pay.deploymentRef), "0x" + wei.toString(16));
     termLine(term, "ok", "[\u2713] payment sent " + ph);
-    termLine(term, "dimln", "    ETH goes straight to NAN; the enclave credits it at the live Chainlink rate");
+    termLine(term, "dimln", "    ETH goes straight to NaN; the enclave credits it at the live Chainlink rate");
     return ph;
   }
   // EIP-3009: the nonce must start with the deployment ref's first 16 bytes (the
@@ -3666,7 +3666,7 @@ async function payForRuntime(term, pay, fundUsdc){
   termLine(term, "info", "[*] pay " + usd + " USDC \u2014 buys runtime\u2026 (wallet \u00b7 one tx, no approve)");
   const ph = await sendTx(pay.forwarder, dataPayWithAuth(pay.deploymentRef, Nan.address, amt6, 0, validBefore, nonce, sig));
   termLine(term, "ok", "[\u2713] payment sent " + ph);
-  termLine(term, "dimln", "    funds go straight to NAN; nothing is custodied");
+  termLine(term, "dimln", "    funds go straight to NaN; nothing is custodied");
   return ph;
 }
 
@@ -4103,7 +4103,7 @@ function injectLiveStyles(){
 let attestRaw = "";
 const LINKS = [
   { t: "Hardware root of trust", fn: "policy.json",
-    d: "Intel TDX and the NVIDIA GPU hold keys fused at manufacture. NAN can't extract or forge them. The silicon vendor is the root of trust, not the operator.",
+    d: "Intel TDX and the NVIDIA GPU hold keys fused at manufacture. NaN can't extract or forge them. The silicon vendor is the root of trust, not the operator.",
     j: { tdx: { mrtd: "0x5a3c…91ef", minTcb: "2026.05" }, gpu: { approvedDrivers: ["565.57.01"], approvedVbios: ["96.00.AE.00.01"] } } },
   { t: "The VM measures itself", fn: "vm.json",
     d: "On boot the CPU emits a DCAP quote over MRTD + RTMR0–3, binding the firmware, the kernel, and the exact enclave image — including the Wasm app catalog baked into it. Change one byte and the quote changes.",
@@ -4530,7 +4530,7 @@ function useInDeploy(app, v){
 // /add endpoint is public, so Caddy's request_body max_size is the real ceiling,
 // and the attested wasm-manager is the authoritative "is it a runnable component"
 // gate at deploy. WebAssembly.validate() can't help — it only validates core
-// modules, and NAN apps are components — so we check the binary preamble by hand.
+// modules, and NaN apps are components — so we check the binary preamble by hand.
 async function validateWasm(file){
   if (!/\.wasm$/i.test(file.name || "")) throw new NanError("Pick a .wasm file.", 0);
   if (file.size < 8) throw new NanError("That file is too small to be a WebAssembly module.", 0);
@@ -4541,7 +4541,7 @@ async function validateWasm(file){
   // Preamble after the magic is version:u16 + layer:u16. Key on the layer, which is
   // stable across component-version bumps: 0 = core module, 1 = component.
   const layer = h[6] | (h[7] << 8);
-  if (layer === 0) throw new NanError("This is a core wasm module, but NAN runs wasi:http *components*. Rebuild with cargo-component (target wasm32-wasip2).", 0);
+  if (layer === 0) throw new NanError("This is a core wasm module, but NaN runs wasi:http *components*. Rebuild with cargo-component (target wasm32-wasip2).", 0);
   if (layer !== 1) throw new NanError("Unrecognized wasm preamble (layer " + layer + ") — expected a wasi:http component.", 0);
   return true;
 }

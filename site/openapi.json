@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "NAN API",
+    "title": "NaN API",
     "version": "1.0.0",
     "summary": "Trustless on-demand confidential GPU compute for WebAssembly apps.",
     "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority — just the request/response socket the runtime hands it. The app catalog is baked into the attested enclave image, so what runs is exactly what the attestation measured. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
@@ -128,7 +128,7 @@
         ],
         "operationId": "getAccount",
         "summary": "Account summary",
-        "description": "Your address, the USDC payment forwarder to pay, and counts of your running and awaiting-payment deployments plus total funded time remaining. No balances are held by NAN.",
+        "description": "Your address, the USDC payment forwarder to pay, and counts of your running and awaiting-payment deployments plus total funded time remaining. No balances are held by NaN.",
         "responses": {
           "200": {
             "description": "Account summary.",
@@ -747,7 +747,7 @@
       },
       "PaymentInstructions": {
         "type": "object",
-        "description": "How to fund (or top up) a deployment by paying the NanPay forwarder. Funds pass straight through to NAN; nothing is custodied.",
+        "description": "How to fund (or top up) a deployment by paying the NanPay forwarder. Funds pass straight through to NaN; nothing is custodied.",
         "properties": {
           "chainId": {
             "type": "integer",
