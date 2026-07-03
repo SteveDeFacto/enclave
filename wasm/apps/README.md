@@ -60,8 +60,8 @@ resolves it to the deployment's actual (see `portMap` on the deployment record).
 
 **Direct public TCP (no websocat).** A declared `tcp:N` is also served at
 `/x/:id/tls/N`: same bridge, but the supervisor terminates the *client's* TLS
-in-enclave first (platform cert via the `TLS_BRIDGE_CERT`/`TLS_BRIDGE_KEY`
-secrets). An untrusted public relay (`relay/README.md`) SNI-routes
+in-enclave first (platform key + cert minted in-enclave at boot; enabled by
+`TLS_BRIDGE_DOMAIN`). An untrusted public relay (`relay/README.md`) SNI-routes
 `<dep-id>.tcp.<domain>:<port>` into that path, so stock clients (`irssi --tls`,
 `psql sslmode=require`) connect directly while the relay only ever carries
 ciphertext. Apps need nothing for this — keep speaking plain TCP on the

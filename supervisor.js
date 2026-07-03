@@ -26,7 +26,7 @@ import { gunzipSync } from "node:zlib";
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
 const pexec = promisify(execFile);
-import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, renameSync, existsSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { WebSocketServer, createWebSocketStream } from "ws";
@@ -1762,18 +1762,20 @@ app.get("/v1/attestation", async (req, res) => {
 });
 
 // TLS-bridge cert binding, PUBLIC: closes the attestation gap on the relay
-// path (relay/README.md). A relay-path session terminates against
-// TLS_BRIDGE_CERT — an ordinary CA cert a client can't tie to the enclave on
-// its own. Publishing the cert + fingerprints OVER THE ATTESTED ORIGIN makes
-// the binding transitive: verify /v1/attestation, read the expected
+// path (relay/README.md). A relay-path session terminates against a cert
+// minted in-enclave at boot (initTlsBridge) — self-signed, so CA validation
+// says nothing about it. Publishing the cert + fingerprints OVER THE ATTESTED
+// ORIGIN is what binds it: verify /v1/attestation, read the expected
 // fingerprint from the same origin, then require exactly that cert when
-// connecting to <dep-id>.tcp.<domain>:<port>. A MITM relay or a mis-issued
-// cert then fails the pin even though it would pass CA validation.
+// connecting to <dep-id>.tcp.<domain>:<port>. The private key never left the
+// CVM, so nothing outside the enclave — a MITM relay, the operator — can
+// present a cert that passes the pin.
 app.get("/v1/tls-bridge", (_req, res) => {
   if (!TLS_BRIDGE_INFO) return res.json({ enabled: false });
   res.json({ enabled: true, ...TLS_BRIDGE_INFO,
              verify: "Verify this origin's /v1/attestation first; then require the served cert on "
-                   + "<dep-id>.tcp.<domain> connections to match fingerprint256 (or pin spkiPinSha256)." });
+                   + "<dep-id>.tcp.<domain> connections to match fingerprint256 (or pin spkiPinSha256, "
+                   + "or use `certificate` as your sole trust root - it is self-signed, minted in-enclave)." });
 });
 
 // UDP routing map, PUBLIC: the udp-relay (relay/udp-relay.js) polls this to learn
@@ -1828,19 +1830,48 @@ async function authUpgrade(req) {
 // --- platform-terminated TLS for app TCP ports (/x/:id/tls/:port) -----------
 // The public relay (relay/relay.js, on any untrusted box) forwards a client's
 // raw TLS bytes into this bridge; the session terminates HERE, inside the
-// attested enclave. The key is an enclave secret the relay never holds, so the
-// relay stays a dumb ciphertext pipe and stock clients (irssi --tls, psql
-// sslmode=require) connect directly - no per-user websocat. Cert/key are PEM
-// contents (secret-store literal "\n" unescaped) or a path to a PEM file.
-// Unset = the /tls/ path answers 503; /tcp/ is unchanged.
-const pemEnv = (v) => v.includes("-----BEGIN") ? v.replace(/\\n/g, "\n") : readFileSync(v, "utf8");
+// attested enclave. The key pair is MINTED IN-ENCLAVE at boot (like the ssh
+// host key) — never provisioned as a secret, so no operator, ACME account, or
+// secret store ever holds it and the relay stays a dumb ciphertext pipe. The
+// cert is self-signed for *.<TLS_BRIDGE_DOMAIN>; clients bind it to the
+// enclave via the fingerprints published over the attested origin at
+// /v1/tls-bridge (CA validation never proved enclave residency anyway — see
+// relay/README.md). Stock clients that don't validate certs (psql
+// sslmode=require, irssi --tls) connect unchanged; validating clients pin or
+// use the published PEM as their trust root. The pair persists in the state
+// dir (ramdisk), so the fingerprint is stable across supervisor restarts
+// within one CVM boot; a full relaunch mints a fresh key — re-read the pin
+// from the attested origin. TLS_BRIDGE_DOMAIN unset = the /tls/ path answers
+// 503; /tcp/ is unchanged.
+const TLS_BRIDGE_DOMAIN = (process.env.TLS_BRIDGE_DOMAIN || "").trim().replace(/^\*\./, "").replace(/\.$/, "");
 let TLS_BRIDGE_CTX = null, TLS_BRIDGE_INFO = null;
-try {
-  if (process.env.TLS_BRIDGE_CERT && process.env.TLS_BRIDGE_KEY) {
-    const certPem = pemEnv(process.env.TLS_BRIDGE_CERT);
-    TLS_BRIDGE_CTX = tls.createSecureContext({ cert: certPem, key: pemEnv(process.env.TLS_BRIDGE_KEY) });
-    // leaf = first PEM block = the cert clients see; published at /v1/tls-bridge
-    // so verifiers can pin it via the attested origin.
+function initTlsBridge() {
+  if (!TLS_BRIDGE_DOMAIN) return;
+  if (!/^[a-z0-9][a-z0-9.-]*$/i.test(TLS_BRIDGE_DOMAIN))
+    return console.error(`[tls-bridge] TLS_BRIDGE_DOMAIN ${JSON.stringify(TLS_BRIDGE_DOMAIN)} is not a hostname - /tls/ bridge disabled`);
+  const dir = join(dirname(STATE_FILE), "tls-bridge");
+  const certPath = join(dir, "cert.pem"), keyPath = join(dir, "key.pem");
+  try {
+    let certPem = null, keyPem = null;
+    try {   // reuse the persisted pair unless it's near expiry or the domain changed
+      const c = readFileSync(certPath, "utf8"), k = readFileSync(keyPath, "utf8");
+      const x = new X509Certificate(c);
+      if (new Date(x.validTo).getTime() - Date.now() > 30 * 86400e3
+          && (x.subjectAltName || "").split(", ").includes(`DNS:*.${TLS_BRIDGE_DOMAIN}`)) { certPem = c; keyPem = k; }
+    } catch {}
+    if (!certPem) {
+      mkdirSync(dir, { recursive: true });
+      // 10y self-signed EC P-256: expiry is a formality — trust comes from the
+      // attested-origin pin, and a CVM relaunch mints a fresh pair long before.
+      execFileSync("openssl", ["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+        "-keyout", keyPath, "-out", certPath, "-days", "3650", "-nodes",
+        "-subj", `/CN=*.${TLS_BRIDGE_DOMAIN}`,
+        "-addext", `subjectAltName=DNS:*.${TLS_BRIDGE_DOMAIN},DNS:${TLS_BRIDGE_DOMAIN}`]);
+      chmodSync(keyPath, 0o600);
+      certPem = readFileSync(certPath, "utf8"); keyPem = readFileSync(keyPath, "utf8");
+      console.log(`[tls-bridge] minted in-enclave key + self-signed cert for *.${TLS_BRIDGE_DOMAIN}`);
+    }
+    TLS_BRIDGE_CTX = tls.createSecureContext({ cert: certPem, key: keyPem });
     const x = new X509Certificate(certPem);
     TLS_BRIDGE_INFO = {
       subject: x.subject, subjectAltName: x.subjectAltName || null,
@@ -1849,10 +1880,12 @@ try {
       spkiPinSha256: createHash("sha256")                             // HPKP-style public-key pin (curl --pinnedpubkey)
         .update(x.publicKey.export({ type: "spki", format: "der" })).digest("base64"),
       certificate: x.toString(),
+      selfSigned: true, keySource: "in-enclave",                      // the key never existed outside this CVM
     };
-  }
-} catch (e) { console.error("[tls-bridge] TLS_BRIDGE_CERT/KEY unusable - /tls/ bridge disabled:", e.message); }
-if (TLS_BRIDGE_CTX) console.log("[tls-bridge] in-enclave TLS termination enabled (/x/:id/tls/:port)");
+  } catch (e) { console.error("[tls-bridge] in-enclave cert mint failed (openssl missing?) - /tls/ bridge disabled:", e.message); }
+}
+initTlsBridge();
+if (TLS_BRIDGE_CTX) console.log(`[tls-bridge] in-enclave TLS termination enabled (/x/:id/tls/:port) · ${TLS_BRIDGE_INFO.fingerprint256}`);
 
 // bridge a WebSocket to a local TCP port, binary frames both ways
 function wsTcpBridge(req, socket, head, port) {

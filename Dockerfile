@@ -2,8 +2,9 @@
 # Keep deps minimal — this image is measured and published; smaller TCB = easier audit.
 FROM node:20-slim
 # openssh-server provides sshd (the supervisor hosts SSH; sandbox images need none);
-# openssh-client provides ssh-keygen for the boot host key + in-enclave keypair minting.
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-server openssh-client \
+# openssh-client provides ssh-keygen for the boot host key + in-enclave keypair minting;
+# openssl mints the in-enclave TLS-bridge key + self-signed cert at boot (initTlsBridge).
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-server openssh-client openssl \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json* ./

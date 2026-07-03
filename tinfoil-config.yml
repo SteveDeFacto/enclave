@@ -22,7 +22,7 @@ gpus: 1            # whole H200 attached to the enclave (CC allows 1 or 8)
 containers:
   # --- MPS daemon: makes per-tenant SM%/VRAM caps enforceable in prod -----------
   - name: "mps-control"
-    image: "ghcr.io/stevedefacto/nan-mps@sha256:1514c177916a287d4e43913898dfc906fbf427b159c01d0eb29bb9c8bc2095f7"
+    image: "ghcr.io/stevedefacto/nan-mps@sha256:ff0a29e3a93797b991d75adfa0ce556e4606ec8c4bc2214f47bff451a855594a"
     runtime: nvidia
     gpus: all
     ipc: host
@@ -39,7 +39,7 @@ containers:
 
   # --- GPU worker: forks MPS-capped CUDA processes per tenant, runs submitted jobs
   - name: "worker"
-    image: "ghcr.io/stevedefacto/nan-worker@sha256:f47920fa866356873673f5e9c7c851bf5c9b9170b436ca39ff0053676cd9ed65"
+    image: "ghcr.io/stevedefacto/nan-worker@sha256:b4461bf4ec29ac1f22fe4fc689e0f74825ff7ae450bfb44feadae52e0bcf3c61"
     runtime: nvidia
     gpus: all
     ipc: host
@@ -59,7 +59,7 @@ containers:
 
   # --- supervisor: control plane (no GPU), public ingress -----------------------
   - name: "supervisor"
-    image: "ghcr.io/stevedefacto/nan@sha256:2590064d395d4c39708a0a98b2df82dd95f908da2e108d15d5e3f545ce64c866"
+    image: "ghcr.io/stevedefacto/nan@sha256:004f0101b86570cb7ffe2527027425c50fa0d92e5101a4c19b8bf29af4953d83"
     restart: always
     env:
       - PORT: "8080"
@@ -125,6 +125,17 @@ containers:
       # provision one deployment at a time. AUTO_PROVISION_HOURS=0 means no auto-expiry.
       - AUTO_PROVISION: ""
       - AUTO_PROVISION_HOURS: "0"
+      # public-TCP relay support (relay/README.md): the SNI suffix the relay
+      # serves (deployments are reached at <dep-id>.tcp.<domain>). Setting it
+      # enables /x/:id/tls/:port — at boot the supervisor MINTS the TLS key +
+      # self-signed cert for *.<domain> IN-ENCLAVE (initTlsBridge), so the key
+      # never exists outside the CVM (no ACME account, no secret store, no
+      # operator copy) and the untrusted relay only ever forwards ciphertext.
+      # /v1/tls-bridge publishes the cert's fingerprints over the attested
+      # origin so clients can pin the relay-path session to the enclave; being
+      # plain (measured) config, the domain itself is attested too. Empty =
+      # the /tls/ bridge is disabled.
+      - TLS_BRIDGE_DOMAIN: "tcp.nan.host"
     # fair-billing state (deployments, funded-time balances, payment-scan cursor).
     # Persisting it means a supervisor restart FREEZES every deployment's clock and
     # payment watching resumes where it stopped, instead of forfeiting paid time.
@@ -137,14 +148,9 @@ containers:
       - SECRET
       - ADMIN_TOKEN              # operator token for POST /v1/admin/deployments/:id/provision
       - REGISTRY_PRIVATE_KEY     # NanRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
-      # public-TCP relay support (relay/README.md): wildcard cert for *.tcp.<domain>
-      # + its key. Enables /x/:id/tls/:port — the supervisor terminates client TLS
-      # IN-ENCLAVE so the untrusted relay only ever forwards ciphertext. The key
-      # exists only here (attested); set both empty to disable the /tls/ bridge.
-      # /v1/tls-bridge publishes the cert's fingerprints over the attested origin
-      # so verifying clients can pin the relay-path session to the enclave.
-      - TLS_BRIDGE_CERT          # PEM chain (literal \n ok)
-      - TLS_BRIDGE_KEY           # PEM private key (literal \n ok)
+      # NOTE: the TLS-bridge key/cert are NOT secrets — they are minted
+      # in-enclave at boot (see TLS_BRIDGE_DOMAIN above), so nothing outside
+      # the CVM ever holds the private key.
     command: ["node", "supervisor.js"]
 
   # --- wasm manager: tenant apps via `wasmtime serve` --------------------------
@@ -161,7 +167,7 @@ containers:
   # The app catalog is baked into the image (apps/*.wasm + catalog.json), so what
   # runs is exactly what Tinfoil attested. Apps are wasi:http components.
   - name: "wasm-manager"
-    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:a1e1868dd46cb9c1e7d2103ee619f85b7a24cc325380e8f2fda1298b66098891"
+    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:03437f8cb3449916d87d2bf5f237a48e8ee9984b743414ad9f414728f3ef9088"
     restart: always
     env:
       - WASM_MANAGER_PORT: "8091"   # same port the supervisor's VMMGR_URL already targets

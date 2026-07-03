@@ -109,11 +109,13 @@ fully intact. No per-user websocat, no app-side TLS code.
 
 The enclave's only ingress is the Tinfoil shim (HTTPS/443), so *some* box must
 own the raw public port. This daemon does — but the client's TLS session
-**terminates inside the attested enclave**, not here. The supervisor holds the
-platform cert (`TLS_BRIDGE_CERT`/`TLS_BRIDGE_KEY`, enclave secrets) and unwraps
-the session at `/x/:id/tls/:port`; the relay just peeks the **SNI** hostname
-from the ClientHello (plaintext by design, never decrypted) to pick a route,
-then splices ciphertext:
+**terminates inside the attested enclave**, not here. The supervisor **mints
+the platform key + cert in-enclave at boot** (self-signed for
+`*.<TLS_BRIDGE_DOMAIN>`; the private key never exists outside the CVM — no
+ACME account, no secret store, no operator copy) and unwraps the session at
+`/x/:id/tls/:port`; the relay just peeks the **SNI** hostname from the
+ClientHello (plaintext by design, never decrypted) to pick a route, then
+splices ciphertext:
 
 ```
 client ──TLS──> relay:6667 ──wss──> shim ──> supervisor(/x/:id/tls/:port) ──plain──> app
@@ -128,10 +130,11 @@ against your enclaves.
 
 ## Setup
 
-1. **Cert** (once, platform-wide): issue a wildcard cert for `*.tcp.nan.host`
-   (DNS-01 ACME). Set the PEM chain and key as the supervisor's
-   `TLS_BRIDGE_CERT` / `TLS_BRIDGE_KEY` enclave secrets. The key never touches
-   the relay box. Renewals = update the secrets.
+1. **Domain** (once, platform-wide): set the supervisor's `TLS_BRIDGE_DOMAIN`
+   env to the SNI suffix (e.g. `tcp.nan.host`, plain config in
+   `tinfoil-config.yml`). At boot the enclave mints its own key + self-signed
+   cert for `*.tcp.nan.host` — no ACME, no secrets, no renewals; the key never
+   exists outside the CVM, let alone on the relay box.
 2. **DNS**: `*.tcp.nan.host  A  <relay ip>` (repeat per relay for round-robin).
 3. **Relay**:
 
@@ -150,11 +153,13 @@ stay unreachable through it — by design).
 
 ## Verifying the endpoint is the enclave (optional)
 
-CA validation alone proves you reached *someone* holding a `*.tcp.nan.host`
-cert — it can't prove that key lives inside an attested enclave. The
-supervisor closes that gap by publishing the bridge cert **over the attested
-origin** at `GET /v1/tls-bridge` (`fingerprint256`, `spkiPinSha256`, the PEM).
-A verifying client:
+The bridge cert is self-signed — CA validation was never the trust anchor
+here (a CA cert would only prove you reached *someone* holding a
+`*.tcp.nan.host` cert, not that the key lives inside an attested enclave —
+and its key would have to exist outside the enclave to be issued at all).
+Instead the supervisor publishes the cert **over the attested origin** at
+`GET /v1/tls-bridge` (`fingerprint256`, `spkiPinSha256`, the PEM). A
+verifying client:
 
 1. Verifies the enclave itself (`/v1/attestation` — TDX quote + H200 CC
    evidence, checked against the Sigstore-signed release measurements).
@@ -168,9 +173,13 @@ openssl s_client -connect dep-abc123.tcp.nan.host:6667 \
   | openssl x509 -noout -fingerprint -sha256      # must match
 ```
 
-With the pin, a MITM relay or a mis-issued certificate fails even though it
-would pass CA validation — the session is transitively bound to the measured
-enclave. Casual clients can skip all of this and rely on plain CA trust.
+With the pin, a MITM relay fails outright — the private key it would need
+never left the CVM — so the session is transitively bound to the measured
+enclave. Strict clients can also use the published PEM as their sole trust
+root (`psql sslmode=verify-full sslrootcert=bridge.pem`; the SAN covers
+`*.tcp.nan.host`). Casual clients that don't validate certs (`sslmode=require`,
+`irssi --tls`) connect unchanged, with the same what-any-router-sees exposure
+they always had.
 
 ## Config
 
