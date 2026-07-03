@@ -569,7 +569,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         <input type="text" id="apiBase" spellcheck="false" autocapitalize="off" autocomplete="off" />
         <span class="ep-state" id="epState"></span>
       </div>
-      <p class="dim" style="font-family:var(--font-mono);font-size:.7rem;margin:.2em 0 0;">Connect your wallet from the header — used only to sign in &amp; pay, with no account or KYC.</p>
+      <p class="dim" style="font-family:var(--font-mono);font-size:.7rem;margin:.2em 0 0;">Connect your wallet from the header. It's used only to sign in &amp; pay, with no account or KYC.</p>
     </div>
     <div class="console">
       <!-- config -->
@@ -728,7 +728,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
 
     <div class="publish-panel" id="publishPanel" hidden>
       <h4>Publish a Wasm app version</h4>
-      <p class="pub-sub">Add a <span class="mono">wasi:http</span> component release to the on-chain catalog. Its bytes go on IPFS; the CID and metadata go on Base. An app is keyed by <b>slug</b> in your wallet's namespace — publish the same slug again to cut a new <b>version</b>. Only you (<span class="mono">msg.sender</span>) can add versions, edit, or delist it. New to building components? The <a href="#docs" data-view="docs">developer guide</a> takes you from an empty directory to a published app.</p>
+      <p class="pub-sub">Add a <span class="mono">wasi:http</span> component release to the on-chain catalog. Its bytes go on IPFS; the CID and metadata go on Base. An app is keyed by <b>slug</b> in your wallet's namespace; publish the same slug again to cut a new <b>version</b>. Only you (<span class="mono">msg.sender</span>) can add versions, edit, or delist it. New to building components? The <a href="#docs" data-view="docs">developer guide</a> takes you from an empty directory to a published app.</p>
       <div class="pub-grid">
         <div>
           <label for="pubSlug">App slug <span class="dim">(stable id · a–z0–9-, ≤ 40)</span></label>
@@ -790,7 +790,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="lv" id="liveVerify">
       <div class="lv-h">
         <div class="lv-txt">
-          <h4>Don't take this page's word for it — run the check now</h4>
+          <h4>Don't take this page's word for it: run the check now</h4>
           <p>Your browser loads Tinfoil's open-source verifier (<code>@tinfoilsh/verifier</code>), fetches the enclave's attestation over your own connection, validates the AMD SEV-SNP report up to AMD's root key, verifies the release's Sigstore code provenance, and compares the two measurements. Exactly what the API's <code>verify</code> field tells every client to do.</p>
         </div>
         <button class="btn btn-primary" id="lvRun" type="button">Verify enclave <span class="arr">→</span></button>
@@ -800,7 +800,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         <div class="lv-verdict" id="lvVerdict"></div>
         <div class="lv-meta" id="lvMeta"></div>
       </div>
-      <p class="lv-note">The verifier module loads from esm.sh; Sigstore bundles and AMD KDS certificates come through Tinfoil's CORS proxies. Fully independent path: <code id="lvCli">tinfoil attestation verify -e &lt;enclave-host&gt; -r &lt;repo&gt;</code> — <a href="https://github.com/tinfoilsh/tinfoil-cli" target="_blank" rel="noopener">tinfoil-cli</a>.</p>
+      <p class="lv-note">The verifier module loads from esm.sh; Sigstore bundles and AMD KDS certificates come through Tinfoil's CORS proxies. Fully independent path: <code id="lvCli">tinfoil attestation verify -e &lt;enclave-host&gt; -r &lt;repo&gt;</code>, via <a href="https://github.com/tinfoilsh/tinfoil-cli" target="_blank" rel="noopener">tinfoil-cli</a>.</p>
     </div>
   </div>
 </section>
@@ -909,7 +909,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="sec-head">
       <span class="eyebrow">Developer guide · build → publish → deploy</span>
       <h2>Build your first Wasm app.</h2>
-      <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code — HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, and attestation your users can check themselves. Everything here runs against the same <a href="#api" data-view="api">public API</a> the <a href="#deploy" data-view="deploy">Deploy console</a> uses.</p>
+      <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code. That covers HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, and attestation your users can check themselves. Everything here runs against the same <a href="#api" data-view="api">public API</a> the <a href="#deploy" data-view="deploy">Deploy console</a> uses.</p>
     </div>
 
     <div class="docs-layout">
@@ -942,40 +942,40 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         <!-- 01 ------------------------------------------------------------ -->
         <article class="doc" id="docs-model">
           <h3><span class="n">01</span>The app model</h3>
-          <p>A NaN app is a <b>WebAssembly component</b> that targets <code>wasi:http</code> — the format <code>wasmtime serve</code> runs. It exports one interface, <code>wasi:http/incoming-handler</code>: the runtime hands your code an HTTP request, your code returns a response. Like a serverless function, except it runs inside a hardware-attested confidential enclave, and anyone can verify that.</p>
+          <p>A NaN app is a <b>WebAssembly component</b> that targets <code>wasi:http</code>, the format <code>wasmtime serve</code> runs. It exports one interface, <code>wasi:http/incoming-handler</code>: the runtime hands your code an HTTP request, your code returns a response. Like a serverless function, except it runs inside a hardware-attested confidential enclave, and anyone can verify that.</p>
           <p>Inside the enclave your app runs in a strict capability sandbox, in its own OS process, launched by the exact same <code>wasmtime</code> command you can run locally:</p>
           <ul>
-            <li><b>Filesystem</b> — a single private, writable <code>/data</code> directory (RAM-backed scratch, torn down with the deployment). Nothing else is visible, and paths that escape it (<code>/data/../..</code>) are refused by the runtime. <a href="#docs-data">Chapter 08 →</a></li>
-            <li><b>Environment</b> — empty, except <code>NAN_PORTS</code> for service apps. No host env ever leaks in.</li>
-            <li><b>Network</b> — none by default beyond the HTTP socket the runtime serves for you. Declaring firewall ports switches the app to service mode with <code>wasi:sockets</code>. <a href="#docs-ports">Chapter 09 →</a></li>
-            <li><b>Memory</b> — the guest's linear memory is capped at the app's <code>mem_mb</code>, enforced by the runtime.</li>
-            <li><b>No host reach</b> — no processes, no exec, no SSH (a Wasm app isn't an OS; there's nothing to SSH into).</li>
+            <li><b>Filesystem</b>: a single private, writable <code>/data</code> directory (RAM-backed scratch, torn down with the deployment). Nothing else is visible, and paths that escape it (<code>/data/../..</code>) are refused by the runtime. <a href="#docs-data">Chapter 08 →</a></li>
+            <li><b>Environment</b>: empty, except <code>NAN_PORTS</code> for service apps. No host env ever leaks in.</li>
+            <li><b>Network</b>: none by default beyond the HTTP socket the runtime serves for you. Declaring firewall ports switches the app to service mode with <code>wasi:sockets</code>. <a href="#docs-ports">Chapter 09 →</a></li>
+            <li><b>Memory</b>: the guest's linear memory is capped at the app's <code>mem_mb</code>, enforced by the runtime.</li>
+            <li><b>No host reach</b>: no processes, no exec, no SSH (a Wasm app isn't an OS; there's nothing to SSH into).</li>
           </ul>
           <p>Two kinds of app, one format:</p>
           <ul>
-            <li><b>Web apps</b> (the default, and this guide's walkthrough) — export the handler; the platform owns the listener and routes requests to you.</li>
-            <li><b>Service apps</b> — declare firewall ports (<code>http:N</code> / <code>tcp:N</code> / <code>udp:N</code>) and run as a long-lived command component that binds its own sockets: databases, IRC servers, DNS resolvers. <a href="#docs-ports">Chapter 09 →</a></li>
+            <li><b>Web apps</b> (the default, and this guide's walkthrough): export the handler; the platform owns the listener and routes requests to you.</li>
+            <li><b>Service apps</b>: declare firewall ports (<code>http:N</code> / <code>tcp:N</code> / <code>udp:N</code>) and run as a long-lived command component that binds its own sockets: databases, IRC servers, DNS resolvers. <a href="#docs-ports">Chapter 09 →</a></li>
           </ul>
           <p>And two catalogs your app reference can point at:</p>
           <ul>
-            <li><b>Baked-in catalog</b> — curated sample apps compiled into the measured enclave image, referenced by id (<code>hello</code>). Covered directly by attestation.</li>
-            <li><b>On-chain app store</b> — the <a href="#apps" data-view="apps">Apps</a> tab: anyone publishes, bytes live on IPFS addressed by CID, listings live in the <code>NanAppCatalog</code> contract on Base. This is where <i>your</i> app goes. <a href="#docs-publish">Chapter 04 →</a></li>
+            <li><b>Baked-in catalog</b>: curated sample apps compiled into the measured enclave image, referenced by id (<code>hello</code>). Covered directly by attestation.</li>
+            <li><b>On-chain app store</b>: the <a href="#apps" data-view="apps">Apps</a> tab: anyone publishes, bytes live on IPFS addressed by CID, listings live in the <code>NanAppCatalog</code> contract on Base. This is where <i>your</i> app goes. <a href="#docs-publish">Chapter 04 →</a></li>
           </ul>
           <div class="doc-note">
             <span class="nt">The contract</span>
-            <p>If <code>wasmtime serve</code> runs your <code>.wasm</code> locally, the enclave runs it too — the manager launches the identical command per tenant. That's the whole compatibility story, and it's why every chapter here ends with a local command you can verify before spending a cent.</p>
+            <p>If <code>wasmtime serve</code> runs your <code>.wasm</code> locally, the enclave runs it too: the manager launches the identical command per tenant. That's the whole compatibility story, and it's why every chapter here ends with a local command you can verify before spending a cent.</p>
           </div>
         </article>
 
         <!-- 02 ------------------------------------------------------------ -->
         <article class="doc" id="docs-toolchain">
           <h3><span class="n">02</span>Toolchain setup</h3>
-          <p>The walkthrough uses <b>Rust</b>, the most mature component toolchain today (other languages in <a href="#docs-langs">chapter 13</a>). You need the WASI 0.2 target, <code>cargo-component</code>, and — for local testing — the same <code>wasmtime</code> runtime the enclave uses:</p>
+          <p>The walkthrough uses <b>Rust</b>, the most mature component toolchain today (other languages in <a href="#docs-langs">chapter 13</a>). You need the WASI 0.2 target, <code>cargo-component</code>, and, for local testing, the same <code>wasmtime</code> runtime the enclave uses:</p>
           <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code># Rust component toolchain
 rustup target add wasm32-wasip2
 cargo install cargo-component
 
-# the runtime the enclave runs (wasmtime 45+) — for local testing
+# the runtime the enclave runs (wasmtime 45+), for local testing
 curl https://wasmtime.dev/install.sh -sSf | bash
 wasmtime --version</code></pre></div>
         </article>
@@ -985,11 +985,11 @@ wasmtime --version</code></pre></div>
           <h3><span class="n">03</span>Hello, enclave</h3>
           <p>Five steps from nothing to a running app: scaffold, declare the world, write the handler, build, run. The result is byte-for-byte the kind of component the platform's own <code>hello</code> sample is.</p>
 
-          <h4>Step 1 — scaffold a component crate</h4>
+          <h4>Step 1: scaffold a component crate</h4>
           <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>cargo component new hello --lib &amp;&amp; cd hello
 cargo add wasi        # WASI 0.2 bindings</code></pre></div>
 
-          <h4>Step 2 — declare the world</h4>
+          <h4>Step 2: declare the world</h4>
           <p>The world tells the toolchain what your component imports and exports. A NaN web app exports exactly one thing:</p>
           <div class="code"><div class="codebar"><span class="fn">wit/world.wit</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>package nan:hello;
 
@@ -997,7 +997,7 @@ world hello {
   export wasi:http/incoming-handler@0.2.0;
 }</code></pre></div>
 
-          <h4>Step 3 — write the handler</h4>
+          <h4>Step 3: write the handler</h4>
           <div class="code"><div class="codebar"><span class="fn">src/lib.rs</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>use wasi::http::types::{
     Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
@@ -1024,18 +1024,18 @@ impl wasi::exports::http::incoming_handler::Guest for Component {
 }</code></pre></div>
           <div class="doc-note warn">
             <span class="nt">Version drift</span>
-            <p>The <code>wasi</code> crate's binding APIs shift between releases. Pin the version documented for your <code>cargo-component</code> and let the compiler guide the exact handler signature — the shape above (<code>proxy::export!</code>, set the outparam, write, finish) is the stable <code>wasi:http</code> pattern.</p>
+            <p>The <code>wasi</code> crate's binding APIs shift between releases. Pin the version documented for your <code>cargo-component</code> and let the compiler guide the exact handler signature; the shape above (<code>proxy::export!</code>, set the outparam, write, finish) is the stable <code>wasi:http</code> pattern.</p>
           </div>
 
-          <h4>Step 4 — build</h4>
+          <h4>Step 4: build</h4>
           <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>cargo component build --release --target wasm32-wasip2
 # artifact: target/wasm32-wasip2/release/hello.wasm</code></pre></div>
-          <p>This emits a <b>component</b> (layer 1 in the wasm preamble), not a plain core module — the upload gateway and the enclave both check that field and reject core modules, so anything that builds this way is already in the right format.</p>
+          <p>This emits a <b>component</b> (layer 1 in the wasm preamble), not a plain core module. The upload gateway and the enclave both check that field and reject core modules, so anything that builds this way is already in the right format.</p>
 
-          <h4>Step 5 — run it locally</h4>
+          <h4>Step 5: run it locally</h4>
           <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>wasmtime serve --addr 127.0.0.1:8080 target/wasm32-wasip2/release/hello.wasm
 curl 127.0.0.1:8080/          # → hello from NaN</code></pre></div>
-          <p>Works? Then it works in the enclave. For a full dress rehearsal, add the exact flags the enclave launches with — the same sandbox, memory cap, and <code>/data</code> preopen your deployment will get:</p>
+          <p>Works? Then it works in the enclave. For a full dress rehearsal, add the exact flags the enclave launches with, giving you the same sandbox, memory cap, and <code>/data</code> preopen your deployment will get:</p>
           <div class="code"><div class="codebar"><span class="fn">terminal · enclave parity</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>mkdir -p scratch
 wasmtime serve -Scli -Shttp -Sp3 \
   --dir scratch::/data \
@@ -1049,20 +1049,20 @@ wasmtime serve -Scli -Shttp -Sp3 \
           <p>Your app's bytes go on <b>IPFS</b>, addressed by their CID (a hash of the exact wasm). The listing goes on <b>Base</b>, in the <code>NanAppCatalog</code> contract. Publishing is one wallet transaction on the <a href="#apps" data-view="apps">Apps</a> tab:</p>
           <ol>
             <li>Connect your wallet (header button) and hit <b>+ Publish app</b>.</li>
-            <li>Pick a <b>slug</b> — your app's stable id, e.g. <code>my-hello</code> (a–z, 0–9, hyphens, ≤ 40 chars). Slugs live in <i>your wallet's namespace</i>: the on-chain app id is <code>keccak256(publisher, slug)</code>, so nobody can squat or write to your lineage. The slug doesn't have to match your crate name.</li>
-            <li>Set a <b>version</b> label (e.g. <code>1.0.0</code>) and choose your <code>hello.wasm</code>. The file is validated (component check, ≤ 256 MB), uploaded, pinned to IPFS, and the <b>CID</b> field fills in — or paste a CID you pinned yourself.</li>
-            <li>Set the display name, a description, the per-instance <b>memory cap</b> (MB of guest linear memory; the Hello app is fine at the default), and — only for service apps — the <b>firewall ports</b> the version may bind (<a href="#docs-ports">chapter 09</a>). Leave ports empty for a standard web app.</li>
-            <li><b>Publish to Base</b> — one transaction, signed by your wallet, attributed on-chain to you.</li>
+            <li>Pick a <b>slug</b>, your app's stable id, e.g. <code>my-hello</code> (a–z, 0–9, hyphens, ≤ 40 chars). Slugs live in <i>your wallet's namespace</i>: the on-chain app id is <code>keccak256(publisher, slug)</code>, so nobody can squat or write to your lineage. The slug doesn't have to match your crate name.</li>
+            <li>Set a <b>version</b> label (e.g. <code>1.0.0</code>) and choose your <code>hello.wasm</code>. The file is validated (component check, ≤ 256 MB), uploaded, pinned to IPFS, and the <b>CID</b> field fills in (or paste a CID you pinned yourself).</li>
+            <li>Set the display name, a description, the per-instance <b>memory cap</b> (MB of guest linear memory; the Hello app is fine at the default), and, only for service apps, the <b>firewall ports</b> the version may bind (<a href="#docs-ports">chapter 09</a>). Leave ports empty for a standard web app.</li>
+            <li><b>Publish to Base</b>: one transaction, signed by your wallet, attributed on-chain to you.</li>
           </ol>
           <h4>Versioning rules (enforced by the contract)</h4>
           <ul>
             <li>Versions are <b>append-only history</b>: you never edit a release, you publish the same slug again with a new version label and CID. <code>editApp</code> changes display metadata; <code>setActive</code> delists the app; <code>yankVersion</code> pulls a bad release (kept for history, hidden from browsing).</li>
             <li>A CID can be listed <b>once across the whole catalog</b>, so a CID maps unambiguously to one app version.</li>
-            <li>Each version carries its own firewall config — it can change from release to release.</li>
+            <li>Each version carries its own firewall config; it can change from release to release.</li>
           </ul>
           <div class="doc-note warn">
             <span class="nt">Approval gates deploys</span>
-            <p>Publishing is permissionless, but every version starts <b>Pending</b> and the enclave refuses to deploy its CID (<code>403 not_approved</code>) until the catalog owner approves that exact CID on-chain. A new release starts Pending again. Your app card on the Apps tab shows the per-version status badge. The separate <b>verified</b> badge is a curation signal only — it never gates execution; the CID does.</p>
+            <p>Publishing is permissionless, but every version starts <b>Pending</b> and the enclave refuses to deploy its CID (<code>403 not_approved</code>) until the catalog owner approves that exact CID on-chain. A new release starts Pending again. Your app card on the Apps tab shows the per-version status badge. The separate <b>verified</b> badge is a curation signal only: it never gates execution; the CID does.</p>
           </div>
         </article>
 
@@ -1073,14 +1073,14 @@ wasmtime serve -Scli -Shttp -Sp3 \
           <div class="tbl"><table class="params">
             <thead><tr><th>reference</th><th>meaning</th></tr></thead>
             <tbody>
-              <tr><td class="pname">hello</td><td>A baked-in catalog id — compiled into the measured enclave image, covered directly by attestation.</td></tr>
+              <tr><td class="pname">hello</td><td>A baked-in catalog id, compiled into the measured enclave image and covered directly by attestation.</td></tr>
               <tr><td class="pname">my-hello:1.0.0</td><td>A store app by slug and version (or <code>&lt;publisher&gt;/my-hello:1.0.0</code> to disambiguate). The <i>browser</i> resolves this against the on-chain catalog to the version's CID; the API itself takes the resolved form below.</td></tr>
               <tr><td class="pname">ipfs://&lt;cid&gt;</td><td>An exact wasm by CID. The enclave fetches it, verifies every block hashes to the CID (a tampering gateway fails the check), confirms it's a component, and runs it. The verified CID is folded into the attestation.</td></tr>
             </tbody>
           </table></div>
-          <p>The easy path is the <a href="#deploy" data-view="deploy">Deploy console</a> — your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and firewall. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
+          <p>The easy path is the <a href="#deploy" data-view="deploy">Deploy console</a>: your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and firewall. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
 
-          <h4>Sign in — an Ethereum signature, no account</h4>
+          <h4>Sign in: an Ethereum signature, no account</h4>
           <div class="code"><div class="codebar"><span class="fn">deploy.js · SIWE handshake</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>const API = "https://api.nan.host/v1";
 
 const addr  = (await ethereum.request({ method: "eth_requestAccounts" }))[0];
@@ -1096,7 +1096,7 @@ const { token }   = await (await fetch(`${API}/auth/login`, {
   method: "POST",
   headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
   body: JSON.stringify({
-    image:     { reference: "ipfs://bafybei…" },   // your published CID — or "hello"
+    image:     { reference: "ipfs://bafybei…" },   // your published CID, or "hello"
     resources: { share: 0.25 },                    // 25% of the card: VRAM+compute+CPU+RAM together
     public:    true,                               // anyone may call it (false = owner-token only)
     region:    "auto",
@@ -1106,15 +1106,15 @@ const { token }   = await (await fetch(`${API}/auth/login`, {
 console.log(dep.id, dep.status);   // dep_… awaiting_payment
 console.log(dep.payment);          // how to fund it ↓</code></pre></div>
 
-          <h4>Fund it — pay-per-second, straight through, no custody</h4>
+          <h4>Fund it: pay-per-second, straight through, no custody</h4>
           <p>The deployment comes back <code>awaiting_payment</code> with a <code>payment</code> block: the <code>NanPay</code> forwarder address on Base, a <code>deploymentRef</code>, the USDC EIP-712 domain, and your <code>ratePerSecondUsdc</code> (your share × the $6/hr full-card rate). Pay either way:</p>
-          <div class="code"><div class="codebar"><span class="fn">NanPay · two ways to pay</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>// USDC — sign an EIP-3009 ReceiveWithAuthorization (gas-free wallet signature,
+          <div class="code"><div class="codebar"><span class="fn">NanPay · two ways to pay</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>// USDC: sign an EIP-3009 ReceiveWithAuthorization (gas-free wallet signature,
 // to = forwarder, nonce prefixed with deploymentRef's first 16 bytes), then ONE tx:
 payWithAuthorization(bytes32 deploymentId, address from, uint256 value,
                      uint256 validAfter, uint256 validBefore,
                      bytes32 nonce, bytes signature)
 
-// ETH — one payable call; the enclave credits the wei at the live Chainlink ETH/USD rate:
+// ETH: one payable call; the enclave credits the wei at the live Chainlink ETH/USD rate:
 payEth(bytes32 deploymentId) payable</code></pre></div>
           <p>The enclave watches the chain, sees the payment, launches your app, and starts the clock: <code>amount / ratePerSecondUsdc</code> seconds of runtime. Unpaid reservations are released after a window. The console does all of the signing and encoding for you.</p>
 
@@ -1133,30 +1133,30 @@ console.log(d.timeRemainingSec);     // funded runtime balance</code></pre></div
           <ul>
             <li><b>Top up</b>: <code>POST /v1/deployments/{id}/topup</code> returns fresh payment instructions; each payment adds <code>amount / rate</code> seconds. Send it before expiry (a short grace period covers in-flight top-ups).</li>
             <li><b>Terminate</b>: <code>DELETE /v1/deployments/{id}</code> tears the app down immediately.</li>
-            <li><b>Fair clock</b>: if the platform itself isn't serving, your balance freezes (<code>paused: true</code> with a reason) and resumes automatically — funded time never drains during an outage.</li>
+            <li><b>Fair clock</b>: if the platform itself isn't serving, your balance freezes (<code>paused: true</code> with a reason) and resumes automatically; funded time never drains during an outage.</li>
           </ul>
         </article>
 
         <!-- 06 ------------------------------------------------------------ -->
         <article class="doc" id="docs-call">
           <h3><span class="n">06</span>Call your app</h3>
-          <p>Every deployment serves HTTP on its own path — and, through the gateway, its own origin (so one app can never touch another app's cookies or storage, or the site's):</p>
-          <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code># public deployment — anyone, no auth
+          <p>Every deployment serves HTTP on its own path and, through the gateway, its own origin (so one app can never touch another app's cookies or storage, or the site's):</p>
+          <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code># public deployment: anyone, no auth
 curl https://3xk9f2qa.app.nan.host/            # per-deployment origin (id without "dep_")
 curl https://&lt;enclave-host&gt;/x/dep_3xK9f2Qa/    # same app, direct to its enclave
 
-# private deployment (public: false) — owner's bearer token only
+# private deployment (public: false): owner's bearer token only
 curl -H "Authorization: Bearer $NAN_TOKEN" https://&lt;enclave-host&gt;/x/dep_3xK9f2Qa/</code></pre></div>
           <ul>
-            <li>Any method, any subpath, headers and body pass through to your handler. The one exception: the <code>Authorization</code> header authenticates at the platform and is <b>stripped before your app sees the request</b> — the token never reaches tenant code.</li>
-            <li><code>public</code> only governs who may <i>send requests</i>. Confidentiality is unaffected either way — the operator can't see inside the enclave regardless.</li>
+            <li>Any method, any subpath, headers and body pass through to your handler. The one exception: the <code>Authorization</code> header authenticates at the platform and is <b>stripped before your app sees the request</b>; the token never reaches tenant code.</li>
+            <li><code>public</code> only governs who may <i>send requests</i>. Confidentiality is unaffected either way; the operator can't see inside the enclave regardless.</li>
             <li>Your app's <code>println!</code> / stderr output lands in the deployment log: <code>GET /v1/deployments/{id}/logs</code> (owner-only).</li>
           </ul>
         </article>
 
         <!-- 07 ------------------------------------------------------------ -->
         <article class="doc" id="docs-http">
-          <h3><span class="n">07</span>HTTP in depth — routing, headers, body</h3>
+          <h3><span class="n">07</span>HTTP in depth: routing, headers, body</h3>
           <p>Everything a web app needs beyond hello: reading the method, path and headers, consuming the request body, and writing a status, headers, and a streamed response. This drop-in <code>src/lib.rs</code> shows all of it:</p>
           <div class="code"><div class="codebar"><span class="fn">src/lib.rs · echo app</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>use wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
@@ -1222,17 +1222,17 @@ curl 127.0.0.1:8080/headers
 curl -X POST --data-binary 'round trip' 127.0.0.1:8080/echo</code></pre></div>
           <div class="doc-note warn">
             <span class="nt">Fresh instance per request</span>
-            <p><code>wasmtime serve</code> instantiates your component <b>per request</b> — globals and statics do not survive from one request to the next. State that must outlive a request goes in <code>/data</code> (next chapter). Also note the 4096-byte ceiling per <code>blocking_write_and_flush</code> call — chunk larger payloads as above.</p>
+            <p><code>wasmtime serve</code> instantiates your component <b>per request</b>: globals and statics do not survive from one request to the next. State that must outlive a request goes in <code>/data</code> (next chapter). Also note the 4096-byte ceiling per <code>blocking_write_and_flush</code> call; chunk larger payloads as above.</p>
           </div>
         </article>
 
         <!-- 08 ------------------------------------------------------------ -->
         <article class="doc" id="docs-data">
           <h3><span class="n">08</span>The /data scratch filesystem</h3>
-          <p>Every deployment gets a private, writable <code>/data</code> directory, so ordinary file-using code — a SQLite database, a cache, config, logs — ports to wasm without a rewrite. In Rust it's plain <code>std::fs</code>; every language's stdlib file I/O maps to the same <code>wasi:filesystem</code> interface. Extending the echo app with a hit counter:</p>
+          <p>Every deployment gets a private, writable <code>/data</code> directory, so ordinary file-using code (a SQLite database, a cache, config, logs) ports to wasm without a rewrite. In Rust it's plain <code>std::fs</code>; every language's stdlib file I/O maps to the same <code>wasi:filesystem</code> interface. Extending the echo app with a hit counter:</p>
           <div class="code"><div class="codebar"><span class="fn">src/lib.rs · add a route</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>use std::fs;
 
-// (Method::Get, "/hits") — a per-deployment counter that survives across requests
+// (Method::Get, "/hits"): a per-deployment counter that survives across requests
 (Method::Get, "/hits") =&gt; {
     let hits: u64 = fs::read_to_string("/data/hits")
         .ok().and_then(|s| s.trim().parse().ok())
@@ -1242,31 +1242,31 @@ curl -X POST --data-binary 'round trip' 127.0.0.1:8080/echo</code></pre></div>
 }</code></pre></div>
           <p>Test locally with the parity flag from chapter 03 (<code>--dir scratch::/data</code>). Know exactly what <code>/data</code> is:</p>
           <ul>
-            <li><b>Private</b> — your app sees only its own <code>/data</code>; there is no preopen for anything else, and escaping paths are refused by the runtime. Isolation is the wasi capability model, not a convention.</li>
-            <li><b>Ephemeral</b> — it's RAM-backed scratch inside the enclave's already-encrypted memory, torn down when the deployment ends. No persistence, no shared storage: treat it as scratch, not a database of record.</li>
-            <li><b>Capped</b> — usage is limited by the version's <code>storage_mb</code> (default 256 MB); an app that exceeds it is killed by the audit sweep, since ramdisk files consume RAM the memory cap doesn't cover. Publish with <code>storage_mb: 0</code> to opt out of <code>/data</code> entirely.</li>
+            <li><b>Private</b>: your app sees only its own <code>/data</code>; there is no preopen for anything else, and escaping paths are refused by the runtime. Isolation is the wasi capability model, not a convention.</li>
+            <li><b>Ephemeral</b>: it's RAM-backed scratch inside the enclave's already-encrypted memory, torn down when the deployment ends. No persistence, no shared storage: treat it as scratch, not a database of record.</li>
+            <li><b>Capped</b>: usage is limited by the version's <code>storage_mb</code> (default 256 MB); an app that exceeds it is killed by the audit sweep, since ramdisk files consume RAM the memory cap doesn't cover. Publish with <code>storage_mb: 0</code> to opt out of <code>/data</code> entirely.</li>
           </ul>
         </article>
 
         <!-- 09 ------------------------------------------------------------ -->
         <article class="doc" id="docs-ports">
-          <h3><span class="n">09</span>Service apps — the firewall &amp; NAN_PORTS</h3>
-          <p>Declaring firewall ports (on the version you publish, prefilled into the deploy request by <b>Use in Deploy</b>) changes how your app runs: instead of <code>wasmtime serve</code> calling your handler, the enclave launches it with <code>wasmtime run</code> as a <b>long-running command component</b> — a <code>main()</code> — granted <code>wasi:sockets</code>: it binds its declared ports itself, and may also make outbound TCP/UDP connections and DNS lookups. Rust's <code>std::net</code> on <code>wasm32-wasip2</code> maps straight onto it.</p>
+          <h3><span class="n">09</span>Service apps: the firewall &amp; NAN_PORTS</h3>
+          <p>Declaring firewall ports (on the version you publish, prefilled into the deploy request by <b>Use in Deploy</b>) changes how your app runs: instead of <code>wasmtime serve</code> calling your handler, the enclave launches it with <code>wasmtime run</code> as a <b>long-running command component</b> (a <code>main()</code>) granted <code>wasi:sockets</code>: it binds its declared ports itself, and may also make outbound TCP/UDP connections and DNS lookups. Rust's <code>std::net</code> on <code>wasm32-wasip2</code> maps straight onto it.</p>
           <div class="tbl"><table class="params">
             <thead><tr><th>entry</th><th>meaning</th><th>reached at</th></tr></thead>
             <tbody>
-              <tr><td class="pname">http:N</td><td>your app serves HTTP on port N itself (max one entry)</td><td><code>/x/{id}/…</code> — same URL as a web app</td></tr>
+              <tr><td class="pname">http:N</td><td>your app serves HTTP on port N itself (max one entry)</td><td><code>/x/{id}/…</code>, the same URL as a web app</td></tr>
               <tr><td class="pname">tcp:N</td><td>a raw TCP listener</td><td><code>/x/{id}/tcp/N</code> bridge · <code>/x/{id}/tls/N</code> + public relay (<a href="#docs-tcp">ch. 10</a>)</td></tr>
               <tr><td class="pname">udp:N</td><td>a datagram socket</td><td><code>/x/{id}/udp/N</code> bridge · per-deployment IPv6 (<a href="#docs-udp">ch. 11</a>)</td></tr>
             </tbody>
           </table></div>
-          <p>Declared ports are <b>logical</b> — your app's stable, advertised interface, like a container's <code>EXPOSE</code>. Each deployment gets its own <b>actual</b> loopback bind, so any number of tenants can run "the <code>tcp:5432</code> app" simultaneously with zero conflicts; URLs always use the logical number and route by deployment id. The mapping arrives in one environment variable:</p>
-          <div class="code"><div class="codebar"><span class="fn">the NAN_PORTS contract</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>NAN_PORTS=tcp:5432=31245,udp:9053=31246     # logical=actual — BIND THE ACTUAL</code></pre></div>
+          <p>Declared ports are <b>logical</b>: your app's stable, advertised interface, like a container's <code>EXPOSE</code>. Each deployment gets its own <b>actual</b> loopback bind, so any number of tenants can run "the <code>tcp:5432</code> app" simultaneously with zero conflicts; URLs always use the logical number and route by deployment id. The mapping arrives in one environment variable:</p>
+          <div class="code"><div class="codebar"><span class="fn">the NAN_PORTS contract</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>NAN_PORTS=tcp:5432=31245,udp:9053=31246     # logical=actual; BIND THE ACTUAL</code></pre></div>
           <div class="doc-note warn">
             <span class="nt">The one rule</span>
-            <p><b>Read <code>NAN_PORTS</code> and bind the actual ports. Never hardcode.</b> The socket grant is coarse, so an audit sweep polices the fine print: an app that binds a port it wasn't assigned is killed on the spot. Labels are 1–19999 (8080/8091 reserved for infrastructure); labels below 1024 — say <code>udp:53</code> — are always remapped to an unprivileged actual. Up to 8 entries per version.</p>
+            <p><b>Read <code>NAN_PORTS</code> and bind the actual ports. Never hardcode.</b> The socket grant is coarse, so an audit sweep polices the fine print: an app that binds a port it wasn't assigned is killed on the spot. Labels are 1–19999 (8080/8091 reserved for infrastructure); labels below 1024 (say <code>udp:53</code>) are always remapped to an unprivileged actual. Up to 8 entries per version.</p>
           </div>
-          <p>Parsing the contract is a few lines — every service example below uses this helper:</p>
+          <p>Parsing the contract is a few lines; every service example below uses this helper:</p>
           <div class="code"><div class="codebar"><span class="fn">src/main.rs · NAN_PORTS helper</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>/// "tcp:7000=31245,udp:9053=31246" → the actual port for a logical entry.
 fn actual_port(logical: &amp;str) -&gt; u16 {
     std::env::var("NAN_PORTS").unwrap_or_default()
@@ -1274,13 +1274,13 @@ fn actual_port(logical: &amp;str) -&gt; u16 {
         .find_map(|e| e.trim().strip_prefix(&amp;format!("{logical}="))?.parse().ok())
         .unwrap_or_else(|| panic!("{logical} not in NAN_PORTS"))
 }</code></pre></div>
-          <p>Readiness: the enclave waits (~20 s) for your first <code>http:</code>/<code>tcp:</code> port to accept before marking the deployment running, so bind early in <code>main()</code>. Both launch modes also pass <code>-S p3</code>, so you may target the async <b>WASIp3</b> API surface instead of wasip2's poll-based one — same sandbox, same rules; guest toolchains for p3 are still young.</p>
+          <p>Readiness: the enclave waits (~20 s) for your first <code>http:</code>/<code>tcp:</code> port to accept before marking the deployment running, so bind early in <code>main()</code>. Both launch modes also pass <code>-S p3</code>, so you may target the async <b>WASIp3</b> API surface instead of wasip2's poll-based one. Same sandbox, same rules; guest toolchains for p3 are still young.</p>
         </article>
 
         <!-- 10 ------------------------------------------------------------ -->
         <article class="doc" id="docs-tcp">
-          <h3><span class="n">10</span>TCP — bridge, in-enclave TLS, public relay</h3>
-          <p>A complete TCP echo service. Note it's a <i>command</i> component (no <code>--lib</code>) — there's a <code>main()</code> that runs for the deployment's lifetime:</p>
+          <h3><span class="n">10</span>TCP: bridge, in-enclave TLS, public relay</h3>
+          <p>A complete TCP echo service. Note it's a <i>command</i> component (no <code>--lib</code>) with a <code>main()</code> that runs for the deployment's lifetime:</p>
           <div class="code"><div class="codebar"><span class="fn">src/main.rs · tcp echo</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>use std::io::{Read, Write};
 use std::net::TcpListener;
 
@@ -1310,11 +1310,11 @@ websocat --binary tcp-listen:127.0.0.1:7000 \
   "wss://&lt;enclave-host&gt;/x/dep_3xK9f2Qa/tcp/7000"
 nc 127.0.0.1 7000                                # → your app, end to end
 
-# 2. Direct public TLS via the relay — stock clients, no websocat. Public deployments
+# 2. Direct public TLS via the relay: stock clients, no websocat. Public deployments
 #    only; hostname = deployment id with its underscore hyphenated (dep_abc123 → dep-abc123)
 psql "host=dep-abc123.tcp.nan.host port=5432 sslmode=require"
 irssi -c dep-abc123.tcp.nan.host -p 6667 --tls</code></pre></div>
-          <p>Your app does <b>nothing</b> for the TLS path — keep speaking plain TCP on the assigned port. The platform mints its key + cert <i>inside the enclave</i> at boot; the untrusted relay only routes ciphertext by SNI, and the session terminates in-enclave at <code>/x/{id}/tls/{port}</code>. Verifying clients can bind the session to the attestation by pinning the cert published over the attested origin:</p>
+          <p>Your app does <b>nothing</b> for the TLS path: keep speaking plain TCP on the assigned port. The platform mints its key + cert <i>inside the enclave</i> at boot; the untrusted relay only routes ciphertext by SNI, and the session terminates in-enclave at <code>/x/{id}/tls/{port}</code>. Verifying clients can bind the session to the attestation by pinning the cert published over the attested origin:</p>
           <div class="code"><div class="codebar"><span class="fn">terminal · pin the bridge cert</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>curl -s https://&lt;enclave-host&gt;/v1/tls-bridge | jq -r .fingerprint256
 openssl s_client -connect dep-abc123.tcp.nan.host:6667 \
   -servername dep-abc123.tcp.nan.host &lt;/dev/null 2&gt;/dev/null \
@@ -1323,8 +1323,8 @@ openssl s_client -connect dep-abc123.tcp.nan.host:6667 \
 
         <!-- 11 ------------------------------------------------------------ -->
         <article class="doc" id="docs-udp">
-          <h3><span class="n">11</span>UDP — datagrams &amp; per-deployment IPv6</h3>
-          <p>Same shape as TCP — bind the actual port, speak datagrams:</p>
+          <h3><span class="n">11</span>UDP: datagrams &amp; per-deployment IPv6</h3>
+          <p>Same shape as TCP: bind the actual port, speak datagrams:</p>
           <div class="code"><div class="codebar"><span class="fn">src/main.rs · udp echo</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>use std::net::UdpSocket;
 
 fn main() {
@@ -1336,7 +1336,7 @@ fn main() {
         let _ = sock.send_to(&amp;buf[..n], from);
     }
 }</code></pre></div>
-          <p>Publish with firewall ports <code>udp:9053</code>. UDP has no SNI to route on, so instead of a shared hostname <b>every public deployment gets its own IPv6 address</b> — it's in the deploy response under <code>network.udp</code> as <code>[address]:port</code>:</p>
+          <p>Publish with firewall ports <code>udp:9053</code>. UDP has no SNI to route on, so instead of a shared hostname <b>every public deployment gets its own IPv6 address</b>; it's in the deploy response under <code>network.udp</code> as <code>[address]:port</code>:</p>
           <div class="code"><div class="codebar"><span class="fn">terminal · clients</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code># 1. direct, via the deployment's own IPv6 (public deployments)
 printf 'ping' | socat -t2 - 'UDP6:[2a01:4f9:c013:bdfd:9c1e:…]:9053'
 
@@ -1345,8 +1345,8 @@ websocat --binary udp-listen:127.0.0.1:9053 \
   "wss://&lt;enclave-host&gt;/x/dep_3xK9f2Qa/udp/9053?token=&lt;bearer&gt;"
 printf 'ping' | socat -t2 - UDP:127.0.0.1:9053</code></pre></div>
           <ul>
-            <li><b>IPv6 only</b> — a box has one IPv4; v4-only clients can't reach the direct endpoint (the bridge still works anywhere WebSockets do).</li>
-            <li><b>The relay sees cleartext</b> — unlike the TCP path, the UDP relay is not a confidentiality boundary. If your protocol needs privacy, encrypt at the app layer (e.g. DTLS).</li>
+            <li><b>IPv6 only</b>: a box has one IPv4; v4-only clients can't reach the direct endpoint (the bridge still works anywhere WebSockets do).</li>
+            <li><b>The relay sees cleartext</b>: unlike the TCP path, the UDP relay is not a confidentiality boundary. If your protocol needs privacy, encrypt at the app layer (e.g. DTLS).</li>
             <li>Datagram boundaries are preserved end to end; idle bridge flows close after 120 s.</li>
           </ul>
         </article>
@@ -1354,7 +1354,7 @@ printf 'ping' | socat -t2 - UDP:127.0.0.1:9053</code></pre></div>
         <!-- 12 ------------------------------------------------------------ -->
         <article class="doc" id="docs-attest">
           <h3><span class="n">12</span>Attestation for your users</h3>
-          <p>The platform's core promise extends to your app: a user can verify — cryptographically, before sending a byte of data — that they're talking to an attested enclave running exactly the code that was measured. For apps deployed by CID, the measurement includes <b>your app</b>: <code>measurements.app.cid</code> pins the exact bytes that ran.</p>
+          <p>The platform's core promise extends to your app: a user can verify, cryptographically and before sending a byte of data, that they're talking to an attested enclave running exactly the code that was measured. For apps deployed by CID, the measurement includes <b>your app</b>: <code>measurements.app.cid</code> pins the exact bytes that ran.</p>
           <div class="code"><div class="codebar"><span class="fn">verify.js · attested client</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>import { SecureClient } from "tinfoil";
 
 const c = new SecureClient({ baseURL: "https://&lt;enclave-host&gt;" });
@@ -1368,7 +1368,7 @@ tinfoil attestation verify -e &lt;enclave-host&gt; -r SteveDeFacto/nan
 curl https://&lt;enclave-host&gt;/v1/attestation
 curl -H "Authorization: Bearer $NAN_TOKEN" \
   https://&lt;enclave-host&gt;/v1/deployments/dep_3xK9f2Qa/attestation</code></pre></div>
-          <p>Point your users at the <a href="#attest">attestation walkthrough</a> for what each link in the chain proves — or embed the check in your own client as above. For raw-TCP services, add the <a href="#docs-tcp">bridge-cert pin</a> so even the TLS session is bound to the measured enclave.</p>
+          <p>Point your users at the <a href="#attest">attestation walkthrough</a> for what each link in the chain proves, or embed the check in your own client as above. For raw-TCP services, add the <a href="#docs-tcp">bridge-cert pin</a> so even the TLS session is bound to the measured enclave.</p>
         </article>
 
         <!-- 13 ------------------------------------------------------------ -->
@@ -1376,14 +1376,14 @@ curl -H "Authorization: Bearer $NAN_TOKEN" \
           <h3><span class="n">13</span>Other languages</h3>
           <p>The platform runs <b>components</b>, not a language: anything that emits a <code>wasi:http</code> component works. Mature routes today:</p>
           <ul>
-            <li><b>Rust</b> — <code>cargo-component</code>, as used throughout this guide. The most complete support, including <code>std::net</code> for service apps.</li>
-            <li><b>JavaScript / TypeScript</b> — <code>jco componentize</code> (ComponentizeJS) turns a JS module exporting a fetch-style handler into a <code>wasi:http</code> component.</li>
-            <li><b>Python</b> — <code>componentize-py</code> builds components from Python code implementing the same world.</li>
-            <li><b>Go</b> — TinyGo's <code>wasip2</code> target with the <code>wasi:http</code> bindings.</li>
+            <li><b>Rust</b>: <code>cargo-component</code>, as used throughout this guide. The most complete support, including <code>std::net</code> for service apps.</li>
+            <li><b>JavaScript / TypeScript</b>: <code>jco componentize</code> (ComponentizeJS) turns a JS module exporting a fetch-style handler into a <code>wasi:http</code> component.</li>
+            <li><b>Python</b>: <code>componentize-py</code> builds components from Python code implementing the same world.</li>
+            <li><b>Go</b>: TinyGo's <code>wasip2</code> target with the <code>wasi:http</code> bindings.</li>
           </ul>
-          <p>The acceptance test is identical regardless of toolchain — if this runs, it deploys:</p>
+          <p>The acceptance test is identical regardless of toolchain. If this runs, it deploys:</p>
           <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>wasmtime serve --addr 127.0.0.1:8080 app.wasm &amp;&amp; curl 127.0.0.1:8080/</code></pre></div>
-          <p>One caveat for service apps: raw-socket support (<code>wasi:sockets</code>) varies by toolchain — Rust's stdlib maps today; check yours before designing around <code>tcp:</code>/<code>udp:</code> ports.</p>
+          <p>One caveat for service apps: raw-socket support (<code>wasi:sockets</code>) varies by toolchain: Rust's stdlib maps today; check yours before designing around <code>tcp:</code>/<code>udp:</code> ports.</p>
         </article>
 
         <!-- 14 ------------------------------------------------------------ -->
@@ -1393,12 +1393,12 @@ curl -H "Authorization: Bearer $NAN_TOKEN" \
           <div class="tbl"><table class="params">
             <thead><tr><th>capability</th><th>web app (default)</th><th>service app (declared ports)</th></tr></thead>
             <tbody>
-              <tr><td class="pname">inbound HTTP</td><td>your handler — fresh instance per request</td><td><code>http:N</code>: you bind and serve it yourself</td></tr>
+              <tr><td class="pname">inbound HTTP</td><td>your handler, fresh instance per request</td><td><code>http:N</code>: you bind and serve it yourself</td></tr>
               <tr><td class="pname">sockets</td><td>none</td><td>bind assigned actuals · outbound TCP/UDP · DNS lookups</td></tr>
-              <tr><td class="pname">filesystem</td><td colspan="2"><code>/data</code> only — private, RAM-backed, ephemeral, capped by <code>storage_mb</code></td></tr>
+              <tr><td class="pname">filesystem</td><td colspan="2"><code>/data</code> only: private, RAM-backed, ephemeral, capped by <code>storage_mb</code></td></tr>
               <tr><td class="pname">environment</td><td>empty</td><td><code>NAN_PORTS</code> only</td></tr>
               <tr><td class="pname">memory</td><td colspan="2">linear memory capped at <code>mem_mb</code>, enforced by the runtime</td></tr>
-              <tr><td class="pname">host / exec / SSH</td><td colspan="2">none — structurally absent, not merely denied</td></tr>
+              <tr><td class="pname">host / exec / SSH</td><td colspan="2">none: structurally absent, not merely denied</td></tr>
             </tbody>
           </table></div>
           <h4>Numbers to know</h4>
@@ -1423,24 +1423,24 @@ curl -H "Authorization: Bearer $NAN_TOKEN" \
           <div class="tbl"><table class="params">
             <thead><tr><th>symptom</th><th>cause → fix</th></tr></thead>
             <tbody>
-              <tr><td class="pname">"a core wasm module, not a wasi:http component"</td><td>You built a plain module. Build with <code>cargo component</code> (or a toolchain that emits components) — the upload gateway and the enclave both check the component layer field.</td></tr>
-              <tr><td class="pname">403 not_approved on deploy</td><td>That version is still Pending (or was Rejected) — the catalog owner approves each CID before it can run. Check the status badge on your app card in <a href="#apps" data-view="apps">Apps</a>.</td></tr>
+              <tr><td class="pname">"a core wasm module, not a wasi:http component"</td><td>You built a plain module. Build with <code>cargo component</code> (or a toolchain that emits components); the upload gateway and the enclave both check the component layer field.</td></tr>
+              <tr><td class="pname">403 not_approved on deploy</td><td>That version is still Pending (or was Rejected); the catalog owner approves each CID before it can run. Check the status badge on your app card in <a href="#apps" data-view="apps">Apps</a>.</td></tr>
               <tr><td class="pname">"firewall: bound unassigned port(s) … app killed"</td><td>The app hardcoded a port. Read <code>NAN_PORTS</code> and bind the <i>actual</i> ports (<a href="#docs-ports">ch. 09</a>).</td></tr>
-              <tr><td class="pname">"did not open port in time"</td><td>Bind your first <code>http:</code>/<code>tcp:</code> port early in <code>main()</code> — the readiness window is ~20 s.</td></tr>
+              <tr><td class="pname">"did not open port in time"</td><td>Bind your first <code>http:</code>/<code>tcp:</code> port early in <code>main()</code>; the readiness window is ~20 s.</td></tr>
               <tr><td class="pname">"storage: /data used … exceeds the cap; app killed"</td><td>Write less, or publish the next version with a larger <code>storage_mb</code>.</td></tr>
-              <tr><td class="pname">502 no_http at /x/{id}</td><td>The app declares only <code>tcp:</code>/<code>udp:</code> ports — there's no HTTP to proxy. Use the bridge or relay paths (<a href="#docs-tcp">ch. 10</a>–<a href="#docs-udp">11</a>).</td></tr>
-              <tr><td class="pname">409 when opening a tcp/udp bridge</td><td>The app hasn't actually bound that port (yet) — the bridge refuses until the enclave confirms the bind. Check the deployment logs.</td></tr>
+              <tr><td class="pname">502 no_http at /x/{id}</td><td>The app declares only <code>tcp:</code>/<code>udp:</code> ports, so there's no HTTP to proxy. Use the bridge or relay paths (<a href="#docs-tcp">ch. 10</a>–<a href="#docs-udp">11</a>).</td></tr>
+              <tr><td class="pname">409 when opening a tcp/udp bridge</td><td>The app hasn't actually bound that port (yet); the bridge refuses until the enclave confirms the bind. Check the deployment logs.</td></tr>
               <tr><td class="pname">state vanishes between requests</td><td>Web apps get a fresh instance per request. Persist in <code>/data</code> (<a href="#docs-data">ch. 08</a>).</td></tr>
               <tr><td class="pname">runs locally, memory-traps deployed</td><td>Local wasmtime is uncapped unless you pass <code>-W max-memory-size</code>. Test with the parity command (<a href="#docs-hello">ch. 03</a>) at your published <code>mem_mb</code>.</td></tr>
             </tbody>
           </table></div>
           <h4>Ship checklist</h4>
           <ol>
-            <li><code>wasmtime serve</code> (or <code>run</code>, for service apps) runs it locally — including with the enclave-parity flags.</li>
+            <li><code>wasmtime serve</code> (or <code>run</code>, for service apps) runs it locally, including with the enclave-parity flags.</li>
             <li>No hardcoded ports anywhere; everything comes from <code>NAN_PORTS</code>.</li>
             <li>All writes go under <code>/data</code>, stay under the cap, and survive being wiped.</li>
             <li>Publish on the <a href="#apps" data-view="apps">Apps</a> tab → wait for the version's <b>Approved</b> badge → <a href="#deploy" data-view="deploy">deploy</a> with <b>Use in Deploy</b>.</li>
-            <li>Verify your own deployment's <a href="#docs-attest">attestation</a> — then hand the same check to your users.</li>
+            <li>Verify your own deployment's <a href="#docs-attest">attestation</a>, then hand the same check to your users.</li>
           </ol>
         </article>
 
@@ -1537,12 +1537,12 @@ const SPEC = {
     "title": "NaN API",
     "version": "1.0.0",
     "summary": "Trustless on-demand confidential GPU compute for WebAssembly apps.",
-    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority — just the request/response socket the runtime hands it. The app catalog is baked into the attested enclave image, so what runs is exactly what the attestation measured. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
+    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority; just the request/response socket the runtime hands it. The app catalog is baked into the attested enclave image, so what runs is exactly what the attestation measured. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
   },
   "servers": [
     {
       "url": "https://api.nan.host/v1",
-      "description": "Production API gateway — proxies to the live enclave (attested TLS terminates in the enclave; the gateway sees control-plane traffic). Override in the API-endpoint field to talk to an enclave directly, e.g. https://enclave1.nan.containers.tinfoil.dev/v1"
+      "description": "Production API gateway: proxies to the live enclave (attested TLS terminates in the enclave; the gateway sees control-plane traffic). Override in the API-endpoint field to talk to an enclave directly, e.g. https://enclave1.nan.containers.tinfoil.dev/v1"
     }
   ],
   "security": [
@@ -2734,11 +2734,11 @@ const SPEC = {
           "public": {
             "type": "boolean",
             "default": false,
-            "description": "If true, anyone can reach the app's data path (`/x/{id}/*`) with no authentication — for hosting public websites, APIs, and servers. If false (default), only the owner's SIWE bearer token can reach it. SSH and management endpoints are always owner-only regardless. Confidentiality is unaffected: the TEE still hides the app from the operator; `public` only governs who may send it requests."
+            "description": "If true, anyone can reach the app's data path (`/x/{id}/*`) with no authentication, for hosting public websites, APIs, and servers. If false (default), only the owner's SIWE bearer token can reach it. SSH and management endpoints are always owner-only regardless. Confidentiality is unaffected: the TEE still hides the app from the operator; `public` only governs who may send it requests."
           },
           "firewall": {
             "type": "object",
-            "description": "Ports the app may bind, from its catalog version's firewall config (the store's Use-in-Deploy prefills this). Entries: `http` (default — standard wasi:http web app), `http:N` (app serves HTTP on N itself), `tcp:N`, `udp:N`; N in 1-19999 excluding 8080/8091 (labels below 1024, e.g. udp:53, are always remapped to an unprivileged actual). Omitted/empty = standard web app with NO socket capability. Ports are LOGICAL: each deployment gets its own actual loopback bind (see `portMap`; passed to the app as `NAN_PORTS=tcp:5432=31245`), so multiple tenants can run the same app simultaneously without conflicts. When ports are declared the app gets wasi:sockets and the enclave audits its binds — binding an unassigned port kills the app. Declared TCP ports are reached through the attested origin as a WebSocket bridge at `/x/{id}/tcp/{logical-port}` (auth follows `public`).",
+            "description": "Ports the app may bind, from its catalog version's firewall config (the store's Use-in-Deploy prefills this). Entries: `http` (default: standard wasi:http web app), `http:N` (app serves HTTP on N itself), `tcp:N`, `udp:N`; N in 1-19999 excluding 8080/8091 (labels below 1024, e.g. udp:53, are always remapped to an unprivileged actual). Omitted/empty = standard web app with NO socket capability. Ports are LOGICAL: each deployment gets its own actual loopback bind (see `portMap`; passed to the app as `NAN_PORTS=tcp:5432=31245`), so multiple tenants can run the same app simultaneously without conflicts. When ports are declared the app gets wasi:sockets and the enclave audits its binds; binding an unassigned port kills the app. Declared TCP ports are reached through the attested origin as a WebSocket bridge at `/x/{id}/tcp/{logical-port}` (auth follows `public`).",
             "properties": {
               "ports": {
                 "type": "array",
@@ -2968,7 +2968,7 @@ const SPEC = {
       },
       "VmAttestation": {
         "type": "object",
-        "description": "Live CPU-TEE evidence. `quote` is the raw hardware quote (base64, decompressed) — feed it to any DCAP/SNP verifier. `reportData` binds the enclave TLS key: bytes 0-31 are sha256 of the TLS public key (SPKI DER) this origin presents.",
+        "description": "Live CPU-TEE evidence. `quote` is the raw hardware quote (base64, decompressed); feed it to any DCAP/SNP verifier. `reportData` binds the enclave TLS key: bytes 0-31 are sha256 of the TLS public key (SPKI DER) this origin presents.",
         "properties": {
           "technology": {
             "type": "string",
@@ -3049,7 +3049,7 @@ const SPEC = {
       },
       "EnclaveAttestation": {
         "type": "object",
-        "description": "The Tinfoil Remote Attestation Document relayed verbatim from /.well-known/tinfoil-attestation — feed `attestationDocument` to Tinfoil's verifier (tinfoil-cli `attestation verify`, or the @tinfoilsh/verifier npm package). This copy is a convenience: fetch the document over your OWN connection for the binding to mean anything.",
+        "description": "The Tinfoil Remote Attestation Document relayed verbatim from /.well-known/tinfoil-attestation; feed `attestationDocument` to Tinfoil's verifier (tinfoil-cli `attestation verify`, or the @tinfoilsh/verifier npm package). This copy is a convenience: fetch the document over your OWN connection for the binding to mean anything.",
         "properties": {
           "attestationDocument": {
             "type": "object",
@@ -3083,7 +3083,7 @@ const SPEC = {
       },
       "Attestation": {
         "type": "object",
-        "description": "Live attestation material. The server never asserts trust on your behalf — `verification.selfCheck` is the enclave running the same five checks a client would, reported as a clearly-labeled diagnostic; reproduce it on your side (cli/npm/browser pointers included) for it to carry trust.",
+        "description": "Live attestation material. The server never asserts trust on your behalf: `verification.selfCheck` is the enclave running the same five checks a client would, reported as a clearly-labeled diagnostic; reproduce it on your side (cli/npm/browser pointers included) for it to carry trust.",
         "properties": {
           "deploymentId": {
             "type": "string"
@@ -3094,7 +3094,7 @@ const SPEC = {
           },
           "verification": {
             "type": "object",
-            "description": "`selfCheck`: the enclave verifying ITSELF with @tinfoilsh/verifier — `result` is `pass`/`fail`/`pending`/`unavailable` with per-step detail (`fetchDigest`, `verifyEnclave`, `verifyCode`, `compareMeasurements`, `verifyCertificate`), the release digest and measurement it matched, and a note explaining that a self-check is a diagnostic, not trust. Alongside it, how to reproduce client-side: instructions (`how`), a ready-to-run tinfoil-cli command (`cli`), the npm verifier package (`npm`, works in Node and browsers), an in-browser verifier (`browser`), the enclave repo whose release holds the signed measurements (`repo`, exact GitHub casing), and the well-known attestation endpoint.",
+            "description": "`selfCheck`: the enclave verifying ITSELF with @tinfoilsh/verifier; `result` is `pass`/`fail`/`pending`/`unavailable` with per-step detail (`fetchDigest`, `verifyEnclave`, `verifyCode`, `compareMeasurements`, `verifyCertificate`), the release digest and measurement it matched, and a note explaining that a self-check is a diagnostic, not trust. Alongside it, how to reproduce client-side: instructions (`how`), a ready-to-run tinfoil-cli command (`cli`), the npm verifier package (`npm`, works in Node and browsers), an in-browser verifier (`browser`), the enclave repo whose release holds the signed measurements (`repo`, exact GitHub casing), and the well-known attestation endpoint.",
             "properties": {
               "selfCheck": {
                 "type": "object",
@@ -3988,7 +3988,7 @@ async function renderWalletPop(){
   const offBase = Nan.chainId && Nan.chainId !== BASE_CHAIN;
   pop.innerHTML =
     '<div class="wp-row"><span class="wp-k">Wallet</span><button class="wp-addr" id="wpCopy">' + esc(short(Nan.address)) + ' \u29c9</button></div>' +
-    '<div class="wp-row"><span class="wp-k">Network</span><span class="wp-v">' + (Nan.chainId === BASE_CHAIN ? "Base" : ("chain " + (Nan.chainId || "\u2014"))) + (offBase ? ' <button class="wp-mini" id="wpSwitch">switch to Base</button>' : "") + '</span></div>' +
+    '<div class="wp-row"><span class="wp-k">Network</span><span class="wp-v">' + (Nan.chainId === BASE_CHAIN ? "Base" : ("chain " + (Nan.chainId || "\u2013"))) + (offBase ? ' <button class="wp-mini" id="wpSwitch">switch to Base</button>' : "") + '</span></div>' +
     '<div class="wp-row"><span class="wp-k">Session</span><span class="wp-v">' + (Nan.authed() ? '<span class="ok">signed in</span>' : '<button class="wp-mini" id="wpAuth">sign in</button>') + '</span></div>' +
     '<div class="wp-bal" id="wpBal">' + (Nan.authed() ? "loading balance\u2026" : "sign in to load balance") + '</div>' +
     '<button class="wp-disc" id="wpDisc">Disconnect</button>';
@@ -4035,13 +4035,13 @@ const dep = { sharePct: 25, asset: "USDC", public: true };
 function renderAccessNote(){
   const el = $("#accessNote"); if (!el) return;
   el.innerHTML = dep.public
-    ? "anyone can reach the app endpoint — for websites, APIs, servers. SSH stays owner-only."
-    : "only your wallet (SIWE token) can reach the app — for private/confidential jobs.";
+    ? "anyone can reach the app endpoint, for websites, APIs, servers. SSH stays owner-only."
+    : "only your wallet (SIWE token) can reach the app, for private/confidential jobs.";
 }
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 function fmtNum(n){ return (Math.round(n * 10) / 10).toString(); }   // drop trailing .0
 function fmtDur(s){
-  s = Math.floor(s); if (!isFinite(s) || s <= 0) return "\u2014";
+  s = Math.floor(s); if (!isFinite(s) || s <= 0) return "\u2013";
   const d = Math.floor(s / 86400); s -= d * 86400;
   const h = Math.floor(s / 3600); s -= h * 3600;
   const m = Math.floor(s / 60); s -= m * 60;
@@ -4074,11 +4074,11 @@ function resolveAppRef(input){
   let apps = (STORE.apps || []).filter(a => a.slug === slug && a.active);
   if (pub) apps = apps.filter(a => a.publisher.toLowerCase() === pub);
   if (!apps.length) return { reference: input, label: input, error: "No catalog app '" + slug + "'" + (pub ? " by " + pub : "") + "." };
-  if (apps.length > 1) return { reference: input, label: input, error: "Several publishers have '" + slug + "' — qualify it: <publisher>/" + slug + ":" + version };
+  if (apps.length > 1) return { reference: input, label: input, error: "Several publishers have '" + slug + "'; qualify it: <publisher>/" + slug + ":" + version };
   const v = apps[0].versions.find(x => x.version === version && !x.yanked);
   if (!v) return { reference: input, label: input, error: "'" + slug + "' has no live version '" + version + "'." };
   if (v.approval !== APPROVAL.approved)
-    return { reference: input, label: input, error: "'" + slug + ":" + version + "' " + (v.approval === APPROVAL.rejected ? "was rejected" : "isn’t approved yet") + " by the catalog owner — the enclave refuses to deploy it." };
+    return { reference: input, label: input, error: "'" + slug + ":" + version + "' " + (v.approval === APPROVAL.rejected ? "was rejected" : "isn’t approved yet") + " by the catalog owner; the enclave refuses to deploy it." };
   REF_CACHE[input] = "ipfs://" + v.cid;
   PORTS_CACHE[input] = v.ports || "";
   return { reference: REF_CACHE[input], label: input };
@@ -4132,7 +4132,7 @@ function renderDeploy(){
             + fmtNum(g.vcpus) + " vCPU · ≈" + fmtNum(g.ramGb) + " GB RAM · $" + (rate * 3600).toFixed(2) + "/hr";
   }
   const t = $("#tierOut"); if (t) t.textContent = readout;
-  $("#estRuntime").textContent = rate > 0 ? fmtDur(budget / rate) : "\u2014";
+  $("#estRuntime").textContent = rate > 0 ? fmtDur(budget / rate) : "\u2013";
 }
 function switchPane(name){
   $$(".console-tabs button").forEach(b => b.classList.toggle("on", b.dataset.pane === name));
@@ -4153,8 +4153,8 @@ function statusCls(st){
 let encPoll = null;
 
 /* ---- minimal ABI encoding for NanPay payWithAuthorization + payEth (no web3 lib) ---- */
-const SEL_PAY_AUTH = "7d368d83";  // payWithAuthorization(bytes32,address,uint256,uint256,uint256,bytes32,bytes) — verified vs viem
-const SEL_PAYETH   = "00bd4dee";  // payEth(bytes32) payable — verified vs viem
+const SEL_PAY_AUTH = "7d368d83";  // payWithAuthorization(bytes32,address,uint256,uint256,uint256,bytes32,bytes); verified vs viem
+const SEL_PAYETH   = "00bd4dee";  // payEth(bytes32) payable; verified vs viem
 const pad32 = (h) => h.replace(/^0x/, "").toLowerCase().padStart(64, "0");
 const encAddr = (a) => pad32(a.replace(/^0x/, ""));
 const encUint = (n) => pad32(BigInt(n).toString(16));
@@ -4177,7 +4177,7 @@ const dataPayEth = (ref) => "0x" + SEL_PAYETH + encBytes32(ref);
 // the enclave credits the actual wei at its own live Chainlink read on arrival)
 function usdToWei(usd, ethUsd){
   const price = parseFloat(ethUsd);
-  if (!(price > 0)) throw new NanError("No live ETH/USD rate from the enclave — pay in USDC, or retry shortly.", 0);
+  if (!(price > 0)) throw new NanError("No live ETH/USD rate from the enclave; pay in USDC, or retry shortly.", 0);
   return BigInt(Math.round((usd / price) * 1e9)) * 1000000000n;   // 9dp of ETH precision
 }
 
@@ -4194,18 +4194,18 @@ async function sendTx(to, data, value){
 
 /* pay (or top up) a deployment.
    USDC: sign an EIP-3009 ReceiveWithAuthorization (EIP-712, a gas-free wallet
-         signature), then ONE payWithAuthorization tx \u2014 no approve, no
+         signature), then ONE payWithAuthorization tx; no approve, no
          allowance left behind.
-   ETH:  payEth(ref) with msg.value \u2014 ONE transaction; the enclave credits the wei
+   ETH:  payEth(ref) with msg.value: ONE transaction; the enclave credits the wei
          as USDC-equivalent at its live Chainlink ETH/USD read when the event lands. */
 async function payForRuntime(term, pay, fundUsdc){
   if (!pay || !pay.forwarder) throw new NanError("This enclave returned no payment instructions (forwarder not configured).", 0);
   await ensureBaseChain();
   const amt6 = usdc6(fundUsdc);                       // cent-rounded 6dp USDC
   if (amt6 <= 0n) throw new NanError("Fund at least $0.01 (USDC).", 0);
-  const usd = (Number(amt6) / 1e6).toFixed(2);        // e.g. "10.00" \u2014 what actually gets signed/paid
+  const usd = (Number(amt6) / 1e6).toFixed(2);        // e.g. "10.00", what actually gets signed/paid
   if (dep.asset === "ETH"){
-    if (!pay.payEthMethod) throw new NanError("This enclave doesn't accept ETH yet (older release) \u2014 pay in USDC.", 0);
+    if (!pay.payEthMethod) throw new NanError("This enclave doesn't accept ETH yet (older release); pay in USDC.", 0);
     const wei = usdToWei(Number(amt6) / 1e6, pay.ethUsd);
     const eth = (Number(wei) / 1e18).toFixed(6);
     termLine(term, "info", "[*] payEth \u2248 " + eth + " ETH (\u2248 $" + usd + " @ $" + pay.ethUsd + "/ETH)\u2026 (wallet \u00b7 one tx)");
@@ -4240,12 +4240,12 @@ async function payForRuntime(term, pay, fundUsdc){
   termLine(term, "info", "[*] sign a " + usd + " USDC payment authorization (EIP-3009)\u2026 (wallet \u00b7 gas-free signature)");
   let sig = await Nan.provider.request({ method: "eth_signTypedData_v4", params: [Nan.address, JSON.stringify(typed)] });
   // some wallets return v as 0/1; USDC's ecrecover wants 27/28 (65-byte ECDSA
-  // sigs only \u2014 longer EIP-1271 smart-wallet blobs pass through untouched)
+  // sigs only; longer EIP-1271 smart-wallet blobs pass through untouched)
   if (sig.replace(/^0x/, "").length === 130) {
     const v = parseInt(sig.slice(-2), 16);
     if (v === 0 || v === 1) sig = sig.slice(0, -2) + (v + 27).toString(16);
   }
-  termLine(term, "info", "[*] pay " + usd + " USDC \u2014 buys runtime\u2026 (wallet \u00b7 one tx, no approve)");
+  termLine(term, "info", "[*] pay " + usd + " USDC \u00b7 buys runtime\u2026 (wallet \u00b7 one tx, no approve)");
   const ph = await sendTx(pay.forwarder, dataPayWithAuth(pay.deploymentRef, Nan.address, amt6, 0, validBefore, nonce, sig));
   termLine(term, "ok", "[\u2713] payment sent " + ph);
   termLine(term, "dimln", "    funds go straight to NaN; nothing is custodied");
@@ -4264,7 +4264,7 @@ async function runDeploy(){
   }
   const rref = resolveAppRef(raw);
   if (rref.error){ termLine(term, "warn", "[!] " + rref.error); return; }
-  if (rref.pending){ termLine(term, "warn", "[!] couldn’t reach the catalog to resolve " + raw + " — open the Apps tab, or paste ipfs://<cid>."); return; }
+  if (rref.pending){ termLine(term, "warn", "[!] couldn’t reach the catalog to resolve " + raw + "; open the Apps tab, or paste ipfs://<cid>."); return; }
   const fwErr = validPortsCsv($("#cfgPorts") ? $("#cfgPorts").value : "");
   if (fwErr){ termLine(term, "warn", "[!] firewall: " + fwErr); return; }
   const body = deployBody();
@@ -4272,7 +4272,7 @@ async function runDeploy(){
   const dry = $("#dryRun") && $("#dryRun").checked;
 
   if (dry){
-    termLine(term, "warn", "// dry run \u2014 nothing is sent");
+    termLine(term, "warn", "// dry run: nothing is sent");
     termLine(term, "p", "POST " + Nan.base + "/deployments");
     JSON.stringify(body, null, 2).split("\n").forEach(l => termLine(term, "dimln", "  " + l));
     termLine(term, "info", dep.asset === "ETH"
@@ -4294,7 +4294,7 @@ async function runDeploy(){
     try {
       created = await Nan.createDeployment(body);
     } catch(e){
-      if (e.status === 401){ termLine(term, "warn", "[!] session expired \u2014 re-signing\u2026"); Nan.token = null; await authenticate(); created = await Nan.createDeployment(body); }
+      if (e.status === 401){ termLine(term, "warn", "[!] session expired; re-signing\u2026"); Nan.token = null; await authenticate(); created = await Nan.createDeployment(body); }
       else if (e.status === 409){ termLine(term, "warn", "[!] no capacity: " + e.message); return; }
       else if (e.status === 422){ termLine(term, "warn", "[!] invalid spec: " + e.message); return; }
       else throw e;
@@ -4313,18 +4313,18 @@ async function runDeploy(){
         // awaiting_payment ghost on the page for the 10-min window.
         const rejected = (e && e.code === 4001) || /reject|denied|declin|cancell/i.test(e && e.message || "");
         if (rejected){
-          termLine(term, "warn", "[x] payment rejected in wallet \u2014 canceling the reservation\u2026");
+          termLine(term, "warn", "[x] payment rejected in wallet; canceling the reservation\u2026");
           try {
             await Nan.terminateDeployment(created.id);
-            termLine(term, "ok", "[\u2713] " + created.id + " canceled \u2014 nothing was charged.");
+            termLine(term, "ok", "[\u2713] " + created.id + " canceled; nothing was charged.");
           } catch(e2){
-            termLine(term, "dimln", "    couldn\u2019t cancel (" + (e2.message || e2) + ") \u2014 the reservation releases itself in ~10 min.");
+            termLine(term, "dimln", "    couldn\u2019t cancel (" + (e2.message || e2) + "); the reservation releases itself in ~10 min.");
           }
           refreshEnclaves();
           return;
         }
         termLine(term, "warn", "[x] payment failed: " + (e.message || e));
-        termLine(term, "dimln", "    " + created.id + " stays awaiting_payment \u2014 pay later to start it (Top up).");
+        termLine(term, "dimln", "    " + created.id + " stays awaiting_payment; pay later to start it (Top up).");
         return;
       }
       termLine(term, "info", "[*] waiting for the enclave to confirm payment + provision\u2026");
@@ -4360,7 +4360,7 @@ async function pollDeployment(id, term){
     }
     await wait(2500);
   }
-  termLine(term, "dimln", "  (still provisioning \u2014 track it in the panel below)");
+  termLine(term, "dimln", "  (still provisioning; track it in the panel below)");
   return d;
 }
 
@@ -4379,7 +4379,7 @@ async function refreshEnclaves(opts){
   }
   if (!Nan.authed()){
     setCount(""); stopEncPoll();
-    body.innerHTML = '<div class="enc-empty">Sign in with your wallet to load your enclaves \u2014 <button class="wp-mini" id="encSignin">sign in</button></div>';
+    body.innerHTML = '<div class="enc-empty">Sign in with your wallet to load your enclaves: <button class="wp-mini" id="encSignin">sign in</button></div>';
     const b = $("#encSignin"); if (b) b.addEventListener("click", async () => { try { await authenticate(); } catch(e){ showToast(e.message); } });
     return;
   }
@@ -4391,7 +4391,7 @@ async function refreshEnclaves(opts){
     startEncPoll();
   } catch(e){
     if (e.status === 401){ Nan.token = null; saveSession(); refreshWallet(); stopEncPoll();
-      body.innerHTML = '<div class="enc-empty">session expired \u2014 <button class="wp-mini" id="encSignin">sign in</button></div>';
+      body.innerHTML = '<div class="enc-empty">session expired: <button class="wp-mini" id="encSignin">sign in</button></div>';
       const b = $("#encSignin"); if (b) b.addEventListener("click", async () => { try { await authenticate(); } catch(_){} });
       return;
     }
@@ -4400,8 +4400,8 @@ async function refreshEnclaves(opts){
 }
 
 // The app's reachable URL. Through the gateway each deployment gets its OWN
-// origin — a per-deployment subdomain (<id>.app.nan.host, the base36 part of
-// the deployment id; the "dep_" is dropped as redundant in this namespace) — so
+// origin: a per-deployment subdomain (<id>.app.nan.host, the base36 part of
+// the deployment id; the "dep_" is dropped as redundant in this namespace), so
 // an app can't touch the frontend's origin or another tenant's. Talking to an
 // enclave directly falls back to the /x/<id> path. The deployment's own
 // network.endpoint (the enclave's hostname) is only a last resort; it's the
@@ -4420,13 +4420,13 @@ function renderEnclaveRows(list, highlight){
   list = (list || []).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   const running = list.filter(d => d.status === "running").length;
   if (count) count.textContent = list.length ? (running + " running \u00b7 " + list.length + " total") : "";
-  if (!list.length){ body.innerHTML = '<div class="enc-empty">No enclaves yet \u2014 build one above.</div>'; return; }
+  if (!list.length){ body.innerHTML = '<div class="enc-empty">No enclaves yet. Build one above.</div>'; return; }
   body.innerHTML = list.map(d => {
-    const ep = appEndpoint(d), st = d.status || "\u2014";
+    const ep = appEndpoint(d), st = d.status || "\u2013";
     const bud = (d.paidUsdc != null)
       ? (esc(d.paidUsdc) + " USDC paid" + (d.timeRemainingSec != null ? " · " + esc(fmtDur(d.timeRemainingSec)) + " left" : "")
          + (d.paused ? " · ⏸ time frozen (" + esc(d.pauseReason || "outage") + ", resumes when service is restored)" : ""))
-      : "\u2014";
+      : "\u2013";
     const live = ["running", "provisioning", "queued", "pending"].indexOf(st) !== -1;
     return '<div class="enc-row' + (highlight && d.id === highlight ? " enc-new" : "") + '">' +
       '<div class="enc-main">' +
@@ -4464,7 +4464,7 @@ async function encVerify(id, btn){
     const pre = box.querySelector(".ap-attpre"); if (pre) pre.innerHTML = hlJson(att);
     const vspec = vspecOf(att);
     if (!vspec){ if (badge) badge.textContent = ""; return; }
-    // the badge is computed HERE, in the customer's browser \u2014 the API's
+    // the badge is computed HERE, in the customer's browser; the API's
     // verification.selfCheck is the enclave's own (labeled) diagnostic.
     try {
       const r = await verifyEnclaveInBrowser(vspec);
@@ -4473,9 +4473,9 @@ async function encVerify(id, btn){
         badge.className = "enc-vbadge ok"; badge.textContent = "\u2713 verified in your browser";
         badge.title = "AMD SEV-SNP report \u2192 AMD root, Sigstore release provenance, measurement match and cert binding, checked client-side against " + r.repo + " (enclave " + r.host + ")";
       } else {
-        badge.className = "enc-vbadge bad"; badge.textContent = "\u2717 not verified \u2014 " + (r.error || "check failed");
+        badge.className = "enc-vbadge bad"; badge.textContent = "\u2717 not verified: " + (r.error || "check failed");
       }
-    } catch(e){ if (badge && !box.hidden){ badge.className = "enc-vbadge bad"; badge.textContent = "\u2717 could not verify \u2014 " + (e.message || e); } }
+    } catch(e){ if (badge && !box.hidden){ badge.className = "enc-vbadge bad"; badge.textContent = "\u2717 could not verify: " + (e.message || e); } }
   }
   catch(e){ const pre = box.querySelector(".ap-attpre"); if (pre) pre.textContent = e.message; if (badge) badge.textContent = ""; }
 }
@@ -4571,7 +4571,7 @@ async function checkHealth(){
     await Nan.health();
     if (ind){ ind.className = "ep-state ok"; ind.textContent = "reachable"; }
   } catch(e){
-    if (ind){ ind.className = "ep-state down"; ind.textContent = "unreachable \u2014 set a live endpoint"; }
+    if (ind){ ind.className = "ep-state down"; ind.textContent = "unreachable \u00b7 set a live endpoint"; }
   }
 }
 
@@ -4704,7 +4704,7 @@ const LINKS = [
     d: "Intel TDX and the NVIDIA GPU hold keys fused at manufacture. NaN can't extract or forge them. The silicon vendor is the root of trust, not the operator.",
     j: { tdx: { mrtd: "0x5a3c…91ef", minTcb: "2026.05" }, gpu: { approvedDrivers: ["565.57.01"], approvedVbios: ["96.00.AE.00.01"] } } },
   { t: "The VM measures itself", fn: "vm.json",
-    d: "On boot the CPU emits a DCAP quote over MRTD + RTMR0–3, binding the firmware, the kernel, and the exact enclave image — including the Wasm app catalog baked into it. Change one byte and the quote changes.",
+    d: "On boot the CPU emits a DCAP quote over MRTD + RTMR0–3, binding the firmware, the kernel, and the exact enclave image, including the Wasm app catalog baked into it. Change one byte and the quote changes.",
     j: { technology: "intel-tdx", quote: "BAACAIEAAAAA…", measurements: { mrTd: "5a3c…91ef", rtmr0: "83d5…44aa", rtmr1: "12fc…09b3", rtmr2: "0000…0000", rtmr3: "9f86…0a08" }, reportData: "4b8c…e2a1" } },
   { t: "The GPU attests too", fn: "gpu.json",
     d: "With confidential computing on, the H200 signs an attestation report over your nonce, proving CC mode, driver, and vBIOS before any data reaches VRAM. Check it against NVIDIA's NRAS or nvtrust.",
@@ -4713,8 +4713,8 @@ const LINKS = [
     d: "The enclave generates its TLS keypair in sealed memory and folds the public-key hash into the quote's report_data. The private key never leaves the boundary, so nobody can sit in the middle.",
     j: { tlsKeyFingerprint: "sha256:4b8c…e2a1", boundTo: "reportData[0:32] = sha256(TLS pubkey SPKI)" } },
   { t: "Your browser verifies", fn: "verify.js",
-    d: "Tinfoil's open-source verifier runs the whole chain client-side: hardware report against the vendor root, Sigstore provenance of the release, measurement comparison, TLS binding. The API's verification.selfCheck is the enclave running these same steps on itself — a labeled diagnostic, because trust only counts when YOUR client computes it. Try it live below.",
-    code: "import { Verifier } from '@tinfoilsh/verifier';\n// or from a shell: tinfoil attestation verify -e <enclave-host> -r <repo>\n\nconst att = await (await fetch(`/v1/attestation`)).json(); // public: verify BEFORE login\natt.verification.selfCheck;          // enclave's own diagnostic — useful, but not trust\n\nawait new Verifier({\n  serverURL:  new URL(att.verification.attestationEndpoint).origin,\n  configRepo: att.verification.repo, // exact GitHub casing — Sigstore compares verbatim\n}).verify();  // hardware report → vendor root · Sigstore release provenance · measurements match\n\npinTls(att.tlsKeyFingerprint);       // only now: connect" }
+    d: "Tinfoil's open-source verifier runs the whole chain client-side: hardware report against the vendor root, Sigstore provenance of the release, measurement comparison, TLS binding. The API's verification.selfCheck is the enclave running these same steps on itself: a labeled diagnostic, because trust only counts when YOUR client computes it. Try it live below.",
+    code: "import { Verifier } from '@tinfoilsh/verifier';\n// or from a shell: tinfoil attestation verify -e <enclave-host> -r <repo>\n\nconst att = await (await fetch(`/v1/attestation`)).json(); // public: verify BEFORE login\natt.verification.selfCheck;          // enclave's own diagnostic: useful, but not trust\n\nawait new Verifier({\n  serverURL:  new URL(att.verification.attestationEndpoint).origin,\n  configRepo: att.verification.repo, // exact GitHub casing; Sigstore compares verbatim\n}).verify();  // hardware report → vendor root · Sigstore release provenance · measurements match\n\npinTls(att.tlsKeyFingerprint);       // only now: connect" }
 ];
 function showAttest(i) {
   const l = LINKS[i];
@@ -4741,9 +4741,9 @@ function initAttest() {
 
 /* ---- live in-browser enclave verification (@tinfoilsh/verifier) ----
    Shared core for the #attest widget and the per-deployment console badge.
-   Runs the full client-side check — AMD SEV-SNP report → VCEK → AMD root,
+   Runs the full client-side check: AMD SEV-SNP report → VCEK → AMD root,
    Sigstore provenance of the release, measurement comparison, certificate
-   binding — in THIS browser, cached per enclave+repo for the session. The
+   binding, in THIS browser, cached per enclave+repo for the session. The
    API's verification.selfCheck is the enclave running the same steps on
    itself; this is the version that actually carries trust. */
 const LV_VERIFIER_URL = "https://esm.sh/@tinfoilsh/verifier@1.1.7?bundle";
@@ -4800,12 +4800,12 @@ async function lvVerify(btn) {
       const li = document.createElement("li");
       li.className = cls;
       li.innerHTML = '<span class="st">' + (cls === "ok" ? "✓" : cls === "bad" ? "✗" : "·") + '</span><span>'
-        + esc(LV_LABELS[k]) + (st && st.error ? ' — <span class="err">' + esc(st.error) + "</span>" : "") + "</span>";
+        + esc(LV_LABELS[k]) + (st && st.error ? ': <span class="err">' + esc(st.error) + "</span>" : "") + "</span>";
       steps.appendChild(li);
     });
     if (r.ok) {
       verdict.className = "lv-verdict ok";
-      verdict.textContent = "✓ VERIFIED — this enclave is running the exact code signed on " + r.repo + "'s latest release";
+      verdict.textContent = "✓ VERIFIED: this enclave is running the exact code signed on " + r.repo + "'s latest release";
       const apiFp = String(att.tlsKeyFingerprint || "").replace(/^sha256:/, "");
       meta.innerHTML = [
         "measurement   " + doc.enclaveFingerprint,
@@ -4814,11 +4814,11 @@ async function lvVerify(btn) {
       ].map((x) => "<span>" + esc(x) + "</span>").join("");
     } else {
       verdict.className = "lv-verdict bad";
-      verdict.textContent = "✗ NOT VERIFIED — " + (r.error || "verification incomplete");
+      verdict.textContent = "✗ NOT VERIFIED: " + (r.error || "verification incomplete");
     }
   } catch (e) {
     verdict.className = "lv-verdict bad";
-    verdict.textContent = "✗ could not run verification — " + (e && e.message ? e.message : e);
+    verdict.textContent = "✗ could not run verification: " + (e && e.message ? e.message : e);
   } finally { btn.disabled = false; }
 }
 
@@ -4873,7 +4873,7 @@ function initMenu() {
 function initDocs(){
   const sec = $("#docs"); if (!sec) return;
   // copy buttons: docs blocks carry no data-copy key (that's the deploy console's
-  // scheme) — copy the text of the <pre> in the same .code block.
+  // scheme); copy the text of the <pre> in the same .code block.
   sec.addEventListener("click", (e) => {
     const b = e.target.closest(".copybtn"); if (!b || b.dataset.copy) return;
     const code = b.closest(".code"); const pre = code && code.querySelector("pre");
@@ -4939,7 +4939,7 @@ function initViews(){
    Publishing is one Base tx through the injected wallet, reusing the
    same hand-rolled ABI codec as the pay flow (no web3 lib on-page).
    ============================================================ */
-const APP_CATALOG_ADDRESS = "0x3e5Ecb2665275D9C820D37A9659C5DD39079C8c5"; // NanAppCatalog on Base — written automatically by scripts/deploy-app-catalog.mjs
+const APP_CATALOG_ADDRESS = "0x3e5Ecb2665275D9C820D37A9659C5DD39079C8c5"; // NanAppCatalog on Base; written automatically by scripts/deploy-app-catalog.mjs
 const APP_CATALOG_CHAIN   = 8453;                        // Base mainnet (kept in sync by the deploy script; 84532 = Base Sepolia)
 const APP_CATALOG_RPC     = "https://mainnet.base.org";  // read-only eth_call endpoint; browsing needs no wallet (CORS-enabled)
 const IPFS_UPLOAD_URL      = "https://ipfs.nan.host/add-wasm"; // validating upload gateway (server validates + pins); empty => paste-a-CID only
@@ -4996,7 +4996,7 @@ function encStr(s){
   for (const x of b) h += x.toString(16).padStart(2, "0");
   return { body: encUint(b.length) + h.padEnd(Math.ceil(h.length / 64) * 64, "0"), words: 1 + Math.ceil(b.length / 32) };
 }
-// args: [{t:'str'|'uint'|'bool'|'addr'|'bytes32', v}] — head (offsets/inline) then string tails.
+// args: [{t:'str'|'uint'|'bool'|'addr'|'bytes32', v}]; head (offsets/inline) then string tails.
 function encCall(selector, args){
   let off = args.length * 32; const heads = [], bodies = [];
   for (const a of args){
@@ -5080,7 +5080,7 @@ const appVerified = (app) => { const i = defaultIdx(app); return i >= 0 && app.v
 function renderApps(){
   const grid = $("#storeGrid"), count = $("#storeCount"); if (!grid) return;
   if (!catConfigured()){
-    grid.innerHTML = '<div class="store-note">The on-chain catalog isn’t wired up on this deployment yet.<br><span class="dim">Deploy <code>NanAppCatalog</code> with <code>scripts/deploy-app-catalog.mjs</code> — it writes the address in for you.</span></div>';
+    grid.innerHTML = '<div class="store-note">The on-chain catalog isn’t wired up on this deployment yet.<br><span class="dim">Deploy <code>NanAppCatalog</code> with <code>scripts/deploy-app-catalog.mjs</code>; it writes the address in for you.</span></div>';
     if (count) count.textContent = ""; return;
   }
   if (!STORE.loaded){ grid.innerHTML = '<div class="store-note">reading catalog from Base…</div>'; return; }
@@ -5091,14 +5091,14 @@ function renderApps(){
   apps.sort((x, y) => (Number(appVerified(y)) - Number(appVerified(x))) || (y.updatedAt - x.updatedAt));
   if (count) count.textContent = apps.length + (apps.length === 1 ? " app" : " apps") + (STORE.filter === "verified" ? " · verified" : "");
   if (!apps.length){
-    grid.innerHTML = '<div class="store-note">' + (STORE.apps.length ? "No apps match your filter." : "No apps published yet — be the first with <b>+ Publish app</b>.") + '</div>';
+    grid.innerHTML = '<div class="store-note">' + (STORE.apps.length ? "No apps match your filter." : "No apps published yet. Be the first with <b>+ Publish app</b>.") + '</div>';
     return;
   }
   grid.innerHTML = apps.map(appCard).join("");
 }
 function appCard(app){
   const i = selIdx(app);
-  const v = app.versions[i] || { cid:"", version:"—", memMb:0, verified:false, yanked:false, approval:APPROVAL.pending };
+  const v = app.versions[i] || { cid:"", version:"–", memMb:0, verified:false, yanked:false, approval:APPROVAL.pending };
   const me = (Nan.address || "").toLowerCase();
   const isPub = me && app.publisher.toLowerCase() === me;
   const isOwner = me && STORE.owner && me === STORE.owner;
@@ -5108,10 +5108,10 @@ function appCard(app){
     : '<span class="app-badge unv" title="Community-published; not owner-verified">community</span>';
   // approval is the deploy gate: the enclave refuses this CID until the catalog owner approves it
   const apBadge = v.approval === APPROVAL.approved
-    ? '<span class="app-badge" title="Approved by the catalog owner — deployable">✓ approved</span>'
+    ? '<span class="app-badge" title="Approved by the catalog owner; deployable">✓ approved</span>'
     : v.approval === APPROVAL.rejected
-    ? '<span class="app-badge rej" title="Rejected by the catalog owner — deploys are refused">✕ rejected</span>'
-    : '<span class="app-badge unv" title="Awaiting catalog-owner approval — deploys are refused until then">pending</span>';
+    ? '<span class="app-badge rej" title="Rejected by the catalog owner; deploys are refused">✕ rejected</span>'
+    : '<span class="app-badge unv" title="Awaiting catalog-owner approval; deploys are refused until then">pending</span>';
   const apLabel = (vv) => vv.approval === APPROVAL.rejected ? ' (rejected)' : vv.approval !== APPROVAL.approved ? ' (pending)' : '';
   const opts = app.versions.map((vv, idx) =>
     '<option value="' + idx + '"' + (idx === i ? ' selected' : '') + '>' + esc(vv.version) + (vv.verified ? ' ✓' : '') + (vv.yanked ? ' (yanked)' : '') + apLabel(vv) + '</option>').join('');
@@ -5157,12 +5157,12 @@ function useInDeploy(app, v){
 // Client-side sanity checks (UX + catch mistakes). NOT a security control: the
 // /add endpoint is public, so Caddy's request_body max_size is the real ceiling,
 // and the attested wasm-manager is the authoritative "is it a runnable component"
-// gate at deploy. WebAssembly.validate() can't help — it only validates core
-// modules, and NaN apps are components — so we check the binary preamble by hand.
+// gate at deploy. WebAssembly.validate() can't help: it only validates core
+// modules, and NaN apps are components, so we check the binary preamble by hand.
 async function validateWasm(file){
   if (!/\.wasm$/i.test(file.name || "")) throw new NanError("Pick a .wasm file.", 0);
   if (file.size < 8) throw new NanError("That file is too small to be a WebAssembly module.", 0);
-  if (file.size > MAX_WASM_BYTES) throw new NanError("Too large — max " + MAX_WASM_MB + " MB (this file is " + (file.size / 1048576).toFixed(1) + " MB).", 0);
+  if (file.size > MAX_WASM_BYTES) throw new NanError("Too large: max " + MAX_WASM_MB + " MB (this file is " + (file.size / 1048576).toFixed(1) + " MB).", 0);
   const h = new Uint8Array(await file.slice(0, 8).arrayBuffer());
   if (!(h[0] === 0x00 && h[1] === 0x61 && h[2] === 0x73 && h[3] === 0x6d))    // "\0asm" magic
     throw new NanError("Not a WebAssembly file (missing the \\0asm magic bytes).", 0);
@@ -5170,12 +5170,12 @@ async function validateWasm(file){
   // stable across component-version bumps: 0 = core module, 1 = component.
   const layer = h[6] | (h[7] << 8);
   if (layer === 0) throw new NanError("This is a core wasm module, but NaN runs wasi:http *components*. Rebuild with cargo-component (target wasm32-wasip2).", 0);
-  if (layer !== 1) throw new NanError("Unrecognized wasm preamble (layer " + layer + ") — expected a wasi:http component.", 0);
+  if (layer !== 1) throw new NanError("Unrecognized wasm preamble (layer " + layer + "); expected a wasi:http component.", 0);
   return true;
 }
 async function putWasm(file){
-  if (!IPFS_UPLOAD_URL) throw new NanError("Direct upload isn’t configured here — paste a CID you’ve pinned (e.g. `ipfs add app.wasm`).", 0);
-  if (file.size > MAX_WASM_BYTES) throw new NanError("Too large — max " + MAX_WASM_MB + " MB.", 0);
+  if (!IPFS_UPLOAD_URL) throw new NanError("Direct upload isn’t configured here; paste a CID you’ve pinned (e.g. `ipfs add app.wasm`).", 0);
+  if (file.size > MAX_WASM_BYTES) throw new NanError("Too large: max " + MAX_WASM_MB + " MB.", 0);
   // raw bytes to the validating gateway; it re-checks size + wasm component preamble
   // server-side, pins to IPFS, and returns { cid }. (The browser checks are just UX.)
   const r = await fetch(IPFS_UPLOAD_URL, { method: "POST", headers: { "content-type": "application/wasm" }, body: file });
@@ -5201,7 +5201,7 @@ async function waitReceipt(hash, tries){
     if (j.result){ if (hexBig(j.result.status) === 0n) throw new NanError("transaction reverted", 0); return j.result; }
     await new Promise(res => setTimeout(res, 2000));
   }
-  throw new NanError("timed out waiting for confirmation (it may still land — hit refresh shortly)", 0);
+  throw new NanError("timed out waiting for confirmation (it may still land; hit refresh shortly)", 0);
 }
 function pubStatus(msg, err){ const el = $("#pubStatus"); if (!el) return; el.textContent = msg || ""; el.className = "pub-status" + (err ? " err" : ""); }
 async function onPubFile(e){
@@ -5236,7 +5236,7 @@ async function publishApp(){
       {t:"str",v:slug},{t:"str",v:name},{t:"str",v:desc},{t:"str",v:version},{t:"str",v:cid},{t:"uint",v:mem},{t:"str",v:ports},
     ]);
     const hash = await sendTx(APP_CATALOG_ADDRESS, data);
-    pubStatus("sent · " + hash + " — waiting for confirmation…");
+    pubStatus("sent · " + hash + " · waiting for confirmation…");
     await waitReceipt(hash);
     pubStatus("live on-chain ✓ " + hash);
     showToast("published " + slug + " " + version);
@@ -5290,7 +5290,7 @@ function initStore(){
   $("#pubSubmit").addEventListener("click", publishApp);
   const pf = $("#pubFile"); if (pf) pf.addEventListener("change", onPubFile);
   const row = $("#pubFileRow");
-  if (row && !IPFS_UPLOAD_URL){ row.classList.add("disabled"); $("#pubFileHint").textContent = "upload disabled here — paste a CID below"; }
+  if (row && !IPFS_UPLOAD_URL){ row.classList.add("disabled"); $("#pubFileHint").textContent = "upload disabled here; paste a CID below"; }
 
   // event delegation on the grid (survives re-renders)
   grid.addEventListener("change", (e) => {

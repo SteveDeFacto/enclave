@@ -4,12 +4,12 @@
     "title": "NaN API",
     "version": "1.0.0",
     "summary": "Trustless on-demand confidential GPU compute for WebAssembly apps.",
-    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority — just the request/response socket the runtime hands it. The app catalog is baked into the attested enclave image, so what runs is exactly what the attestation measured. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
+    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority; just the request/response socket the runtime hands it. The app catalog is baked into the attested enclave image, so what runs is exactly what the attestation measured. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
   },
   "servers": [
     {
       "url": "https://api.nan.host/v1",
-      "description": "Production API gateway — proxies to the live enclave (attested TLS terminates in the enclave; the gateway sees control-plane traffic). Talk to an enclave directly by using its base, e.g. https://enclave1.nan.containers.tinfoil.dev/v1"
+      "description": "Production API gateway: proxies to the live enclave (attested TLS terminates in the enclave; the gateway sees control-plane traffic). Talk to an enclave directly by using its base, e.g. https://enclave1.nan.containers.tinfoil.dev/v1"
     }
   ],
   "security": [
@@ -1221,11 +1221,11 @@
           "public": {
             "type": "boolean",
             "default": false,
-            "description": "If true, anyone can reach the app's data path (`/x/{id}/*`) with no authentication — for hosting public websites, APIs, and servers. If false (default), only the owner's SIWE bearer token can reach it. SSH and management endpoints are always owner-only regardless. Confidentiality is unaffected: the TEE still hides the app from the operator; `public` only governs who may send it requests."
+            "description": "If true, anyone can reach the app's data path (`/x/{id}/*`) with no authentication, for hosting public websites, APIs, and servers. If false (default), only the owner's SIWE bearer token can reach it. SSH and management endpoints are always owner-only regardless. Confidentiality is unaffected: the TEE still hides the app from the operator; `public` only governs who may send it requests."
           },
           "firewall": {
             "type": "object",
-            "description": "Ports the app may bind, from its catalog version's firewall config (the store's Use-in-Deploy prefills this). Entries: `http` (default — standard wasi:http web app), `http:N` (app serves HTTP on N itself), `tcp:N`, `udp:N`; N in 1-19999 excluding 8080/8091 (labels below 1024, e.g. udp:53, are always remapped to an unprivileged actual). Omitted/empty = standard web app with NO socket capability. Ports are LOGICAL: each deployment gets its own actual loopback bind (see `portMap`; passed to the app as `NAN_PORTS=tcp:5432=31245`), so multiple tenants can run the same app simultaneously without conflicts. When ports are declared the app gets wasi:sockets and the enclave audits its binds — binding an unassigned port kills the app. Declared TCP ports are reached through the attested origin as a WebSocket bridge at `/x/{id}/tcp/{logical-port}` (auth follows `public`).",
+            "description": "Ports the app may bind, from its catalog version's firewall config (the store's Use-in-Deploy prefills this). Entries: `http` (default: standard wasi:http web app), `http:N` (app serves HTTP on N itself), `tcp:N`, `udp:N`; N in 1-19999 excluding 8080/8091 (labels below 1024, e.g. udp:53, are always remapped to an unprivileged actual). Omitted/empty = standard web app with NO socket capability. Ports are LOGICAL: each deployment gets its own actual loopback bind (see `portMap`; passed to the app as `NAN_PORTS=tcp:5432=31245`), so multiple tenants can run the same app simultaneously without conflicts. When ports are declared the app gets wasi:sockets and the enclave audits its binds; binding an unassigned port kills the app. Declared TCP ports are reached through the attested origin as a WebSocket bridge at `/x/{id}/tcp/{logical-port}` (auth follows `public`).",
             "properties": {
               "ports": {
                 "type": "array",
@@ -1449,7 +1449,7 @@
       },
       "VmAttestation": {
         "type": "object",
-        "description": "Live CPU-TEE evidence. `quote` is the raw hardware quote (base64, decompressed) — feed it to any DCAP/SNP verifier. `reportData` binds the enclave TLS key: bytes 0-31 are sha256 of the TLS public key (SPKI DER) this origin presents.",
+        "description": "Live CPU-TEE evidence. `quote` is the raw hardware quote (base64, decompressed); feed it to any DCAP/SNP verifier. `reportData` binds the enclave TLS key: bytes 0-31 are sha256 of the TLS public key (SPKI DER) this origin presents.",
         "properties": {
           "technology": { "type": "string", "example": "intel-tdx" },
           "quote": { "type": "string", "description": "Base64 raw quote." },
@@ -1475,7 +1475,7 @@
       },
       "EnclaveAttestation": {
         "type": "object",
-        "description": "The Tinfoil Remote Attestation Document relayed verbatim from /.well-known/tinfoil-attestation — feed `attestationDocument` to Tinfoil's verifier (tinfoil-cli `attestation verify`, or the @tinfoilsh/verifier npm package). This copy is a convenience: fetch the document over your OWN connection for the binding to mean anything.",
+        "description": "The Tinfoil Remote Attestation Document relayed verbatim from /.well-known/tinfoil-attestation; feed `attestationDocument` to Tinfoil's verifier (tinfoil-cli `attestation verify`, or the @tinfoilsh/verifier npm package). This copy is a convenience: fetch the document over your OWN connection for the binding to mean anything.",
         "properties": {
           "attestationDocument": {
             "type": "object",
@@ -1492,7 +1492,7 @@
       },
       "Attestation": {
         "type": "object",
-        "description": "Live attestation material. The server never asserts trust on your behalf — `verification.selfCheck` is the enclave running the same five checks a client would, reported as a clearly-labeled diagnostic; reproduce it on your side (cli/npm/browser pointers included) for it to carry trust.",
+        "description": "Live attestation material. The server never asserts trust on your behalf: `verification.selfCheck` is the enclave running the same five checks a client would, reported as a clearly-labeled diagnostic; reproduce it on your side (cli/npm/browser pointers included) for it to carry trust.",
         "properties": {
           "deploymentId": {
             "type": "string"
@@ -1503,7 +1503,7 @@
           },
           "verification": {
             "type": "object",
-            "description": "`selfCheck`: the enclave verifying ITSELF with @tinfoilsh/verifier — `result` is `pass`/`fail`/`pending`/`unavailable` with per-step detail (`fetchDigest`, `verifyEnclave`, `verifyCode`, `compareMeasurements`, `verifyCertificate`), the release digest and measurement it matched, and a note explaining that a self-check is a diagnostic, not trust. Alongside it, how to reproduce client-side: instructions (`how`), a ready-to-run tinfoil-cli command (`cli`), the npm verifier package (`npm`, works in Node and browsers), an in-browser verifier (`browser`), the enclave repo whose release holds the signed measurements (`repo`, exact GitHub casing), and the well-known attestation endpoint.",
+            "description": "`selfCheck`: the enclave verifying ITSELF with @tinfoilsh/verifier; `result` is `pass`/`fail`/`pending`/`unavailable` with per-step detail (`fetchDigest`, `verifyEnclave`, `verifyCode`, `compareMeasurements`, `verifyCertificate`), the release digest and measurement it matched, and a note explaining that a self-check is a diagnostic, not trust. Alongside it, how to reproduce client-side: instructions (`how`), a ready-to-run tinfoil-cli command (`cli`), the npm verifier package (`npm`, works in Node and browsers), an in-browser verifier (`browser`), the enclave repo whose release holds the signed measurements (`repo`, exact GitHub casing), and the well-known attestation endpoint.",
             "properties": {
               "selfCheck": {
                 "type": "object",
