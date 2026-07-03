@@ -1,0 +1,119 @@
+# Tinfoil Containers release workflow — CPU-ONLY flavor (phase 1).
+#
+# Mirrors tinfoil-release.yml but releases the CPU enclave config
+# (tinfoil-config.cpu.yml: supervisor + wasm-manager, no GPU containers).
+# The supervisor image is the SAME build as the GPU flavor — the flavor is
+# picked by the measured config (GPU_COUNT=0), not by the image.
+#
+# tinfoilsh/update-container-action only rewrites tinfoil-config.yml, so this
+# workflow pins the digest into tinfoil-config.cpu.yml itself, tags the release,
+# and dispatches tinfoil-release-publish-cpu.yml which measures the CPU config.
+#
+# Versions MUST end in "-cpu" (e.g. v1.0.0-cpu) so CPU and GPU tags never
+# collide and the flavor is readable off the tag. NOTE: verifiers that check
+# against this repo's LATEST release (tinfoil-cli default) see the GPU
+# measurement — point them at the matching -cpu release explicitly.
+
+name: Tinfoil Release (CPU)
+
+run-name: Release ${{ inputs.version }} (CPU flavor)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'CPU flavor version to release (must end in -cpu, e.g. v1.0.0-cpu)'
+        required: true
+        type: string
+
+concurrency:
+  group: tinfoil-container-release-${{ inputs.version }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read    # checkout + check the tag does not exist
+      packages: write   # push the container image
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate version and check the tag does not exist
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ -cpu$ ]]; then
+            echo "::error::CPU flavor versions must end in -cpu (got: $VERSION)"
+            exit 1
+          fi
+          if git ls-remote --tags origin "refs/tags/$VERSION" | grep -q .; then
+            echo "::error::Tag $VERSION already exists"
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        env:
+          SOURCE_DATE_EPOCH: 0
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/stevedefacto/nan:${{ inputs.version }}
+
+  prepare-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # push the pinned-config commit + release tag
+      actions: write        # dispatch tinfoil-release-publish-cpu.yml on the new tag
+
+    steps:
+      - name: Checkout source commit
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: true
+
+      - name: Pin the supervisor digest into tinfoil-config.cpu.yml and tag the release
+        env:
+          VERSION: ${{ inputs.version }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # `nan[:@]` cannot match nan-wasm-manager (next char is '-'), so only
+          # the supervisor line is repinned; the wasm-manager pin stays as committed.
+          sed -i -E "s#(image: \"ghcr\.io/stevedefacto/nan)[:@][^\"]*\"#\1@${DIGEST}\"#" tinfoil-config.cpu.yml
+          grep -q "ghcr.io/stevedefacto/nan@${DIGEST}" tinfoil-config.cpu.yml \
+            || { echo "::error::failed to pin supervisor digest into tinfoil-config.cpu.yml"; exit 1; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tinfoil-config.cpu.yml
+          git commit -m "Release ${VERSION}: pin supervisor digest (CPU flavor)"
+          git tag "$VERSION"
+          git push origin "refs/tags/$VERSION"
+
+      - name: Dispatch the CPU publish workflow on the new tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh workflow run tinfoil-release-publish-cpu.yml --ref "$VERSION"

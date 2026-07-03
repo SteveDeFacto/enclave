@@ -110,6 +110,19 @@
     "anonymous": false,
     "inputs": [
       {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "cpuPricePerSec6",
+        "type": "uint256"
+      }
+    ],
+    "name": "CpuPriceSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
         "indexed": true,
         "internalType": "bytes32",
         "name": "id",
@@ -126,6 +139,12 @@
         "internalType": "string",
         "name": "appRef",
         "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "gpu",
+        "type": "bool"
       },
       {
         "indexed": false,
@@ -371,11 +390,29 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "cpuPricePerSec6",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "string",
         "name": "appRef",
         "type": "string"
+      },
+      {
+        "internalType": "bool",
+        "name": "gpu",
+        "type": "bool"
       },
       {
         "internalType": "uint16",
@@ -542,6 +579,11 @@
           },
           {
             "internalType": "bool",
+            "name": "gpu",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
             "name": "isPublic",
             "type": "bool"
           },
@@ -650,6 +692,11 @@
             "internalType": "uint32",
             "name": "appPort",
             "type": "uint32"
+          },
+          {
+            "internalType": "bool",
+            "name": "gpu",
+            "type": "bool"
           },
           {
             "internalType": "bool",
@@ -871,6 +918,19 @@
       }
     ],
     "name": "setConfig",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_cpuPricePerSec6",
+        "type": "uint256"
+      }
+    ],
+    "name": "setCpuPrice",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

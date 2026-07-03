@@ -28,9 +28,13 @@
 //                         tinfoil-config.yml's REGISTRY_ADDRESS line.
 //   ETH_USD_FEED          Chainlink ETH/USD aggregator; defaults per network;
 //                         "none" disables ETH funding (USDC only).
-//   PRICE_PER_SEC6        initial full-card USDC(6dp)/second price to set right
-//                         after deploy (default "278" ~= $1.00/hour). "0" skips
-//                         (creates revert until setPrice is called).
+//   PRICE_PER_SEC6        full-card USDC(6dp)/second price. The contract now
+//                         HARDCODES 1667 (~$6.00/hour) at deploy, so by default
+//                         no setPrice tx is sent at all; set this env var only
+//                         to CHANGE the price ("0" skips the check entirely).
+//   CPU_PRICE_PER_SEC6    whole-CPU-node USDC(6dp)/second price for gpu=false
+//                         deployments. Hardcoded to 556 (~$2.00/hour) at deploy;
+//                         same rules as PRICE_PER_SEC6.
 //   NETWORK               base-sepolia (default) | base
 //   RPC_URL               override the chain RPC.
 //   USDC_ADDRESS          override the USDC token address for the network.
@@ -68,6 +72,7 @@ const REPO = path.resolve(HERE, "..");
 const CONTRACT = path.join(REPO, "contracts", "NanDeployments.sol");
 const ABI_OUT = path.join(REPO, "contracts", "NanDeployments.abi.json");
 const CONFIG = path.join(REPO, "tinfoil-config.yml");
+const CONFIG_CPU = path.join(REPO, "tinfoil-config.cpu.yml");   // CPU flavor points at the same ledger
 
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has("--dry-run");
@@ -156,24 +161,28 @@ function resolveRegistry() {
 }
 
 function writeDeploymentsAddress(addr) {
-  let cfg = fs.readFileSync(CONFIG, "utf8");
   const re = /(-\s*DEPLOYMENTS_ADDRESS:\s*)"[^"]*"/;
-  if (!re.test(cfg)) {
-    console.log(`No DEPLOYMENTS_ADDRESS line in ${path.relative(REPO, CONFIG)} yet; add under the supervisor env:`);
-    console.log(`      - DEPLOYMENTS_ADDRESS: "${addr}"   # set by scripts/deploy-deployments.mjs`);
-    return;
+  for (const file of [CONFIG, CONFIG_CPU]) {
+    if (!fs.existsSync(file)) continue;
+    let cfg = fs.readFileSync(file, "utf8");
+    if (!re.test(cfg)) {
+      console.log(`No DEPLOYMENTS_ADDRESS line in ${path.relative(REPO, file)} yet; add under the supervisor env:`);
+      console.log(`      - DEPLOYMENTS_ADDRESS: "${addr}"   # set by scripts/deploy-deployments.mjs`);
+      continue;
+    }
+    cfg = cfg.replace(re, `$1"${addr}"`);
+    fs.writeFileSync(file, cfg);
+    console.log(`Wrote DEPLOYMENTS_ADDRESS="${addr}" into ${path.relative(REPO, file)}`);
   }
-  cfg = cfg.replace(re, `$1"${addr}"`);
-  fs.writeFileSync(CONFIG, cfg);
-  console.log(`Wrote DEPLOYMENTS_ADDRESS="${addr}" into ${path.relative(REPO, CONFIG)}`);
 }
 
 // Base's public RPC caps EIP-7702 delegated EOAs at ONE in-flight tx, and its
-// load-balanced nodes can briefly disagree right after a confirmation — so a
-// send immediately after a mined tx can bounce with "in-flight transaction
+// load-balanced nodes can disagree for a while right after a confirmation — so
+// a send immediately after a mined tx can bounce with "in-flight transaction
 // limit reached for delegated accounts". Transient: retry with backoff (each
-// attempt re-fetches the nonce, so a retry is always safe to re-send).
-async function sendWithRetry(label, fn, tries = 6, gapMs = 5000) {
+// attempt re-fetches the nonce, so a retry is always safe to re-send). The
+// window has been observed to outlast 25s, hence the generous budget (~90s).
+async function sendWithRetry(label, fn, tries = 10, gapMs = 10000) {
   for (let i = 1; ; i++) {
     try { return await fn(); }
     catch (e) {
@@ -214,23 +223,37 @@ function announce(addr, net) {
   else console.log("(--no-write-config: skipped tinfoil-config.yml; set DEPLOYMENTS_ADDRESS manually)");
 }
 
-// Set the full-card per-second price if it isn't already what we want. Reads
-// the current value first, so re-runs and --finish are idempotent.
-async function ensurePrice(pub, wallet, abi, addr, price) {
-  if (price <= 0n) { console.log("PRICE_PER_SEC6=0: skipping setPrice (creates revert until it is set)."); return; }
-  const current = await readWithRetry("pricePerSec6", () =>
-    pub.readContract({ address: addr, abi, functionName: "pricePerSec6" }));
-  if (current === price) { console.log(`Price already ${price}/sec — nothing to send.`); return; }
-  if (current > 0n && !process.env.PRICE_PER_SEC6) {
-    console.log(`Price already set (${current}/sec); set PRICE_PER_SEC6 explicitly to change it.`);
-    return;
+// Set a per-second price if it isn't already what we want. Reads the current
+// value first, so re-runs and --finish are idempotent. Covers both schedules:
+// the full-card GPU price (setPrice) and the whole-node CPU price (setCpuPrice).
+// Returns true if it broadcast a tx (callers pace consecutive sends on this).
+async function ensureOnePrice(pub, wallet, abi, addr, price,
+                              { label, getter, setter, envVar }) {
+  if (price <= 0n) { console.log(`${envVar}=0: skipping ${setter} (${label} creates revert until it is set).`); return false; }
+  const current = await readWithRetry(getter, () =>
+    pub.readContract({ address: addr, abi, functionName: getter }));
+  if (current === price) { console.log(`${label} price already ${price}/sec — nothing to send.`); return false; }
+  if (current > 0n && !process.env[envVar]) {
+    console.log(`${label} price already set (${current}/sec); set ${envVar} explicitly to change it.`);
+    return false;
   }
-  console.log(`Setting price (${price} USDC-6dp per full-card second)...`);
-  const h2 = await sendWithRetry("setPrice", () =>
-    wallet.writeContract({ address: addr, abi, functionName: "setPrice", args: [price] }));
-  const r2 = await readWithRetry("setPrice receipt", () => pub.waitForTransactionReceipt({ hash: h2 }));
-  if (r2.status !== "success") die(`setPrice tx did not succeed (status=${r2.status})`);
+  console.log(`Setting ${label} price (${price} USDC-6dp per second)...`);
+  const h2 = await sendWithRetry(setter, () =>
+    wallet.writeContract({ address: addr, abi, functionName: setter, args: [price] }));
+  const r2 = await readWithRetry(`${setter} receipt`, () => pub.waitForTransactionReceipt({ hash: h2 }));
+  if (r2.status !== "success") die(`${setter} tx did not succeed (status=${r2.status})`);
   console.log(`  tx ${h2}`);
+  return true;
+}
+async function ensurePrice(pub, wallet, abi, addr, price, cpuPrice) {
+  const sent = await ensureOnePrice(pub, wallet, abi, addr, price,
+    { label: "full-card (GPU)", getter: "pricePerSec6", setter: "setPrice", envVar: "PRICE_PER_SEC6" });
+  // Settle before the next owner tx: right after a receipt, lagging RPC nodes
+  // can still count the mined tx as in-flight and bounce the follow-up with
+  // "in-flight transaction limit reached for delegated accounts".
+  if (sent) { console.log("  (settling 15s before the next owner tx...)"); await new Promise((r) => setTimeout(r, 15000)); }
+  await ensureOnePrice(pub, wallet, abi, addr, cpuPrice,
+    { label: "whole-node (CPU)", getter: "cpuPricePerSec6", setter: "setCpuPrice", envVar: "CPU_PRICE_PER_SEC6" });
 }
 
 // Pick the network: from $NETWORK if set, else an interactive menu (number or name).
@@ -260,8 +283,11 @@ async function main() {
   const usdc = getAddress(process.env.USDC_ADDRESS || net.usdc);
   const feedIn = process.env.ETH_USD_FEED || net.ethUsdFeed;
   const feed = /^none$/i.test(feedIn) ? ZERO : getAddress(feedIn);
-  // default ~$1.00/hour for a full card: 1e6 / 3600 ~= 278 (6dp USDC per second)
-  const price = BigInt(process.env.PRICE_PER_SEC6 ?? "278");
+  // Defaults MATCH the values hardcoded in the contract (~$6.00/hour full card,
+  // ~$2.00/hour whole CPU node), so a fresh deploy sends ZERO follow-up txs —
+  // ensurePrice just verifies. Set the env vars to change a live contract.
+  const price = BigInt(process.env.PRICE_PER_SEC6 ?? "1667");
+  const cpuPrice = BigInt(process.env.CPU_PRICE_PER_SEC6 ?? "556");
 
   let pk0 = process.env.DEPLOYER_PRIVATE_KEY;
   if (!pk0) {
@@ -292,11 +318,11 @@ async function main() {
     announce(addr, net);
     if (!ASSUME_YES) {
       const rl = readline.createInterface({ input, output });
-      const ans = (await rl.question(`Send setPrice to ${addr} on ${netName} if needed? [y/N]: `)).trim();
+      const ans = (await rl.question(`Send setPrice/setCpuPrice to ${addr} on ${netName} if needed? [y/N]: `)).trim();
       rl.close();
       if (!/^y(es)?$/i.test(ans)) { console.log("Skipped setPrice (re-run with --finish when ready)."); return; }
     }
-    await ensurePrice(pub, wallet, abi, addr, price);
+    await ensurePrice(pub, wallet, abi, addr, price, cpuPrice);
     console.log("\nNext:  rebuild+repin the supervisor:  ./scripts/release.sh nan");
     return;
   }
@@ -348,7 +374,7 @@ async function main() {
   // announce + write config BEFORE setPrice: if the follow-up tx fails, the
   // address is already saved (recover the price step with --finish).
   announce(addr, net);
-  await ensurePrice(pub, wallet, abi, addr, price);
+  await ensurePrice(pub, wallet, abi, addr, price, cpuPrice);
 
   console.log("\nNext:");
   console.log(`  1. Ensure DEPLOYMENTS_ADDRESS in tinfoil-config.yml is ${addr} (written above)`);

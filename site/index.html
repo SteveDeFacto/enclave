@@ -593,7 +593,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
           <div class="dim" id="accessNote" style="margin-top:7px;font-family:var(--font-mono);font-size:.68rem;line-height:1.5;"></div>
         </div>
         <div class="field">
-          <label for="cfgShare">Share <span class="dim">(% of card · 1 to 100)</span> <span class="dim" id="shareCap">· checking live capacity…</span></label>
+          <label for="cfgShare">Share <span class="dim" id="shareUnit">(% of card · 1 to 100)</span> <span class="dim" id="shareCap">· checking live capacity…</span></label>
           <input type="number" id="cfgShare" value="25" min="1" max="100" step="1" />
           <div class="tier-readout" id="tierOut"></div>
         </div>
@@ -4014,6 +4014,7 @@ async function renderWalletPop(){
    Deploy console
    ============================================================ */
 const FULL_RATE = 0.0016667;        // whole-H200 USDC/sec ($6.00/hr)
+const CPU_NODE_RATE = 0.0005556;    // whole CPU node USDC/sec ($2.00/hr) — CPU-only enclaves
 const CARD_GB = 141;                // whole-card VRAM
 const NODE_VCPUS = 16;              // host vCPUs on the enclave (confirm vs real Tinfoil spec)
 const NODE_RAM_GB = 64;             // host RAM GB on the enclave (confirm vs real Tinfoil spec)
@@ -4028,11 +4029,19 @@ function gpuRate(sharePct){
   return { rate: share * FULL_RATE, share, pct,
            vramGb: share * CARD_GB, vcpus: share * NODE_VCPUS, ramGb: share * NODE_RAM_GB };
 }
+// CPU-only enclave: the same one-dial share, but of the NODE (vCPU+RAM), billed
+// at share x the whole-node rate. GPU deployments go to GPU enclaves instead.
+function cpuRate(sharePct){
+  const pct = Math.min(100, Math.max(1, Math.round(sharePct)));
+  const share = pct / 100;
+  return { rate: share * CPU_NODE_RATE, share, pct,
+           vcpus: share * NODE_VCPUS, ramGb: share * NODE_RAM_GB };
+}
 function bucketFor(sharePct){
   if (sharePct > 100) return "over";   // exceeds the whole card
   return "gpu";
 }
-const dep = { sharePct: 25, asset: "USDC", public: true };
+const dep = { sharePct: 25, asset: "USDC", public: true, gpuEnclave: true };  // gpuEnclave: from /availability (gpu:false = CPU-only enclave)
 function renderAccessNote(){
   const el = $("#accessNote"); if (!el) return;
   el.innerHTML = dep.public
@@ -4096,7 +4105,8 @@ function deployBody(){
   body.resources = (dep.sharePct > 0)
     ? { share: Math.min(1, Math.max(0.01, Math.round(dep.sharePct) / 100)) }
     : {};
-  if (dep.sharePct > 0) body.attestationPolicy = { requireGpuAttestation: true };
+  // GPU attestation only exists on GPU enclaves; a CPU-only enclave attests the VM alone.
+  if (dep.sharePct > 0 && dep.gpuEnclave) body.attestationPolicy = { requireGpuAttestation: true };
   body.region = "auto";
   return body;
 }
@@ -4126,7 +4136,12 @@ function renderDeploy(){
   $("#outCurl").innerHTML = hlCode(deployCurl(body));
   const b = bucketFor(dep.sharePct), budget = parseFloat($("#cfgBudget").value) || 0;
   let rate, readout;
-  if (b === "over") { rate = 0; readout = "✕ " + dep.sharePct + "% exceeds the whole card (100%)"; }
+  if (b === "over") { rate = 0; readout = "✕ " + dep.sharePct + "% exceeds the whole " + (dep.gpuEnclave ? "card" : "node") + " (100%)"; }
+  else if (!dep.gpuEnclave) {
+    const g = cpuRate(dep.sharePct); rate = g.rate;
+    readout = "→ " + g.pct + "% of CPU node · ≈" + fmtNum(g.vcpus) + " vCPU · ≈" + fmtNum(g.ramGb)
+            + " GB RAM · no GPU · $" + (rate * 3600).toFixed(2) + "/hr";
+  }
   else {
     const g = gpuRate(dep.sharePct); rate = g.rate;
     readout = "→ " + g.pct + "% of card · ≈" + g.vramGb.toFixed(0) + " GB VRAM · " + g.pct + "% compute · ≈"
@@ -4368,7 +4383,11 @@ async function pollDeployment(id, term){
 /* offerDeposit removed: escrow deposits no longer exist (pay-per-deploy) */
 /* ---- active deployment panel ---- */
 function shortImg(s){ if (!s) return ""; return s.length > 44 ? s.slice(0, 42) + "\u2026" : s; }
-function encTier(d){ const s = d.resources && d.resources.share; return s ? (Math.round(s * 100) + "% card") : "CPU"; }
+function encTier(d){
+  const r = d.resources || {}, s = r.share;
+  if (r.cpu) return s ? (Math.round(s * 100) + "% CPU node") : "CPU";
+  return s ? (Math.round(s * 100) + "% card") : "CPU";
+}
 
 async function refreshEnclaves(opts){
   opts = opts || {};
@@ -4503,8 +4522,11 @@ async function refreshAvailability(){
   if (!sin) return;
   try {
     const a = await Nan.getAvailability();
+    dep.gpuEnclave = a.gpu !== false;               // gpu:false = CPU-only enclave (older enclaves omit the field)
+    const unitS = $("#shareUnit");
+    if (unitS) unitS.textContent = dep.gpuEnclave ? "(% of card · 1 to 100)" : "(% of CPU node · 1 to 100)";
     const cardGb = (a.cardVramGb != null) ? a.cardVramGb : CARD_GB;
-    // free share of the card: prefer maxShare; else the smaller of free VRAM and free compute
+    // free share of the card/node: prefer maxShare; else the smaller of free VRAM and free compute
     let freePct;
     if (a.maxShare != null){
       freePct = Math.floor(a.maxShare * 100);
@@ -4514,7 +4536,10 @@ async function refreshAvailability(){
       freePct = Math.floor(Math.min(vPct, cPct));
     }
     sin.max = String(Math.max(0, freePct));
-    if (capS) capS.textContent = "· " + freePct + "% of the card free now (≈" + Math.round(freePct / 100 * cardGb) + " GB)";
+    if (capS) capS.textContent = dep.gpuEnclave
+      ? "· " + freePct + "% of the card free now (≈" + Math.round(freePct / 100 * cardGb) + " GB)"
+      : "· " + freePct + "% of the node free now (≈" + fmtNum(freePct / 100 * (a.nodeVcpus != null ? a.nodeVcpus : NODE_VCPUS)) + " vCPU / ≈"
+        + fmtNum(freePct / 100 * (a.nodeRamGb != null ? a.nodeRamGb : NODE_RAM_GB)) + " GB RAM · CPU-only enclave)";
     // clamp if the current pick now exceeds capacity, but don't yank the field the user is editing
     if (dep.sharePct > freePct && document.activeElement !== sin){ dep.sharePct = freePct; sin.value = String(freePct); }
     renderDeploy();

@@ -21,6 +21,7 @@ TAG="${TAG:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CONFIG="$REPO_ROOT/tinfoil-config.yml"
+CONFIG_CPU="$REPO_ROOT/tinfoil-config.cpu.yml"   # CPU-only flavor; shares the supervisor + wasm-manager images
 cd "$REPO_ROOT"
 
 # image short-name -> build context (Dockerfile is <context>/Dockerfile unless
@@ -49,13 +50,17 @@ if [ "$DRY_RUN" != "1" ] && [ -n "${CR_PAT:-}" ]; then
   echo "$CR_PAT" | docker login "$REGISTRY" -u "$ORG" --password-stdin >/dev/null
 fi
 
-repin(){ # $1=image name, $2=digest (sha256:...)
-  local name="$1" digest="$2"
+repin(){ # $1=image name, $2=digest (sha256:...) — pins into EVERY config that ships the image
+  local name="$1" digest="$2" cfg
   local pat="(image: \"${REGISTRY//./\\.}/${ORG}/${name})[:@][^\"]*\""
   local rep="\\1${DIGEST_SEP}${digest}\""
-  sed -i -E "s#${pat}#${rep}#" "$CONFIG"
-  grep -q "${REGISTRY}/${ORG}/${name}${DIGEST_SEP}${digest}" "$CONFIG" \
-    || { echo "ERROR: failed to repin ${name} in $CONFIG"; exit 1; }
+  for cfg in "$CONFIG" "$CONFIG_CPU"; do
+    [ -f "$cfg" ] || continue
+    grep -qE "image: \"${REGISTRY}/${ORG}/${name}[:@]" "$cfg" || continue  # this flavor doesn't ship it
+    sed -i -E "s#${pat}#${rep}#" "$cfg"
+    grep -q "${REGISTRY}/${ORG}/${name}${DIGEST_SEP}${digest}" "$cfg" \
+      || { echo "ERROR: failed to repin ${name} in $cfg"; exit 1; }
+  done
 }
 
 for name in "${TARGETS[@]}"; do
@@ -81,11 +86,14 @@ for name in "${TARGETS[@]}"; do
   say "  repinned ${name} -> ${DIGEST_SEP}${digest}"
 done
 
-# validate the config still parses
-python3 -c "import yaml; yaml.safe_load(open('$CONFIG'))" \
-  && say "tinfoil-config.yml valid"
+# validate the configs still parse
+for cfg in "$CONFIG" "$CONFIG_CPU"; do
+  [ -f "$cfg" ] || continue
+  python3 -c "import yaml; yaml.safe_load(open('$cfg'))" \
+    && say "$(basename "$cfg") valid"
+done
 
 say "done. pinned images:"
-grep -nE 'image:' "$CONFIG" | sed 's/^/    /'
+grep -nE 'image:' "$CONFIG" "$CONFIG_CPU" 2>/dev/null | sed 's/^/    /'
 [ "$DRY_RUN" = "1" ] && say "DRY_RUN: no images were built or pushed; digests are fake."
 say "reminder: confirm each package is PUBLIC so Tinfoil can pull it anonymously."

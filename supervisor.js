@@ -214,9 +214,15 @@ function need(n){ const v = process.env[n]; if(!v){ console.error("FATAL: missin
 // compute (throughput) share. Any split is allowed at GRANULARITY_GB, as long as
 // the per-card sums fit. Isolation comes from the process boundary, not the slice
 // size (separate GPU address spaces; VRAM scrubbed by the driver on worker exit).
-const CPU_RATE        = 0.0000306;                                      // USDC/sec, CPU-only ($0.11/hr)
+const CPU_RATE        = 0.0005556;                                      // USDC/sec, the WHOLE node on a CPU-only enclave ($2.00/hr)
 const FULL_RATE       = 0.0016667;                                      // USDC/sec, a WHOLE card ($6.00/hr)
-const GPU_COUNT       = parseInt(process.env.GPU_COUNT || "1", 10);     // cards in this enclave
+const GPU_COUNT       = parseInt(process.env.GPU_COUNT || "1", 10);     // cards in this enclave; 0 = CPU-only enclave
+// Enclave partition rule: a CPU enclave (GPU_COUNT=0) runs ONLY CPU deployments
+// (a share of the node's vCPU+RAM, no GPU fields); a GPU-enabled enclave runs
+// ONLY GPU deployments. Enforced at the deploy endpoint and in the claim loop.
+const IS_GPU          = GPU_COUNT > 0;
+const NODE_VCPUS      = parseInt(process.env.NODE_VCPUS || "16", 10);   // node size, for CPU pricing/readouts
+const NODE_RAM_GB     = parseInt(process.env.NODE_RAM_GB || "64", 10);
 const CARD_VRAM_GB    = parseFloat(process.env.GPU_VRAM_GB || "141");   // usable VRAM per card
 const CTX_OVERHEAD_GB = parseFloat(process.env.CTX_OVERHEAD_GB || "0.5"); // per-worker context cost, reserved on top of the cap
 const SM_TOTAL        = parseInt(process.env.SM_TOTAL || "132", 10);   // SMs per card (H200=132); for reporting granted SMs
@@ -234,6 +240,22 @@ const quantizePct = (share) => Math.min(100, Math.max(MIN_COMPUTE_PCT, Math.roun
 // per-card free pools (vram + compute). With CC on there is exactly one whole
 // device per card - no MIG instances to enumerate.
 const gpuCards = Array.from({ length: GPU_COUNT }, (_, i) => ({ id: i, uuid: null, vramFree: CARD_VRAM_GB, computeFree: 1 }));
+
+// CPU-only enclave: the node itself is the one resource pool. A deployment
+// reserves a share of the node's vCPU+RAM; the wasm-manager admits by the same
+// share, so the two allocators agree. The handle lives in rec._gpu (cpu: true)
+// so every reserve/release/persist call site is shared with the GPU path.
+const cpuPool = { shareFree: 1 };
+function allocCpu(share) {
+  if (cpuPool.shareFree < share - 1e-9) return null;
+  cpuPool.shareFree -= share;
+  return { cpu: true, share };
+}
+const maxFreeCpu = () => Math.max(0, Math.min(1, cpuPool.shareFree));
+// CPU requests use the same whole-percent grain as GPU compute; priced at the
+// share of the whole-node rate.
+const normalizeCpuReq = (share) => { const pct = quantizePct(share); return { cpu: true, share: pct / 100, pct }; };
+const cpuRateFor = (share) => CPU_RATE * share;
 
 // price = whole-card rate × the LARGER of memory share or compute share.
 function rateFor(vramGb, computeShare) {
@@ -262,6 +284,7 @@ function allocGpu(vramGb, computeShare) {
 }
 function releaseGpu(h) {
   if (!h) return;
+  if (h.cpu) { cpuPool.shareFree = Math.min(1, cpuPool.shareFree + h.share); return; }
   const card = gpuCards[h.cardId]; if (!card) return;
   card.vramFree = Math.min(CARD_VRAM_GB, card.vramFree + h._needV);
   card.computeFree = Math.min(1, card.computeFree + h.computeShare);
@@ -454,9 +477,12 @@ function loadState() {
     r._payTimer = null; r._respawning = false;
     deployments.set(r.id, r);
     if (r.payRef) payRefIndex.set(r.payRef.toLowerCase(), r.id);
-    if (r._gpu) {                       // re-reserve the GPU slice this deployment still holds
-      const card = gpuCards[r._gpu.cardId];
-      if (card) { card.vramFree -= r._gpu._needV; card.computeFree -= r._gpu.computeShare; }
+    if (r._gpu) {                       // re-reserve the slice this deployment still holds
+      if (r._gpu.cpu) cpuPool.shareFree = Math.max(0, cpuPool.shareFree - r._gpu.share);
+      else {
+        const card = gpuCards[r._gpu.cardId];
+        if (card) { card.vramFree -= r._gpu._needV; card.computeFree -= r._gpu.computeShare; }
+      }
     }
     if (r.status === "running") {
       // FREEZE the outage: the gap between savedAt and now is never charged. The
@@ -866,7 +892,7 @@ async function getMeasurements(rec, { origin = PUBLIC_URL, nonce } = {}) {
     out.enclave = { available: false, error: e.message,
                     note: "Fetch " + RAD_PATH + " from this origin yourself - the shim serves it directly." };
   }
-  if (rec?._gpu) {
+  if (IS_GPU && rec?._gpu) {
     const n = nonce || randomBytes(32).toString("hex");
     try {
       const ev = await fetchGpuEvidence(n);
@@ -1061,8 +1087,23 @@ app.get("/v1/health", (_req, res) => res.json({ status: "ok", deployments: deplo
                                  fresh: (Date.now() - _lastPollOkAt) < WATCHER_STALE_SEC * 1000 } : null }));
 app.get("/v1/version", (_req, res) => res.json({ service: "nan-supervisor/0.1.0", contract: "nan-openapi/1.0.0", chainId: CHAIN_ID }));
 
-app.get("/v1/pricing", (_req, res) => res.json({
-  assets: ["ETH","USDC"],
+app.get("/v1/pricing", (_req, res) => {
+  if (!IS_GPU) return res.json({
+    assets: ["ETH","USDC"], gpu: false,
+    model: "CPU-only enclave: request a single share (0..1) of the node's vCPU+RAM. Billed per second at share × the whole-node rate, dialed in whole percent. GPU deployments run on GPU enclaves.",
+    node: { vcpus: NODE_VCPUS, ramGb: NODE_RAM_GB,
+            wholeNodePerSecondUsdc: CPU_RATE.toFixed(7), wholeNodePerHourUsdc: (CPU_RATE * 3600).toFixed(2) },
+    computeGranularity: { unit: "percent", step: 1, minPercent: MIN_COMPUTE_PCT },
+    formula: "ratePerSecondUsdc = wholeNodePerSecond × share",
+    examples: [5, 25, 50, 100].map(pct => {
+      const s = normalizeCpuReq(pct / 100), r = cpuRateFor(s.share);
+      return { share: s.share, vcpus: round1(s.share * NODE_VCPUS), ramGb: round1(s.share * NODE_RAM_GB),
+               ratePerSecondUsdc: r.toFixed(7), ratePerHourUsdc: (r * 3600).toFixed(2) };
+    }),
+    billingIncrementSeconds: 1,
+  });
+  res.json({
+  assets: ["ETH","USDC"], gpu: true,
   model: "Request any VRAM slice (GB) and an optional compute share of a card. Both are hardware-enforced caps via MPS under NVIDIA CC (CC disables MIG, so splits are arbitrary, not fixed profiles). Compute is dialed in whole percent of the card. Billed per second by the LARGER of memory share (vramGb / cardVramGb) or compute share, times the whole-card rate.",
   card: { vramGb: CARD_VRAM_GB, count: GPU_COUNT, sms: SM_TOTAL,
           wholeCardPerSecondUsdc: FULL_RATE.toFixed(7), wholeCardPerHourUsdc: (FULL_RATE * 3600).toFixed(2) },
@@ -1077,26 +1118,46 @@ app.get("/v1/pricing", (_req, res) => res.json({
              ratePerSecondUsdc: r.toFixed(7), ratePerHourUsdc: (r * 3600).toFixed(2) };
   }),
   billingIncrementSeconds: 1,
-}));
+  });
+});
 
 app.get("/availability", async (_req, res) => {
   // Live from the active backend's allocator. In vm mode the manager reports CPU/RAM
-  // capacity; we keep emitting the GPU-flavored fields (synthesized from maxShare) so
-  // the existing frontend stays consistent. Falls back to local accounting if down.
+  // capacity; GPU enclaves keep emitting the GPU-flavored fields (synthesized from
+  // maxShare) so the existing frontend stays consistent. A CPU-only enclave reports
+  // gpu:false + node capacity — callers use this to tell the flavors apart (the
+  // registry entry itself carries no type). Falls back to local accounting if down.
   try {
     const h = PROVISION_BACKEND === "vm" ? await vmHealth() : await mgrHealth();
     const c = h.capacity;
+    if (!IS_GPU) return res.json({
+      gpu: false, type: "cpu",
+      maxShare: c.maxShare, usedShare: c.usedShare,
+      vcpusFree: c.vcpusFree ?? round1(c.maxShare * NODE_VCPUS),
+      ramGbFree: c.ramGbFree ?? round1(c.maxShare * NODE_RAM_GB),
+      nodeVcpus: NODE_VCPUS, nodeRamGb: NODE_RAM_GB, cards: 0,
+      source: "vmmanager", updatedAt: new Date().toISOString(),
+    });
     const smFree = (c.smFree != null) ? c.smFree : Math.round(c.maxShare * SM_TOTAL);
     const vramFreeGb = (c.vramFreeGb != null) ? c.vramFreeGb : round1(c.maxShare * CARD_VRAM_GB);
     return res.json({
+      gpu: true, type: "gpu",
       maxShare: c.maxShare, usedShare: c.usedShare,
       smFree, smTotal: SM_TOTAL,
       vramFreeGb, cardVramGb: CARD_VRAM_GB, cards: GPU_COUNT,
       source: PROVISION_BACKEND === "vm" ? "vmmanager" : "worker", updatedAt: new Date().toISOString(),
     });
   } catch (e) {
+    if (!IS_GPU) return res.json({
+      gpu: false, type: "cpu",
+      maxShare: maxFreeCpu(), usedShare: round3(1 - maxFreeCpu()),
+      vcpusFree: round1(maxFreeCpu() * NODE_VCPUS), ramGbFree: round1(maxFreeCpu() * NODE_RAM_GB),
+      nodeVcpus: NODE_VCPUS, nodeRamGb: NODE_RAM_GB, cards: 0,
+      source: "fallback", note: "wasm manager unreachable", updatedAt: new Date().toISOString(),
+    });
     const c = capacity();
     return res.json({
+      gpu: true, type: "gpu",
       maxShare: c.maxComputeShare, usedShare: round3(1 - c.maxComputeShare),
       smFree: Math.round(c.maxComputeShare * SM_TOTAL), smTotal: SM_TOTAL,
       vramFreeGb: c.vramFreeGb, cardVramGb: CARD_VRAM_GB, cards: GPU_COUNT,
@@ -1108,6 +1169,7 @@ app.get("/availability", async (_req, res) => {
 // External proof that MPS caps are live: each running tenant's granted SM count
 // (sanitized - no tenant ids). A 25% tenant should report ~33 of 132 SMs.
 app.get("/v1/gpu", async (_req, res) => {
+  if (!IS_GPU) return fail(res, 404, "no_gpu", "This is a CPU-only enclave: no GPU is attached.");
   try {
     const h = await mgrHealth(5000);
     res.json({
@@ -1393,29 +1455,46 @@ app.post("/v1/deployments", authed, async (req, res) => {
   if (b.sshPublicKey != null && !/^(ssh-ed25519|ssh-rsa|ecdsa-sha2-|sk-ssh-|sk-ecdsa-)/.test(String(b.sshPublicKey).trim()))
     return fail(res, 422, "invalid_spec", "sshPublicKey must be an OpenSSH public key (ssh-ed25519 / ssh-rsa / ecdsa / sk-*).");
 
-  // resource request: single `share` (0..1) preferred; legacy vramGb/computeShare still accepted.
-  let vramGb0, computeShare0;
-  if (b.resources && b.resources.share != null) {
-    const s = Number(b.resources.share);
+  // resource request: single `share` (0..1) preferred; legacy vramGb/computeShare
+  // still accepted on GPU enclaves. Enclave partition: a CPU enclave (GPU_COUNT=0)
+  // runs ONLY CPU deployments — `share` buys a slice of the node's vCPU+RAM and
+  // GPU fields are refused; a GPU enclave runs ONLY GPU deployments — a GPU share
+  // is required, exactly as before.
+  let slice, gpu, rate;
+  if (!IS_GPU) {
+    if (b.resources && (Number(b.resources.vramGb) > 0 || b.resources.computeShare != null))
+      return fail(res, 422, "invalid_spec", "This is a CPU-only enclave: GPU resources (vramGb/computeShare) are not served here. Request resources.share (a share of the node's vCPU+RAM), or deploy to a GPU enclave.");
+    const s = (b.resources && b.resources.share != null) ? Number(b.resources.share) : 0.05;
     if (!(s > 0 && s <= 1)) return fail(res, 422, "invalid_spec", "resources.share must be in (0, 1].");
-    vramGb0 = s * CARD_VRAM_GB; computeShare0 = s;
+    slice = normalizeCpuReq(s);
+    gpu = allocCpu(slice.share);
+    if (!gpu) return fail(res, 409, "no_capacity",
+      `Requested ${slice.pct}% of the node but only ${Math.round(maxFreeCpu() * 100)}% is free.`);
+    rate = cpuRateFor(slice.share);
   } else {
-    vramGb0 = Number((b.resources && b.resources.vramGb) || 0);
-    if (!(vramGb0 >= 0) || vramGb0 > 100000) return fail(res, 422, "invalid_spec", "resources.vramGb out of range.");
-    computeShare0 = (b.resources && b.resources.computeShare != null) ? Number(b.resources.computeShare) : null;
-    if (computeShare0 != null && !(computeShare0 > 0 && computeShare0 <= 1))
-      return fail(res, 422, "invalid_spec", "resources.computeShare must be in (0, 1].");
-  }
-  if (!(vramGb0 > 0)) return fail(res, 422, "invalid_spec", "a GPU share is required (CPU-only is not supported).");
+    let vramGb0, computeShare0;
+    if (b.resources && b.resources.share != null) {
+      const s = Number(b.resources.share);
+      if (!(s > 0 && s <= 1)) return fail(res, 422, "invalid_spec", "resources.share must be in (0, 1].");
+      vramGb0 = s * CARD_VRAM_GB; computeShare0 = s;
+    } else {
+      vramGb0 = Number((b.resources && b.resources.vramGb) || 0);
+      if (!(vramGb0 >= 0) || vramGb0 > 100000) return fail(res, 422, "invalid_spec", "resources.vramGb out of range.");
+      computeShare0 = (b.resources && b.resources.computeShare != null) ? Number(b.resources.computeShare) : null;
+      if (computeShare0 != null && !(computeShare0 > 0 && computeShare0 <= 1))
+        return fail(res, 422, "invalid_spec", "resources.computeShare must be in (0, 1].");
+    }
+    if (!(vramGb0 > 0)) return fail(res, 422, "invalid_spec", "a GPU share is required on a GPU enclave (CPU-only deployments run on CPU-only enclaves).");
 
-  // reserve an arbitrary GPU slice; the worker isn't spawned until payment lands
-  const slice = normalizeReq(vramGb0, computeShare0);
-  if (slice.vramGb > maxFreeVram() + 1e-9)
-    return fail(res, 422, "invalid_spec", `requested ${slice.vramGb}GB VRAM exceeds the largest free slice (${round1(maxFreeVram())}GB on a ${CARD_VRAM_GB}GB card).`);
-  const gpu = allocGpu(slice.vramGb, slice.computeShare);
-  if (!gpu) return fail(res, 409, "no_capacity",
-    `No single card has ${slice.vramGb}GB VRAM and ${round3(slice.computeShare)} compute share free together (max free: ${round1(maxFreeVram())}GB, ${round3(maxFreeCompute())} share).`);
-  const rate = rateFor(slice.vramGb, slice.computeShare);
+    // reserve an arbitrary GPU slice; the worker isn't spawned until payment lands
+    slice = normalizeReq(vramGb0, computeShare0);
+    if (slice.vramGb > maxFreeVram() + 1e-9)
+      return fail(res, 422, "invalid_spec", `requested ${slice.vramGb}GB VRAM exceeds the largest free slice (${round1(maxFreeVram())}GB on a ${CARD_VRAM_GB}GB card).`);
+    gpu = allocGpu(slice.vramGb, slice.computeShare);
+    if (!gpu) return fail(res, 409, "no_capacity",
+      `No single card has ${slice.vramGb}GB VRAM and ${round3(slice.computeShare)} compute share free together (max free: ${round1(maxFreeVram())}GB, ${round3(maxFreeCompute())} share).`);
+    rate = rateFor(slice.vramGb, slice.computeShare);
+  }
 
   // SSH: install the caller's key, or mint one in-enclave and return it ONCE (now, at create).
   let keySource = "provided", authorizedKey = (b.sshPublicKey || "").trim(), oneTimePrivateKey = null;
@@ -1430,16 +1509,18 @@ app.post("/v1/deployments", authed, async (req, res) => {
   const rec = {
     id, owner: req.address, status: "awaiting_payment", public: isPublic, firewall,
     image, command: b.command || [],
-    resources: { vramGb: slice.vramGb, computeShare: round3(slice.computeShare), share: round3(slice.computeShare), cardId: gpu.cardId },
+    resources: gpu.cpu
+      ? { cpu: true, share: slice.share }
+      : { vramGb: slice.vramGb, computeShare: round3(slice.computeShare), share: round3(slice.computeShare), cardId: gpu.cardId },
     network: { port: appPort, protocol: "https", endpoint: `${originOf(req)}/x/${id}` },
-    attestation: { available: true, vmTechnology: "intel-tdx", gpuTechnology: "nvidia-cc", href: `/v1/deployments/${id}/attestation` },
+    attestation: { available: true, vmTechnology: "intel-tdx", gpuTechnology: IS_GPU ? "nvidia-cc" : null, href: `/v1/deployments/${id}/attestation` },
     region: "tinfoil", createdAt: new Date().toISOString(), startedAt: null,
     // fair-billing clock: a funded BALANCE (null = unlimited pilot) drained only
     // on healthy ticks - see startBillingTicker. paused surfaces a frozen clock.
     remainingMs: null, consumedMs: 0, paused: false, pauseReason: null, _lastTickAt: 0,
     payDeadline: Date.now() + PAYMENT_WINDOW_SEC * 1000,
     digest: image.digest || null, rate, payRef, paidUsdc: 0,
-    _gpu: gpu, _gpuSpec: { cardId: gpu.cardId, cardUuid: gpuCards[gpu.cardId]?.uuid || null, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare },
+    _gpu: gpu, _gpuSpec: gpu.cpu ? null : { cardId: gpu.cardId, cardUuid: gpuCards[gpu.cardId]?.uuid || null, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare },
     _port: 0, _sshPort: 0, _sshKeySource: keySource, _authorizedKey: authorizedKey, _payTimer: null,
   };
   deployments.set(id, rec);
@@ -1803,6 +1884,8 @@ app.get("/v1/deployments/:id/attestation", authed, async (req, res) => {
 let _gpuEvCache = null;                       // { ev?, err?, at } - failures cached briefly too
 app.get("/v1/attestation", async (req, res) => {
   const out = await getMeasurements(null, { origin: originOf(req) });
+  if (!IS_GPU)                                 // CPU-only enclave: no card, no NVML evidence to fetch
+    return res.json({ generatedAt: new Date().toISOString(), ...out, guideUrl: "https://nan.host/#attest" });
   try {
     const ttl = _gpuEvCache?.err ? 10_000 : 60_000;
     if (!_gpuEvCache || Date.now() - _gpuEvCache.at > ttl) {
@@ -1857,8 +1940,9 @@ app.get("/v1/deployments/:id/logs", authed, async (req, res) => {
 });
 
 app.use((_req, res) => fail(res, 404, "not_found", "No such route."));
-await initGpu();
-await initMps();
+if (IS_GPU) { await initGpu(); await initMps(); }        // CPU-only enclave: no cards to discover, no MPS
+else if (PROVISION_BACKEND !== "vm")
+  console.warn("[cpu] GPU_COUNT=0 but PROVISION_BACKEND!=vm — a CPU enclave has no GPU worker; deploys will fail");
 await initSshHostKey();
 // restore persisted deployments/payment cursor BEFORE serving traffic or polling:
 // the downtime gap is frozen (never charged) and reservations shift by the gap.
@@ -2082,6 +2166,7 @@ const DEPLOYMENT_COMPONENTS = [
   { name: "appRef", type: "string" }, { name: "ports", type: "string" },
   { name: "sshPubKey", type: "string" }, { name: "configCid", type: "string" },
   { name: "milliShare", type: "uint16" }, { name: "appPort", type: "uint32" },
+  { name: "gpu", type: "bool" },
   { name: "isPublic", type: "bool" }, { name: "active", type: "bool" },
   { name: "createdAt", type: "uint64" },
   { name: "rate", type: "uint256" }, { name: "balance6", type: "uint256" }, { name: "spent6", type: "uint256" },
@@ -2210,12 +2295,21 @@ async function claimSweep() {
       if (ex && !CLAIM_TERMINAL.has(ex.status)) continue;                 // already ours
       if (!d.active || Number(d.leaseUntil) * 1000 > Date.now()) continue; // stopped or leased
       if (d.balance6 < d.rate) continue;                                  // out of funded time
+      // partition rule: CPU deployments run only on CPU enclaves, GPU deployments
+      // only on GPU enclaves — never claim across the line.
+      if (Boolean(d.gpu) !== IS_GPU) continue;
       let firewall;
       try { firewall = parseFirewall({ ports: d.ports ? String(d.ports).split(",") : [] }); }
       catch (e) { continue; }                 // port spec we won't serve (mirrors the HTTP 422)
       const share = Number(d.milliShare) / 1000;
-      const slice = normalizeReq(share * CARD_VRAM_GB, share);
-      if (slice.vramGb > maxFreeVram() + 1e-9) continue;                  // doesn't fit right now
+      let slice;
+      if (IS_GPU) {
+        slice = normalizeReq(share * CARD_VRAM_GB, share);
+        if (slice.vramGb > maxFreeVram() + 1e-9) continue;                // doesn't fit right now
+      } else {
+        slice = normalizeCpuReq(share);
+        if (slice.share > maxFreeCpu() + 1e-9) continue;
+      }
       const g = await gateAppReference(d.appRef);
       if (g.error) continue;                  // unapproved/unlisted CID (or catalog unreachable: fail closed)
       await tryClaim(d, g.ref, firewall, slice);
@@ -2249,7 +2343,7 @@ async function tryClaim(d, ref, firewall, slice) {
 // an address, so owner-only routes (status, ssh, delete) work unchanged.
 async function adopt(d, ref, firewall, slice) {
   if (deployments.has(d.id)) deployments.delete(d.id);      // terminal leftover from an earlier lease
-  const gpu = allocGpu(slice.vramGb, slice.computeShare);
+  const gpu = slice.cpu ? allocCpu(slice.share) : allocGpu(slice.vramGb, slice.computeShare);
   if (!gpu) {                                                // capacity vanished since the sweep checked
     await sendClaimTx("release", [d.id]).catch(() => {});    // hand it back with the lease refunded
     return;
@@ -2257,21 +2351,23 @@ async function adopt(d, ref, firewall, slice) {
   const rec = {
     id: d.id, owner: getAddress(d.owner), status: "claimed", public: d.isPublic, firewall,
     image: { reference: ref }, command: [],
-    resources: { vramGb: slice.vramGb, computeShare: round3(slice.computeShare), share: round3(slice.computeShare), cardId: gpu.cardId },
+    resources: slice.cpu
+      ? { cpu: true, share: slice.share }
+      : { vramGb: slice.vramGb, computeShare: round3(slice.computeShare), share: round3(slice.computeShare), cardId: gpu.cardId },
     network: { port: Number(d.appPort) || 8080, protocol: "https", endpoint: `${_advertisedEndpoint}/x/${d.id}` },
-    attestation: { available: true, vmTechnology: "intel-tdx", gpuTechnology: "nvidia-cc", href: `/v1/deployments/${d.id}/attestation` },
+    attestation: { available: true, vmTechnology: "intel-tdx", gpuTechnology: IS_GPU ? "nvidia-cc" : null, href: `/v1/deployments/${d.id}/attestation` },
     region: "tinfoil", createdAt: new Date(Number(d.createdAt) * 1000).toISOString(), startedAt: null,
     // the local clock only mirrors the CURRENT lease; the chain holds the rest
     remainingMs: Number(d.leaseUntil) * 1000 - Date.now(), consumedMs: 0,
     paused: false, pauseReason: null, _lastTickAt: Date.now(),
     rate: Number(d.rate) / 1e6, paidUsdc: Number(d.spent6 + d.balance6),
     _onchain: true, _leaseUntil: Number(d.leaseUntil), _renewing: false,
-    _gpu: gpu, _gpuSpec: { cardId: gpu.cardId, cardUuid: gpuCards[gpu.cardId]?.uuid || null, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare },
+    _gpu: gpu, _gpuSpec: gpu.cpu ? null : { cardId: gpu.cardId, cardUuid: gpuCards[gpu.cardId]?.uuid || null, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare },
     _port: 0, _sshPort: 0, _sshKeySource: "on-chain", _authorizedKey: (d.sshPubKey || "").trim(), _payTimer: null,
   };
   deployments.set(rec.id, rec); saveStateSoon();
   if (await provisionTenant(rec)) {
-    console.log(`[claim] ${rec.id} adopted: app=${ref} share=${round3(slice.computeShare)} `
+    console.log(`[claim] ${rec.id} adopted: app=${ref} ${slice.cpu ? "cpu" : "gpu"} share=${round3(slice.cpu ? slice.share : slice.computeShare)} `
               + `lease until ${new Date(rec._leaseUntil * 1000).toISOString()}`);
   } else {
     // launch failed (bad wasm, image too big, ...): hand it back refunded so
@@ -2342,7 +2438,9 @@ function onchainPaymentInstructions(rec) {
   };
 }
 
-server.listen(PORT, () => console.log(`nan supervisor on :${PORT} · ${GPU_COUNT}×GPU @ ${CARD_VRAM_GB}GB (arbitrary split) · ssh host key ${SSH_HOST_KEY_FP}`));
+server.listen(PORT, () => console.log(`nan supervisor on :${PORT} · ${IS_GPU
+  ? `${GPU_COUNT}×GPU @ ${CARD_VRAM_GB}GB (arbitrary split)`
+  : `CPU-only enclave (${NODE_VCPUS} vCPU / ${NODE_RAM_GB}GB, node-share split)`} · ssh host key ${SSH_HOST_KEY_FP}`));
 
 // advertise this enclave on-chain (opt-in, non-blocking, never fatal)
 // If the origin is pinned (PUBLIC_URL), advertise eagerly at boot; otherwise we

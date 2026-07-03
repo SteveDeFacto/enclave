@@ -53,10 +53,16 @@ via transaction instead of via one enclave's API).
 
 ## Contract summary (`NanDeployments.sol`)
 
-- **`create(appRef, milliShare, appPort, ports, isPublic, sshPubKey, configCid)`**
-  — permissionless; inert until funded. `rate` (USDC 6dp/sec) is snapshotted
-  from the owner-set global price, so price changes never re-price existing
-  deployments. `id = keccak256(creator, nonce)`.
+- **`create(appRef, gpu, milliShare, appPort, ports, isPublic, sshPubKey, configCid)`**
+  — permissionless; inert until funded. `gpu` picks the flavor AND the price
+  schedule: `true` = a GPU deployment (`milliShare` is 1/1000ths of a card,
+  priced from `pricePerSec6`), `false` = a CPU deployment (`milliShare` is
+  1/1000ths of a CPU node's vCPU+RAM, priced from `cpuPricePerSec6`). `rate`
+  (USDC 6dp/sec) is snapshotted at create, so price changes never re-price
+  existing deployments. `id = keccak256(creator, nonce)`.
+  **Partition rule (enforced by runners at claim time): CPU deployments are
+  claimed ONLY by CPU-only enclaves (`GPU_COUNT=0`); GPU deployments ONLY by
+  GPU-enabled enclaves.**
 - **`fundWithAuthorization(id, ...)` / `fundEth(id)`** — non-custodial, exactly
   NanPay's pattern (EIP-3009 nonce bound to the first 16 bytes of `id`; funds
   forward to `payout` in the same tx). The difference: the credit lands in
@@ -143,11 +149,12 @@ async function claimSweep() {
     if (!page.length) break;
     for (const d of page) {
       if (deployments.has(d.id)) continue;              // already ours (running or recovering)
+      if (Boolean(d.gpu) !== IS_GPU) continue;          // partition rule: never claim across the CPU/GPU line
       if (!d.active || Number(d.leaseUntil) * 1000 > Date.now()) continue;  // stopped or leased
       if (d.balance6 < d.rate) continue;                // out of funded time — queue drops it
       // capacity check BEFORE claiming: never burn a user's lease we can't serve
       const share = Number(d.milliShare) / 1000, vramGb = share * CARD_VRAM_GB;
-      if (vramGb > maxFreeVram() + 1e-9) continue;
+      if (vramGb > maxFreeVram() + 1e-9) continue;      // (CPU enclaves check the node-share pool instead)
       // catalog approval gate, same as the HTTP deploy path (fail closed)
       const g = await gateAppReference(d.appRef);
       if (g.error) continue;
@@ -315,7 +322,8 @@ the new enclave. This is the same no-trusted-gateway shape as discovery today.
 # Base Sepolia dry run (compile + plan, no broadcast; re-emits the ABI):
 DEPLOYER_PRIVATE_KEY=0x... node scripts/deploy-deployments.mjs --dry-run --yes
 
-# Base Sepolia (uses REGISTRY_ADDRESS from tinfoil-config.yml; sets ~$1/h price):
+# Base Sepolia (uses REGISTRY_ADDRESS from tinfoil-config.yml; prices are hardcoded
+# in the contract: ~$6/h full GPU card, ~$2/h whole CPU node — no setter txs sent):
 DEPLOYER_PRIVATE_KEY=0x... node scripts/deploy-deployments.mjs
 
 # Base MAINNET:

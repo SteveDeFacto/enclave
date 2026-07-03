@@ -1,0 +1,32 @@
+# DO NOT RUN MANUALLY. This workflow is dispatched automatically by
+# `tinfoil-release-cpu.yml` against the newly created -cpu release tag.
+# It measures the CPU-only enclave config (tinfoil-config.cpu.yml).
+
+name: Tinfoil Release - Publish CPU (auto-triggered)
+
+run-name: Publish CPU release ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: tinfoil-container-release-${{ github.ref_name }}
+
+jobs:
+  measure-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # create the GitHub release
+      packages: write       # attach the attestation to the image
+      id-token: write       # keyless attestation signing
+      attestations: write   # publish the attestation
+
+    steps:
+      - name: Measure image, attest, and publish the release
+        uses: tinfoilsh/measure-image-action@e9967c4a2dd60bacc7cce9e4315c5ebcd46118e9 # v0.9.2
+        with:
+          config-file: ${{ github.workspace }}/tinfoil-config.cpu.yml
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # never mark CPU releases "latest": default verification against this
+          # repo resolves to the GPU flavor's latest release.
+          mark-as-latest: "false"

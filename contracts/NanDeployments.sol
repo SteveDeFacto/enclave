@@ -34,9 +34,10 @@ pragma solidity ^0.8.20;
 ///     enclave refuses to claim an ipfs:// appRef whose version isn't Approved in
 ///     NanAppCatalog (one cidStatus eth_call, fail closed). The ledger doesn't parse
 ///     appRefs; the enclave that would run the code is the one that checks it.
-///   - Pricing: the contract owner sets a global per-second full-card price; each
-///     deployment SNAPSHOTS its rate at create (price changes never re-price
-///     existing deployments). rate = price * milliShare / 1000, rounded up.
+///   - Pricing: two global per-second prices, hardcoded at deploy (~$6.00/hour
+///     for a full GPU card, ~$2.00/hour for a full CPU node) and owner-adjustable
+///     later; each deployment SNAPSHOTS its rate at create (price changes never
+///     re-price existing deployments). rate = price * milliShare / 1000, rounded up.
 ///
 /// Fairness bounds (the cost of decentralized failover, all bounded by leaseSec):
 ///   - a runner that dies mid-lease has already burned that lease: the user loses at
@@ -89,8 +90,11 @@ contract NanDeployments {
                                 // enclave-minted keys are NOT portable — the private key would die with the runner)
         string  configCid;      // optional IPFS CID of a config blob ("" = none). NOTE: whatever it
                                 // points at is PUBLIC unless encrypted; see DEPLOYMENTS.md "secrets".
-        uint16  milliShare;     // GPU share in 1/1000ths of a card (1..1000)
+        uint16  milliShare;     // share in 1/1000ths (1..1000): of a card if gpu, of a CPU node if not
         uint32  appPort;        // guest HTTP port the app serves on
+        bool    gpu;            // true = GPU deployment (claimable by GPU enclaves ONLY);
+                                // false = CPU deployment (claimable by CPU-only enclaves ONLY).
+                                // The partition is enforced by runners at claim time.
         bool    isPublic;       // anyone may hit the data path (vs owner-only)
         bool    active;         // owner-set; inactive is not claimable/fundable (kept for history)
         uint64  createdAt;
@@ -116,7 +120,11 @@ contract NanDeployments {
     INanRegistry public immutable registry;
     IAggregatorV3 public ethUsdFeed;       // 0x0 = ETH funding disabled (USDC only)
 
-    uint256 public pricePerSec6;           // USDC 6dp per second for a FULL card (milliShare = 1000)
+    // Prices are HARDCODED at deploy (no post-deploy setter txs needed — Base's
+    // public RPC caps delegated EOAs at one in-flight tx, so follow-up sends
+    // right after the deploy bounce). Owner setters remain for later changes.
+    uint256 public pricePerSec6 = 1667;    // USDC 6dp per second, FULL card (gpu=true, milliShare = 1000): ~$6.00/hour
+    uint256 public cpuPricePerSec6 = 556;  // USDC 6dp per second, FULL CPU node (gpu=false, milliShare = 1000): ~$2.00/hour
     uint64  public leaseSec = 1800;        // lease quantum: max claim/renew burn, max time lost to a dead runner
 
     bytes32[] private _ids;                                // every deployment ever created
@@ -124,7 +132,7 @@ contract NanDeployments {
     mapping(bytes32 => bool) private _exists;
     mapping(address => uint64) private _nonces;            // per-creator id salt
 
-    event Created(bytes32 indexed id, address indexed owner, string appRef, uint16 milliShare, uint256 rate);
+    event Created(bytes32 indexed id, address indexed owner, string appRef, bool gpu, uint16 milliShare, uint256 rate);
     event ConfigSet(bytes32 indexed id, string sshPubKey, string configCid);
     event ActiveSet(bytes32 indexed id, bool active);
     event Funded(bytes32 indexed id, address indexed payer, uint256 amount6);
@@ -133,6 +141,7 @@ contract NanDeployments {
     event Renewed(bytes32 indexed id, bytes32 indexed enclaveId, uint64 leaseUntil, uint256 burned6);
     event Released(bytes32 indexed id, bytes32 indexed enclaveId, uint256 refunded6);
     event PriceSet(uint256 pricePerSec6);
+    event CpuPriceSet(uint256 cpuPricePerSec6);
     event LeaseSecSet(uint64 leaseSec);
     event PayoutChanged(address indexed payout);
     event OwnerChanged(address indexed owner);
@@ -147,6 +156,8 @@ contract NanDeployments {
         ethUsdFeed = IAggregatorV3(_ethUsdFeed);   // may be 0x0: ETH funding off
         emit PayoutChanged(_payout);
         emit OwnerChanged(msg.sender);
+        emit PriceSet(pricePerSec6);               // prices are live from deploy (hardcoded defaults)
+        emit CpuPriceSet(cpuPricePerSec6);
     }
 
     // ========================================================================
@@ -157,9 +168,12 @@ contract NanDeployments {
     /// @dev id embeds the creator + a per-creator nonce, so ids can't be squatted
     ///      or predicted across owners (same structural-ownership trick as the
     ///      catalog's appId). The rate snapshot makes future price changes
-    ///      non-retroactive.
+    ///      non-retroactive. `gpu` picks both the price schedule and which
+    ///      enclaves will claim it: GPU enclaves serve only gpu=true, CPU-only
+    ///      enclaves serve only gpu=false.
     function create(
         string calldata appRef,
+        bool gpu,
         uint16 milliShare,
         uint32 appPort,
         string calldata ports,
@@ -167,7 +181,6 @@ contract NanDeployments {
         string calldata sshPubKey,
         string calldata configCid
     ) external returns (bytes32 id) {
-        require(pricePerSec6 > 0, "price unset");
         require(bytes(appRef).length > 0 && bytes(appRef).length <= MAX_APPREF, "appRef length");
         require(milliShare > 0 && milliShare <= 1000, "milliShare range");
         require(appPort > 0, "appPort range");
@@ -186,14 +199,24 @@ contract NanDeployments {
         d.ports = ports;
         d.sshPubKey = sshPubKey;
         d.configCid = configCid;
+        _initScalars(d, appRef, gpu, milliShare, appPort, isPublic);
+    }
+
+    /// @dev Split out (emit included) so create() keeps a workable stack frame
+    ///      without viaIR (same shape as the catalog's `_reserveCid` / `_touchApp`).
+    function _initScalars(Deployment storage d, string calldata appRef, bool gpu,
+                          uint16 milliShare, uint32 appPort, bool isPublic) private {
+        uint256 price = gpu ? pricePerSec6 : cpuPricePerSec6;
+        require(price > 0, "price unset");
         d.milliShare = milliShare;
         d.appPort = appPort;
+        d.gpu = gpu;
         d.isPublic = isPublic;
         d.active = true;
         d.createdAt = uint64(block.timestamp);
         // ceil: a 1-milliShare deployment still pays at least 1 unit/sec
-        d.rate = (pricePerSec6 * milliShare + 999) / 1000;
-        emit Created(id, msg.sender, appRef, milliShare, d.rate);
+        d.rate = (price * milliShare + 999) / 1000;
+        emit Created(d.id, msg.sender, appRef, gpu, milliShare, d.rate);
     }
 
     /// @notice Update the portable config; runners apply it on the next (re)launch.
@@ -339,6 +362,15 @@ contract NanDeployments {
         require(_pricePerSec6 > 0, "price=0");
         pricePerSec6 = _pricePerSec6;      // affects FUTURE creates only (rate is snapshotted)
         emit PriceSet(_pricePerSec6);
+    }
+
+    /// @notice Whole-CPU-node per-second price for gpu=false deployments. 0 (the
+    ///         default) keeps CPU creates disabled until it is deliberately set.
+    function setCpuPrice(uint256 _cpuPricePerSec6) external {
+        require(msg.sender == owner, "!owner");
+        require(_cpuPricePerSec6 > 0, "price=0");
+        cpuPricePerSec6 = _cpuPricePerSec6;   // affects FUTURE creates only (rate is snapshotted)
+        emit CpuPriceSet(_cpuPricePerSec6);
     }
 
     function setLeaseSec(uint64 _leaseSec) external {

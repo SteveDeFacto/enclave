@@ -213,7 +213,7 @@
         "operationId": "getGpu",
         "summary": "Live MPS / per-tenant SM grants",
         "security": [],
-        "description": "External proof that MPS caps are live: each running tenant's granted SM count (sanitized, no tenant ids). A 25% tenant reports roughly a quarter of the card's SMs.",
+        "description": "External proof that MPS caps are live: each running tenant's granted SM count (sanitized, no tenant ids). A 25% tenant reports roughly a quarter of the card's SMs. On a CPU-only enclave this endpoint returns 404 (no GPU attached).",
         "responses": {
           "200": {
             "description": "MPS status and per-tenant SM grants.",
@@ -221,6 +221,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Gpu"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CPU-only enclave: no GPU attached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -245,7 +255,7 @@
         ],
         "operationId": "createDeployment",
         "summary": "Create a deployment (awaiting payment)",
-        "description": "Reserves a GPU share and returns a deployment in `awaiting_payment` with a `payment` block. The Wasm app is NOT started yet: sign a USDC payment authorization (EIP-3009 ReceiveWithAuthorization) and submit payWithAuthorization(deploymentRef, ...); the enclave sees the payment, launches your app as its own sandboxed, MPS-capped worker process on the confidential GPU, and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. The share is a software cap (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles). Catalog apps (ipfs://<cid> references) deploy only after the catalog owner has approved that version on-chain; unapproved or rejected versions return 403 not_approved.",
+        "description": "Reserves a share and returns a deployment in `awaiting_payment` with a `payment` block. On a GPU enclave the share is a GPU slice; on a CPU-only enclave (GPU_COUNT=0) it is a slice of the node's vCPU+RAM at the CPU rate, and GPU resource fields are refused — CPU-only enclaves run only CPU deployments, GPU enclaves only GPU deployments. The Wasm app is NOT started yet: sign a USDC payment authorization (EIP-3009 ReceiveWithAuthorization) and submit payWithAuthorization(deploymentRef, ...); the enclave sees the payment, launches your app as its own sandboxed, MPS-capped worker process on the confidential GPU, and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. The share is a software cap (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles). Catalog apps (ipfs://<cid> references) deploy only after the catalog owner has approved that version on-chain; unapproved or rejected versions return 403 not_approved.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1011,8 +1021,20 @@
       },
       "Availability": {
         "type": "object",
-        "description": "Live free capacity as a single share (0 to 1). Served at the root origin, not under /v1.",
+        "description": "Live free capacity as a single share (0 to 1). Served at the root origin, not under /v1. `gpu` tells the enclave flavor apart: true = GPU enclave (share of a card), false = CPU-only enclave (share of the node's vCPU+RAM; the VRAM/SM fields are absent).",
         "properties": {
+          "gpu": {
+            "type": "boolean",
+            "description": "true = GPU enclave, false = CPU-only enclave.",
+            "example": true
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "gpu",
+              "cpu"
+            ]
+          },
           "maxShare": {
             "type": "number",
             "description": "Largest share of the card still free (0 to 1). Requests above this get 409.",
@@ -1046,15 +1068,38 @@
             "type": "string",
             "enum": [
               "worker",
+              "vmmanager",
               "fallback"
             ]
           },
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "vcpusFree": {
+            "type": "number",
+            "description": "CPU-only enclaves: free vCPUs on the node.",
+            "example": 12
+          },
+          "ramGbFree": {
+            "type": "number",
+            "description": "CPU-only enclaves: free RAM (GB) on the node.",
+            "example": 48
+          },
+          "nodeVcpus": {
+            "type": "integer",
+            "description": "CPU-only enclaves: node size in vCPUs.",
+            "example": 16
+          },
+          "nodeRamGb": {
+            "type": "integer",
+            "description": "CPU-only enclaves: node RAM (GB).",
+            "example": 64
           }
         },
         "example": {
+          "gpu": true,
+          "type": "gpu",
           "maxShare": 0.55,
           "usedShare": 0.45,
           "smFree": 72,
@@ -1131,23 +1176,23 @@
       },
       "ResourceSpec": {
         "type": "object",
-        "description": "A single share of the card (0 to 1) sets a matching VRAM + compute cap. Legacy vramGb/computeShare are still accepted.",
+        "description": "A single share (0 to 1). On a GPU enclave it sets a matching VRAM + compute cap of the card (legacy vramGb/computeShare still accepted). On a CPU-only enclave it is a share of the node's vCPU+RAM, and the GPU fields are refused (422). The enclave partition rule applies: CPU-only enclaves run only CPU deployments; GPU enclaves run only GPU deployments.",
         "properties": {
           "share": {
             "type": "number",
             "minimum": 0.01,
             "maximum": 1,
-            "description": "Share of the whole card (0 to 1).",
+            "description": "Share of the whole card (GPU enclave) or of the whole node (CPU-only enclave), 0 to 1.",
             "example": 0.25
           },
           "vramGb": {
             "type": "number",
-            "description": "Legacy: explicit VRAM cap in GB.",
+            "description": "Legacy: explicit VRAM cap in GB. GPU enclaves only.",
             "example": 35
           },
           "computeShare": {
             "type": "number",
-            "description": "Legacy: explicit compute share (0 to 1).",
+            "description": "Legacy: explicit compute share (0 to 1). GPU enclaves only.",
             "example": 0.25
           }
         }
@@ -1290,6 +1335,10 @@
               },
               "cardId": {
                 "type": "integer"
+              },
+              "cpu": {
+                "type": "boolean",
+                "description": "Present and true on CPU-only enclaves: `share` is a node share, no GPU fields."
               }
             }
           },
@@ -1347,7 +1396,10 @@
             "example": "10.00"
           },
           "timeRemainingSec": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "description": "Funded runtime balance in seconds (null = unlimited pilot deployment). Drains only while the platform is healthy; frozen (see paused) during outages, so it never shrinks while service is down.",
             "example": 21600
           },
@@ -1357,7 +1409,10 @@
             "example": false
           },
           "pauseReason": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Why the clock is frozen: backend_down | watcher_stale | instance_missing | restart_recovery.",
             "example": null
           },
@@ -1451,11 +1506,31 @@
         "type": "object",
         "description": "Live CPU-TEE evidence. `quote` is the raw hardware quote (base64, decompressed); feed it to any DCAP/SNP verifier. `reportData` binds the enclave TLS key: bytes 0-31 are sha256 of the TLS public key (SPKI DER) this origin presents.",
         "properties": {
-          "technology": { "type": "string", "example": "intel-tdx" },
-          "quote": { "type": "string", "description": "Base64 raw quote." },
-          "quoteVersion": { "type": ["integer", "null"], "example": 4 },
-          "measurements": { "$ref": "#/components/schemas/Measurements" },
-          "reportData": { "type": ["string", "null"], "description": "64-byte report_data, hex." }
+          "technology": {
+            "type": "string",
+            "example": "intel-tdx"
+          },
+          "quote": {
+            "type": "string",
+            "description": "Base64 raw quote."
+          },
+          "quoteVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "example": 4
+          },
+          "measurements": {
+            "$ref": "#/components/schemas/Measurements"
+          },
+          "reportData": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "64-byte report_data, hex."
+          }
         },
         "additionalProperties": true
       },
@@ -1463,13 +1538,48 @@
         "type": "object",
         "description": "NVIDIA confidential-computing evidence, signed by the GPU over `nonce`. Verify `report` + `certChain` with NVIDIA NRAS or nvtrust's local_gpu_verifier and confirm it signs your nonce.",
         "properties": {
-          "technology": { "type": "string", "example": "nvidia-cc" },
-          "ccMode": { "type": ["string", "null"], "example": "on" },
-          "nonce": { "type": "string", "description": "32-byte hex freshness challenge folded into the report." },
-          "driverVersion": { "type": ["string", "null"] },
-          "report": { "type": ["string", "null"], "description": "Base64 GPU attestation report (first card)." },
-          "certChain": { "type": ["string", "null"], "description": "Base64 attestation cert chain (first card)." },
-          "gpus": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+          "technology": {
+            "type": "string",
+            "example": "nvidia-cc"
+          },
+          "ccMode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "on"
+          },
+          "nonce": {
+            "type": "string",
+            "description": "32-byte hex freshness challenge folded into the report."
+          },
+          "driverVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "report": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base64 GPU attestation report (first card)."
+          },
+          "certChain": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base64 attestation cert chain (first card)."
+          },
+          "gpus": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
         },
         "additionalProperties": true
       },
@@ -1480,13 +1590,30 @@
           "attestationDocument": {
             "type": "object",
             "properties": {
-              "format": { "type": "string", "example": "https://tinfoil.sh/predicate/tdx-guest/v2" },
-              "body": { "type": "string", "description": "Base64 (gzip-compressed) hardware attestation report." }
+              "format": {
+                "type": "string",
+                "example": "https://tinfoil.sh/predicate/tdx-guest/v2"
+              },
+              "body": {
+                "type": "string",
+                "description": "Base64 (gzip-compressed) hardware attestation report."
+              }
             }
           },
-          "fetchedFrom": { "type": "string" },
-          "fetchedAt": { "type": "string", "format": "date-time" },
-          "observedTlsKeyFingerprint": { "type": ["string", "null"], "description": "sha256 (hex) of the TLS public key the shim presented when this copy was fetched." }
+          "fetchedFrom": {
+            "type": "string"
+          },
+          "fetchedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "observedTlsKeyFingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "sha256 (hex) of the TLS public key the shim presented when this copy was fetched."
+          }
         },
         "additionalProperties": true
       },
@@ -1508,7 +1635,16 @@
               "selfCheck": {
                 "type": "object",
                 "properties": {
-                  "result": { "type": "string", "enum": ["pass", "fail", "pending", "unavailable"], "example": "pass" }
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "pending",
+                      "unavailable"
+                    ],
+                    "example": "pass"
+                  }
                 },
                 "additionalProperties": true
               }
@@ -1516,7 +1652,10 @@
             "additionalProperties": true
           },
           "tlsKeyFingerprint": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "sha256:<hex> of the enclave TLS public key, extracted from the quote's report_data.",
             "example": "sha256:4b8c…e2a1"
           },

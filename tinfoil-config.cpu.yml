@@ -1,0 +1,108 @@
+# NAN enclave — CPU-ONLY flavor (no GPU attached, no GPU containers).
+#
+# Two containers share one confidential VM (shared localhost network, shared
+# /mnt/ramdisk volume):
+#
+#   supervisor    - control plane (auth, billing, quota, routing). Public via shim.
+#   wasm-manager  - tenant apps via `wasmtime serve` (all CPU; no GPU interface).
+#
+# GPU_COUNT=0 puts the supervisor in CPU-enclave mode: deployments buy a share
+# of the NODE's vCPU+RAM instead of a GPU slice, priced at the CPU rate. The
+# partition rule is enforced here and in the claim loop: a CPU enclave runs
+# ONLY CPU deployments; GPU-enabled enclaves run ONLY GPU deployments.
+#
+# Released separately from the GPU flavor: tag CPU releases as v<X.Y.Z>-cpu via
+# the "Tinfoil Release (CPU)" workflow, which measures THIS file. Image digests
+# are pinned by scripts/release.sh / the workflow, same as tinfoil-config.yml.
+cvm-version: 0.7.5
+cpus: 16
+memory: 65536      # 64 GiB
+
+containers:
+  # --- supervisor: control plane (no GPU), public ingress -----------------------
+  - name: "supervisor"
+    image: "ghcr.io/stevedefacto/nan@sha256:c04a6a609e584a4a1d56a202797b47bd632daef1f12db180ed0bbf4d5606e328"
+    restart: always
+    env:
+      - PORT: "8080"
+      # CPU-enclave mode: no cards. The supervisor refuses GPU deployments and
+      # allocates node shares (vCPU+RAM) instead; the claim loop only adopts
+      # on-chain deployments created with gpu=false.
+      - GPU_COUNT: "0"
+      - NODE_VCPUS: "16"
+      - NODE_RAM_GB: "64"
+      # tenant-app hosting: the wasm-manager runs each app as a `wasmtime serve` process.
+      - PROVISION_BACKEND: "vm"                          # required on a CPU enclave (no GPU worker exists)
+      - VMMGR_URL: "http://localhost:8091"               # the wasm-manager (container below)
+      - PUBLIC_URL: ""                                  # empty: supervisor derives its origin per-request from the Host header
+      - SIWE_DOMAIN: "nan.host"
+      - SIWE_URI: "https://nan.host"
+      - CHAIN_ID: "8453"
+      - CORS_ORIGINS: "https://nan.host"
+      - BASE_RPC: "https://mainnet.base.org"
+      # pay-per-deploy (no custody): same NanPay forwarder as the GPU flavor.
+      - FORWARDER_ADDRESS: "0xDd3905faE5F961891e6392eA48Cb63d5a4732b87"
+      - USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"   # USDC on Base
+      # app approval gate: same NanAppCatalog as the GPU flavor.
+      - APP_CATALOG_ADDRESS: "0x3e5Ecb2665275D9C820D37A9659C5DD39079C8c5"
+      - PAYMENT_WINDOW_SEC: "600"
+      - GRACE_SEC: "90"
+      - PAY_POLL_SEC: "12"
+      - SESSION_TTL: "43200"
+      # attestation: CPU releases are measured from THIS config under -cpu tags
+      # on the same repo. NOTE: verifiers that fetch the repo's LATEST release
+      # (tinfoil-cli default) will see the GPU flavor's measurement — point them
+      # at the matching -cpu release explicitly.
+      - ENCLAVE_REPO: "SteveDeFacto/nan"
+      # on-chain discovery: same registry; a CPU enclave advertises like any
+      # other and callers learn it is CPU-only from its /availability.
+      - REGISTRY_ENABLED: "1"
+      - REGISTRY_ADDRESS: "0xC4C6C7D4D0b9C92ba5326f7903e6f0C300B6994D"
+      # Portable deployments: the claim loop adopts ONLY CPU deployments
+      # (NanDeployments records created with gpu=false).
+      - CLAIM_ENABLED: "1"
+      - DEPLOYMENTS_ADDRESS: "0x8845DE6475664E6D3B0ce955f21A7F6F60B13DC9"
+      # public UDP: set to a CPU relay box's routed /64 if one is attached; empty
+      # keeps udp ports in-enclave-only.
+      - UDP_ADDR_PREFIX: ""
+      # manual-billing / pilot controls, same semantics as the GPU flavor.
+      - AUTO_PROVISION: ""
+      - AUTO_PROVISION_HOURS: "0"
+      # public-TCP relay support; empty disables the /tls/ bridge on this flavor
+      # until a relay domain is routed to it.
+      - TLS_BRIDGE_DOMAIN: ""
+    volumes:
+      - /mnt/ramdisk/nan-state:/var/lib/nan
+    secrets:
+      - SECRET
+      - ADMIN_TOKEN              # operator token for POST /v1/admin/deployments/:id/provision
+      - REGISTRY_PRIVATE_KEY     # NanRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
+    command: ["node", "supervisor.js"]
+
+  # --- wasm manager: tenant apps via `wasmtime serve` --------------------------
+  # Identical to the GPU flavor's wasm-manager except NODE_HAS_GPU=0: catalog
+  # apps marked `gpu: true` are refused at launch (a CPU node cannot serve them).
+  - name: "wasm-manager"
+    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:14ac04be2ffc6d53969260e7dd545af1c0cd4013df18f7561a0c9732fc92ed6e"
+    restart: always
+    env:
+      - WASM_MANAGER_PORT: "8091"
+      - NODE_VCPUS: "16"
+      - NODE_RAM_GB: "64"
+      - NODE_HAS_GPU: "0"           # refuse catalog apps that declare gpu: true
+      - WASM_APP_MEM_MB: "512"      # default per-app address-space cap
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+# Single ingress → supervisor. Only these paths are reachable from outside.
+shim:
+  upstream-port: 8080
+  paths:
+    - /health
+    - /v1/*
+    - /availability
+    - /x/*

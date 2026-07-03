@@ -61,6 +61,11 @@ PORT_LO      = int(os.environ.get("WASM_PORT_LO", "20000"))
 PORT_HI      = int(os.environ.get("WASM_PORT_HI", "40000"))
 NODE_VCPUS   = int(os.environ.get("NODE_VCPUS", "16"))
 NODE_RAM_GB  = int(os.environ.get("NODE_RAM_GB", "64"))
+# Does this node have a GPU attached? Catalog apps that declare `gpu: true`
+# need one and are refused at launch on CPU-only nodes (tinfoil-config.cpu.yml
+# sets NODE_HAS_GPU=0). Apps without the flag are CPU-only and run anywhere the
+# partition rule sends them.
+NODE_HAS_GPU = os.environ.get("NODE_HAS_GPU", "0").lower() in ("1", "true", "on")
 DEF_MEM_MB   = int(os.environ.get("WASM_APP_MEM_MB", "512"))       # per-app guest linear-memory ceiling (wasmtime -W max-memory-size)
 READY_SECS   = float(os.environ.get("WASM_READY_TIMEOUT", "20"))
 MOCK         = os.environ.get("WASM_MOCK", "") not in ("", "0", "false")
@@ -618,7 +623,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             cat = _load_catalog()
             return self._json(200, {"apps": [
                 {"id": a["id"], "name": a.get("name", a["id"]),
-                 "description": a.get("description", "")} for a in cat.values()]})
+                 "description": a.get("description", ""),
+                 "gpu": bool(a.get("gpu"))} for a in cat.values()]})
         if self.path == "/debug/env":
             return self._json(200, _debug_env())
         if self.path == "/vms":
@@ -654,6 +660,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # app which), so two tenants can both run "the tcp:5432 app" simultaneously.
         cat = _load_catalog()
         meta = cat.get(app_ref, {})
+        if meta.get("gpu") and not NODE_HAS_GPU:
+            return self._json(422, {"error": f"app '{app_ref}' requires a GPU; this node is CPU-only"})
         mem_mb = int(meta.get("mem_mb", DEF_MEM_MB))
         storage_mb = int(meta.get("storage_mb", DEF_STORAGE_MB))   # per-app /data cap; 0 opts out
         rec = launch(app_ref, b.get("name", ""), share, mem_mb, pspec, storage_mb)
