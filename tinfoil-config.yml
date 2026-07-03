@@ -93,6 +93,19 @@ containers:
       # overrides discovery if the shim binds elsewhere). ENCLAVE_REPO is the repo
       # whose Sigstore-signed release measurements verifiers compare the quote to.
       - ENCLAVE_REPO: "SteveDeFacto/Nan"
+      # on-chain discovery: with these set, the supervisor self-registers this
+      # enclave's URL in NanRegistry on boot and heartbeats every 15 min
+      # (registerOnChain in supervisor.js), so callers discover enclaves from the
+      # chain with no trusted gateway. Non-fatal: if anything here is missing the
+      # enclave still serves, it just doesn't advertise. Registration signs on
+      # Base mainnet over BASE_RPC and needs the REGISTRY_PRIVATE_KEY secret
+      # funded with a little ETH for gas. ENCLAVE_ENDPOINT is THIS enclave's own
+      # public URL - it differs per enclave, so set it per deployment (empty =
+      # don't advertise this one).
+      - REGISTRY_ENABLED: "1"
+      - REGISTRY_ADDRESS: ""                             # set by scripts/deploy-registry.mjs
+      - ENCLAVE_ENDPOINT: ""                             # e.g. "https://enclave1.nan.containers.tinfoil.dev"
+      # - REGISTRY_HEARTBEAT_SEC: "900"                  # optional, default 15 min
       - GPU_COUNT: "1"
       - GPU_VRAM_GB: "141"
       - SM_TOTAL: "132"
@@ -116,6 +129,15 @@ containers:
     secrets:
       - SECRET
       - ADMIN_TOKEN              # operator token for POST /v1/admin/deployments/:id/provision
+      - REGISTRY_PRIVATE_KEY     # NanRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
+      # public-TCP relay support (relay/README.md): wildcard cert for *.tcp.<domain>
+      # + its key. Enables /x/:id/tls/:port — the supervisor terminates client TLS
+      # IN-ENCLAVE so the untrusted relay only ever forwards ciphertext. The key
+      # exists only here (attested); set both empty to disable the /tls/ bridge.
+      # /v1/tls-bridge publishes the cert's fingerprints over the attested origin
+      # so verifying clients can pin the relay-path session to the enclave.
+      - TLS_BRIDGE_CERT          # PEM chain (literal \n ok)
+      - TLS_BRIDGE_KEY           # PEM private key (literal \n ok)
     command: ["node", "supervisor.js"]
 
   # --- wasm manager: tenant apps via `wasmtime serve` --------------------------

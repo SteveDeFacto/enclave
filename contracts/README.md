@@ -14,39 +14,51 @@ caller --(SecureClient(URL, repo))--> enclave verifies SEV-SNP/TDX + Sigstore, p
 
 ## Files
 - `contracts/NanRegistry.sol` — the registry (open, no deps, ~120 lines).
-- `contracts/NanRegistry.abi.json` — ABI for JS callers.
+- `contracts/NanRegistry.abi.json` — ABI for JS callers (re-emitted by the deploy script).
+- `scripts/deploy-registry.mjs` — compile + deploy + wire config (mirrors the other deploy scripts).
 - supervisor self-registration — built into `supervisor.js` (`registerOnChain`).
 - `scripts/nan-discover.mjs` — caller-side read + availability aggregation + pick.
 
 ## 1. Deploy the contract to Base (chain 8453)
 
-No constructor args. Any toolchain works; quickest is Remix or Foundry.
+No constructor args, no owner — the deployer keeps no special power. A viem+solc
+script mirrors `deploy-app-catalog.mjs` and **wires `tinfoil-config.yml`'s
+`REGISTRY_ADDRESS` plus `nan-discover.mjs`'s default automatically** on success
+(pass `--no-write-config` to skip):
 
-Foundry:
 ```bash
-forge create contracts/NanRegistry.sol:NanRegistry \
-  --rpc-url https://mainnet.base.org \
-  --private-key $DEPLOYER_PK \
-  --broadcast
+# compile + plan only, no broadcast:
+DEPLOYER_PRIVATE_KEY=0x... node scripts/deploy-registry.mjs --dry-run --yes
+
+# Base Sepolia (discovery reads only — the supervisor registers on MAINNET):
+DEPLOYER_PRIVATE_KEY=0x... node scripts/deploy-registry.mjs
+
+# Base MAINNET (what enclaves self-register against):
+NETWORK=base DEPLOYER_PRIVATE_KEY=0x... node scripts/deploy-registry.mjs
 ```
-Note the deployed address — that's `REGISTRY_ADDRESS` everywhere below. (Test on
-Base Sepolia first with its RPC + a faucet if you want a dry run.)
+
+> `registerOnChain` in `supervisor.js` signs on Base mainnet (viem `base`), so
+> the registry enclaves advertise to must live on chain 8453. A Sepolia deploy
+> is still useful to exercise `nan-discover.mjs` (`BASE_RPC=https://sepolia.base.org`).
 
 ## 2. Give each enclave a registry config
 
-The enclave self-registers on boot when `REGISTRY_ENABLED` is set. Add to the
-supervisor container's env in `tinfoil-config.yml`:
+The enclave self-registers on boot when `REGISTRY_ENABLED` is set. The supervisor
+container's env in `tinfoil-config.yml` already carries the block — the deploy
+script fills in the address; the one value you set **per enclave** is its own URL:
 
 ```yaml
 env:
   REGISTRY_ENABLED: "1"
-  REGISTRY_ADDRESS: "0x<deployed registry address>"
-  ENCLAVE_ENDPOINT: "https://enclave1.nan.containers.tinfoil.dev"  # this enclave's own URL
-  ENCLAVE_REPO:     "SteveDeFacto/Nan"      # what callers attest against (Sigstore-measured)
+  REGISTRY_ADDRESS: ""       # written by scripts/deploy-registry.mjs
+  ENCLAVE_ENDPOINT: ""       # per enclave, e.g. "https://enclave1.nan.containers.tinfoil.dev"; empty = don't advertise
+  ENCLAVE_REPO: "SteveDeFacto/Nan"          # what callers attest against (Sigstore-measured)
   # REGISTRY_HEARTBEAT_SEC: "900"           # optional, default 15 min
 ```
 
-And the operator key as an **enclave secret** (not plaintext env):
+And the operator key as an **enclave secret** (not plaintext env — already listed
+under `secrets:`), one EOA **per enclave** so concurrent heartbeats never fight
+over an account nonce:
 ```
 REGISTRY_PRIVATE_KEY = 0x...   # an EOA that owns this enclave's registry entry
 ```

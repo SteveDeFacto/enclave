@@ -19,7 +19,8 @@ import cors from "cors";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
-import { createHash, randomBytes } from "node:crypto";
+import tls from "node:tls";
+import { createHash, randomBytes, X509Certificate } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -27,7 +28,7 @@ const pexec = promisify(execFile);
 import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, renameSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, createWebSocketStream } from "ws";
 import { verifyMessage, createPublicClient, createWalletClient, http as viemHttp, getAddress, keccak256, toHex, stringToBytes } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
@@ -1619,6 +1620,21 @@ app.get("/v1/attestation", async (req, res) => {
   res.json({ generatedAt: new Date().toISOString(), ...out, guideUrl: "https://nan.host/#attest" });
 });
 
+// TLS-bridge cert binding, PUBLIC: closes the attestation gap on the relay
+// path (relay/README.md). A relay-path session terminates against
+// TLS_BRIDGE_CERT — an ordinary CA cert a client can't tie to the enclave on
+// its own. Publishing the cert + fingerprints OVER THE ATTESTED ORIGIN makes
+// the binding transitive: verify /v1/attestation, read the expected
+// fingerprint from the same origin, then require exactly that cert when
+// connecting to <dep-id>.tcp.<domain>:<port>. A MITM relay or a mis-issued
+// cert then fails the pin even though it would pass CA validation.
+app.get("/v1/tls-bridge", (_req, res) => {
+  if (!TLS_BRIDGE_INFO) return res.json({ enabled: false });
+  res.json({ enabled: true, ...TLS_BRIDGE_INFO,
+             verify: "Verify this origin's /v1/attestation first; then require the served cert on "
+                   + "<dep-id>.tcp.<domain> connections to match fingerprint256 (or pin spkiPinSha256)." });
+});
+
 // Tail the worker's stdout/stderr (owner only). ?tail=N (default 200, max 2000).
 app.get("/v1/deployments/:id/logs", authed, async (req, res) => {
   const rec = deployments.get(req.params.id);
@@ -1661,6 +1677,35 @@ async function authUpgrade(req) {
   try { const { payload } = await jwtVerify(token, SECRET); return getAddress(payload.sub); } catch { return null; }
 }
 
+// --- platform-terminated TLS for app TCP ports (/x/:id/tls/:port) -----------
+// The public relay (relay/relay.js, on any untrusted box) forwards a client's
+// raw TLS bytes into this bridge; the session terminates HERE, inside the
+// attested enclave. The key is an enclave secret the relay never holds, so the
+// relay stays a dumb ciphertext pipe and stock clients (irssi --tls, psql
+// sslmode=require) connect directly - no per-user websocat. Cert/key are PEM
+// contents (secret-store literal "\n" unescaped) or a path to a PEM file.
+// Unset = the /tls/ path answers 503; /tcp/ is unchanged.
+const pemEnv = (v) => v.includes("-----BEGIN") ? v.replace(/\\n/g, "\n") : readFileSync(v, "utf8");
+let TLS_BRIDGE_CTX = null, TLS_BRIDGE_INFO = null;
+try {
+  if (process.env.TLS_BRIDGE_CERT && process.env.TLS_BRIDGE_KEY) {
+    const certPem = pemEnv(process.env.TLS_BRIDGE_CERT);
+    TLS_BRIDGE_CTX = tls.createSecureContext({ cert: certPem, key: pemEnv(process.env.TLS_BRIDGE_KEY) });
+    // leaf = first PEM block = the cert clients see; published at /v1/tls-bridge
+    // so verifiers can pin it via the attested origin.
+    const x = new X509Certificate(certPem);
+    TLS_BRIDGE_INFO = {
+      subject: x.subject, subjectAltName: x.subjectAltName || null,
+      validFrom: x.validFrom, validTo: x.validTo,
+      fingerprint256: x.fingerprint256,                               // SHA-256 of the leaf DER (openssl x509 -fingerprint -sha256)
+      spkiPinSha256: createHash("sha256")                             // HPKP-style public-key pin (curl --pinnedpubkey)
+        .update(x.publicKey.export({ type: "spki", format: "der" })).digest("base64"),
+      certificate: x.toString(),
+    };
+  }
+} catch (e) { console.error("[tls-bridge] TLS_BRIDGE_CERT/KEY unusable - /tls/ bridge disabled:", e.message); }
+if (TLS_BRIDGE_CTX) console.log("[tls-bridge] in-enclave TLS termination enabled (/x/:id/tls/:port)");
+
 // bridge a WebSocket to a local TCP port, binary frames both ways
 function wsTcpBridge(req, socket, head, port) {
   wss.handleUpgrade(req, socket, head, (ws) => {
@@ -1675,18 +1720,36 @@ function wsTcpBridge(req, socket, head, port) {
   });
 }
 
+// like wsTcpBridge, but the frames carry the CLIENT's TLS session: unwrap it
+// here (key never leaves the enclave) and pipe cleartext to the app's loopback
+// port. The app still speaks plain TCP; TLS is platform dressing on top.
+function wsTlsBridge(req, socket, head, port) {
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    const wsStream = createWebSocketStream(ws);
+    const tlsSock  = new tls.TLSSocket(wsStream, { isServer: true, secureContext: TLS_BRIDGE_CTX });
+    const tcp = net.connect(port, "127.0.0.1");
+    const close = () => { try { ws.close(); } catch {} try { tlsSock.destroy(); } catch {} try { tcp.destroy(); } catch {} };
+    tlsSock.pipe(tcp); tcp.pipe(tlsSock);
+    for (const s of [wsStream, tlsSock, tcp]) { s.on("error", close); s.on("close", close); }
+  });
+}
+
 server.on("upgrade", async (req, socket, head) => {
   const deny = (line) => { socket.write(`HTTP/1.1 ${line}\r\n\r\n`); socket.destroy(); };
 
-  // ---- app TCP ports: /x/:id/tcp/:port — the declared-firewall data path ----
+  // ---- app TCP ports: /x/:id/(tcp|tls)/:port — the declared-firewall data path ----
   // Auth follows the deployment's `public` flag (like the HTTP path). Two gates
   // before bridging: the port must be DECLARED in the firewall config, and the
   // manager must confirm THIS app actually bound it (boundPorts) — otherwise a
   // tenant could declare-but-not-bind a port and bridge into a sibling's socket.
-  const t = (req.url || "").match(/^\/x\/([^/?]+)\/tcp\/(\d{1,5})(?:\?|$)/);
+  // /tls/ is the same data path except the supervisor terminates the client's
+  // TLS in-enclave first (see wsTlsBridge) — it's what the public relay targets.
+  // A declared "tcp:N" serves both flavors; there is no separate tls: entry.
+  const t = (req.url || "").match(/^\/x\/([^/?]+)\/(tcp|tls)\/(\d{1,5})(?:\?|$)/);
   if (t) {
-    const rec = deployments.get(t[1]), port = +t[2];        // `port` is the LOGICAL port (the app's advertised one)
+    const rec = deployments.get(t[1]), mode = t[2], port = +t[3]; // `port` is the LOGICAL port (the app's advertised one)
     if (!rec)                                 return deny("404 Not Found");
+    if (mode === "tls" && !TLS_BRIDGE_CTX)    return deny("503 Service Unavailable");
     if (!fwTcpPorts(rec).includes(port))      return deny("404 Not Found");
     if (!rec.public) {
       const addr = await authUpgrade(req);
@@ -1700,7 +1763,7 @@ server.on("upgrade", async (req, socket, head) => {
     const vr = await vmReq("GET", `/vms/${encodeURIComponent(rec._vmId)}`).catch(() => null);
     const bound = (vr && vr.body && vr.body.boundPorts) || [];
     if (!bound.includes(actual)) return deny("409 Conflict");   // app hasn't bound it (yet)
-    return wsTcpBridge(req, socket, head, actual);
+    return (mode === "tls" ? wsTlsBridge : wsTcpBridge)(req, socket, head, actual);
   }
 
   // ---- SSH: always owner-only, regardless of `public` ----

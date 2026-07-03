@@ -1,45 +1,336 @@
 [
-  { "type": "function", "name": "idOf", "stateMutability": "pure",
-    "inputs": [{ "name": "endpoint", "type": "string" }],
-    "outputs": [{ "name": "", "type": "bytes32" }] },
-  { "type": "function", "name": "register", "stateMutability": "nonpayable",
+  {
+    "anonymous": false,
     "inputs": [
-      { "name": "endpoint", "type": "string" },
-      { "name": "repo", "type": "string" },
-      { "name": "measurement", "type": "bytes32" }],
-    "outputs": [{ "name": "id", "type": "bytes32" }] },
-  { "type": "function", "name": "heartbeat", "stateMutability": "nonpayable",
-    "inputs": [{ "name": "id", "type": "bytes32" }], "outputs": [] },
-  { "type": "function", "name": "setMeasurement", "stateMutability": "nonpayable",
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      }
+    ],
+    "name": "Deregistered",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
     "inputs": [
-      { "name": "id", "type": "bytes32" },
-      { "name": "repo", "type": "string" },
-      { "name": "measurement", "type": "bytes32" }], "outputs": [] },
-  { "type": "function", "name": "deregister", "stateMutability": "nonpayable",
-    "inputs": [{ "name": "id", "type": "bytes32" }], "outputs": [] },
-  { "type": "function", "name": "count", "stateMutability": "view",
-    "inputs": [], "outputs": [{ "name": "", "type": "uint256" }] },
-  { "type": "function", "name": "idAt", "stateMutability": "view",
-    "inputs": [{ "name": "i", "type": "uint256" }],
-    "outputs": [{ "name": "", "type": "bytes32" }] },
-  { "type": "function", "name": "get", "stateMutability": "view",
-    "inputs": [{ "name": "id", "type": "bytes32" }],
-    "outputs": [{ "name": "", "type": "tuple", "components": [
-      { "name": "endpoint", "type": "string" },
-      { "name": "repo", "type": "string" },
-      { "name": "measurement", "type": "bytes32" },
-      { "name": "operator", "type": "address" },
-      { "name": "registeredAt", "type": "uint64" },
-      { "name": "lastSeen", "type": "uint64" },
-      { "name": "active", "type": "bool" }] }] },
-  { "type": "function", "name": "getPage", "stateMutability": "view",
-    "inputs": [{ "name": "start", "type": "uint256" }, { "name": "n", "type": "uint256" }],
-    "outputs": [{ "name": "page", "type": "tuple[]", "components": [
-      { "name": "endpoint", "type": "string" },
-      { "name": "repo", "type": "string" },
-      { "name": "measurement", "type": "bytes32" },
-      { "name": "operator", "type": "address" },
-      { "name": "registeredAt", "type": "uint64" },
-      { "name": "lastSeen", "type": "uint64" },
-      { "name": "active", "type": "bool" }] }] }
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "at",
+        "type": "uint64"
+      }
+    ],
+    "name": "Heartbeat",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "operator",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "endpoint",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "repo",
+        "type": "string"
+      }
+    ],
+    "name": "Registered",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "repo",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "measurement",
+        "type": "bytes32"
+      }
+    ],
+    "name": "Updated",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "count",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      }
+    ],
+    "name": "deregister",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      }
+    ],
+    "name": "get",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "string",
+            "name": "endpoint",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "repo",
+            "type": "string"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "measurement",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "operator",
+            "type": "address"
+          },
+          {
+            "internalType": "uint64",
+            "name": "registeredAt",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "lastSeen",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "active",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct NanRegistry.Enclave",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "start",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "n",
+        "type": "uint256"
+      }
+    ],
+    "name": "getPage",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "string",
+            "name": "endpoint",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "repo",
+            "type": "string"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "measurement",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "operator",
+            "type": "address"
+          },
+          {
+            "internalType": "uint64",
+            "name": "registeredAt",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "lastSeen",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "active",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct NanRegistry.Enclave[]",
+        "name": "page",
+        "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      }
+    ],
+    "name": "heartbeat",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "i",
+        "type": "uint256"
+      }
+    ],
+    "name": "idAt",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "endpoint",
+        "type": "string"
+      }
+    ],
+    "name": "idOf",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "endpoint",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "repo",
+        "type": "string"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "measurement",
+        "type": "bytes32"
+      }
+    ],
+    "name": "register",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "string",
+        "name": "repo",
+        "type": "string"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "measurement",
+        "type": "bytes32"
+      }
+    ],
+    "name": "setMeasurement",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
 ]

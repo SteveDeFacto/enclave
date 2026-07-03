@@ -58,6 +58,17 @@ the supervisor proxies `/x/:id` to its actual bind; `tcp:N` ports are reached
 via the WebSocket bridge `/x/:id/tcp/N` — always the logical N; the supervisor
 resolves it to the deployment's actual (see `portMap` on the deployment record).
 
+**Direct public TCP (no websocat).** A declared `tcp:N` is also served at
+`/x/:id/tls/N`: same bridge, but the supervisor terminates the *client's* TLS
+in-enclave first (platform cert via the `TLS_BRIDGE_CERT`/`TLS_BRIDGE_KEY`
+secrets). An untrusted public relay (`relay/README.md`) SNI-routes
+`<dep-id>.tcp.<domain>:<port>` into that path, so stock clients (`irssi --tls`,
+`psql sslmode=require`) connect directly while the relay only ever carries
+ciphertext. Apps need nothing for this — keep speaking plain TCP on the
+assigned port; TLS is platform dressing. Verifying clients can bind the
+session to the attestation: `GET /v1/tls-bridge` (served over the attested
+origin) publishes the platform cert's fingerprints to pin.
+
 Sandbox defaults (nothing to configure): a private writable `/data` (see below),
 no host environment, no network beyond the served HTTP socket, memory capped per
 app via `mem_mb` in the catalog. Peer isolation = separate Wasm sandbox +
