@@ -124,8 +124,8 @@ NN_PROBE_TIMEOUT = float(os.environ.get("WASM_NN_PROBE_TIMEOUT", "75"))   # work
 # minutes (encrypted bounce-buffered copies), which only LOOKS like a hang.
 NN_PROBE_LONG = float(os.environ.get("WASM_NN_PROBE_LONG", "600"))
 _NN_PROBE = {"state": "probing" if (NN_ENABLED and NODE_HAS_GPU and not MOCK) else "off",
-             "mode": None, "detail": "", "attempts": 0,
-             "env": {}}   # state: probing|ok|failed|off; mode: full|nopin; env: extra tenant env the probe adopted (e.g. CUDA_MODULE_LOADING)
+             "mode": None, "detail": "", "attempts": 0, "stage": None,
+             "env": {}}   # state: probing|ok|failed|off; mode: full|nopin; stage: what's running RIGHT NOW; env: extra tenant env the probe adopted (e.g. CUDA_MODULE_LOADING)
 
 _NN_PROBE_SRC = r"""
 import ctypes, sys
@@ -251,16 +251,32 @@ def _nn_tenant_env(gpu_share: float, pinned: bool) -> dict:
 
 def _nn_probe_once(env: dict) -> tuple:
     """(ok, detail). Runs the cuInit/primary-ctx probe in a subprocess under a
-    hard timeout - a HANG is a result here, not a failure mode."""
+    hard timeout - a HANG is a result here, not a failure mode. Deliberately
+    NOT subprocess.run: its timeout path does kill()+wait(), and a child stuck
+    in an UNINTERRUPTIBLE kernel ioctl (D-state - how GPU driver hangs look
+    under CC) never reaps, blocking the whole probe forever. We poll with a
+    deadline and ABANDON an unkillable child rather than wait on it."""
     try:
-        r = subprocess.run(["python3", "-c", _NN_PROBE_SRC], env=env, timeout=NN_PROBE_TIMEOUT,
-                           capture_output=True, text=True)
-        out = (r.stdout or r.stderr or "").strip()
-        return (r.returncode == 0 and out.endswith("ok"), out or f"rc={r.returncode}")
-    except subprocess.TimeoutExpired:
-        return (False, f"HUNG >{NN_PROBE_TIMEOUT:.0f}s (killed)")
+        proc = subprocess.Popen(["python3", "-c", _NN_PROBE_SRC], env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, preexec_fn=_preexec)
     except Exception as e:                                       # noqa: BLE001
         return (False, f"probe spawn failed: {e}")
+    deadline = time.time() + NN_PROBE_TIMEOUT
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            out = (proc.stdout.read() or "").strip() if proc.stdout else ""
+            return (proc.returncode == 0 and out.endswith("ok"), out or f"rc={proc.returncode}")
+        time.sleep(0.5)
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:                                            # noqa: BLE001
+        pass
+    for _ in range(10):                                          # 5s of grace to reap
+        if proc.poll() is not None:
+            return (False, f"HUNG >{NN_PROBE_TIMEOUT:.0f}s (killed)")
+        time.sleep(0.5)
+    return (False, f"HUNG >{NN_PROBE_TIMEOUT:.0f}s and UNKILLABLE (kernel-stuck GPU ioctl?) - abandoned")
 
 
 def _nn_probe_e2e(env, targets=("cpu", "gpu"), timeout=None) -> tuple:
@@ -315,12 +331,27 @@ def _nn_probe_e2e(env, targets=("cpu", "gpu"), timeout=None) -> tuple:
 
 
 def _nn_probe_loop():
+    """Crash guard: a probe that dies must VERDICT, not stay 'probing' forever
+    (every GPU deploy 503s on that state)."""
+    try:
+        _nn_probe_run()
+    except Exception:                                            # noqa: BLE001
+        import traceback
+        tb = traceback.format_exc()
+        _NN_PROBE.update(state="failed", stage="crashed",
+                         detail="probe crashed: " + " | ".join(tb.strip().splitlines()[-3:]))
+        print("[nn-probe] CRASHED:\n" + tb, flush=True)
+
+
+def _nn_probe_run():
     """Boot-time GPU readiness bisect. Writes _NN_PROBE; launches gate on it.
     Layer 1: raw driver (cuInit + primary-ctx retain = the MPS attach point),
     bisecting the env. Layer 2: ORT end to end through the real runtime.
+    Progress is published LIVE (stage + growing detail) so an outside observer
+    can always tell a slow probe from a stuck one.
     WASM_NN_PROBE=0 skips everything and declares ok (operator escape hatch)."""
     if os.environ.get("WASM_NN_PROBE", "1").lower() in ("0", "false", "off"):
-        _NN_PROBE.update(state="ok", mode="full", detail="probe skipped (WASM_NN_PROBE=0)")
+        _NN_PROBE.update(state="ok", mode="full", stage="done", detail="probe skipped (WASM_NN_PROBE=0)")
         print("[nn-probe] skipped by WASM_NN_PROBE=0 - GPU launches ungated", flush=True)
         return
     share = 0.01   # smallest grain; the probe only needs A context, not capacity
@@ -334,10 +365,15 @@ def _nn_probe_loop():
     mode = None
     # up to 3 rounds of the full env first: rides out MPS-daemon boot races the
     # same way worker.py's children retry their CUDA init.
+    def note(entry):   # publish progress LIVE: detail grows as the bisect runs
+        history.append(entry)
+        _NN_PROBE["detail"] = "; ".join(history)
+
     for attempt in range(3):
         _NN_PROBE["attempts"] = attempt + 1
+        _NN_PROBE["stage"] = f"cuInit full env #{attempt + 1}"
         ok, detail = _nn_probe_once(steps[0][1])
-        history.append(f"full#{attempt + 1}: {detail}")
+        note(f"full#{attempt + 1}: {detail}")
         print(f"[nn-probe] full env attempt {attempt + 1}: {'ok' if ok else detail}", flush=True)
         if ok:
             mode = "full"
@@ -345,8 +381,9 @@ def _nn_probe_loop():
         time.sleep(5)
     if mode is None:
         for m, env, label in steps[1:]:
+            _NN_PROBE["stage"] = f"cuInit {m}"
             ok, detail = _nn_probe_once(env)
-            history.append(f"{m}: {detail}")
+            note(f"{m}: {detail}")
             print(f"[nn-probe] {label}: {'ok' if ok else detail}", flush=True)
             if ok and m == "nopin":
                 # the pinned-VRAM var is the poison: run tenants SM-capped only
@@ -358,25 +395,26 @@ def _nn_probe_loop():
             if ok and m == "nomps":
                 # CUDA works, MPS attach doesn't: refusing is the honest move -
                 # uncapped tenants would break the share product.
-                _NN_PROBE.update(state="failed", mode=None,
+                _NN_PROBE.update(state="failed", mode=None, stage="done",
                                  detail="MPS attach breaks CUDA init in this container (bare CUDA works). "
                                         + "; ".join(history))
                 return
         if mode is None:
-            _NN_PROBE.update(state="failed", mode=None, detail="; ".join(history))
+            _NN_PROBE.update(state="failed", mode=None, stage="done", detail="; ".join(history))
             return
     # driver layer passed - now prove the ORT layer with the env tenants get
     base = _nn_tenant_env(share, pinned=(mode == "full"))
+    _NN_PROBE["stage"] = f"ORT e2e base ({mode}): cpu then gpu, {NN_PROBE_TIMEOUT:.0f}s each"
     res, e2e_detail = _nn_probe_e2e(base)
-    history.append(f"e2e[{mode}]: {e2e_detail}")
+    note(f"e2e[{mode}]: {e2e_detail}")
     print(f"[nn-probe] ORT end-to-end ({mode}): {e2e_detail}", flush=True)
     if all(res.values()):
-        _NN_PROBE.update(state="ok", mode=mode, detail="; ".join(history))
+        _NN_PROBE.update(state="ok", mode=mode, stage="done", detail="; ".join(history))
         return
     if not res.get("cpu", False):
         # ORT can't even run the CPU provider here - nothing GPU-specific to bisect
-        _NN_PROBE.update(state="failed", mode=mode,
-                         detail=f"ORT fails on the CPU provider itself - " + "; ".join(history))
+        _NN_PROBE.update(state="failed", mode=mode, stage="done",
+                         detail="ORT fails on the CPU provider itself - " + "; ".join(history))
         return
     # GPU-only failure: bisect the known failure classes, one fresh CUDA init
     # each. First success is adopted for every tenant launch.
@@ -401,16 +439,17 @@ def _nn_probe_loop():
     ]
     for name, env, tmo, adopt, meaning in variants:
         t0 = time.time()
+        _NN_PROBE["stage"] = f"ORT e2e gpu variant '{name}' ({tmo:.0f}s budget)"
         vres, vdetail = _nn_probe_e2e(env, targets=("gpu",), timeout=tmo)
-        history.append(f"{name}: {vdetail}")
+        note(f"{name}: {vdetail}")
         print(f"[nn-probe] gpu variant {name}: {vdetail}", flush=True)
         if vres.get("gpu"):
             adopt()
-            history.append(f"ADOPTED {name} ({time.time() - t0:.0f}s): {meaning}")
+            note(f"ADOPTED {name} ({time.time() - t0:.0f}s): {meaning}")
             print(f"[nn-probe] ADOPTED {name}: {meaning}", flush=True)
-            _NN_PROBE.update(state="ok", detail="; ".join(history))
+            _NN_PROBE.update(state="ok", stage="done", detail="; ".join(history))
             return
-    _NN_PROBE.update(state="failed", mode=mode,
+    _NN_PROBE.update(state="failed", mode=mode, stage="done",
                      detail=f"driver layer ok ({mode}) but the ORT CUDA provider failed every variant - "
                             + "; ".join(history))
 
