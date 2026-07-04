@@ -360,10 +360,17 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
     if storage_mb is None:
         storage_mb = DEF_STORAGE_MB
     # the guest memory ceiling is the deployment's slice of the node's RAM
-    # (cpuShare × NODE_RAM_GB); an explicit memMb (direct callers) caps lower
+    # (cpuShare × NODE_RAM_GB); an explicit memMb (direct callers) caps lower.
+    # Clamped to 4 GiB: wasm32 linear memory is hard-limited to 4 GiB, and
+    # wasmtime refuses `-W max-memory-size` above its memory reservation
+    # ("maximum memory size ... exceeds the configured memory reservation"),
+    # which killed every launch with cpuShare > ~6% of a 64 GB node. Larger
+    # CPU shares still buy proportional vCPU time — the guest just can't
+    # address more than 4 GiB of linear memory.
+    WASM32_MAX_MEM_MB = 4096
     if not mem_mb or mem_mb <= 0:
         mem_mb = int(cpu_share * NODE_RAM_GB * 1024)
-    mem_mb = max(MIN_MEM_MB, int(mem_mb))
+    mem_mb = min(WASM32_MAX_MEM_MB, max(MIN_MEM_MB, int(mem_mb)))
     port = _free_port() if pspec["serve"] else 0
     port_map = {} if pspec["serve"] else _alloc_ports(pspec)   # logical entry -> actual bind
     vid = "app_" + uuid.uuid4().hex[:9]
