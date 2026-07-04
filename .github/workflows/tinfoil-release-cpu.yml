@@ -111,7 +111,9 @@ jobs:
             || { echo "::error::failed to pin supervisor digest into tinfoil-config.yml"; exit 1; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tinfoil-config.yml
+          # -f: the root config is deliberately gitignored on main (it only exists
+          # in release-tag commits); force it into this tag's commit
+          git add -f tinfoil-config.yml
           git commit -m "Release ${VERSION}: root config from enclaves/cpu, supervisor digest pinned"
           git tag "$VERSION"
           git push origin "refs/tags/$VERSION"

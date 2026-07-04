@@ -274,13 +274,17 @@ jobs:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
           RELAY_SSH_HOST: ${{ vars.RELAY_SSH_HOST }}
+          SITE_SSH_HOST: ${{ vars.SITE_SSH_HOST }}
         run: |
           set -euo pipefail
           [ -n "$DEPLOY_SSH_KEY" ] || { echo "::error::DEPLOY_SSH_KEY secret is not set (run scripts/ci-setup.sh)"; exit 1; }
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          printf 'Host nan-relay\n  HostName %s\n  User root\n' "$RELAY_SSH_HOST" > ~/.ssh/config
+          # two boxes: tcp+udp relays live on nan-relay; the api relay lives on
+          # the nan box (api.nan.host) - relay/deploy.sh targets both aliases
+          printf 'Host nan-relay\n  HostName %s\n  User root\nHost nan\n  HostName %s\n  User root\n' \
+            "$RELAY_SSH_HOST" "$SITE_SSH_HOST" > ~/.ssh/config
           chmod 600 ~/.ssh/config
 
       - name: Deploy relay
