@@ -68,13 +68,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           EVENT_BEFORE: ${{ github.event.before }}
+          BASE_OVERRIDE: ${{ vars.DEPLOY_BASE_OVERRIDE }}
         run: |
           set -euo pipefail
 
           # Base = head of the last successful Deploy run; falls back to the
           # push's before-sha, then to HEAD^ (first run / force push).
-          BASE="$(gh api "repos/$GH_REPO/actions/workflows/deploy.yml/runs?branch=main&status=success&per_page=1" \
+          # Recovery override: when the last-success baseline is stale because
+          # its changes were deployed MANUALLY while runs stayed red (so every
+          # push re-prompts e.g. a contract redeploy), set the repo variable
+          # DEPLOY_BASE_OVERRIDE to the already-deployed sha; delete it after
+          # the next green run re-establishes a real baseline.
+          BASE="${BASE_OVERRIDE:-}"
+          [ -n "$BASE" ] && echo "using DEPLOY_BASE_OVERRIDE=$BASE"
+          if [ -z "$BASE" ]; then
+            BASE="$(gh api "repos/$GH_REPO/actions/workflows/deploy.yml/runs?branch=main&status=success&per_page=1" \
                     --jq '.workflow_runs[0].head_sha // empty' || true)"
+          fi
           if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             BASE="$EVENT_BEFORE"
           fi
