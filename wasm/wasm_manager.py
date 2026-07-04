@@ -12,7 +12,8 @@ filesystem, no host env, no network beyond the served HTTP socket).
 It speaks the SAME HTTP contract the supervisor already uses for the "vm"
 backend, so the supervisor needs no change:
 
-  POST   /vms   {image, cpuShare, gpuShare?, gpuTflops?, cpuTflops?, name?, appPort?}
+  POST   /vms   {image, cpuShare, gpuShare?, gpuTflops?, cpuGflops?, name?, appPort?}
+                 (cpuGflops in GFLOPS; legacy cpuTflops accepted as x1000)
                  -> 201 {id, status, endpoint, hostPort, sshHostPort, ...}
   DELETE /vms/:id        -> {id, deleted: true}
   GET    /vms/:id | /vms | /health | /capacity | /catalog | /debug/env
@@ -716,15 +717,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                              + ("ask for GPU resources" if NODE_HAS_GPU else "this node is CPU-only")})
         if min_mem and (mem_mb or int(cpu_share * NODE_RAM_GB * 1024)) < min_mem:
             return self._json(422, {"error": f"app '{app_ref}' declares a minimum of {min_mem} MB RAM; the request asks for less"})
-        # compute minimums (GFLOPS): the supervisor passes the ask in TFLOPS
-        def _tflops(k):
+        # compute minimums: the ask arrives GPU in TFLOPS (gpuTflops) but CPU in
+        # GFLOPS (cpuGflops) - a whole node is ~1000 GFLOPS, so TFLOPS is too
+        # coarse a grain for CPU. cpuTflops is the legacy pre-GFLOPS field.
+        def _num(k):
             try:
                 return max(0.0, float(b.get(k) or 0))
             except (TypeError, ValueError):
                 return 0.0
-        if min_cgf and round(_tflops("cpuTflops") * 1000) < min_cgf:
-            return self._json(422, {"error": f"app '{app_ref}' declares a minimum of {min_cgf / 1000} CPU TFLOPS; the request asks for less"})
-        if min_ggf and round(_tflops("gpuTflops") * 1000) < min_ggf:
+        ask_cgf = _num("cpuGflops") or _num("cpuTflops") * 1000
+        if min_cgf and round(ask_cgf) < min_cgf:
+            return self._json(422, {"error": f"app '{app_ref}' declares a minimum of {min_cgf} CPU GFLOPS; the request asks for less"})
+        if min_ggf and round(_num("gpuTflops") * 1000) < min_ggf:
             return self._json(422, {"error": f"app '{app_ref}' declares a minimum of {min_ggf / 1000} GPU TFLOPS; the request asks for less"})
         storage_mb = int(meta.get("storage_mb", DEF_STORAGE_MB))   # per-app /data cap; 0 opts out
         rec = launch(app_ref, b.get("name", ""), cpu_share, gpu_share, mem_mb, pspec, storage_mb)
