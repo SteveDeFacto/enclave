@@ -1502,6 +1502,7 @@ curl -H "Authorization: Bearer $NAN_TOKEN" \
               <tr><td class="pname">runs locally, memory-traps deployed</td><td>Local wasmtime is uncapped unless you pass <code>-W max-memory-size</code>. Test with the parity command (<a href="#docs-hello">ch. 03</a>) at your published <code>memMb</code> (the cap at the minimum CPU share).</td></tr>
               <tr><td class="pname">"component imports instance wasi:nn/… not found in the linker"</td><td>The app imports <code>wasi:nn</code> but the deployment bought no GPU share. Redeploy with <code>resources.gpuShare</code> &gt; 0 (<a href="#docs-gpu">ch. 12</a>).</td></tr>
               <tr><td class="pname">wasi-nn <code>load()</code> fails: "Failed while accessing backend"</td><td>Target <code>gpu</code> where CUDA can't initialize - a CPU-only node, or local wasmtime without the CUDA libraries. The GPU target is strict on purpose (no silent CPU fallback): use <code>cpu</code> there, or deploy to a GPU enclave.</td></tr>
+              <tr><td class="pname">deploy fails: "GPU interface warming up" / "GPU interface unavailable on this node"</td><td>GPU deployments launch only after the enclave's boot-time CUDA readiness probe passes (so a broken GPU path fails your deploy loudly instead of hanging your app). "Warming up" resolves in a minute or two - retry; "unavailable" carries the probe's diagnosis and is an operator problem, not yours.</td></tr>
             </tbody>
           </table></div>
           <h4>Ship checklist</h4>
