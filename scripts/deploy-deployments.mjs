@@ -32,8 +32,8 @@
 //                         HARDCODES 1667 (~$6.00/hour) at deploy, so by default
 //                         no setPrice tx is sent at all; set this env var only
 //                         to CHANGE the price ("0" skips the check entirely).
-//   CPU_PRICE_PER_SEC6    whole-CPU-node USDC(6dp)/second price for gpu=false
-//                         deployments. Hardcoded to 556 (~$2.00/hour) at deploy;
+//   CPU_PRICE_PER_SEC6    whole-CPU-node USDC(6dp)/second price (every deployment
+//                         pays it on its derived CPU share). Hardcoded to 556 (~$2.00/hour) at deploy;
 //                         same rules as PRICE_PER_SEC6.
 //   NETWORK               base-sepolia (default) | base
 //   RPC_URL               override the chain RPC.

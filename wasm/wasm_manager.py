@@ -12,7 +12,7 @@ filesystem, no host env, no network beyond the served HTTP socket).
 It speaks the SAME HTTP contract the supervisor already uses for the "vm"
 backend, so the supervisor needs no change:
 
-  POST   /vms   {image, share, name?, appPort?}
+  POST   /vms   {image, memMb, cpuShare, gpuShare?, name?, appPort?}
                  -> 201 {id, status, endpoint, hostPort, sshHostPort, ...}
   DELETE /vms/:id        -> {id, deleted: true}
   GET    /vms/:id | /vms | /health | /capacity | /catalog | /debug/env
@@ -66,7 +66,11 @@ NODE_RAM_GB  = int(os.environ.get("NODE_RAM_GB", "64"))
 # sets NODE_HAS_GPU=0). Apps without the flag are CPU-only and run anywhere the
 # partition rule sends them.
 NODE_HAS_GPU = os.environ.get("NODE_HAS_GPU", "0").lower() in ("1", "true", "on")
-DEF_MEM_MB   = int(os.environ.get("WASM_APP_MEM_MB", "512"))       # per-app guest linear-memory ceiling (wasmtime -W max-memory-size)
+# Apps specify EXACT resources: the request's memMb is the guest linear-memory
+# ceiling (wasmtime -W max-memory-size), and the cpuShare admission unit is
+# CALCULATED from it (memMb / node RAM) by the supervisor. When only a share
+# arrives (legacy caller), the cap is derived back from it: share × NODE_RAM_GB.
+MIN_MEM_MB   = int(os.environ.get("WASM_APP_MIN_MEM_MB", "64"))
 READY_SECS   = float(os.environ.get("WASM_READY_TIMEOUT", "20"))
 MOCK         = os.environ.get("WASM_MOCK", "") not in ("", "0", "false")
 LOG_DIR      = pathlib.Path(os.environ.get("WASM_LOG_DIR", "/tmp/nan-wasm-logs"))
@@ -121,7 +125,11 @@ _apps = {}    # id -> record
 
 # ---- helpers --------------------------------------------------------------- #
 def _load_catalog() -> dict:
-    """Map of app-id -> {file, name, description, mem_mb?}. Baked-in + attested."""
+    """Map of app-id -> {file, name, description, vram_mb?, gpu_gflops?,
+    mem_mb?, cpu_gflops?, storage_mb?}. Baked-in + attested. The four resource
+    fields are the app's EXACT minimums (memory in MB, compute in GFLOPS =
+    1/1000 TFLOPS; any GPU axis > 0 marks a GPU app), mirroring NanAppCatalog;
+    shares are calculated from them."""
     try:
         data = json.loads(CATALOG_PATH.read_text())
         return {a["id"]: a for a in data.get("apps", [])}
@@ -202,15 +210,19 @@ def _port_open(port: int, timeout=0.25) -> bool:
             return False
 
 
-def _used_share() -> float:
-    return round(sum(r["share"] for r in _apps.values() if r["status"] in ("starting", "running")), 4)
+def _used_cpu_share() -> float:
+    """Admission is by cpuShare only: this manager owns the node's vCPU+RAM pool.
+    GPU shares are accounted by the supervisor's card allocator, not here."""
+    return round(sum(r["cpuShare"] for r in _apps.values() if r["status"] in ("starting", "running")), 4)
 
 
 def _capacity() -> dict:
-    used = _used_share()
-    return {"maxShare": 1.0, "usedShare": used,
-            "vcpusFree": round(NODE_VCPUS * (1.0 - used), 2),
-            "ramGbFree": round(NODE_RAM_GB * (1.0 - used), 2),
+    used = _used_cpu_share()
+    free = round(max(0.0, 1.0 - used), 4)
+    return {"cpuShareFree": free, "usedCpuShare": used,
+            "maxShare": free, "usedShare": used,   # deprecated aliases (one release)
+            "vcpusFree": round(NODE_VCPUS * free, 2),
+            "ramGbFree": round(NODE_RAM_GB * free, 2),
             "apps": len(_apps)}
 
 
@@ -341,10 +353,16 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     return cmd, host_port, wait
 
 
-def launch(app_ref: str, name: str, share: float, mem_mb: int, pspec=None, storage_mb=None) -> dict:
+def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
+           mem_mb: int = 0, pspec=None, storage_mb=None) -> dict:
     pspec = pspec or _parse_ports([])
     if storage_mb is None:
         storage_mb = DEF_STORAGE_MB
+    # the guest memory ceiling is the EXACT memMb asked for; when only a share
+    # arrived, derive the cap back from it (share × node RAM)
+    if not mem_mb or mem_mb <= 0:
+        mem_mb = int(cpu_share * NODE_RAM_GB * 1024)
+    mem_mb = max(MIN_MEM_MB, int(mem_mb))
     port = _free_port() if pspec["serve"] else 0
     port_map = {} if pspec["serve"] else _alloc_ports(pspec)   # logical entry -> actual bind
     vid = "app_" + uuid.uuid4().hex[:9]
@@ -361,11 +379,12 @@ def launch(app_ref: str, name: str, share: float, mem_mb: int, pspec=None, stora
             fsdir = cand
         except OSError as e:
             print(f"[fs] {vid} could not create scratch dir: {e}", flush=True)
-    rec = {"id": vid, "name": name or vid, "app": app_ref, "share": share,
+    rec = {"id": vid, "name": name or vid, "app": app_ref,
+           "cpuShare": cpu_share, "gpuShare": gpu_share,
            "hostPort": port, "sshHostPort": 0,
            "endpoint": f"http://{HOST_IP}:{port}" if port else None, "status": "starting",
            "createdAt": time.time(), "_proc": None, "_log": str(log_path),
-           "error": None, "mem_mb": mem_mb,
+           "error": None, "mem_mb": mem_mb,   # exact guest memory cap (floor MIN_MEM_MB)
            "storageMb": storage_mb if fsdir else 0,   # 0 = no /data (opted out or disabled)
            "storageBytes": 0,                         # last measured /data usage (audit sweep)
            "ports": pspec["norm"],           # logical (the app's advertised interface)
@@ -624,7 +643,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(200, {"apps": [
                 {"id": a["id"], "name": a.get("name", a["id"]),
                  "description": a.get("description", ""),
-                 "gpu": bool(a.get("gpu"))} for a in cat.values()]})
+                 "vramMb": int(a.get("vram_mb", 0)),
+                 "gpuGflops": int(a.get("gpu_gflops", 0)),
+                 "memMb": int(a.get("mem_mb", 0)),
+                 "cpuGflops": int(a.get("cpu_gflops", 0)),
+                 "gpu": int(a.get("vram_mb", 0)) > 0 or int(a.get("gpu_gflops", 0)) > 0} for a in cat.values()]})
         if self.path == "/debug/env":
             return self._json(200, _debug_env())
         if self.path == "/vms":
@@ -644,12 +667,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
         app_ref = b.get("image") or b.get("app")
         if not app_ref:
             return self._json(400, {"error": "missing app reference (image)"})
+        # exact resources in, shares calculated: memMb is the exact guest memory
+        # cap; cpuShare (the admission unit; "share" is the legacy alias) is
+        # derived from it by the supervisor — or here, when only memMb arrives.
+        # gpuShare rides along for GPU catalog apps (the card pool itself is the
+        # supervisor's allocator).
+        def _share(*keys, default=0.0):
+            for k in keys:
+                if b.get(k) is not None:
+                    try:
+                        return min(max(float(b[k]), 0.0), 1.0)
+                    except (TypeError, ValueError):
+                        pass
+            return default
         try:
-            share = float(b.get("share", 0.05))
+            mem_mb = max(0, int(b.get("memMb") or 0))
         except (TypeError, ValueError):
-            share = 0.05
-        share = min(max(share, 0.0), 1.0)
-        if _used_share() + share > 1.0 + 1e-6:
+            mem_mb = 0
+        cpu_share = _share("cpuShare", "share",
+                           default=min(1.0, mem_mb / (NODE_RAM_GB * 1024.0)) if mem_mb else 0.05)
+        gpu_share = _share("gpuShare")
+        if gpu_share > 0 and gpu_share < cpu_share - 1e-9:
+            return self._json(422, {"error": "derived gpuShare must be at least cpuShare (too much RAM for that VRAM ask)"})
+        if _used_cpu_share() + cpu_share > 1.0 + 1e-6:
             return self._json(429, {"error": "insufficient capacity", "capacity": _capacity()})
         try:
             pspec = _parse_ports(b.get("ports") or [])
@@ -660,11 +700,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # app which), so two tenants can both run "the tcp:5432 app" simultaneously.
         cat = _load_catalog()
         meta = cat.get(app_ref, {})
-        if meta.get("gpu") and not NODE_HAS_GPU:
-            return self._json(422, {"error": f"app '{app_ref}' requires a GPU; this node is CPU-only"})
-        mem_mb = int(meta.get("mem_mb", DEF_MEM_MB))
+        min_vram = int(meta.get("vram_mb", 0))
+        min_ggf = int(meta.get("gpu_gflops", 0))
+        min_mem = int(meta.get("mem_mb", 0))
+        min_cgf = int(meta.get("cpu_gflops", 0))
+        if (min_vram > 0 or min_ggf > 0) and (not NODE_HAS_GPU or gpu_share <= 0):
+            return self._json(422, {"error": f"app '{app_ref}' requires a GPU ({min_vram} MB VRAM / {min_ggf / 1000} TFLOPS); "
+                                             + ("ask for GPU resources" if NODE_HAS_GPU else "this node is CPU-only")})
+        if min_mem and (mem_mb or int(cpu_share * NODE_RAM_GB * 1024)) < min_mem:
+            return self._json(422, {"error": f"app '{app_ref}' declares a minimum of {min_mem} MB RAM; the request asks for less"})
+        # compute minimums (GFLOPS): the supervisor passes the ask in TFLOPS
+        def _tflops(k):
+            try:
+                return max(0.0, float(b.get(k) or 0))
+            except (TypeError, ValueError):
+                return 0.0
+        if min_cgf and round(_tflops("cpuTflops") * 1000) < min_cgf:
+            return self._json(422, {"error": f"app '{app_ref}' declares a minimum of {min_cgf / 1000} CPU TFLOPS; the request asks for less"})
+        if min_ggf and round(_tflops("gpuTflops") * 1000) < min_ggf:
+            return self._json(422, {"error": f"app '{app_ref}' declares a minimum of {min_ggf / 1000} GPU TFLOPS; the request asks for less"})
         storage_mb = int(meta.get("storage_mb", DEF_STORAGE_MB))   # per-app /data cap; 0 opts out
-        rec = launch(app_ref, b.get("name", ""), share, mem_mb, pspec, storage_mb)
+        rec = launch(app_ref, b.get("name", ""), cpu_share, gpu_share, mem_mb, pspec, storage_mb)
         code = 201 if rec["status"] in ("starting", "running") else 500
         return self._json(code, _public(rec))
 

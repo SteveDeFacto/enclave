@@ -14,7 +14,7 @@ for good, the deployment — including paid, unconsumed runtime — dies with it
 transactions waiting to be processed. The chain holds the three things a
 stranger enclave needs to take over:
 
-1. the **intent** — what to run (`appRef`), share, ports, visibility, ssh key;
+1. the **intent** — what to run (`appRef`), the exact resources (VRAM + GPU TFLOPS + RAM + CPU TFLOPS), ports, visibility, ssh key;
 2. the **balance** — funded runtime (USDC 6dp), credited by payments, burned by leases;
 3. the **lease** — who is serving it right now, and until when.
 
@@ -53,16 +53,27 @@ via transaction instead of via one enclave's API).
 
 ## Contract summary (`NanDeployments.sol`)
 
-- **`create(appRef, gpu, milliShare, appPort, ports, isPublic, sshPubKey, configCid)`**
-  — permissionless; inert until funded. `gpu` picks the flavor AND the price
-  schedule: `true` = a GPU deployment (`milliShare` is 1/1000ths of a card,
-  priced from `pricePerSec6`), `false` = a CPU deployment (`milliShare` is
-  1/1000ths of a CPU node's vCPU+RAM, priced from `cpuPricePerSec6`). `rate`
-  (USDC 6dp/sec) is snapshotted at create, so price changes never re-price
-  existing deployments. `id = keccak256(creator, nonce)`.
-  **Partition rule (enforced by runners at claim time): CPU deployments are
-  claimed ONLY by CPU-only enclaves (`GPU_COUNT=0`); GPU deployments ONLY by
-  GPU-enabled enclaves.**
+- **`create(appRef, res, appPort, ports, isPublic, sshPubKey, configCid)`**
+  — permissionless; inert until funded. Apps specify EXACT resources on four
+  axes, packed as `res = [vramMb, gpuGflops, memMb, cpuGflops]`: memory and
+  compute of one GPU card (both `0` = a CPU-only deployment) and of a node
+  (compute in GFLOPS = 1/1000 TFLOPS). The contract CALCULATES the two
+  allocation shares from them against its owner-set reference specs
+  (`cardVramMb`/`cardGflops`/`nodeRamMb`/`nodeGflops`, matching the fleet's
+  hardware — H200 141 GB / 989 TFLOPS, node 64 GB / ~1 TFLOPS), each the
+  LARGER of the memory- and compute-derived share, and snapshots them:
+  `gpuMilli = ceil(max(vramMb / cardVramMb, gpuGflops / cardGflops) × 1000)`,
+  `cpuMilli` likewise. It enforces `gpuMilli == 0 || gpuMilli >= cpuMilli` — a
+  GPU app's CPU slice rides on the same node as its card. Both derived shares
+  are paid for:
+  `rate = (pricePerSec6 × gpuMilli + cpuPricePerSec6 × cpuMilli) / 1000`,
+  rounded up, snapshotted at create (price/refSize changes never re-price or
+  resize existing deployments). `id = keccak256(creator, nonce)`.
+  **Routing (enforced by runners at claim time): GPU work (`gpuMilli > 0`) is
+  claimed ONLY by GPU-enabled enclaves; CPU-only work is claimed by CPU-only
+  enclaves immediately and by GPU enclaves only after `CPU_CLAIM_GRACE_SEC`
+  (default 120s), out of their leftover CPU/RAM pool — e.g. a tenant taking a
+  whole card + 10% of the node leaves 90% of that node's CPU for CPU-only work.**
 - **`fundWithAuthorization(id, ...)` / `fundEth(id)`** — non-custodial, exactly
   NanPay's pattern (EIP-3009 nonce bound to the first 16 bytes of `id`; funds
   forward to `payout` in the same tx). The difference: the credit lands in
@@ -111,6 +122,9 @@ const DEPLOYMENTS_ADDRESS = process.env.DEPLOYMENTS_ADDRESS || "";
 const CLAIM_ENABLED   = /^(1|true|on)$/i.test(process.env.CLAIM_ENABLED || "");
 const CLAIM_POLL_SEC  = parseInt(process.env.CLAIM_POLL_SEC  || "60", 10);  // queue sweep + split-brain check cadence
 const RENEW_MARGIN_SEC= parseInt(process.env.RENEW_MARGIN_SEC|| "300", 10); // renew when < this much lease is left
+// GPU enclaves wait this long after a CPU-only deployment becomes claimable
+// before bidding, so CPU-only enclaves get first claim (GPU leftovers = fallback)
+const CPU_CLAIM_GRACE_SEC = parseInt(process.env.CPU_CLAIM_GRACE_SEC || "120", 10);
 const CLAIM_PAGE      = 100;
 // ready iff we advertise on the registry (claims are gated to its operators)
 // and we know our own enclave id (keccak256 of the advertised endpoint —
@@ -149,15 +163,30 @@ async function claimSweep() {
     if (!page.length) break;
     for (const d of page) {
       if (deployments.has(d.id)) continue;              // already ours (running or recovering)
-      if (Boolean(d.gpu) !== IS_GPU) continue;          // partition rule: never claim across the CPU/GPU line
       if (!d.active || Number(d.leaseUntil) * 1000 > Date.now()) continue;  // stopped or leased
       if (d.balance6 < d.rate) continue;                // out of funded time — queue drops it
-      // capacity check BEFORE claiming: never burn a user's lease we can't serve
-      const share = Number(d.milliShare) / 1000, vramGb = share * CARD_VRAM_GB;
-      if (vramGb > maxFreeVram() + 1e-9) continue;      // (CPU enclaves check the node-share pool instead)
-      // catalog approval gate, same as the HTTP deploy path (fail closed)
+      // routing + capacity BEFORE claiming: never burn a user's lease we can't
+      // serve. The deployment records EXACT resources on four axes; shares are
+      // calculated against OUR hardware (each the larger of its memory- and
+      // compute-derived share). GPU work fits a card AND the node's cpu pool;
+      // CPU-only work runs on CPU enclaves immediately, on GPU enclaves only
+      // after a grace window (CPU enclaves get first claim) and only out of
+      // LEFTOVER cpu pool.
+      const gpuShare = gpuShareOf(Number(d.vramMb) / 1024, Number(d.gpuGflops) / 1000);
+      const cpuShare = cpuShareOf(Number(d.memMb), Number(d.cpuGflops) / 1000);
+      if (gpuShare > 0) {
+        if (!IS_GPU) continue;                          // GPU work never runs on a CPU-only enclave
+        if (gpuShare * CARD_VRAM_GB > maxFreeVram() + 1e-9 || cpuShare > maxFreeCpu() + 1e-9) continue;
+      } else {
+        if (IS_GPU && Date.now() < (Math.max(Number(d.createdAt), Number(d.leaseUntil)) + CPU_CLAIM_GRACE_SEC) * 1000) continue;
+        if (cpuShare > maxFreeCpu() + 1e-9) continue;
+      }
+      // catalog approval gate, same as the HTTP deploy path (fail closed); also
+      // refuses deployments that asked for less than the app's declared minimums
       const g = await gateAppReference(d.appRef);
       if (g.error) continue;
+      if (Number(d.vramMb) < g.min.vramMb || Number(d.gpuGflops) < g.min.gpuGflops
+       || Number(d.memMb) < g.min.memMb || Number(d.cpuGflops) < g.min.cpuGflops) continue;
       await tryClaim(d, g.ref);
     }
     if (page.length < CLAIM_PAGE) break;
@@ -192,21 +221,25 @@ works with zero changes.
 
 ```js
 async function adopt(d, resolvedRef) {
-  const share = Number(d.milliShare) / 1000;
-  const gpu = allocGpu(share * CARD_VRAM_GB, share);
+  const vramGb = Number(d.vramMb) / 1024, memMb = Number(d.memMb);
+  const gpuShare = gpuShareOf(vramGb, Number(d.gpuGflops) / 1000);     // calculated locally,
+  const cpuShare = cpuShareOf(memMb, Number(d.cpuGflops) / 1000);      // max(memory, compute) per pool
+  // GPU work reserves a card slice AND its cpuShare; CPU-only work just the cpu pool
+  const gpu = gpuShare > 0 ? allocGpu(gpuShare * CARD_VRAM_GB, gpuShare, cpuShare) : allocCpu(cpuShare);
   if (!gpu) { await releaseOnChain(d.id); return; }     // capacity vanished; refund the lease
   const rec = {
     id: d.id, owner: d.owner.toLowerCase(), status: "claimed",
     public: d.isPublic, firewall: firewallFromPorts(d.ports),  // CSV -> the parseFirewall shape
     image: { reference: resolvedRef }, command: [],
-    resources: { vramGb: share * CARD_VRAM_GB, computeShare: share, share, cardId: gpu.cardId },
+    resources: gpuShare > 0 ? { vramGb, memMb, gpuShare, cpuShare, cardId: gpu.cardId }
+                            : { vramGb: 0, memMb, gpuShare: 0, cpuShare },
     network: { port: Number(d.appPort), protocol: "https", endpoint: null }, // filled from originOf per request
     createdAt: new Date(Number(d.createdAt) * 1000).toISOString(), startedAt: null,
     // the local clock only covers the CURRENT lease; the chain holds the rest
     remainingMs: Number(d.leaseUntil) * 1000 - Date.now(), consumedMs: 0,
     rate: Number(d.rate) / 1e6, paidUsdc: Number(d.spent6) + Number(d.balance6),
     _onchain: true, _leaseUntil: Number(d.leaseUntil),
-    _gpu: gpu, _gpuSpec: { cardId: gpu.cardId, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare },
+    _gpu: gpu, _gpuSpec: gpuShare > 0 ? { cardId: gpu.cardId, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare } : null,
     _authorizedKey: (d.sshPubKey || "").trim(), _sshKeySource: "on-chain",
   };
   deployments.set(rec.id, rec); saveStateSoon();

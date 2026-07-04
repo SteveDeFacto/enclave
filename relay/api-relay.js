@@ -116,11 +116,36 @@ async function pollAvailability() {
   updatedAt = new Date().toISOString();
 }
 
-// most free share that still fits the request — same rule as nan-discover.mjs
-function pick(wantShare = 0) {
-  return live
-    .filter((e) => (e.availability.maxShare ?? 0) >= wantShare)
-    .sort((a, b) => (b.availability.maxShare ?? 0) - (a.availability.maxShare ?? 0))[0] || null;
+// Exact-resource routing — same rule as nan-discover.mjs. Callers name EXACT
+// resources on four axes (vramGb + gpuTflops of a card, memMb + cpuTflops of
+// the node); each enclave's fit is checked against ITS OWN specs from
+// /availability, so heterogeneous hardware routes correctly. GPU work needs a
+// GPU enclave whose free card slice covers BOTH GPU axes and whose cpu pool
+// covers both CPU axes. CPU-only work prefers CPU-only enclaves; GPU enclaves
+// are the FALLBACK, serving it out of leftover cpu pool (a tenant taking a
+// whole card + 10% of the RAM leaves 90% of the node rentable). Availability
+// fields: gpuShareFree / cpuShareFree (+ cardVramGb / cardTflops / nodeRamGb /
+// nodeTflops; maxShare kept as a deprecated fallback for old enclaves).
+const gpuFreeOf = (a) => a.gpuShareFree ?? (a.gpu ? a.maxShare ?? 0 : 0);
+const cpuFreeOf = (a) => a.cpuShareFree ?? (a.gpu ? 0 : a.maxShare ?? 0);
+const vramFreeGbOf    = (a) => gpuFreeOf(a) * (a.cardVramGb || 141);
+const gpuTflopsFreeOf = (a) => gpuFreeOf(a) * (a.cardTflops || 989);
+const ramFreeMbOf     = (a) => cpuFreeOf(a) * (a.nodeRamGb || 64) * 1024;
+const cpuTflopsFreeOf = (a) => cpuFreeOf(a) * (a.nodeTflops || 1);
+function pick(want = {}) {
+  const { vramGb = 0, gpuTflops = 0, memMb = 0, cpuTflops = 0 } = want;
+  const cpuFits = (a) => ramFreeMbOf(a) >= memMb && cpuTflopsFreeOf(a) >= cpuTflops;
+  if (vramGb > 0 || gpuTflops > 0) {
+    return live
+      .filter((e) => e.availability.gpu && vramFreeGbOf(e.availability) >= vramGb
+                     && gpuTflopsFreeOf(e.availability) >= gpuTflops && cpuFits(e.availability))
+      .sort((a, b) => gpuFreeOf(b.availability) - gpuFreeOf(a.availability))[0] || null;
+  }
+  const fits = live.filter((e) => cpuFits(e.availability));
+  const byCpuFree = (a, b) => cpuFreeOf(b.availability) - cpuFreeOf(a.availability);
+  return fits.filter((e) => !e.availability.gpu).sort(byCpuFree)[0]
+      || fits.filter((e) => e.availability.gpu).sort(byCpuFree)[0]
+      || null;
 }
 
 // --- http ----------------------------------------------------------------------
@@ -197,7 +222,7 @@ const _existCache = new Map();                                // id -> { ok, at(
 async function deploymentExists(id) {
   const hit = _existCache.get(id);
   if (hit && (Date.now() - hit.at) < 60_000) return hit.ok;
-  const c = pick(0); if (!c) return false;
+  const c = pick(); if (!c) return false;
   let ok = false;
   try {
     const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 4000);
@@ -225,7 +250,7 @@ const server = http.createServer((req, res) => {
   // (it's a distinct origin, so the gateway doesn't impose CORS).
   const depHost = depFromHost(req.headers["x-forwarded-host"] || req.headers.host);
   if (depHost) {
-    const c = pick(0);
+    const c = pick();
     if (!c) return json(res, 503, { error: "no_capacity", message: "No live enclaves.", updatedAt });
     const rest = req.url === "/" ? "/" : req.url;             // preserve path+query under /x/<id>
     return proxyTo(c.endpoint, req, res, { path: "/x/" + depHost + rest, setCors: false });
@@ -239,16 +264,30 @@ const server = http.createServer((req, res) => {
   if (u.pathname === "/enclaves") {
     const agg = {
       enclaves: live.length,
-      totalFreeShare: Math.round(live.reduce((s, e) => s + (e.availability.maxShare || 0), 0) * 1000) / 1000,
+      totalGpuShareFree: Math.round(live.reduce((s, e) => s + gpuFreeOf(e.availability), 0) * 1000) / 1000,
+      totalCpuShareFree: Math.round(live.reduce((s, e) => s + cpuFreeOf(e.availability), 0) * 1000) / 1000,
       totalVramFreeGb: Math.round(live.reduce((s, e) => s + (e.availability.vramFreeGb || 0), 0) * 10) / 10,
     };
     return json(res, 200, { updatedAt, aggregate: agg, enclaves: live }, req);
   }
 
   if (u.pathname === "/route") {
-    const want = parseFloat(u.searchParams.get("share") || "0") || 0;
+    // ?vramGb=&gpuTflops=&memMb=&cpuTflops= — the EXACT resources the
+    // deployment wants on four axes (shares are calculated per enclave). Both
+    // GPU axes 0 = CPU-only (CPU enclaves preferred, GPU leftovers as
+    // fallback). Legacy ?gpuShare=/?share= is read as a fraction of a 141 GB
+    // card, ?cpuShare= as a fraction of a 64 GB node.
+    const want = {
+      vramGb: parseFloat(u.searchParams.get("vramGb")
+        ?? String((parseFloat(u.searchParams.get("gpuShare") ?? u.searchParams.get("share") ?? "0") || 0) * 141)) || 0,
+      gpuTflops: parseFloat(u.searchParams.get("gpuTflops") || "0") || 0,
+      memMb: parseFloat(u.searchParams.get("memMb")
+        ?? String((parseFloat(u.searchParams.get("cpuShare") || "0") || 0) * 64 * 1024)) || 0,
+      cpuTflops: parseFloat(u.searchParams.get("cpuTflops") || "0") || 0,
+    };
     const c = pick(want);
-    if (!c) return json(res, 503, { error: "no_capacity", message: `No live enclave has >= ${want} free share.`, updatedAt }, req);
+    if (!c) return json(res, 503, { error: "no_capacity",
+      message: `No live enclave has ${want.vramGb} GB VRAM / ${want.gpuTflops} GPU TFLOPS and ${Math.round(want.memMb)} MB RAM / ${want.cpuTflops} CPU TFLOPS free.`, updatedAt }, req);
     return json(res, 200, { endpoint: c.endpoint, repo: c.repo, availability: c.availability, updatedAt,
                             note: "Verify attestation at the endpoint (Tinfoil SecureClient + repo) before sending anything." }, req);
   }
@@ -259,12 +298,12 @@ const server = http.createServer((req, res) => {
   // this needs per-deployment routing (a SIWE token is enclave-specific anyway),
   // so revisit before adding a second enclave.
   if (proxied(u.pathname)) {
-    const c = pick(0);
+    const c = pick();
     if (!c) return json(res, 503, { error: "no_capacity", message: "No live enclaves.", updatedAt }, req);
     return proxyTo(c.endpoint, req, res);
   }
 
-  json(res, 404, { error: "not_found", routes: ["/health", "/enclaves", "/route?share=0.05", "/v1/* /x/* /availability (proxied to the enclave)"] }, req);
+  json(res, 404, { error: "not_found", routes: ["/health", "/enclaves", "/route?vramGb=8&gpuTflops=50&memMb=2048&cpuTflops=0.1", "/v1/* /x/* /availability (proxied to the enclave)"] }, req);
 });
 
 await pollRegistry();

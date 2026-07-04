@@ -6,10 +6,11 @@
 #   supervisor    - control plane (auth, billing, quota, routing). Public via shim.
 #   wasm-manager  - tenant apps via `wasmtime serve` (all CPU; no GPU interface).
 #
-# GPU_COUNT=0 puts the supervisor in CPU-enclave mode: deployments buy a share
-# of the NODE's vCPU+RAM instead of a GPU slice, priced at the CPU rate. The
-# partition rule is enforced here and in the claim loop: a CPU enclave runs
-# ONLY CPU deployments; GPU-enabled enclaves run ONLY GPU deployments.
+# GPU_COUNT=0 puts the supervisor in CPU-enclave mode: deployments name the
+# exact RAM they need (memMb; vramGb is refused with a 422) and the CPU share
+# billed at the CPU rate is calculated from it. Routing: GPU work runs only on
+# GPU enclaves; CPU-only work lands here FIRST — GPU enclaves bid on it only
+# after CPU_CLAIM_GRACE_SEC, out of their leftover CPU pool.
 #
 # Released separately from the GPU flavor: tag CPU releases as v<X.Y.Z>-cpu via
 # the "Tinfoil Release (CPU)" workflow, which measures THIS file. Image digests
@@ -25,12 +26,13 @@ containers:
     restart: always
     env:
       - PORT: "8080"
-      # CPU-enclave mode: no cards. The supervisor refuses GPU deployments and
-      # allocates node shares (vCPU+RAM) instead; the claim loop only adopts
-      # on-chain deployments created with gpu=false.
+      # CPU-enclave mode: no cards. The supervisor refuses vramGb > 0 and
+      # allocates node shares calculated from each deployment's memMb; the
+      # claim loop only adopts on-chain deployments created with vramMb=0.
       - GPU_COUNT: "0"
       - NODE_VCPUS: "16"
       - NODE_RAM_GB: "64"
+      - NODE_TFLOPS: "1"                                 # CPU compute per node; exact cpuTflops asks divide by this
       # tenant-app hosting: the wasm-manager runs each app as a `wasmtime serve` process.
       - PROVISION_BACKEND: "vm"                          # required on a CPU enclave (no GPU worker exists)
       - VMMGR_URL: "http://localhost:8091"               # the wasm-manager (container below)
@@ -89,8 +91,9 @@ containers:
       - WASM_MANAGER_PORT: "8091"
       - NODE_VCPUS: "16"
       - NODE_RAM_GB: "64"
-      - NODE_HAS_GPU: "0"           # refuse catalog apps that declare gpu: true
-      - WASM_APP_MEM_MB: "512"      # default per-app address-space cap
+      - NODE_HAS_GPU: "0"           # refuse catalog apps that declare vram_mb > 0
+      # each app's memory cap is exactly the memMb its deployment asked for;
+      # WASM_APP_MIN_MEM_MB (default 64) is the floor
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
       interval: 15s

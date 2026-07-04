@@ -142,15 +142,9 @@
       },
       {
         "indexed": false,
-        "internalType": "bool",
-        "name": "gpu",
-        "type": "bool"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint16",
-        "name": "milliShare",
-        "type": "uint16"
+        "internalType": "uint32[4]",
+        "name": "res",
+        "type": "uint32[4]"
       },
       {
         "indexed": false,
@@ -287,6 +281,37 @@
     "anonymous": false,
     "inputs": [
       {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "cardVramMb",
+        "type": "uint32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "cardGflops",
+        "type": "uint32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "nodeRamMb",
+        "type": "uint32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "nodeGflops",
+        "type": "uint32"
+      }
+    ],
+    "name": "RefSizesSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
         "indexed": true,
         "internalType": "bytes32",
         "name": "id",
@@ -338,6 +363,32 @@
     ],
     "name": "Renewed",
     "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "cardGflops",
+    "outputs": [
+      {
+        "internalType": "uint32",
+        "name": "",
+        "type": "uint32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "cardVramMb",
+    "outputs": [
+      {
+        "internalType": "uint32",
+        "name": "",
+        "type": "uint32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
   },
   {
     "inputs": [
@@ -410,14 +461,9 @@
         "type": "string"
       },
       {
-        "internalType": "bool",
-        "name": "gpu",
-        "type": "bool"
-      },
-      {
-        "internalType": "uint16",
-        "name": "milliShare",
-        "type": "uint16"
+        "internalType": "uint32[4]",
+        "name": "res",
+        "type": "uint32[4]"
       },
       {
         "internalType": "uint32",
@@ -568,19 +614,39 @@
             "type": "string"
           },
           {
+            "internalType": "uint32",
+            "name": "vramMb",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "gpuGflops",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "memMb",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "cpuGflops",
+            "type": "uint32"
+          },
+          {
             "internalType": "uint16",
-            "name": "milliShare",
+            "name": "gpuMilli",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint16",
+            "name": "cpuMilli",
             "type": "uint16"
           },
           {
             "internalType": "uint32",
             "name": "appPort",
             "type": "uint32"
-          },
-          {
-            "internalType": "bool",
-            "name": "gpu",
-            "type": "bool"
           },
           {
             "internalType": "bool",
@@ -684,19 +750,39 @@
             "type": "string"
           },
           {
+            "internalType": "uint32",
+            "name": "vramMb",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "gpuGflops",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "memMb",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "cpuGflops",
+            "type": "uint32"
+          },
+          {
             "internalType": "uint16",
-            "name": "milliShare",
+            "name": "gpuMilli",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint16",
+            "name": "cpuMilli",
             "type": "uint16"
           },
           {
             "internalType": "uint32",
             "name": "appPort",
             "type": "uint32"
-          },
-          {
-            "internalType": "bool",
-            "name": "gpu",
-            "type": "bool"
           },
           {
             "internalType": "bool",
@@ -779,6 +865,32 @@
         "internalType": "uint64",
         "name": "",
         "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nodeGflops",
+    "outputs": [
+      {
+        "internalType": "uint32",
+        "name": "",
+        "type": "uint32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nodeRamMb",
+    "outputs": [
+      {
+        "internalType": "uint32",
+        "name": "",
+        "type": "uint32"
       }
     ],
     "stateMutability": "view",
@@ -996,6 +1108,34 @@
       }
     ],
     "name": "setPrice",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint32",
+        "name": "_cardVramMb",
+        "type": "uint32"
+      },
+      {
+        "internalType": "uint32",
+        "name": "_cardGflops",
+        "type": "uint32"
+      },
+      {
+        "internalType": "uint32",
+        "name": "_nodeRamMb",
+        "type": "uint32"
+      },
+      {
+        "internalType": "uint32",
+        "name": "_nodeGflops",
+        "type": "uint32"
+      }
+    ],
+    "name": "setRefSizes",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

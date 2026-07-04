@@ -80,8 +80,9 @@ need privacy). See `relay/README.md`.
 
 Sandbox defaults (nothing to configure): a private writable `/data` (see below),
 no host environment, no network beyond the served HTTP socket, memory capped per
-app via `mem_mb` in the catalog. Peer isolation = separate Wasm sandbox +
-separate OS process per app.
+deployment at exactly the `memMb` it asked for (the billing CPU share is
+calculated from it: `memMb / node RAM`). Peer isolation = separate Wasm sandbox
++ separate OS process per app.
 
 **Scratch filesystem (`/data`).** Every deployment is launched with a private,
 writable `/data` preopen (wasi:filesystem via `wasmtime --dir`), so off-the-shelf
@@ -97,8 +98,8 @@ model: an app sees *only* its own `/data`; there is no preopen for anything else
 and a path escaping the tree (`/data/../../etc/...`) is refused by the runtime.
 
 Usage is capped per app by `storage_mb` (default 256; the audit sweep kills an
-app that exceeds it, since a ramdisk file tree consumes RAM that `mem_mb` doesn't
-cover). Set `storage_mb: 0` to opt an app out of `/data` entirely (back to the
+app that exceeds it, since a ramdisk file tree consumes RAM the linear-memory
+cap doesn't cover). Set `storage_mb: 0` to opt an app out of `/data` entirely (back to the
 old no-filesystem sandbox). Operators can disable the feature fleet-wide with
 `WASM_FS=0` on the wasm-manager, or relocate the backing dir with `WASM_FS_DIR`.
 
@@ -108,18 +109,25 @@ old no-filesystem sandbox). Operators can disable the feature fleet-wide with
 {
   "apps": [
     { "id": "hello", "name": "Hello", "file": "hello.wasm",
-      "description": "…", "mem_mb": 128, "storage_mb": 64 }
+      "description": "…", "vram_mb": 0, "gpu_gflops": 0,
+      "mem_mb": 128, "cpu_gflops": 0, "storage_mb": 64 }
   ]
 }
 ```
 
 - `id`     - what the frontend/user selects; what the supervisor sends as `image`.
 - `file`   - the `.wasm` in this directory.
-- `mem_mb` - per-instance guest memory cap, enforced on the Wasm linear memory
-             via `wasmtime -W max-memory-size` (not RLIMIT_AS — wasmtime reserves
-             terabytes of virtual space for bounds-checking, so an RLIMIT_AS
-             small enough to bound RAM would kill the runtime). Optional;
-             defaults to `WASM_APP_MEM_MB` (512).
+- `vram_mb` / `gpu_gflops` / `mem_mb` / `cpu_gflops` - the app's **exact minimum
+             resources** on four axes: memory (MB) and compute (GFLOPS = 1/1000
+             TFLOPS) of a GPU card and of a node (mirrors NanAppCatalog; the
+             allocation shares are calculated from them, each the larger of its
+             memory and compute ask). Either GPU axis > 0 marks a GPU app: it is
+             refused on `NODE_HAS_GPU=0` nodes. A deploy asking for less than
+             any minimum is refused. `mem_mb` is also the guest linear-memory
+             cap (enforced via `wasmtime -W max-memory-size`, floor
+             `WASM_APP_MIN_MEM_MB`=64 — not RLIMIT_AS, which would kill
+             wasmtime's terabyte-scale virtual reservations); deployments may
+             ask for more than the minimums and get exactly what they ask.
 - `storage_mb` - ceiling on the app's `/data` scratch filesystem (see above),
              enforced by the audit sweep. Optional; defaults to
              `WASM_APP_STORAGE_MB` (256). `0` disables `/data` for this app.

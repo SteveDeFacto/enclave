@@ -118,8 +118,11 @@ containers:
       - DEPLOYMENTS_ADDRESS: "0x8845DE6475664E6D3B0ce955f21A7F6F60B13DC9"                          # set by scripts/deploy-deployments.mjs
       # - CLAIM_POLL_SEC: "60"                           # optional: queue sweep / lease audit cadence
       # - RENEW_MARGIN_SEC: "300"                        # optional: renew when less lease than this remains
+      # - CPU_CLAIM_GRACE_SEC: "120"                     # optional: how long CPU-only work waits for a CPU enclave before we bid on it
       - GPU_COUNT: "1"
       - GPU_VRAM_GB: "141"
+      - GPU_TFLOPS: "989"                                # GPU compute per card (H200 FP16 dense); exact gpuTflops asks divide by this
+      - NODE_TFLOPS: "1"                                 # CPU compute per node; exact cpuTflops asks divide by this
       - SM_TOTAL: "132"
       - MIN_COMPUTE_PCT: "1"
       - VRAM_GRANULARITY_GB: "1"
@@ -183,8 +186,9 @@ containers:
       - WASM_MANAGER_PORT: "8091"   # same port the supervisor's VMMGR_URL already targets
       - NODE_VCPUS: "16"
       - NODE_RAM_GB: "64"
-      - NODE_HAS_GPU: "1"           # GPU node: catalog apps with gpu: true may launch here (CPU flavor sets "0")
-      - WASM_APP_MEM_MB: "512"      # default per-app address-space cap (RLIMIT_AS)
+      - NODE_HAS_GPU: "1"           # GPU node: catalog apps with vram_mb > 0 may launch here (CPU flavor sets "0")
+      # each app's memory cap is exactly the memMb its deployment asked for;
+      # WASM_APP_MIN_MEM_MB (default 64) is the floor
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
       interval: 15s

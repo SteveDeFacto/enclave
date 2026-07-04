@@ -157,7 +157,7 @@ def _spawn_tenant(tid: str, share: float) -> dict:
             "WORKER_PORT": str(port),
             "REQUIRE_FENCE": "1" if REQUIRE_FENCE else "0"}
     proc = subprocess.Popen([sys.executable, os.path.abspath(__file__), "child"], env=env)
-    rec = {"id": tid, "share": share, "pct": pct, "port": port, "status": "starting",
+    rec = {"id": tid, "gpuShare": share, "share": share, "pct": pct, "port": port, "status": "starting",
            "sm_granted": None, "device": None, "error": None, "createdAt": time.time(), "_proc": proc}
     with _lock:
         _tenants[tid] = rec
@@ -199,7 +199,8 @@ def _kill_tenant(tid: str) -> bool:
 
 def _capacity():
     free = max(0.0, 1.0 - _used_share)
-    return {"maxShare": round(free, 4), "usedShare": round(_used_share, 4),
+    return {"gpuShareFree": round(free, 4), "usedGpuShare": round(_used_share, 4),
+            "maxShare": round(free, 4), "usedShare": round(_used_share, 4),   # deprecated aliases (one release)
             "smFree": round(free * 132), "vramFreeGb": round(free * VRAM_GB, 1)}
 
 
@@ -315,9 +316,11 @@ class MGR(BaseHTTPRequestHandler):
                 req = json.loads(self.rfile.read(n) or b"{}")
             except Exception:
                 return self._send(400, {"error": "bad json"})
-            share = req.get("share")
+            # gpuShare: the deployment's slice of THIS card (VRAM + compute move
+            # together under the MPS cap). "share" is the legacy alias.
+            share = req.get("gpuShare", req.get("share"))
             if not isinstance(share, (int, float)) or not (0 < share <= 1):
-                return self._send(422, {"error": "share must be in (0,1]"})
+                return self._send(422, {"error": "gpuShare must be in (0,1]"})
             with _lock:
                 if share > (1.0 - _used_share) + 1e-9:
                     return self._send(409, {"error": "not enough free share", "capacity": _capacity()})

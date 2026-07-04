@@ -12,7 +12,8 @@ import url from "node:url";
 const REPO = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 const SITE = path.join(REPO, "site", "index.html");
 
-const SEL_SET_APPROVAL  = "a67613fa"; // setApproval(bytes32,uint256,uint8)      -> current (approval-gated deploys)
+const SEL_PUBLISH_SHARES = "adbf439a"; // publishVersion(...,uint32[4] res,string ports) -> current (exact resources incl. TFLOPS -> derived shares)
+const SEL_SET_APPROVAL  = "a67613fa"; // setApproval(bytes32,uint256,uint8)      -> approval-gated deploys, memMb-only resources
 const SEL_PUBLISH_PORTS = "2936ec7d"; // publishVersion(...,uint32,string ports) -> firewall, no approval
 const SEL_PUBLISH_V2    = "7535857a"; // publishVersion(...,uint32)              -> versioned, no ports
 const SEL_PUBLISH_V1    = "098d0746"; // publish(string,string,string,uint32)    -> original, no versions
@@ -62,10 +63,14 @@ async function main() {
 
   if (!code || code === "0x") {
     console.log(`=> No contract at that address on this network (wrong address or chain).`);
-  } else if (code.includes(SEL_SET_APPROVAL)) {
+  } else if (code.includes(SEL_PUBLISH_SHARES)) {
     let n = "?";
     try { n = BigInt(await rpc(rpcUrl, "eth_call", [{ to: addr, data: "0x" + SEL_APP_COUNT }, "latest"]) || "0x0").toString(); } catch {}
-    console.log(`=> CURRENT NanAppCatalog ✓ (approval-gated deploys + firewall ports). Apps listed: ${n}`);
+    console.log(`=> CURRENT NanAppCatalog ✓ (exact resources: vramMb/gpuGflops/memMb/cpuGflops, shares derived by runners). Apps listed: ${n}`);
+  } else if (code.includes(SEL_SET_APPROVAL)) {
+    console.log(`=> OLDER NanAppCatalog (approval-gated, but memMb-only resources — no VRAM`);
+    console.log(`   requirement, so runners can't derive both shares). Redeploy:`);
+    console.log(`     node scripts/deploy-app-catalog.mjs`);
   } else if (code.includes(SEL_PUBLISH_PORTS)) {
     console.log(`=> OLDER NanAppCatalog (firewall ports, NO approval gating — the supervisor's`);
     console.log(`   cidStatus() deploy gate can't work against it). Redeploy:`);

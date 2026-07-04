@@ -5,8 +5,10 @@
       "name": "Hello (wasi:http)",
       "file": "hello.wasm",
       "description": "Minimal wasi:http component that returns a greeting. Smoke-test app.",
+      "vram_mb": 0,
+      "gpu_gflops": 0,
       "mem_mb": 128,
-      "gpu": false
+      "cpu_gflops": 0
     }
   ]
 }

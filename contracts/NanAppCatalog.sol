@@ -15,9 +15,13 @@ pragma solidity ^0.8.20;
 ///     else's "hello" are different apps (distinguished by publisher). Because the
 ///     appId embeds msg.sender, only you can ever write to your app — lineage
 ///     ownership is STRUCTURAL, not an access check that can be spoofed.
-///   - `publishVersion` appends an immutable Version (its own CID, label, memMb).
-///     Versions are append-only history; you don't edit a released version, you
-///     publish a new one. A publisher can `yankVersion` a bad release (kept for
+///   - `publishVersion` appends an immutable Version (its own CID, label, and the
+///     EXACT resources the app needs to run, on four axes: vramMb + gpuGflops of
+///     a GPU card — both 0 for CPU-only apps — and memMb + cpuGflops of a node;
+///     GFLOPS = 1/1000 TFLOPS). Runners calculate the two allocation shares from
+///     these numbers against their hardware specs, each the LARGER of its
+///     memory- and compute-derived share. Versions are append-only history; you
+///     don't edit a released version, you publish a new one. A publisher can `yankVersion` a bad release (kept for
 ///     history, hidden by readers) and `editApp` the display metadata.
 ///   - Global CID uniqueness: a given wasm artifact is listed at most once across
 ///     the whole catalog, so a CID unambiguously maps to one app/version.
@@ -50,7 +54,12 @@ contract NanAppCatalog {
     struct Version {
         string  cid;          // IPFS CID of this release's .wasm (wasi:http component)
         string  version;      // label, e.g. "1.0.0"
-        uint32  memMb;        // per-instance guest memory cap
+        uint32  vramMb;       // EXACT minimum VRAM (MB) this release needs; 0 = no VRAM ask
+        uint32  gpuGflops;    // EXACT minimum GPU compute (GFLOPS = 1/1000 TFLOPS); both GPU
+                              // axes 0 = CPU-only app
+        uint32  memMb;        // EXACT minimum RAM (MB) this release needs (>= 1)
+        uint32  cpuGflops;    // EXACT minimum CPU compute (GFLOPS); 0 = RAM-driven. Runners derive
+                              // the allocation shares from these against their hardware specs
         uint64  createdAt;
         bool    verified;     // owner-curated, per version (the CID is what's checked)
         bool    yanked;       // publisher pulled this release (kept for history)
@@ -73,7 +82,9 @@ contract NanAppCatalog {
     uint256 private constant MAX_DESC = 500;
     uint256 private constant MAX_VER  = 32;
     uint256 private constant MAX_CID  = 100;
-    uint32  private constant MAX_MEM  = 8192;
+    uint32  private constant MAX_MB   = 1048576;   // 1 TB sanity bound on vramMb/memMb (the catalog
+                                                    // is hardware-agnostic; runners enforce real fit)
+    uint32  private constant MAX_GFLOPS = 10000000; // 10,000 TFLOPS sanity bound on gpuGflops/cpuGflops
     uint256 private constant MAX_PORTS = 96;   // CSV port spec, e.g. "http:8088,tcp:5432,udp:9053"
                                                // (runners restrict the range; 8080/8091 are infra-reserved)
 
@@ -105,18 +116,24 @@ contract NanAppCatalog {
     /// @return appId the app's stable id; index the new version's position.
     /// @dev Split into `_reserveCid` / `_touchApp` helpers so each has its own stack
     ///      frame (a single flat body hits "stack too deep" without viaIR).
+    /// @dev `res` = [vramMb, gpuGflops, memMb, cpuGflops] — the four exact
+    ///      resource axes, packed as an array (keeps the calldata layout stable
+    ///      and the stack workable as axes grow).
     function publishVersion(
         string calldata slug,
         string calldata name,
         string calldata description,
         string calldata version,
         string calldata cid,
-        uint32 memMb,
+        uint32[4] calldata res,
         string calldata ports
     ) external returns (bytes32 appId, uint256 index) {
         require(bytes(version).length > 0 && bytes(version).length <= MAX_VER, "version length");
         require(bytes(cid).length > 0 && bytes(cid).length <= MAX_CID, "cid length");
-        require(memMb > 0 && memMb <= MAX_MEM, "memMb range");
+        require(res[0] <= MAX_MB, "vramMb range");
+        require(res[1] <= MAX_GFLOPS, "gpuGflops range");
+        require(res[2] > 0 && res[2] <= MAX_MB, "memMb range");
+        require(res[3] <= MAX_GFLOPS, "cpuGflops range");
         require(bytes(ports).length <= MAX_PORTS, "ports length");
 
         bytes32 cidKey = _reserveCid(cid);
@@ -131,11 +148,18 @@ contract NanAppCatalog {
         }
 
         Version[] storage vs = _versions[appId];
-        vs.push(Version({
-            cid: cid, version: version, memMb: memMb,
-            createdAt: uint64(block.timestamp), verified: false, yanked: false,
-            ports: ports, approval: APPROVAL_PENDING
-        }));
+        // field-by-field (not a struct literal): 10 fields with 3 dynamic strings
+        // overflow the Yul stack even under viaIR; verified/yanked default false
+        Version storage v = vs.push();
+        v.cid = cid;
+        v.version = version;
+        v.vramMb = res[0];
+        v.gpuGflops = res[1];
+        v.memMb = res[2];
+        v.cpuGflops = res[3];
+        v.createdAt = uint64(block.timestamp);
+        v.ports = ports;
+        v.approval = APPROVAL_PENDING;
         index = vs.length - 1;
         _cidRefs[cidKey] = CidRef({ appId: appId, index1: uint32(index + 1) });
 
@@ -247,13 +271,18 @@ contract NanAppCatalog {
     /// @notice One-call deploy gate for runners: resolve a CID to its listing and
     ///         the flags that decide deployability (deployable iff `listed`,
     ///         `appActive`, not `yanked`, and approval == APPROVAL_APPROVED).
+    ///         Also returns the version's exact minimum resources — `res` =
+    ///         [vramMb, gpuGflops, memMb, cpuGflops] — so runners can refuse a
+    ///         deployment that asked for less than the app declares it needs.
     function cidStatus(string calldata cid) external view returns (
-        bool listed, bytes32 appId, uint256 index, uint8 approval, bool yanked, bool appActive
+        bool listed, bytes32 appId, uint256 index, uint8 approval, bool yanked, bool appActive,
+        uint32[4] memory res
     ) {
         CidRef storage r = _cidRefs[keccak256(bytes(cid))];
-        if (r.index1 == 0) return (false, bytes32(0), 0, 0, false, false);
+        if (r.index1 == 0) return (false, bytes32(0), 0, 0, false, false, res);
         Version storage v = _versions[r.appId][r.index1 - 1];
-        return (true, r.appId, r.index1 - 1, v.approval, v.yanked, _apps[r.appId].active);
+        res = [v.vramMb, v.gpuGflops, v.memMb, v.cpuGflops];
+        return (true, r.appId, r.index1 - 1, v.approval, v.yanked, _apps[r.appId].active, res);
     }
 
     /// @notice Paginated app list (metadata only; fetch each app's versions separately).

@@ -66,24 +66,37 @@ site-deploy hook predates this pipeline and is now redundant — disable it with
 `git config --unset core.hooksPath` if you don't want pushes deploying the site
 twice.
 
+## Resources: exact resources in, two shares calculated
+
+Apps specify **exact resources on four axes** — memory and compute for each pool: `vramMb` + `gpuGflops` of one GPU card (both 0 = CPU-only app), and `memMb` + `cpuGflops` of the node (`memMb` is also the wasm guest's runtime-enforced memory cap; compute is measured in TFLOPS, stored as integer GFLOPS = 1/1000 TFLOPS on-chain). The platform **calculates two normalized shares** — the allocation/routing/billing unit — by dividing the app's spec by the server's spec, taking the LARGER of the memory- and compute-derived share per pool, rounded UP to the whole-percent grain so a share is never worth less than what was asked for:
+
+- **`gpuShare` (0..1)** = `max(vramGb / CARD_VRAM_GB, gpuTflops / GPU_TFLOPS)`. The MPS compute % and VRAM cap both follow it.
+- **`cpuShare` (0..1)** = `max(memMb / node RAM, cpuTflops / NODE_TFLOPS)`. The node's vCPUs come along in the same proportion.
+
+Server specs: H200 card = 141 GB / 989 TFLOPS (`GPU_VRAM_GB` / `GPU_TFLOPS`); node = 64 GB / ~1 TFLOPS (`NODE_RAM_GB` / `NODE_TFLOPS`). The max() means a compute-bound app (little VRAM, many TFLOPS) still pays for the throughput it occupies, and vice versa.
+
+Invariant: a GPU app's CPU slice rides on the same node as its card, so the derived **`gpuShare >= cpuShare` whenever `gpuShare > 0`**. The leftovers are the point — a tenant taking a whole card + 10% of the node leaves 90% of that node's CPU/RAM rentable by CPU-only apps. Pricing is additive on the derived shares: `rate = gpuShare × cardRate ($6/hr) + cpuShare × nodeRate ($2/hr)`, per second.
+
+Routing: GPU work (either GPU axis > 0) runs **only** on GPU-enabled enclaves. CPU-only work is served by CPU-only enclaves first; GPU enclaves bid on it only after a grace window (`CPU_CLAIM_GRACE_SEC`, default 120s) and only out of leftover CPU pool.
+
 ## CPU-only enclaves
 
-The repo ships two enclave flavors, and the partition rule between them is strict: **CPU-only enclaves run only CPU deployments; GPU-enabled enclaves run only GPU deployments.**
+The repo ships two enclave flavors:
 
-- `tinfoil-config.yml` — the GPU flavor (supervisor + MPS daemon + GPU worker + wasm-manager). Deployments buy a share of an H200.
-- `tinfoil-config.cpu.yml` — the CPU flavor (supervisor + wasm-manager only, `GPU_COUNT=0`). Deployments buy a share of the node's vCPU+RAM at the CPU rate; GPU resource fields are refused with a 422.
+- `tinfoil-config.yml` — the GPU flavor (supervisor + MPS daemon + GPU worker + wasm-manager). Serves GPU deployments, plus CPU-only deployments out of leftover CPU/RAM.
+- `tinfoil-config.cpu.yml` — the CPU flavor (supervisor + wasm-manager only, `GPU_COUNT=0`). Serves CPU-only deployments (`gpuShare` is refused with a 422).
 
 To spin one up:
 
 1. Release the CPU flavor: `gh workflow run tinfoil-release-cpu.yml -f version=v0.0.1-cpu` (CPU versions must end in `-cpu`; the workflow pins the supervisor digest into `tinfoil-config.cpu.yml` and measures that config). `scripts/release.sh` repins image digests into **both** configs.
 2. In the Tinfoil dashboard, deploy the `-cpu` release with the same secrets (`SECRET`, `ADMIN_TOKEN`, `REGISTRY_PRIVATE_KEY` — use a distinct registry EOA per enclave).
-3. The enclave self-registers in NanRegistry like any other; callers tell the flavors apart from `/availability` (`gpu: false`).
+3. The enclave self-registers in NanRegistry like any other; callers read both pools from `/availability` (`gpuShareFree` / `cpuShareFree`; `gpu: false` marks the CPU flavor).
 
-How the partition is enforced:
+How the routing is enforced:
 
-- **HTTP deploys**: the supervisor sizes and prices `resources.share` against the node on a CPU enclave, against the card on a GPU enclave, and rejects requests for the other flavor.
-- **On-chain deploys**: `NanDeployments.create(...)` takes a `gpu` flag (CPU deployments are priced from `cpuPricePerSec6`, GPU from `pricePerSec6`); each enclave's claim loop only adopts deployments matching its own flavor.
-- **Apps**: catalog apps that need the GPU interface declare `"gpu": true` in `wasm/apps/catalog.json`; the wasm-manager refuses to launch them on a node with `NODE_HAS_GPU=0`. Apps without the flag are CPU-only and run on either flavor's wasmtime, but are placed per the deployment's flavor.
+- **HTTP deploys**: the supervisor takes `resources.{vramGb, gpuTflops, memMb, cpuTflops}`, calculates the shares, enforces the derived `gpuShare >= cpuShare` for GPU apps, and refuses GPU asks on a CPU enclave. CPU-only requests are served on either flavor from the node's CPU pool.
+- **On-chain deploys**: `NanDeployments.create(appRef, [vramMb, gpuGflops, memMb, cpuGflops], ...)` takes the exact axes; the contract derives and snapshots `gpuMilli`/`cpuMilli` against owner-set reference specs (`cardVramMb`/`cardGflops`/`nodeRamMb`/`nodeGflops`, matching the fleet), enforces the invariant, and prices both derived shares. GPU enclaves only adopt GPU work; CPU-only work goes to CPU enclaves first, with GPU enclaves as a delayed fallback (`CPU_CLAIM_GRACE_SEC`).
+- **Apps**: catalog apps declare exact minimum resources on the same four axes — `vramMb`/`gpuGflops`/`memMb`/`cpuGflops` on-chain (NanAppCatalog, returned by `cidStatus`) and `vram_mb`/`gpu_gflops`/`mem_mb`/`cpu_gflops` in `wasm/apps/catalog.json` for baked-in apps. Runners refuse deployments that asked for less on any axis; GPU-needing apps are refused on nodes with `NODE_HAS_GPU=0`.
 
 Verification caveat: verifiers that check against this repo's *latest* release (the `tinfoil-cli` default) will see the GPU flavor's measurement — verify CPU enclaves against their matching `-cpu` release explicitly.
 

@@ -78,10 +78,13 @@ let the live attestation be authoritative, which it is regardless.
 
 Read the registry and aggregate availability (no gateway, runs anywhere):
 ```bash
-REGISTRY_ADDRESS=0x... BASE_RPC=https://mainnet.base.org node scripts/nan-discover.mjs 0.25
+REGISTRY_ADDRESS=0x... BASE_RPC=https://mainnet.base.org node scripts/nan-discover.mjs 35 2048 250 0.1
 ```
-Prints aggregate free capacity across all live enclaves and the best one for a
-0.25 share, ending with the endpoint+repo to hand to SecureClient.
+Prints aggregate free capacity across all live enclaves and the best one for an
+app needing 35 GB VRAM + 2048 MB RAM + 250 GPU TFLOPS + 0.1 CPU TFLOPS (args:
+vramGb memMb gpuTflops cpuTflops; GPU axes 0 for a CPU-only app: CPU enclaves
+first, GPU leftovers as fallback; shares are calculated per enclave), ending
+with the endpoint+repo to hand to SecureClient.
 
 Then connect with attestation (the part that actually gates trust):
 ```js
@@ -116,7 +119,7 @@ After one enclave registers:
 ```bash
 node scripts/nan-discover.mjs        # should list it with live availability
 ```
-You should see it in `all[]` with a real `maxShare`, and `chosen` set. That's the
+You should see it in `all[]` with real `gpuShareFree`/`cpuShareFree`, and `chosen` set. That's the
 full loop: chain registry -> live availability -> a pick, with nothing trusted
 in the middle.
 
@@ -131,7 +134,7 @@ the **Apps** tab on the site.
 
 ```
 browser --(eth_call getAppsPage)------> NanAppCatalog   apps: {appId,slug,name,desc,publisher,versionCount,active}
-browser --(eth_call getVersionsPage)--> NanAppCatalog   per app: {cid,version,memMb,verified,yanked}
+browser --(eth_call getVersionsPage)--> NanAppCatalog   per app: {cid,version,vramMb,gpuGflops,memMb,cpuGflops,verified,yanked}
 browser --(fetch CID)-----------------> any IPFS peer   the .wasm bytes (hash == CID, verify yourself)
 browser --(publishVersion tx)---------> NanAppCatalog   one Base tx; publisher = msg.sender
 ```
@@ -172,9 +175,13 @@ Manager env: `IPFS_GATEWAY` (default `https://ipfs.nan.host`), `WASM_MAX_BYTES`
   namespace. Because the appId embeds `msg.sender`, only you can ever write to your
   app; lineage ownership is structural, not a spoofable check, and slugs can't be
   squatted across publishers.
-- `publishVersion(slug, …)` appends an **immutable Version** (its own CID, label,
-  memMb), creating the app on first use. Versions are append-only history; you don't
-  edit a release, you publish a new one. `editApp` changes display metadata;
+- `publishVersion(slug, …)` appends an **immutable Version** (its own CID, label, and
+  the app's exact minimum resources on four axes, packed as
+  `[vramMb, gpuGflops, memMb, cpuGflops]` — memory and compute of a GPU card and of a
+  node (compute in GFLOPS = 1/1000 TFLOPS); runners calculate the allocation shares
+  from them, and `cidStatus` returns them so runners refuse deployments that asked for
+  less on any axis), creating the app on first use. Versions are append-only history;
+  you don't edit a release, you publish a new one. `editApp` changes display metadata;
   `setActive` delists the whole app; `yankVersion` pulls a bad release (kept for
   history, hidden by readers).
 - **Global CID uniqueness**: a wasm artifact is listed at most once across the whole

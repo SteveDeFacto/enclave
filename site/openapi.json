@@ -161,7 +161,7 @@
         "operationId": "getPricing",
         "summary": "Rates and billing model",
         "security": [],
-        "description": "The whole-card per-second rate and how a share maps to a price. Billed per second at your share of the full-GPU rate.",
+        "description": "The two per-second rates (whole GPU card, whole CPU node) and how exact resources map to a price: the billing shares are calculated from vramGb and memMb, then ratePerSecond = gpuShare x cardRate + cpuShare x nodeRate.",
         "responses": {
           "200": {
             "description": "Pricing model.",
@@ -182,7 +182,7 @@
           "Pricing"
         ],
         "operationId": "getAvailability",
-        "summary": "Live GPU capacity",
+        "summary": "Live capacity (both pools)",
         "security": [],
         "servers": [
           {
@@ -190,7 +190,7 @@
             "description": "Root origin (this path is not under /v1)"
           }
         ],
-        "description": "Live free capacity on the enclave's card, as a single `share` (0 to 1). Read directly from the worker allocator; falls back to local accounting if the worker is briefly unreachable. NOTE: this endpoint is served at the root origin, not under /v1.",
+        "description": "Live free capacity as TWO shares: `gpuShareFree` (largest slice one card can still take; 0 on CPU-only enclaves) and `cpuShareFree` (the node's leftover vCPU+RAM - on a GPU enclave it is rentable by CPU-only apps). Read from the live allocators; falls back to local accounting if the backend is briefly unreachable. NOTE: this endpoint is served at the root origin, not under /v1.",
         "responses": {
           "200": {
             "description": "Current capacity.",
@@ -255,7 +255,7 @@
         ],
         "operationId": "createDeployment",
         "summary": "Create a deployment (awaiting payment)",
-        "description": "Reserves a share and returns a deployment in `awaiting_payment` with a `payment` block. On a GPU enclave the share is a GPU slice; on a CPU-only enclave (GPU_COUNT=0) it is a slice of the node's vCPU+RAM at the CPU rate, and GPU resource fields are refused — CPU-only enclaves run only CPU deployments, GPU enclaves only GPU deployments. The Wasm app is NOT started yet: sign a USDC payment authorization (EIP-3009 ReceiveWithAuthorization) and submit payWithAuthorization(deploymentRef, ...); the enclave sees the payment, launches your app as its own sandboxed, MPS-capped worker process on the confidential GPU, and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. The share is a software cap (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles). Catalog apps (ipfs://<cid> references) deploy only after the catalog owner has approved that version on-chain; unapproved or rejected versions return 403 not_approved.",
+        "description": "Reserves the exact resources asked for (resources.vramGb of one GPU card, resources.memMb of the node's RAM), calculates the two allocation shares from them, and returns a deployment in `awaiting_payment` with a `payment` block. vramGb > 0 needs a GPU enclave, and the derived gpuShare must be >= the derived cpuShare; vramGb 0 (CPU-only) is served by CPU-only enclaves and by GPU enclaves with leftover CPU/RAM. Catalog apps declare exact minimum resources - asking for less is refused (422). The Wasm app is NOT started yet: sign a USDC payment authorization (EIP-3009 ReceiveWithAuthorization) and submit payWithAuthorization(deploymentRef, ...); the enclave sees the payment, launches your app as its own sandboxed worker process (MPS-capped on the confidential GPU when vramGb > 0), and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. The derived shares are software caps (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles). Catalog apps (ipfs://<cid> references) deploy only after the catalog owner has approved that version on-chain; unapproved or rejected versions return 403 not_approved.",
         "requestBody": {
           "required": true,
           "content": {
@@ -298,7 +298,7 @@
             }
           },
           "409": {
-            "description": "No single card has that share free.",
+            "description": "No capacity: no single card has that much VRAM free, or the node lacks the RAM.",
             "content": {
               "application/json": {
                 "schema": {
@@ -308,7 +308,7 @@
             }
           },
           "422": {
-            "description": "Invalid spec (e.g. share out of range, or share exceeds a whole card).",
+            "description": "Invalid spec (e.g. a resource out of range, too much RAM for the VRAM asked (derived gpuShare < cpuShare), less than the app's declared minimum resources, or a share field - shares are calculated, not specified).",
             "content": {
               "application/json": {
                 "schema": {
@@ -395,7 +395,7 @@
         ],
         "operationId": "terminateDeployment",
         "summary": "Stop a deployment",
-        "description": "Stops the worker process, tears down the tenant, and releases the GPU share. Pay-per-deploy holds no balance, so any unused funded time is forfeit on early stop.",
+        "description": "Stops the worker process, tears down the tenant, and releases both shares (GPU and CPU). Pay-per-deploy holds no balance, so any unused funded time is forfeit on early stop.",
         "parameters": [
           {
             "name": "id",
@@ -673,7 +673,7 @@
           },
           "message": {
             "type": "string",
-            "example": "resources.share must be in (0, 1]."
+            "example": "resources.memMb must be in [1, 65536]."
           }
         }
       },
@@ -904,26 +904,56 @@
         "properties": {
           "vramGb": {
             "type": "number",
+            "description": "The exact VRAM asked for in this example (0 = CPU-only).",
             "example": 35
           },
-          "computeShare": {
+          "memMb": {
+            "type": "integer",
+            "description": "The exact RAM asked for in this example.",
+            "example": 3277
+          },
+          "gpuTflops": {
             "type": "number",
+            "description": "The exact GPU compute asked for in this example (TFLOPS).",
+            "example": 0
+          },
+          "cpuTflops": {
+            "type": "number",
+            "description": "The exact CPU compute asked for in this example (TFLOPS).",
+            "example": 0
+          },
+          "gpuShare": {
+            "type": "number",
+            "description": "Calculated: max(vramGb / cardVramGb, gpuTflops / cardTflops), rounded up to a whole percent.",
             "example": 0.25
           },
-          "billedOn": {
-            "type": "string",
-            "enum": [
-              "memory",
-              "compute"
-            ]
+          "cpuShare": {
+            "type": "number",
+            "description": "Calculated: max(memMb / node RAM, cpuTflops / nodeTflops), rounded up to a whole percent.",
+            "example": 0.05
+          },
+          "vramCapGb": {
+            "type": "number",
+            "description": "The VRAM cap the derived share actually grants (>= vramGb). GPU examples only.",
+            "example": 36
+          },
+          "tflopsCap": {
+            "type": "number",
+            "description": "The GPU compute the derived share actually grants (>= gpuTflops). GPU examples only.",
+            "example": 247.3
+          },
+          "vcpus": {
+            "type": "number",
+            "description": "Derived vCPUs (cpuShare × node vCPUs).",
+            "example": 0.8
           },
           "ratePerSecondUsdc": {
             "type": "string",
-            "example": "0.0004167"
+            "example": "0.0004445"
           },
           "ratePerHourUsdc": {
             "type": "string",
-            "example": "1.50"
+            "example": "1.60"
           }
         }
       },
@@ -945,10 +975,16 @@
           },
           "card": {
             "type": "object",
+            "description": "The GPU card's spec: exact asks are divided by these to derive the GPU share.",
             "properties": {
               "vramGb": {
                 "type": "number",
                 "example": 141
+              },
+              "tflops": {
+                "type": "number",
+                "description": "GPU compute per card (TFLOPS, H200 FP16 dense).",
+                "example": 989
               },
               "count": {
                 "type": "integer",
@@ -968,14 +1004,30 @@
               }
             }
           },
-          "cpu": {
+          "node": {
             "type": "object",
+            "description": "The node's spec - present on every flavor (cpuShare is priced everywhere); exact asks are divided by these to derive the CPU share.",
             "properties": {
-              "ratePerSecondUsdc": {
-                "type": "string"
+              "vcpus": {
+                "type": "integer",
+                "example": 16
               },
-              "ratePerHourUsdc": {
-                "type": "string"
+              "ramGb": {
+                "type": "integer",
+                "example": 64
+              },
+              "tflops": {
+                "type": "number",
+                "description": "CPU compute per node (TFLOPS).",
+                "example": 1
+              },
+              "wholeNodePerSecondUsdc": {
+                "type": "string",
+                "example": "0.0005556"
+              },
+              "wholeNodePerHourUsdc": {
+                "type": "string",
+                "example": "2.00"
               }
             }
           },
@@ -1005,7 +1057,7 @@
           },
           "formula": {
             "type": "string",
-            "example": "ratePerSecondUsdc = wholeCardPerSecond x max(vramGb / cardVramGb, computeShare)"
+            "example": "gpuShare = ceilPct(max(vramGb / cardVramGb, gpuTflops / cardTflops)); cpuShare = ceilPct(max(memMb / (nodeRamGb x 1024), cpuTflops / nodeTflops)); ratePerSecondUsdc = gpuShare x wholeCardPerSecond + cpuShare x wholeNodePerSecond"
           },
           "examples": {
             "type": "array",
@@ -1021,7 +1073,7 @@
       },
       "Availability": {
         "type": "object",
-        "description": "Live free capacity as a single share (0 to 1). Served at the root origin, not under /v1. `gpu` tells the enclave flavor apart: true = GPU enclave (share of a card), false = CPU-only enclave (share of the node's vCPU+RAM; the VRAM/SM fields are absent).",
+        "description": "Live free capacity as TWO shares (0 to 1), served at the root origin, not under /v1. gpuShareFree is the largest slice ONE card can still take (0 on CPU-only enclaves); cpuShareFree is the node's leftover vCPU+RAM share - on a GPU enclave that leftover is rentable by CPU-only apps. Route on the pair: GPU work needs gpuShareFree, CPU-only work fits wherever cpuShareFree is big enough (CPU-only enclaves first).",
         "properties": {
           "gpu": {
             "type": "boolean",
@@ -1035,14 +1087,28 @@
               "cpu"
             ]
           },
-          "maxShare": {
+          "gpuShareFree": {
             "type": "number",
-            "description": "Largest share of the card still free (0 to 1). Requests above this get 409.",
+            "description": "Largest GPU share a single card can still take (0 to 1; 0 on CPU-only enclaves). Requests above this get 409.",
             "example": 0.55
           },
-          "usedShare": {
+          "cpuShareFree": {
+            "type": "number",
+            "description": "Free share of the node's vCPU+RAM (0 to 1). CPU-only apps fit here on either flavor.",
+            "example": 0.9
+          },
+          "usedGpuShare": {
             "type": "number",
             "example": 0.45
+          },
+          "usedCpuShare": {
+            "type": "number",
+            "example": 0.1
+          },
+          "maxShare": {
+            "type": "number",
+            "description": "DEPRECATED alias of the flavor's primary pool (gpuShareFree on GPU enclaves, cpuShareFree on CPU-only ones); kept one release for old routers.",
+            "example": 0.55
           },
           "smFree": {
             "type": "integer",
@@ -1056,9 +1122,24 @@
             "type": "number",
             "example": 77
           },
+          "gpuTflopsFree": {
+            "type": "number",
+            "description": "Free GPU compute on the biggest single-card slice (gpuShareFree × cardTflops).",
+            "example": 543.9
+          },
+          "cpuTflopsFree": {
+            "type": "number",
+            "description": "Free CPU compute in the node's leftover pool (cpuShareFree × nodeTflops).",
+            "example": 0.9
+          },
           "cardVramGb": {
             "type": "number",
             "example": 141
+          },
+          "cardTflops": {
+            "type": "number",
+            "description": "GPU compute per card (TFLOPS); routers divide exact compute asks by this.",
+            "example": 989
           },
           "cards": {
             "type": "integer",
@@ -1078,36 +1159,52 @@
           },
           "vcpusFree": {
             "type": "number",
-            "description": "CPU-only enclaves: free vCPUs on the node.",
-            "example": 12
+            "description": "Free vCPUs on the node (cpuShareFree × nodeVcpus).",
+            "example": 14.4
           },
           "ramGbFree": {
             "type": "number",
-            "description": "CPU-only enclaves: free RAM (GB) on the node.",
-            "example": 48
+            "description": "Free RAM (GB) on the node (cpuShareFree × nodeRamGb).",
+            "example": 57.6
           },
           "nodeVcpus": {
             "type": "integer",
-            "description": "CPU-only enclaves: node size in vCPUs.",
+            "description": "Node size in vCPUs.",
             "example": 16
           },
           "nodeRamGb": {
             "type": "integer",
-            "description": "CPU-only enclaves: node RAM (GB).",
+            "description": "Node RAM (GB).",
             "example": 64
+          },
+          "nodeTflops": {
+            "type": "number",
+            "description": "CPU compute per node (TFLOPS); routers divide exact compute asks by this.",
+            "example": 1
           }
         },
         "example": {
           "gpu": true,
           "type": "gpu",
+          "gpuShareFree": 0.55,
+          "cpuShareFree": 0.9,
+          "usedGpuShare": 0.45,
+          "usedCpuShare": 0.1,
           "maxShare": 0.55,
-          "usedShare": 0.45,
+          "vcpusFree": 14.4,
+          "ramGbFree": 57.6,
+          "cpuTflopsFree": 0.9,
+          "nodeVcpus": 16,
+          "nodeRamGb": 64,
+          "nodeTflops": 1,
           "smFree": 72,
           "smTotal": 132,
           "vramFreeGb": 77,
+          "gpuTflopsFree": 543.9,
           "cardVramGb": 141,
+          "cardTflops": 989,
           "cards": 1,
-          "source": "worker",
+          "source": "vmmanager",
           "updatedAt": "2026-06-29T17:04:30Z"
         }
       },
@@ -1176,24 +1273,31 @@
       },
       "ResourceSpec": {
         "type": "object",
-        "description": "A single share (0 to 1). On a GPU enclave it sets a matching VRAM + compute cap of the card (legacy vramGb/computeShare still accepted). On a CPU-only enclave it is a share of the node's vCPU+RAM, and the GPU fields are refused (422). The enclave partition rule applies: CPU-only enclaves run only CPU deployments; GPU enclaves run only GPU deployments.",
+        "description": "EXACT resources on four axes; the two allocation/billing shares are CALCULATED by dividing the app's spec by the server's spec. GPU axes: vramGb (VRAM of ONE card, GB) and gpuTflops (GPU compute, TFLOPS) - both 0 or absent = CPU-only app. CPU axes: memMb (RAM, MB; the wasm guest is capped at exactly memMb) and cpuTflops (CPU compute, TFLOPS). Each share is the LARGER of its memory- and compute-derived share, rounded up to the whole-percent grain: gpuShare = max(vramGb / cardVramGb, gpuTflops / cardTflops), cpuShare = max(memMb / node RAM, cpuTflops / nodeTflops). A GPU app's derived gpuShare must be >= its derived cpuShare (its CPU slice rides on the same node as its card). Routing: a GPU ask needs a GPU enclave; CPU-only apps go to CPU-only enclaves first, and to GPU enclaves with leftover CPU/RAM (a tenant taking a whole card + 10% of the node leaves 90% for CPU-only apps). Share fields (share, gpuShare, cpuShare, computeShare) are refused with 422 - shares are an output, not an input.",
         "properties": {
-          "share": {
-            "type": "number",
-            "minimum": 0.01,
-            "maximum": 1,
-            "description": "Share of the whole card (GPU enclave) or of the whole node (CPU-only enclave), 0 to 1.",
-            "example": 0.25
-          },
           "vramGb": {
             "type": "number",
-            "description": "Legacy: explicit VRAM cap in GB. GPU enclaves only.",
+            "minimum": 0,
+            "description": "Exact VRAM of one GPU card, in GB. 0 = no VRAM ask. Defaults to the app's declared requirement (catalog apps) or 0.",
             "example": 35
           },
-          "computeShare": {
+          "gpuTflops": {
             "type": "number",
-            "description": "Legacy: explicit compute share (0 to 1). GPU enclaves only.",
-            "example": 0.25
+            "minimum": 0,
+            "description": "Exact GPU compute, in TFLOPS (H200 card = 989). 0 = no GPU-compute ask; both GPU axes 0 = CPU-only app. Defaults to the app's declared requirement or 0.",
+            "example": 250
+          },
+          "memMb": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Exact RAM in MB (also the wasm guest's memory cap). Defaults to the app's declared requirement (catalog apps), else 5% of the node.",
+            "example": 2048
+          },
+          "cpuTflops": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Exact CPU compute, in TFLOPS (16-vCPU node = 1). 0 = RAM-driven. Defaults to the app's declared requirement or 0.",
+            "example": 0.1
           }
         }
       },
@@ -1292,7 +1396,10 @@
             "reference": "hello"
           },
           "resources": {
-            "share": 0.25
+            "vramGb": 35,
+            "gpuTflops": 0,
+            "memMb": 2048,
+            "cpuTflops": 0
           },
           "public": true,
           "attestationPolicy": {
@@ -1323,22 +1430,35 @@
           },
           "resources": {
             "type": "object",
+            "description": "The exact resources asked for on four axes, plus the shares calculated from them.",
             "properties": {
               "vramGb": {
-                "type": "number"
+                "type": "number",
+                "description": "Exact VRAM asked for (GB)."
               },
-              "computeShare": {
-                "type": "number"
+              "gpuTflops": {
+                "type": "number",
+                "description": "Exact GPU compute asked for (TFLOPS). Both GPU axes 0 = CPU-only app."
               },
-              "share": {
-                "type": "number"
+              "memMb": {
+                "type": "integer",
+                "description": "Exact RAM asked for (MB; also the wasm guest's memory cap)."
+              },
+              "cpuTflops": {
+                "type": "number",
+                "description": "Exact CPU compute asked for (TFLOPS)."
+              },
+              "gpuShare": {
+                "type": "number",
+                "description": "Derived: the slice of one GPU card this deployment holds - max(vramGb / cardVramGb, gpuTflops / cardTflops), rounded up to a whole percent."
+              },
+              "cpuShare": {
+                "type": "number",
+                "description": "Derived: the slice of the node this deployment holds - max(memMb / node RAM, cpuTflops / nodeTflops), rounded up to a whole percent."
               },
               "cardId": {
-                "type": "integer"
-              },
-              "cpu": {
-                "type": "boolean",
-                "description": "Present and true on CPU-only enclaves: `share` is a node share, no GPU fields."
+                "type": "integer",
+                "description": "Which card holds the GPU slice (GPU deployments only)."
               }
             }
           },

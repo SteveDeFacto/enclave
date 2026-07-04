@@ -326,6 +326,11 @@
         "internalType": "bool",
         "name": "appActive",
         "type": "bool"
+      },
+      {
+        "internalType": "uint32[4]",
+        "name": "res",
+        "type": "uint32[4]"
       }
     ],
     "stateMutability": "view",
@@ -520,7 +525,22 @@
           },
           {
             "internalType": "uint32",
+            "name": "vramMb",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "gpuGflops",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
             "name": "memMb",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "cpuGflops",
             "type": "uint32"
           },
           {
@@ -591,7 +611,22 @@
           },
           {
             "internalType": "uint32",
+            "name": "vramMb",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "gpuGflops",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
             "name": "memMb",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "cpuGflops",
             "type": "uint32"
           },
           {
@@ -688,9 +723,9 @@
         "type": "string"
       },
       {
-        "internalType": "uint32",
-        "name": "memMb",
-        "type": "uint32"
+        "internalType": "uint32[4]",
+        "name": "res",
+        "type": "uint32[4]"
       },
       {
         "internalType": "string",

@@ -37,7 +37,17 @@ pragma solidity ^0.8.20;
 ///   - Pricing: two global per-second prices, hardcoded at deploy (~$6.00/hour
 ///     for a full GPU card, ~$2.00/hour for a full CPU node) and owner-adjustable
 ///     later; each deployment SNAPSHOTS its rate at create (price changes never
-///     re-price existing deployments). rate = price * milliShare / 1000, rounded up.
+///     re-price existing deployments). Apps specify EXACT resources on four
+///     axes — vramMb + gpuGflops of a GPU card (both 0 = CPU-only) and memMb +
+///     cpuGflops of a node (GFLOPS = 1/1000 TFLOPS; integer-friendly) — and the
+///     contract CALCULATES the two shares from them against the reference
+///     hardware specs (cardVramMb / cardGflops / nodeRamMb / nodeGflops,
+///     owner-adjustable). Each share is the LARGER of its memory- and
+///     compute-derived share, so neither axis can be occupied without being
+///     paid for: gpuMilli = ceil(max(vramMb / cardVramMb, gpuGflops /
+///     cardGflops) * 1000), cpuMilli likewise from memMb / cpuGflops. Both
+///     derived shares are snapshotted and paid for:
+///     rate = (gpuPrice * gpuMilli + cpuPrice * cpuMilli) / 1000, rounded up.
 ///
 /// Fairness bounds (the cost of decentralized failover, all bounded by leaseSec):
 ///   - a runner that dies mid-lease has already burned that lease: the user loses at
@@ -90,11 +100,21 @@ contract NanDeployments {
                                 // enclave-minted keys are NOT portable — the private key would die with the runner)
         string  configCid;      // optional IPFS CID of a config blob ("" = none). NOTE: whatever it
                                 // points at is PUBLIC unless encrypted; see DEPLOYMENTS.md "secrets".
-        uint16  milliShare;     // share in 1/1000ths (1..1000): of a card if gpu, of a CPU node if not
+        uint32  vramMb;         // EXACT VRAM the app asked for, in MB (0 with gpuGflops 0 = CPU-only
+                                // deployment). GPU deployments (gpuMilli > 0) are claimable by GPU
+                                // enclaves ONLY; CPU-only ones by CPU-only enclaves first, and by GPU
+                                // enclaves with spare CPU/RAM after a grace window (runner-enforced).
+        uint32  gpuGflops;      // EXACT GPU compute the app asked for, in GFLOPS (1/1000 TFLOPS).
+        uint32  memMb;          // EXACT RAM the app asked for, in MB (>= 1).
+        uint32  cpuGflops;      // EXACT CPU compute the app asked for, in GFLOPS (0 = RAM-driven).
+        uint16  gpuMilli;       // DERIVED GPU share in 1/1000ths of a card, snapshotted at create:
+                                // ceil(max(vramMb / cardVramMb, gpuGflops / cardGflops) * 1000) —
+                                // the LARGER of the memory and compute asks; the pricing/allocation unit.
+        uint16  cpuMilli;       // DERIVED CPU share in 1/1000ths of a node, snapshotted at create:
+                                // ceil(max(memMb / nodeRamMb, cpuGflops / nodeGflops) * 1000). A GPU
+                                // deployment's CPU share rides along on the same node, so it may never
+                                // exceed the GPU share: gpuMilli == 0 || gpuMilli >= cpuMilli.
         uint32  appPort;        // guest HTTP port the app serves on
-        bool    gpu;            // true = GPU deployment (claimable by GPU enclaves ONLY);
-                                // false = CPU deployment (claimable by CPU-only enclaves ONLY).
-                                // The partition is enforced by runners at claim time.
         bool    isPublic;       // anyone may hit the data path (vs owner-only)
         bool    active;         // owner-set; inactive is not claimable/fundable (kept for history)
         uint64  createdAt;
@@ -123,16 +143,26 @@ contract NanDeployments {
     // Prices are HARDCODED at deploy (no post-deploy setter txs needed — Base's
     // public RPC caps delegated EOAs at one in-flight tx, so follow-up sends
     // right after the deploy bounce). Owner setters remain for later changes.
-    uint256 public pricePerSec6 = 1667;    // USDC 6dp per second, FULL card (gpu=true, milliShare = 1000): ~$6.00/hour
-    uint256 public cpuPricePerSec6 = 556;  // USDC 6dp per second, FULL CPU node (gpu=false, milliShare = 1000): ~$2.00/hour
+    uint256 public pricePerSec6 = 1667;    // USDC 6dp per second, FULL card (gpuMilli = 1000): ~$6.00/hour
+    uint256 public cpuPricePerSec6 = 556;  // USDC 6dp per second, FULL CPU node (cpuMilli = 1000): ~$2.00/hour
     uint64  public leaseSec = 1800;        // lease quantum: max claim/renew burn, max time lost to a dead runner
+    // Reference hardware specs: exact resources are converted to shares against
+    // these (they must match the fleet's actual card/node specs — H200 141 GB /
+    // ~989 TFLOPS, 64 GB / ~1 TFLOPS nodes). Owner-adjustable if the fleet's
+    // hardware generation changes; shares are snapshotted at create, so changes
+    // never resize existing deployments.
+    uint32  public cardVramMb = 144384;    // 141 GB VRAM per GPU card
+    uint32  public cardGflops = 989000;    // 989 TFLOPS per GPU card (FP16 dense)
+    uint32  public nodeRamMb  = 65536;     // 64 GB of RAM per node
+    uint32  public nodeGflops = 1000;      // ~1 TFLOPS of CPU compute per node (16 vCPU)
 
     bytes32[] private _ids;                                // every deployment ever created
     mapping(bytes32 => Deployment) private _deployments;
     mapping(bytes32 => bool) private _exists;
     mapping(address => uint64) private _nonces;            // per-creator id salt
 
-    event Created(bytes32 indexed id, address indexed owner, string appRef, bool gpu, uint16 milliShare, uint256 rate);
+    /// @dev res = [vramMb, gpuGflops, memMb, cpuGflops] — the four exact resource axes.
+    event Created(bytes32 indexed id, address indexed owner, string appRef, uint32[4] res, uint256 rate);
     event ConfigSet(bytes32 indexed id, string sshPubKey, string configCid);
     event ActiveSet(bytes32 indexed id, bool active);
     event Funded(bytes32 indexed id, address indexed payer, uint256 amount6);
@@ -142,6 +172,7 @@ contract NanDeployments {
     event Released(bytes32 indexed id, bytes32 indexed enclaveId, uint256 refunded6);
     event PriceSet(uint256 pricePerSec6);
     event CpuPriceSet(uint256 cpuPricePerSec6);
+    event RefSizesSet(uint32 cardVramMb, uint32 cardGflops, uint32 nodeRamMb, uint32 nodeGflops);
     event LeaseSecSet(uint64 leaseSec);
     event PayoutChanged(address indexed payout);
     event OwnerChanged(address indexed owner);
@@ -168,13 +199,17 @@ contract NanDeployments {
     /// @dev id embeds the creator + a per-creator nonce, so ids can't be squatted
     ///      or predicted across owners (same structural-ownership trick as the
     ///      catalog's appId). The rate snapshot makes future price changes
-    ///      non-retroactive. `gpu` picks both the price schedule and which
-    ///      enclaves will claim it: GPU enclaves serve only gpu=true, CPU-only
-    ///      enclaves serve only gpu=false.
+    ///      non-retroactive. Apps specify EXACT resources on four axes (memory +
+    ///      compute, GPU + CPU; GFLOPS = 1/1000 TFLOPS); the shares derived from
+    ///      them pick which enclaves will claim: a GPU ask (vramMb or gpuGflops
+    ///      > 0) is served by GPU enclaves only; CPU-only work is served by
+    ///      CPU-only enclaves first, then by GPU enclaves with spare CPU/RAM. A
+    ///      GPU deployment's derived CPU share may never exceed its derived GPU
+    ///      share. `res` = [vramMb, gpuGflops, memMb, cpuGflops] (packed as an
+    ///      array to keep create()'s stack workable without viaIR).
     function create(
         string calldata appRef,
-        bool gpu,
-        uint16 milliShare,
+        uint32[4] calldata res,
         uint32 appPort,
         string calldata ports,
         bool isPublic,
@@ -182,7 +217,6 @@ contract NanDeployments {
         string calldata configCid
     ) external returns (bytes32 id) {
         require(bytes(appRef).length > 0 && bytes(appRef).length <= MAX_APPREF, "appRef length");
-        require(milliShare > 0 && milliShare <= 1000, "milliShare range");
         require(appPort > 0, "appPort range");
         require(bytes(ports).length <= MAX_PORTS, "ports length");
         require(bytes(sshPubKey).length <= MAX_SSHKEY, "sshPubKey length");
@@ -199,24 +233,53 @@ contract NanDeployments {
         d.ports = ports;
         d.sshPubKey = sshPubKey;
         d.configCid = configCid;
-        _initScalars(d, appRef, gpu, milliShare, appPort, isPublic);
+        _initScalars(d, appRef, res, appPort, isPublic);
+    }
+
+    /// @dev ceil(x * 1000 / y): an exact ask converted to 1/1000th shares, rounded
+    ///      UP so a share is never worth less than the resources asked for.
+    function _milliOf(uint32 x, uint32 y) private pure returns (uint256) {
+        return (uint256(x) * 1000 + y - 1) / y;
+    }
+
+    /// @dev Exact resources -> derived shares: each share is the LARGER of its
+    ///      memory- and compute-derived share (both axes are occupied together,
+    ///      so the bigger one is what's really consumed).
+    function _deriveShares(uint32[4] calldata res) private view returns (uint16 gpuMilli, uint16 cpuMilli) {
+        require(res[0] <= cardVramMb, "vramMb range");
+        require(res[1] <= cardGflops, "gpuGflops range");
+        require(res[2] > 0 && res[2] <= nodeRamMb, "memMb range");
+        require(res[3] <= nodeGflops, "cpuGflops range");
+        uint256 gv = _milliOf(res[0], cardVramMb);
+        uint256 gc = _milliOf(res[1], cardGflops);
+        uint256 cm = _milliOf(res[2], nodeRamMb);
+        uint256 cc = _milliOf(res[3], nodeGflops);
+        gpuMilli = uint16(gv > gc ? gv : gc);
+        cpuMilli = uint16(cm > cc ? cm : cc);
+        require(gpuMilli == 0 || gpuMilli >= cpuMilli, "gpuShare < cpuShare");
+        require(cpuPricePerSec6 > 0 && (gpuMilli == 0 || pricePerSec6 > 0), "price unset");
     }
 
     /// @dev Split out (emit included) so create() keeps a workable stack frame
     ///      without viaIR (same shape as the catalog's `_reserveCid` / `_touchApp`).
-    function _initScalars(Deployment storage d, string calldata appRef, bool gpu,
-                          uint16 milliShare, uint32 appPort, bool isPublic) private {
-        uint256 price = gpu ? pricePerSec6 : cpuPricePerSec6;
-        require(price > 0, "price unset");
-        d.milliShare = milliShare;
+    ///      Derived shares are snapshotted with the rate so later refSize/price
+    ///      changes never resize/re-price existing deployments.
+    function _initScalars(Deployment storage d, string calldata appRef, uint32[4] calldata res,
+                          uint32 appPort, bool isPublic) private {
+        (uint16 gpuMilli, uint16 cpuMilli) = _deriveShares(res);
+        d.vramMb = res[0];
+        d.gpuGflops = res[1];
+        d.memMb = res[2];
+        d.cpuGflops = res[3];
+        d.gpuMilli = gpuMilli;
+        d.cpuMilli = cpuMilli;
         d.appPort = appPort;
-        d.gpu = gpu;
         d.isPublic = isPublic;
         d.active = true;
         d.createdAt = uint64(block.timestamp);
-        // ceil: a 1-milliShare deployment still pays at least 1 unit/sec
-        d.rate = (price * milliShare + 999) / 1000;
-        emit Created(d.id, msg.sender, appRef, gpu, milliShare, d.rate);
+        // both derived shares are paid for; ceil so a 1-milli deployment still pays >= 1 unit/sec
+        d.rate = (pricePerSec6 * gpuMilli + cpuPricePerSec6 * cpuMilli + 999) / 1000;
+        emit Created(d.id, msg.sender, appRef, res, d.rate);
     }
 
     /// @notice Update the portable config; runners apply it on the next (re)launch.
@@ -364,13 +427,26 @@ contract NanDeployments {
         emit PriceSet(_pricePerSec6);
     }
 
-    /// @notice Whole-CPU-node per-second price for gpu=false deployments. 0 (the
-    ///         default) keeps CPU creates disabled until it is deliberately set.
+    /// @notice Whole-CPU-node per-second price (every deployment pays it on its
+    ///         cpuMilli). 0 keeps creates disabled until it is deliberately set.
     function setCpuPrice(uint256 _cpuPricePerSec6) external {
         require(msg.sender == owner, "!owner");
         require(_cpuPricePerSec6 > 0, "price=0");
         cpuPricePerSec6 = _cpuPricePerSec6;   // affects FUTURE creates only (rate is snapshotted)
         emit CpuPriceSet(_cpuPricePerSec6);
+    }
+
+    /// @notice Reference hardware specs used to convert exact resources to shares
+    ///         (memory in MB, compute in GFLOPS = 1/1000 TFLOPS). Affects FUTURE
+    ///         creates only (shares are snapshotted at create).
+    function setRefSizes(uint32 _cardVramMb, uint32 _cardGflops, uint32 _nodeRamMb, uint32 _nodeGflops) external {
+        require(msg.sender == owner, "!owner");
+        require(_cardVramMb > 0 && _cardGflops > 0 && _nodeRamMb > 0 && _nodeGflops > 0, "size=0");
+        cardVramMb = _cardVramMb;
+        cardGflops = _cardGflops;
+        nodeRamMb = _nodeRamMb;
+        nodeGflops = _nodeGflops;
+        emit RefSizesSet(_cardVramMb, _cardGflops, _nodeRamMb, _nodeGflops);
     }
 
     function setLeaseSec(uint64 _leaseSec) external {
