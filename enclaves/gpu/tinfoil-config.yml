@@ -122,7 +122,7 @@ containers:
       - GPU_COUNT: "1"
       - GPU_VRAM_GB: "141"
       - GPU_TFLOPS: "989"                                # GPU compute per card (H200 FP16 dense); exact gpuTflops asks divide by this
-      - NODE_TFLOPS: "1"                                 # CPU compute per node; exact cpuTflops asks divide by this
+      - NODE_GFLOPS: "1000"                              # CPU compute per node in GFLOPS (16 vCPU ≈ 1 TFLOPS); exact cpuGflops asks divide by this
       - SM_TOTAL: "132"
       - MIN_COMPUTE_PCT: "1"
       - VRAM_GRANULARITY_GB: "1"

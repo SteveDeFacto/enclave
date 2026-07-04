@@ -62,7 +62,7 @@ export async function fetchAvailability(endpoint, timeoutMs = 4000) {
 // shares you intend to buy: gpuShare (0..1 of one GPU card; 0 = CPU-only app)
 // and cpuShare (0..1 of a node's vCPU+RAM). Your app's exact specs (catalog)
 // only set the MINIMUM shares — derive them per enclave from /availability's
-// cardVramGb / cardTflops / nodeRamGb / nodeTflops if you're sizing from
+// cardVramGb / cardTflops / nodeRamGb / nodeGflops if you're sizing from
 // specs. GPU work only fits GPU enclaves (both pools must fit). CPU-only work
 // prefers CPU-only enclaves; GPU enclaves are the FALLBACK, renting out the
 // cpu pool their GPU tenants left over (e.g. a whole card + 10% of the node

@@ -59,7 +59,7 @@ via transaction instead of via one enclave's API).
   CPU-only deployment) and `cpuMilli` of a node's vCPU+RAM (1..1000). The
   contract enforces `gpuMilli == 0 || gpuMilli >= cpuMilli` — a GPU app's CPU
   slice rides on the same node as its card. The app's exact specs in
-  NanAppCatalog (VRAM, TFLOPS, RAM) set its MINIMUM shares: each RUNNER
+  NanAppCatalog (vramMb, gpuGflops, memMb, cpuGflops) set its MINIMUM shares: each RUNNER
   re-derives them against its own hardware (spec / server spec, the larger of
   the memory and compute axes, ceil to the percent grain) and skips
   under-provisioned deployments — the chain stays hardware-agnostic. Both

@@ -78,13 +78,13 @@ let the live attestation be authoritative, which it is regardless.
 
 Read the registry and aggregate availability (no gateway, runs anywhere):
 ```bash
-REGISTRY_ADDRESS=0x... BASE_RPC=https://mainnet.base.org node scripts/nan-discover.mjs 35 2048 250 0.1
+REGISTRY_ADDRESS=0x... BASE_RPC=https://mainnet.base.org node scripts/nan-discover.mjs 0.25 0.05
 ```
-Prints aggregate free capacity across all live enclaves and the best one for an
-app needing 35 GB VRAM + 2048 MB RAM + 250 GPU TFLOPS + 0.1 CPU TFLOPS (args:
-vramGb memMb gpuTflops cpuTflops; GPU axes 0 for a CPU-only app: CPU enclaves
-first, GPU leftovers as fallback; shares are calculated per enclave), ending
-with the endpoint+repo to hand to SecureClient.
+Prints aggregate free capacity across all live enclaves and the best one for a
+deployment buying a 25% GPU share + 5% CPU share (args: gpuShare cpuShare,
+0..1 each; gpuShare 0 for a CPU-only app: CPU enclaves first, GPU leftovers as
+fallback — derive the minimum shares from the app's exact specs against each
+enclave's /availability), ending with the endpoint+repo to hand to SecureClient.
 
 Then connect with attestation (the part that actually gates trust):
 ```js

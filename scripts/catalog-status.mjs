@@ -12,7 +12,7 @@ import url from "node:url";
 const REPO = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 const SITE = path.join(REPO, "site", "index.html");
 
-const SEL_PUBLISH_SHARES = "adbf439a"; // publishVersion(...,uint32[4] res,string ports) -> current (exact resources incl. TFLOPS -> derived shares)
+const SEL_PUBLISH_SHARES = "adbf439a"; // publishVersion(...,uint32[4] res,string ports) -> current (exact resources incl. compute -> derived shares)
 const SEL_SET_APPROVAL  = "a67613fa"; // setApproval(bytes32,uint256,uint8)      -> approval-gated deploys, memMb-only resources
 const SEL_PUBLISH_PORTS = "2936ec7d"; // publishVersion(...,uint32,string ports) -> firewall, no approval
 const SEL_PUBLISH_V2    = "7535857a"; // publishVersion(...,uint32)              -> versioned, no ports

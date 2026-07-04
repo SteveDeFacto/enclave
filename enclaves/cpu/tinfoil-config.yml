@@ -36,7 +36,7 @@ containers:
       - GPU_COUNT: "0"
       - NODE_VCPUS: "16"
       - NODE_RAM_GB: "64"
-      - NODE_TFLOPS: "1"                                 # CPU compute per node; exact cpuTflops asks divide by this
+      - NODE_GFLOPS: "1000"                              # CPU compute per node in GFLOPS (16 vCPU ≈ 1 TFLOPS); exact cpuGflops asks divide by this
       # tenant-app hosting: the wasm-manager runs each app as a `wasmtime serve` process.
       - PROVISION_BACKEND: "vm"                          # required on a CPU enclave (no GPU worker exists)
       - VMMGR_URL: "http://localhost:8091"               # the wasm-manager (container below)

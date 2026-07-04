@@ -930,10 +930,10 @@
             "description": "What the CPU share grants in vCPUs.",
             "example": 0.8
           },
-          "cpuTflops": {
+          "cpuGflops": {
             "type": "number",
-            "description": "What the CPU share grants in compute.",
-            "example": 0.05
+            "description": "What the CPU share grants in compute (GFLOPS - the whole node is ~1000).",
+            "example": 50
           },
           "ratePerSecondUsdc": {
             "type": "string",
@@ -1004,10 +1004,10 @@
                 "type": "integer",
                 "example": 64
               },
-              "tflops": {
+              "gflops": {
                 "type": "number",
-                "description": "CPU compute per node (TFLOPS).",
-                "example": 1
+                "description": "CPU compute per node (GFLOPS; ~1000 for 16 vCPU - about 1/1000 of a card, which is why CPU uses the smaller unit).",
+                "example": 1000
               },
               "wholeNodePerSecondUsdc": {
                 "type": "string",
@@ -1045,7 +1045,7 @@
           },
           "formula": {
             "type": "string",
-            "example": "ratePerSecondUsdc = gpuShare x wholeCardPerSecond + cpuShare x wholeNodePerSecond; minGpuShare = ceilPct(max(vramGb / cardVramGb, gpuTflops / cardTflops)); minCpuShare = ceilPct(max(memMb / nodeRam, cpuTflops / nodeTflops))"
+            "example": "ratePerSecondUsdc = gpuShare x wholeCardPerSecond + cpuShare x wholeNodePerSecond; minGpuShare = ceilPct(max(vramGb / cardVramGb, gpuTflops / cardTflops)); minCpuShare = ceilPct(max(memMb / nodeRam, cpuGflops / nodeGflops))"
           },
           "examples": {
             "type": "array",
@@ -1115,10 +1115,10 @@
             "description": "Free GPU compute on the biggest single-card slice (gpuShareFree × cardTflops).",
             "example": 543.9
           },
-          "cpuTflopsFree": {
+          "cpuGflopsFree": {
             "type": "number",
-            "description": "Free CPU compute in the node's leftover pool (cpuShareFree × nodeTflops).",
-            "example": 0.9
+            "description": "Free CPU compute in the node's leftover pool (cpuShareFree × nodeGflops, GFLOPS).",
+            "example": 900
           },
           "cardVramGb": {
             "type": "number",
@@ -1165,10 +1165,10 @@
             "description": "Node RAM (GB).",
             "example": 64
           },
-          "nodeTflops": {
+          "nodeGflops": {
             "type": "number",
-            "description": "CPU compute per node (TFLOPS); routers divide exact compute asks by this.",
-            "example": 1
+            "description": "CPU compute per node (GFLOPS; ~1000 for 16 vCPU); routers divide exact compute asks by this.",
+            "example": 1000
           }
         },
         "example": {
@@ -1181,10 +1181,10 @@
           "maxShare": 0.55,
           "vcpusFree": 14.4,
           "ramGbFree": 57.6,
-          "cpuTflopsFree": 0.9,
+          "cpuGflopsFree": 900,
           "nodeVcpus": 16,
           "nodeRamGb": 64,
-          "nodeTflops": 1,
+          "nodeGflops": 1000,
           "smFree": 72,
           "smTotal": 132,
           "vramFreeGb": 77,

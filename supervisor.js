@@ -210,7 +210,10 @@ function need(n){ const v = process.env[n]; if(!v){ console.error("FATAL: missin
 
 // ---- resource model: EXACT RESOURCES -> TWO CALCULATED SHARES ---------------
 // Apps specify EXACT resources on four axes: vramGb + gpuTflops of one GPU card
-// (both 0 = CPU-only app) and memMb + cpuTflops of the node. From those the
+// (both 0 = CPU-only app) and memMb + cpuGflops of the node. CPU compute is
+// measured in GFLOPS, not TFLOPS: a whole 16-vCPU node peaks around ONE
+// TFLOPS (vs 989 for the card), so TFLOPS-grained CPU asks round to "all of
+// it or nothing" - GFLOPS is the honest grain. From those the
 // platform CALCULATES two normalized shares — the allocation/routing/billing
 // unit — by dividing the app's spec by the server's spec, taking the LARGER of
 // the memory- and compute-derived share per pool (both axes are occupied
@@ -218,7 +221,7 @@ function need(n){ const v = process.env[n]; if(!v){ console.error("FATAL: missin
 // whole-percent grain so a share is never worth less than what was asked for:
 //   gpuShare (0..1) — max(vramGb / CARD_VRAM_GB, gpuTflops / CARD_TFLOPS).
 //                     The MPS compute % and the VRAM cap both follow it.
-//   cpuShare (0..1) — max(memMb / node RAM, cpuTflops / NODE_TFLOPS); the
+//   cpuShare (0..1) — max(memMb / node RAM, cpuGflops / NODE_GFLOPS); the
 //                     node's vCPUs come along; the wasm guest is capped at memMb.
 // Invariant: a GPU app's CPU slice rides on the same node as its card, so
 // gpuShare >= cpuShare whenever gpuShare > 0. The leftovers are a feature: a
@@ -234,7 +237,8 @@ const GPU_COUNT       = parseInt(process.env.GPU_COUNT || "1", 10);     // cards
 const IS_GPU          = GPU_COUNT > 0;
 const NODE_VCPUS      = parseInt(process.env.NODE_VCPUS || "16", 10);   // node size, for CPU pricing/readouts
 const NODE_RAM_GB     = parseInt(process.env.NODE_RAM_GB || "64", 10);
-const NODE_TFLOPS     = parseFloat(process.env.NODE_TFLOPS || "1");     // CPU compute per node (~1 TFLOPS for 16 vCPU)
+const NODE_GFLOPS     = parseFloat(process.env.NODE_GFLOPS || "")       // CPU compute per node in GFLOPS (16 vCPU ≈ 1000)
+                     || parseFloat(process.env.NODE_TFLOPS || "1") * 1000; // legacy env name (was TFLOPS-denominated)
 const CARD_VRAM_GB    = parseFloat(process.env.GPU_VRAM_GB || "141");   // usable VRAM per card
 const CARD_TFLOPS     = parseFloat(process.env.GPU_TFLOPS || "989");    // GPU compute per card (H200 FP16 dense)
 const CTX_OVERHEAD_GB = parseFloat(process.env.CTX_OVERHEAD_GB || "0.5"); // per-worker context cost, reserved on top of the cap
@@ -255,14 +259,14 @@ const quantizePct = (share) => Math.min(100, Math.max(MIN_COMPUTE_PCT, Math.roun
 const pctCeil = (x) => Math.min(100, Math.max(MIN_COMPUTE_PCT, Math.ceil(x * 100 - 1e-9)));
 const gpuShareOf = (vramGb, gpuTflops = 0) => (vramGb > 0 || gpuTflops > 0)
   ? pctCeil(Math.max(vramGb / CARD_VRAM_GB, gpuTflops / CARD_TFLOPS)) / 100 : 0;
-const cpuShareOf = (memMb, cpuTflops = 0) =>
-  pctCeil(Math.max(memMb / (NODE_RAM_GB * 1024), cpuTflops / NODE_TFLOPS)) / 100;
+const cpuShareOf = (memMb, cpuGflops = 0) =>
+  pctCeil(Math.max(memMb / (NODE_RAM_GB * 1024), cpuGflops / NODE_GFLOPS)) / 100;
 // An app's catalog specs -> the minimum shares a deployment must buy here.
 // Zero-guarded: axes the app didn't declare add no minimum. A GPU app's CPU
 // minimum also lifts its GPU minimum, or the gpuShare >= cpuShare invariant
 // could never be satisfied at the floor.
 function minSharesOf(min) {
-  const cpu = (min.memMb || min.cpuGflops) ? cpuShareOf(min.memMb || 0, (min.cpuGflops || 0) / 1000) : 0;
+  const cpu = (min.memMb || min.cpuGflops) ? cpuShareOf(min.memMb || 0, min.cpuGflops || 0) : 0;
   const gpu0 = (min.vramMb || min.gpuGflops) ? gpuShareOf((min.vramMb || 0) / 1024, (min.gpuGflops || 0) / 1000) : 0;
   return { gpuShare: gpu0 > 0 ? Math.max(gpu0, cpu) : 0, cpuShare: cpu };
 }
@@ -648,8 +652,9 @@ async function spawnContainer({ deploymentId, gpuShare, cpuShare, image, appPort
   // Two backends. "vm": hand the app reference to the app manager on VMMGR_URL
   // (the wasm-manager runs it as a `wasmtime serve` process; cpuShare is its
   // admission unit and sets the guest memory cap — cpuShare × node RAM;
-  // gpuShare rides along for GPU catalog apps. The TFLOPS the shares grant are
-  // passed too, so the manager can enforce catalog compute minimums).
+  // gpuShare rides along for GPU catalog apps. The compute the shares grant is
+  // passed too - GPU in TFLOPS, CPU in GFLOPS - so the manager can enforce
+  // catalog compute minimums).
   // "worker": fork an MPS-capped CUDA child PROCESS (GPU PTX submission);
   // gpuShare sets the MPS cap.
   if (/^(1|true|on)$/i.test(process.env.MOCK_SPAWN || "")) {
@@ -663,7 +668,9 @@ async function spawnContainer({ deploymentId, gpuShare, cpuShare, image, appPort
     const c = (cpuShare != null) ? cpuShare : 0.05, g = gpuShare || 0;
     const r = await vmReq("POST", "/vms",
       { image: ref, cpuShare: c, gpuShare: g,
-        gpuTflops: round1(g * CARD_TFLOPS), cpuTflops: round3(c * NODE_TFLOPS),
+        gpuTflops: round1(g * CARD_TFLOPS), cpuGflops: Math.round(c * NODE_GFLOPS),
+        // cpuTflops: legacy field for managers pinned before the GFLOPS switch
+        cpuTflops: round3(c * NODE_GFLOPS / 1000),
         appPort: appPort || 8080, name: deploymentId, ports: ports || [] }, SPAWN_TIMEOUT_MS);
     if (r.status !== 201)
       throw new Error(`vmmanager: ${r.body.error || r.body.message || r.status}`);
@@ -1129,18 +1136,18 @@ app.get("/v1/pricing", (_req, res) => {
   // sell (vramGb must be 0 here).
   const base = {
     assets: ["ETH","USDC"], gpu: IS_GPU,
-    model: "Deployments buy TWO shares: gpuShare (0..1 of ONE GPU card — VRAM and compute move together; 0 = CPU-only app) and cpuShare (0..1 of the node's vCPU+RAM). Apps declare their exact specs (VRAM, TFLOPS, RAM) in the catalog; those specs divided by this server's spec (the LARGER of the memory and compute axes per pool, rounded up to the whole percent) are the MINIMUM shares a deployment may buy. A GPU app's gpuShare must be >= its cpuShare. Billed per second, additively.",
-    node: { vcpus: NODE_VCPUS, ramGb: NODE_RAM_GB, tflops: NODE_TFLOPS,
+    model: "Deployments buy TWO shares: gpuShare (0..1 of ONE GPU card — VRAM and compute move together; 0 = CPU-only app) and cpuShare (0..1 of the node's vCPU+RAM). Apps declare their exact specs in the catalog — VRAM GB + GPU TFLOPS of a card, RAM MB + CPU GFLOPS of the node; those specs divided by this server's spec (the LARGER of the memory and compute axes per pool, rounded up to the whole percent) are the MINIMUM shares a deployment may buy. A GPU app's gpuShare must be >= its cpuShare. Billed per second, additively.",
+    node: { vcpus: NODE_VCPUS, ramGb: NODE_RAM_GB, gflops: NODE_GFLOPS,
             wholeNodePerSecondUsdc: CPU_RATE.toFixed(7), wholeNodePerHourUsdc: (CPU_RATE * 3600).toFixed(2) },
     computeGranularity: { unit: "percent", step: 1, minPercent: MIN_COMPUTE_PCT },
-    formula: "ratePerSecondUsdc = gpuShare × wholeCardPerSecond + cpuShare × wholeNodePerSecond; minGpuShare = ceilPct(max(vramGb / cardVramGb, gpuTflops / cardTflops)); minCpuShare = ceilPct(max(memMb / nodeRam, cpuTflops / nodeTflops))",
+    formula: "ratePerSecondUsdc = gpuShare × wholeCardPerSecond + cpuShare × wholeNodePerSecond; minGpuShare = ceilPct(max(vramGb / cardVramGb, gpuTflops / cardTflops)); minCpuShare = ceilPct(max(memMb / nodeRam, cpuGflops / nodeGflops))",
     billingIncrementSeconds: 1,
   };
   const example = (g, c) => {
     const r = rateFor(g, c);
     return { gpuShare: g, cpuShare: c,
              ...(g > 0 ? { vramGb: round1(g * CARD_VRAM_GB), gpuTflops: round1(g * CARD_TFLOPS) } : {}),
-             ramGb: round1(c * NODE_RAM_GB), vcpus: round1(c * NODE_VCPUS), cpuTflops: round3(c * NODE_TFLOPS),
+             ramGb: round1(c * NODE_RAM_GB), vcpus: round1(c * NODE_VCPUS), cpuGflops: Math.round(c * NODE_GFLOPS),
              ratePerSecondUsdc: r.toFixed(7), ratePerHourUsdc: (r * 3600).toFixed(2) };
   };
   if (!IS_GPU) return res.json({
@@ -1173,8 +1180,8 @@ app.get("/availability", async (_req, res) => {
     usedGpuShare: IS_GPU ? round3(1 - gpuFree) : 0, usedCpuShare: round3(1 - cpuFree),
     maxShare: round3(IS_GPU ? gpuFree : cpuFree),
     vcpusFree: round1(cpuFree * NODE_VCPUS), ramGbFree: round1(cpuFree * NODE_RAM_GB),
-    cpuTflopsFree: round3(cpuFree * NODE_TFLOPS),
-    nodeVcpus: NODE_VCPUS, nodeRamGb: NODE_RAM_GB, nodeTflops: NODE_TFLOPS,
+    cpuGflopsFree: Math.round(cpuFree * NODE_GFLOPS),
+    nodeVcpus: NODE_VCPUS, nodeRamGb: NODE_RAM_GB, nodeGflops: NODE_GFLOPS,
     smFree: IS_GPU ? Math.round(gpuFree * SM_TOTAL) : 0, smTotal: IS_GPU ? SM_TOTAL : 0,
     vramFreeGb: IS_GPU ? round1(gpuFree * CARD_VRAM_GB) : 0,
     gpuTflopsFree: IS_GPU ? round1(gpuFree * CARD_TFLOPS) : 0,
@@ -1504,8 +1511,8 @@ app.post("/v1/deployments", authed, async (req, res) => {
   // enclave serves it from LEFTOVER cpu pool.
   const r0 = b.resources || {};
   if (r0.share != null || r0.computeShare != null || r0.vramGb != null || r0.memMb != null
-      || r0.gpuTflops != null || r0.cpuTflops != null)
-    return fail(res, 422, "invalid_spec", "Deployments buy SHARES: request resources.gpuShare (0..1 of one GPU card; 0 = CPU-only) and resources.cpuShare (0..1 of the node). Exact resources (vramGb/memMb/TFLOPS) are declared by the app in the catalog and only set the minimum shares.");
+      || r0.gpuTflops != null || r0.cpuTflops != null || r0.gpuGflops != null || r0.cpuGflops != null)
+    return fail(res, 422, "invalid_spec", "Deployments buy SHARES: request resources.gpuShare (0..1 of one GPU card; 0 = CPU-only) and resources.cpuShare (0..1 of the node). Exact resources (vramGb/memMb/compute) are declared by the app in the catalog and only set the minimum shares.");
   const mins = minSharesOf(appMin);
   const gpuShare0 = r0.gpuShare != null ? Number(r0.gpuShare) : mins.gpuShare;
   if (!(gpuShare0 >= 0 && gpuShare0 <= 1))
