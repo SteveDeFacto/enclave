@@ -538,7 +538,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/><path d="M9 4V2M15 4V2M9 22v-2M15 22v-2M4 9H2M4 15H2M22 9h-2M22 15h-2"/></svg></div>
         <span class="tag">h200</span>
         <h3>Real GPUs</h3>
-        <p>Full H200s in NVIDIA confidential-computing mode, exposed to your Wasm app through a GPU interface. The whole GPU is one attested trust domain (CC disables MIG, so there's no hardware sub-slicing). Apps declare exact VRAM, RAM, and compute specs; you deploy by buying a GPU share and a CPU share, floored at the minimums those specs imply. Tenants share the card by time, isolated from each other by a Wasm sandbox and a separate process. <a href="#isolation">How that's enforced →</a></p>
+        <p>Full H200s in NVIDIA confidential-computing mode, wired into your Wasm app through a GPU interface. Deploying is two dials - a GPU share and a CPU share - floored at the minimums the app's declared specs imply. <a href="#isolation">How tenants share a card →</a></p>
       </div>
     </div>
   </div>
