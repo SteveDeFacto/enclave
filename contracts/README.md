@@ -184,8 +184,11 @@ Manager env: `IPFS_GATEWAY` (default `https://ipfs.nan.host`), `WASM_MAX_BYTES`
   you don't edit a release, you publish a new one. `editApp` changes display metadata;
   `setActive` delists the whole app; `yankVersion` pulls a bad release (kept for
   history, hidden by readers).
-- **Global CID uniqueness**: a wasm artifact is listed at most once across the whole
-  catalog, so a CID maps unambiguously to one app/version.
+- **CID ownership**: a wasm artifact belongs to the app that FIRST listed it — no
+  other app can ever list the same CID, so a CID maps unambiguously into one
+  lineage. The owning app may re-list its CID in a later version (the metadata
+  fix: same bytes, corrected specs/ports); `cidStatus` then follows the newest
+  listing, which starts Pending again.
 - **Per-version firewall config** (`Version.ports`): a CSV of ports the release may
   bind — `http:N` / `tcp:N` / `udp:N` (empty = standard wasi:http web app). It can
   change from version to version. The store's **Use in Deploy** defaults the

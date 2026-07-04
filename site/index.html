@@ -1082,7 +1082,7 @@ wasmtime serve -Scli -Shttp -Sp3 \
           <h4>Versioning rules (enforced by the contract)</h4>
           <ul>
             <li>Versions are <b>append-only history</b>: you never edit a release, you publish the same slug again with a new version label and CID. <code>editApp</code> changes display metadata; <code>setActive</code> delists the app; <code>yankVersion</code> pulls a bad release (kept for history, hidden from browsing).</li>
-            <li>A release's <b>CID is claimed forever</b>, globally: the same bytes can never be listed twice, by anyone - and yanking or delisting does <b>not</b> free the CID (the enclaves' CID-to-approval lookup must stay unambiguous). Practical consequence: to fix a version's <i>metadata</i> (wrong ports, wrong specs), you must produce new bytes - any rebuild changes the CID - and publish that as a new version. Publishing a new version to a delisted slug automatically relists the app.</li>
+            <li>A release's <b>CID belongs to its app forever</b>: no other app can ever list the same bytes, and yanking or delisting doesn't free it. The <i>same</i> app <b>can re-list its own CID</b> in a new version - that's the metadata fix (same bytes, corrected specs or ports; the <b>add version</b> button pre-fills it) - and the enclaves' deploy gate follows the <b>newest</b> listing of a CID, which starts Pending again (a metadata change is re-approved like any release). After the fix lands, yank the superseded version. Publishing a new version to a delisted slug automatically relists the app.</li>
             <li>A CID can be listed <b>once across the whole catalog</b>, so a CID maps unambiguously to one app version.</li>
             <li>Each version carries its own firewall config; it can change from release to release.</li>
           </ul>
@@ -5624,16 +5624,19 @@ async function publishApp(){
   // Pre-flight against the loaded catalog. Both cases REVERT on-chain, which a
   // wallet surfaces as a gas-estimation hang and the form as a bare timeout -
   // refuse here with the actual reason instead.
-  // 1) A CID is claimed FOREVER, globally: the same bytes can never be listed
-  //    twice, and yanking or delisting does not free it (the enclaves' CID ->
-  //    approval lookup must stay unambiguous).
+  // 1) A CID belongs to the app that FIRST listed it: no other app can ever
+  //    list the same bytes. The owning app re-listing its own CID is the
+  //    metadata-fix path (same bytes, corrected specs/ports) and is allowed;
+  //    the deploy gate then follows the newest listing.
   if (STORE.apps){
+    const me = (Nan.address || "").toLowerCase();
     for (const a of STORE.apps){
       const hit = (a.versions || []).find(v => v.cid === cid);
-      if (hit) return pubStatus("this exact .wasm is already on-chain as " + a.slug + " " + hit.version
-        + (hit.yanked ? " (yanked)" : "") + (a.active ? "" : " (app delisted)")
-        + " - a CID can only ever be listed once, and yank/delist don't free it. Rebuild the app so the bytes (and CID) change, or "
-        + (a.active ? "deploy the existing version instead." : "relist the app to use the existing version."), true);
+      if (!hit) continue;
+      const sameApp = a.slug === slug && me && (a.publisher || "").toLowerCase() === me;
+      if (!sameApp) return pubStatus("this exact .wasm is already on-chain as " + a.slug + " " + hit.version
+        + " - a CID belongs to the app that first listed it. Publish the fix as a new version of that app, or rebuild so the bytes (and CID) change.", true);
+      break;
     }
     // 2) version labels are immutable history within an app (your namespace)
     const mine = STORE.apps.find(a => a.slug === slug && Nan.address && (a.publisher || "").toLowerCase() === Nan.address.toLowerCase());
@@ -5660,8 +5663,8 @@ async function publishApp(){
     togglePublish(false); resetPublish();
   } catch(e){
     const m = e.message || String(e);
-    pubStatus(/cid already listed/i.test(m)
-      ? "rejected on-chain: this exact .wasm is already listed and a CID can only ever be listed once (yank/delist don't free it) - rebuild the app so the bytes change, then publish the new CID"
+    pubStatus(/cid (already listed|listed by another app)/i.test(m)
+      ? "rejected on-chain: this CID already belongs to another app (a CID is owned by the app that first listed it) - publish the fix under that app, or rebuild so the bytes change"
       : m, true);
   }
   finally { btn.disabled = false; btn.textContent = lbl; }
@@ -5694,8 +5697,8 @@ function bumpVersion(s){
   return m ? m[1] + (parseInt(m[2], 10) + 1) + m[3] : (s ? s + ".1" : "1.0.1");
 }
 // "add version": open the publish form pre-filled from an app's current
-// version. Everything carries over EXCEPT the file/CID - a new version needs
-// new bytes (CIDs are claimed forever), so that stays empty on purpose.
+// version - INCLUDING its CID. Re-listing your own CID is the metadata-fix
+// path (same bytes, corrected specs/ports); picking a new .wasm replaces it.
 function prefillPublish(app){
   const v = app.versions[selIdx(app)] || app.versions[app.versions.length - 1] || {};
   resetPublish();
@@ -5703,13 +5706,14 @@ function prefillPublish(app){
   $("#pubName").value = app.name || "";
   $("#pubDesc").value = app.description || "";
   $("#pubVersion").value = bumpVersion(v.version);
+  $("#pubCid").value = v.cid || "";
   $("#pubVram").value = String((Number(v.vramMb) || 0) / 1024);
   $("#pubGpuT").value = String((Number(v.gpuGflops) || 0) / 1000);
   $("#pubMem").value = String(Number(v.memMb) || 128);
   $("#pubCpuG").value = String(Math.max(1, Number(v.cpuGflops) || 1));
   $("#pubPorts").value = v.ports || "";
   togglePublish(true);
-  pubStatus("pre-filled from " + app.slug + " " + (v.version || "") + " - pick the new .wasm (new bytes = new CID), adjust what changed, publish"
+  pubStatus("pre-filled from " + app.slug + " " + (v.version || "") + " - fix specs/ports and publish (same bytes), or pick a new .wasm if the code changed"
           + (app.active ? "" : " · publishing relists the app"));
 }
 function togglePublish(show){

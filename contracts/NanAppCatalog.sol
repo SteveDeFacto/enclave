@@ -23,8 +23,11 @@ pragma solidity ^0.8.20;
 ///     memory- and compute-derived share. Versions are append-only history; you
 ///     don't edit a released version, you publish a new one. A publisher can `yankVersion` a bad release (kept for
 ///     history, hidden by readers) and `editApp` the display metadata.
-///   - Global CID uniqueness: a given wasm artifact is listed at most once across
-///     the whole catalog, so a CID unambiguously maps to one app/version.
+///   - CID ownership: a wasm artifact belongs to the app that FIRST listed it —
+///     no other app (any publisher, any slug) can ever list the same CID, so a
+///     CID unambiguously maps into one lineage. The owning app MAY re-list its
+///     CID in a later version: that is the metadata fix (same bytes, corrected
+///     specs/ports), and the `cidStatus` deploy gate follows the NEWEST listing.
 ///
 /// Trust model (mirrors NanRegistry: claims on-chain, verification off-chain):
 ///   - `verified` is an OPTIONAL owner-curated signal, set PER VERSION (you verify
@@ -136,8 +139,8 @@ contract NanAppCatalog {
         require(res[3] <= MAX_GFLOPS, "cpuGflops range");
         require(bytes(ports).length <= MAX_PORTS, "ports length");
 
-        bytes32 cidKey = _reserveCid(cid);
         appId = _touchApp(slug, name, description);
+        bytes32 cidKey = _reserveCid(cid, appId);
 
         // version labels are unique within an app, so `slug:version` resolves to
         // exactly one CID (deterministic human-friendly deploy references).
@@ -170,11 +173,16 @@ contract NanAppCatalog {
         emit VersionPublished(appId, index, version, cid);
     }
 
-    /// @dev Enforce global CID uniqueness (a wasm artifact is listed at most once);
-    ///      the reverse-lookup entry itself is written once the version index is known.
-    function _reserveCid(string calldata cid) private view returns (bytes32 cidKey) {
+    /// @dev A CID belongs to the app that FIRST listed it, forever: no other app
+    ///      can ever list the same artifact, so a CID always maps into exactly
+    ///      one lineage. The owning app may list it AGAIN in a later version —
+    ///      how metadata (specs, ports) gets fixed without touching the bytes —
+    ///      and the reverse-lookup entry is then overwritten so `cidStatus`
+    ///      follows the newest listing (the superseded version stays as history).
+    function _reserveCid(string calldata cid, bytes32 appId) private view returns (bytes32 cidKey) {
         cidKey = keccak256(bytes(cid));
-        require(_cidRefs[cidKey].index1 == 0, "cid already listed");
+        CidRef storage r = _cidRefs[cidKey];
+        require(r.index1 == 0 || r.appId == appId, "cid listed by another app");
     }
 
     /// @dev Create the app on first use, then refresh its display metadata. Returns appId.
@@ -274,6 +282,9 @@ contract NanAppCatalog {
     ///         Also returns the version's exact minimum resources — `res` =
     ///         [vramMb, gpuGflops, memMb, cpuGflops] — so runners can refuse a
     ///         deployment that asked for less than the app declares it needs.
+    ///         A CID its own app re-listed resolves to the NEWEST listing (each
+    ///         re-list starts approval at Pending again — a metadata change is
+    ///         re-reviewed like any release).
     function cidStatus(string calldata cid) external view returns (
         bool listed, bytes32 appId, uint256 index, uint8 approval, bool yanked, bool appActive,
         uint32[4] memory res
