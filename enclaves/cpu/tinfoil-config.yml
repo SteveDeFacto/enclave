@@ -47,10 +47,10 @@ containers:
       - CORS_ORIGINS: "https://nan.host"
       - BASE_RPC: "https://mainnet.base.org"
       # pay-per-deploy (no custody): same NanPay forwarder as the GPU flavor.
-      - FORWARDER_ADDRESS: "0xDd3905faE5F961891e6392eA48Cb63d5a4732b87"
+      - FORWARDER_ADDRESS: "0xaA943DfDF4e9F9F33C04e35D31E2645C69C7D8D9"
       - USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"   # USDC on Base
       # app approval gate: same NanAppCatalog as the GPU flavor.
-      - APP_CATALOG_ADDRESS: "0x3e5Ecb2665275D9C820D37A9659C5DD39079C8c5"
+      - APP_CATALOG_ADDRESS: "0x9BDe7CB742a7baC4C67656c2467A7f3da99614a6"
       - PAYMENT_WINDOW_SEC: "600"
       - GRACE_SEC: "90"
       - PAY_POLL_SEC: "12"
@@ -63,7 +63,7 @@ containers:
       # on-chain discovery: same registry; a CPU enclave advertises like any
       # other and callers learn it is CPU-only from its /availability.
       - REGISTRY_ENABLED: "1"
-      - REGISTRY_ADDRESS: "0xC4C6C7D4D0b9C92ba5326f7903e6f0C300B6994D"
+      - REGISTRY_ADDRESS: "0x13deE63b80353a15C6E03D54240EE463B420353F"
       # Portable deployments: the claim loop adopts ONLY CPU deployments
       # (NanDeployments records created with gpu=false).
       - CLAIM_ENABLED: "1"
