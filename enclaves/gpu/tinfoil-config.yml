@@ -180,7 +180,7 @@ containers:
   # The app catalog is baked into the image (apps/*.wasm + catalog.json), so what
   # runs is exactly what Tinfoil attested. Apps are wasi:http components.
   - name: "wasm-manager"
-    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:6a7c6390ae8c629e87007aace8a1cd86d2af122d68e3ccf3f68f85b41ab5c150"
+    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:ed98eb181cfcfbaefa52b740fcaed54451c4462fca847ac6092779c3ad1dc2d7"
     restart: always
     env:
       - WASM_MANAGER_PORT: "8091"   # same port the supervisor's VMMGR_URL already targets
