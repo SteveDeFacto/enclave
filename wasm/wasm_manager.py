@@ -92,6 +92,20 @@ PORT_MAX_DECL  = 19999
 PRIV_PORT_MAX  = 1023
 RESERVED_PORTS = {8080, 8091}
 AUDIT_SECS     = float(os.environ.get("WASM_AUDIT_INTERVAL", "10"))
+# wasi-nn GPU interface: a deployment that BUYS a GPU share (gpuShare > 0)
+# is launched with `-S nn`, so the guest can `load()` ONNX models and run
+# inference through the host's ONNX Runtime — ExecutionTarget::Gpu maps to the
+# CUDA execution provider, ::Cpu to the CPU one. Enforcement of the share is
+# the SAME mechanism as the worker backend's PTX children: the tenant's
+# wasmtime process is launched with CUDA_MPS_ACTIVE_THREAD_PERCENTAGE (SM cap)
+# and CUDA_MPS_PINNED_DEVICE_MEM_LIMIT (VRAM cap = gpuShare × GPU_VRAM_GB), so
+# the MPS daemon hardware-enforces both. Tenants that didn't buy a GPU share
+# don't get the flag at all — a component importing wasi:nn then fails to
+# instantiate, which is the admission control ("pay for a share to use the
+# card"). WASM_NN=0 is the fleet-wide kill-switch (same shape as WASM_P3).
+NN_ENABLED   = os.environ.get("WASM_NN", "1").lower() not in ("0", "false", "no")
+GPU_VRAM_GB  = float(os.environ.get("GPU_VRAM_GB", "141"))
+MPS_PIPE_DIR = os.environ.get("CUDA_MPS_PIPE_DIRECTORY", "/tmp/nvidia-mps")
 # WASIp3 (component-model async): wasmtime 45 accepts `-S p3` on both `run`
 # and `serve`, and no longer marks it experimental. The flag widens the API
 # SURFACE only — wasip2 components ignore it, wasip3 components need it to
@@ -318,7 +332,8 @@ def _alloc_ports(pspec) -> dict:
     return out
 
 
-def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdir=None):
+def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdir=None,
+               nn=False):
     """The wasmtime invocation for a ports spec. Returns (cmd, host_port, wait_ports).
 
     serve mode: `wasmtime serve` owns the one HTTP listener; no sockets granted.
@@ -332,16 +347,20 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     Both modes add -Sp3 (unless WASM_P3=0) so apps may target the WASIp3
     async APIs as well as wasip2; socket permissions are identical either way.
     `fsdir`, when set, is preopened as the guest's /data (a private ramdisk
-    scratch space); the app sees only that subtree."""
+    scratch space); the app sees only that subtree.
+    `nn`, when set, grants wasi-nn (`-S nn`): the deployment bought a GPU share,
+    so the guest may run ONNX inference through the host runtime (the MPS caps
+    ride in the process env, set by launch(), not here)."""
     fs_args = ["--dir", f"{fsdir}::{FS_GUEST_PATH}"] if fsdir else []
+    nn_args = ["-Snn"] if nn else []
     if pspec["serve"]:
-        return ([WASMTIME, "serve", "-Scli", "-Shttp", *P3_FLAGS, *fs_args,
+        return ([WASMTIME, "serve", "-Scli", "-Shttp", *P3_FLAGS, *nn_args, *fs_args,
                  "-W", f"max-memory-size={mem_bytes}",
                  "--addr", f"{HOST_IP}:{serve_port}", str(wasm)],
                 serve_port, [serve_port])
     port_map = port_map or {}
     nan_ports = ",".join(f"{e}={port_map[e]}" for e in pspec["norm"])
-    cmd = [WASMTIME, "run", "-Scli", *P3_FLAGS, "-Stcp", "-Sudp",
+    cmd = [WASMTIME, "run", "-Scli", *P3_FLAGS, *nn_args, "-Stcp", "-Sudp",
            "-Sinherit-network", "-Sallow-ip-name-lookup", *fs_args,
            "-W", f"max-memory-size={mem_bytes}",
            "--env", "NAN_PORTS=" + nan_ports, str(wasm)]
@@ -388,8 +407,11 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
             fsdir = cand
         except OSError as e:
             print(f"[fs] {vid} could not create scratch dir: {e}", flush=True)
+    # wasi-nn: buying a GPU share grants the interface; the share is enforced
+    # per-process by MPS (env below), the same mechanism as the worker backend.
+    nn = NN_ENABLED and NODE_HAS_GPU and gpu_share > 0
     rec = {"id": vid, "name": name or vid, "app": app_ref,
-           "cpuShare": cpu_share, "gpuShare": gpu_share,
+           "cpuShare": cpu_share, "gpuShare": gpu_share, "nn": nn,
            "hostPort": port, "sshHostPort": 0,
            "endpoint": f"http://{HOST_IP}:{port}" if port else None, "status": "starting",
            "createdAt": time.time(), "_proc": None, "_log": str(log_path),
@@ -425,13 +447,25 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
     # the runtime rather than by RLIMIT_AS (see _preexec for why RLIMIT_AS is
     # wrong); the /data ramdisk usage is capped separately by the audit sweep.
     mem_bytes = max(mem_mb, 1) * 1024 * 1024
-    cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir)
+    cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir, nn)
     rec["hostPort"] = host_port
     rec["endpoint"] = f"http://{HOST_IP}:{host_port}" if host_port else None
+    # GPU tenants: the wasmtime process itself is the CUDA process (ORT holds
+    # the context), so the MPS caps go in ITS environment — SM% from the bought
+    # share, VRAM = share × the card (the same budget the deployment priced).
+    # The pipe dir joins the mps-control daemon's server; without these vars a
+    # CUDA context would run uncapped, so nn tenants never launch without them.
+    env = None
+    if nn:
+        env = dict(os.environ)
+        env["CUDA_MPS_PIPE_DIRECTORY"] = MPS_PIPE_DIR
+        env["CUDA_MPS_ACTIVE_THREAD_PERCENTAGE"] = str(max(1, round(gpu_share * 100)))
+        env["CUDA_MPS_PINNED_DEVICE_MEM_LIMIT"] = f"0={max(1, int(gpu_share * GPU_VRAM_GB * 1024))}M"
+        rec["mpsPct"] = max(1, round(gpu_share * 100))
     logf = open(log_path, "wb")
     try:
         proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=logf,
-                                stderr=logf, preexec_fn=_preexec)
+                                stderr=logf, preexec_fn=_preexec, env=env)
     except Exception as e:
         rec["status"], rec["error"] = "failed", f"spawn: {e}"
         logf.close()
@@ -644,6 +678,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/health":
             return self._json(200, {"ok": True, "runtime": "wasmtime",
                                     "version": _wasmtime_version(), "mock": MOCK,
+                                    "nn": NN_ENABLED and NODE_HAS_GPU,
                                     "capacity": _capacity()})
         if self.path == "/capacity":
             return self._json(200, _capacity())
@@ -756,6 +791,8 @@ def _debug_env() -> dict:
     out = {"runtime": "wasmtime", "mock": MOCK, "apps_dir": str(APPS_DIR),
            "catalog": sorted(_load_catalog().keys()), "version": _wasmtime_version(),
            "p3": bool(P3_FLAGS),
+           "nn": NN_ENABLED and NODE_HAS_GPU, "gpu_vram_gb": GPU_VRAM_GB,
+           "mps_pipe": MPS_PIPE_DIR if (NN_ENABLED and NODE_HAS_GPU) else None,
            "fs": FS_ENABLED, "fs_guest": FS_GUEST_PATH if FS_ENABLED else None,
            "default_storage_mb": DEF_STORAGE_MB if FS_ENABLED else 0}
     try:

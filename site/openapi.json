@@ -1114,12 +1114,12 @@
           },
           "gpuTflopsFree": {
             "type": "number",
-            "description": "Free GPU compute on the biggest single-card slice (gpuShareFree × cardTflops).",
+            "description": "Free GPU compute on the biggest single-card slice (gpuShareFree \u00d7 cardTflops).",
             "example": 543.9
           },
           "cpuGflopsFree": {
             "type": "number",
-            "description": "Free CPU compute in the node's leftover pool (cpuShareFree × nodeGflops, GFLOPS).",
+            "description": "Free CPU compute in the node's leftover pool (cpuShareFree \u00d7 nodeGflops, GFLOPS).",
             "example": 900
           },
           "aggregate": {
@@ -1163,12 +1163,12 @@
           },
           "vcpusFree": {
             "type": "number",
-            "description": "Free vCPUs on the node (cpuShareFree × nodeVcpus).",
+            "description": "Free vCPUs on the node (cpuShareFree \u00d7 nodeVcpus).",
             "example": 14.4
           },
           "ramGbFree": {
             "type": "number",
-            "description": "Free RAM (GB) on the node (cpuShareFree × nodeRamGb).",
+            "description": "Free RAM (GB) on the node (cpuShareFree \u00d7 nodeRamGb).",
             "example": 57.6
           },
           "nodeVcpus": {
@@ -1283,7 +1283,7 @@
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Share of one GPU card (VRAM + compute), 0 to 1. 0 = CPU-only app. Must be >= the app's minimum and >= cpuShare when > 0. Dialed in whole percent.",
+            "description": "Share of one GPU card (VRAM + compute), 0 to 1. 0 = CPU-only app. Must be >= the app's minimum and >= cpuShare when > 0. Dialed in whole percent. A share > 0 also grants the app the wasi-nn interface: ONNX inference through the enclave's runtime, hardware-capped per process via MPS at exactly this share (SM% = share, VRAM = share x 141 GB). ExecutionTarget gpu is strict - it initializes the CUDA provider or load() fails; no silent CPU fallback. Apps importing wasi:nn fail to instantiate when deployed with gpuShare 0.",
             "example": 0.25
           },
           "cpuShare": {
@@ -1753,7 +1753,7 @@
               "null"
             ],
             "description": "sha256:<hex> of the enclave TLS public key, extracted from the quote's report_data.",
-            "example": "sha256:4b8c…e2a1"
+            "example": "sha256:4b8c\u2026e2a1"
           },
           "enclave": {
             "$ref": "#/components/schemas/EnclaveAttestation"

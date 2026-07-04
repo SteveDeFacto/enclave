@@ -9,6 +9,17 @@
       "gpu_gflops": 0,
       "mem_mb": 128,
       "cpu_gflops": 0
+    },
+    {
+      "id": "nn-demo",
+      "name": "NN Demo (wasi-nn)",
+      "file": "nn-demo.wasm",
+      "description": "wasi-nn smoke test: runs a tiny baked-in ONNX graph through the host's ONNX Runtime. GET / tries the GPU (CUDA) and reports a CPU fallback; ?target=gpu|cpu pins the execution target.",
+      "vram_mb": 1024,
+      "gpu_gflops": 10,
+      "mem_mb": 128,
+      "cpu_gflops": 10,
+      "storage_mb": 0
     }
   ]
 }

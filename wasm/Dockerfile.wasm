@@ -2,22 +2,34 @@
 # No privileged mode, no nested runtime, no namespace/mount/exec ops. The whole
 # reason this backend exists: it runs unprivileged inside Tinfoil's confinement.
 # Image integrity is covered by Tinfoil attestation (the built image is measured),
-# so the wasmtime download is pinned by version for reproducible builds.
-FROM ubuntu:24.04
+# so every input is pinned: the wasmtime toolchain image by digest, the CUDA
+# base by tag+digest at measurement time.
+#
+# WHY the CUDA base: tenant deployments that buy a GPU share get wasi-nn
+# (`-S nn`), and the wasmtime process itself then holds a CUDA context through
+# ONNX Runtime's CUDA execution provider — so the runtime libs (cudart, cublas,
+# cuDNN) must exist HERE, in the container the tenants' processes run in. The
+# CPU flavor ships the same image (the libs idle without a GPU; ExecutionTarget
+# ::Cpu uses the CPU provider) — one image, one measurement, both flavors.
+#
+# The wasmtime binary comes from the nan-wasmtime toolchain image (built from
+# source with wasi-nn + onnx-cuda; see Dockerfile.wasmtime). Bump = rebuild that
+# image via the "Wasmtime Toolchain" workflow, then repin WASMTIME_IMAGE here.
+ARG WASMTIME_IMAGE=ghcr.io/stevedefacto/nan-wasmtime:v45.0.0@sha256:4367b9e4cd2c2ebba7799df108ae3e09a5695ce78ed7d3f917ade516fda48ebe
+FROM ${WASMTIME_IMAGE} AS wasmtime
+
+FROM nvidia/cuda:12.6.2-cudnn-runtime-ubuntu24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 ca-certificates curl xz-utils \
+      python3 ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-# wasmtime CLI (provides `wasmtime serve` for wasi:http components). Pinned.
-ARG WASMTIME_VERSION=v45.0.0
-RUN curl -fsSL \
-      "https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VERSION}/wasmtime-${WASMTIME_VERSION}-x86_64-linux.tar.xz" \
-      | tar -xJ -C /tmp \
-    && mv "/tmp/wasmtime-${WASMTIME_VERSION}-x86_64-linux/wasmtime" /usr/local/bin/wasmtime \
-    && chmod 0755 /usr/local/bin/wasmtime \
-    && rm -rf /tmp/wasmtime-* \
-    && /usr/local/bin/wasmtime --version
+# wasmtime CLI with wasi-nn (ONNX Runtime backend, CUDA EP) + the ORT dylibs it
+# links. ldconfig registers /usr/local/lib so the dynamic linker finds them; the
+# CUDA provider .so is dlopened by libonnxruntime from the same directory.
+COPY --from=wasmtime /bin/wasmtime /usr/local/bin/wasmtime
+COPY --from=wasmtime /lib/ /usr/local/lib/
+RUN ldconfig && /usr/local/bin/wasmtime --version
 
 WORKDIR /opt/nan
 
@@ -32,4 +44,6 @@ ENV WASM_MANAGER_PORT=8091 \
     WASMTIME_BIN=/usr/local/bin/wasmtime
 
 EXPOSE 8091
+# the nvidia/cuda base ships a banner-printing entrypoint; drop it so CMD execs
+ENTRYPOINT []
 CMD ["python3", "/opt/nan/wasm_manager.py"]

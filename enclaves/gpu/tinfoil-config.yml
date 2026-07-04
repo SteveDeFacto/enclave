@@ -179,16 +179,32 @@ containers:
   #
   # The app catalog is baked into the image (apps/*.wasm + catalog.json), so what
   # runs is exactly what Tinfoil attested. Apps are wasi:http components.
+  # wasi-nn GPU interface: this container holds the card because tenant
+  # wasmtime processes ARE the CUDA processes — a deployment that buys a GPU
+  # share is launched with `-S nn` and runs ONNX inference through the host's
+  # ONNX Runtime CUDA provider. Isolation is the SAME scheme as the worker
+  # backend's PTX children: each tenant process joins the mps-control daemon
+  # (shared pipe dir + ipc:host) with CUDA_MPS_ACTIVE_THREAD_PERCENTAGE and
+  # CUDA_MPS_PINNED_DEVICE_MEM_LIMIT set from its bought share, so SM% and VRAM
+  # are hardware-enforced per process. Tenants without a GPU share never get
+  # the wasi-nn import at all.
   - name: "wasm-manager"
     image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:f1132448a60bb8b119683b74f40504e418a4fdab66503ae9feed7600b783c761"
+    runtime: nvidia
+    gpus: all
+    ipc: host
     restart: always
     env:
       - WASM_MANAGER_PORT: "8091"   # same port the supervisor's VMMGR_URL already targets
       - NODE_VCPUS: "16"
       - NODE_RAM_GB: "64"
       - NODE_HAS_GPU: "1"           # GPU node: catalog apps with vram_mb > 0 may launch here (CPU flavor sets "0")
+      - GPU_VRAM_GB: "141"          # VRAM budget base: a tenant's MPS mem limit = gpuShare × this
+      - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
       # each app's memory cap is its deployment's cpuShare × NODE_RAM_GB
       # (>= the mem_mb its specs declare); WASM_APP_MIN_MEM_MB (64) is the floor
+    volumes:
+      - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # join the MPS daemon (SM%/VRAM caps)
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
       interval: 15s

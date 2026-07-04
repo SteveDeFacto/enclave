@@ -655,9 +655,10 @@ async function spawnContainer({ deploymentId, gpuShare, cpuShare, image, appPort
   // Two backends. "vm": hand the app reference to the app manager on VMMGR_URL
   // (the wasm-manager runs it as a `wasmtime serve` process; cpuShare is its
   // admission unit and sets the guest memory cap — cpuShare × node RAM;
-  // gpuShare rides along for GPU catalog apps. The compute the shares grant is
-  // passed too - GPU in TFLOPS, CPU in GFLOPS - so the manager can enforce
-  // catalog compute minimums).
+  // gpuShare buys the wasi-nn GPU interface: the manager launches the tenant
+  // with `-S nn` and MPS-caps its process at gpuShare SM% / gpuShare × VRAM.
+  // The compute the shares grant is passed too - GPU in TFLOPS, CPU in
+  // GFLOPS - so the manager can enforce catalog compute minimums).
   // "worker": fork an MPS-capped CUDA child PROCESS (GPU PTX submission);
   // gpuShare sets the MPS cap.
   if (/^(1|true|on)$/i.test(process.env.MOCK_SPAWN || "")) {

@@ -1,0 +1,3 @@
+# build artifacts of the in-tree app sources; only the committed .wasm ships
+apps/*/target/
+__pycache__/

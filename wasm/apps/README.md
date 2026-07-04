@@ -38,6 +38,23 @@ are still young — e.g. Rust lists a `wasm32-wasip3` target but most distros
 don't ship its std yet. Operators can set `WASM_P3=0` on the wasm-manager to
 drop the flag fleet-wide.
 
+**GPU inference (wasi-nn).** A deployment that buys a GPU share (`gpuShare > 0`)
+is launched with `-S nn`: the component may import `wasi:nn`
+(0.2.0-rc-2024-10-28, vendored from wasmtime 45) and run ONNX inference through
+the host's ONNX Runtime — `ExecutionTarget::Gpu` is the CUDA execution provider
+on the enclave's H200, `::Cpu` the CPU provider. Enforcement is per OS process
+via MPS, the same scheme as the worker backend's PTX children: the tenant's
+wasmtime process launches with `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE` = gpuShare
+and `CUDA_MPS_PINNED_DEVICE_MEM_LIMIT` = gpuShare × `GPU_VRAM_GB`, so SM% and
+VRAM are hardware-capped. Deployments without a GPU share never get the flag —
+a component importing `wasi:nn` then fails to instantiate ("not found in the
+linker"); the boundary is structural. The platform's wasmtime carries
+`wasm/wasmtime-onnx-gpu-strict.patch`: `::Gpu` either initializes CUDA or
+`load()` fails — never ONNX Runtime's silent CPU fallback. Complete example:
+[`nn-demo/`](nn-demo/) (baked in as `nn-demo`; regenerate its model with
+`gen-model.py`, rebuild with `cargo component build --release --target
+wasm32-wasip2`). Operator kill-switch: `WASM_NN=0` on the wasm-manager.
+
 Declared ports are **logical** — the app's stable, advertised interface, like a
 container's EXPOSE. Each deployment gets its own **actual** loopback bind, so two
 tenants can run "the tcp:5432 app" at the same time with zero conflicts; the URL
