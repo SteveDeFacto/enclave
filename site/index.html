@@ -5251,9 +5251,9 @@ function initViews(){
    Publishing is one Base tx through the injected wallet, reusing the
    same hand-rolled ABI codec as the pay flow (no web3 lib on-page).
    ============================================================ */
-const APP_CATALOG_ADDRESS = "0x9BDe7CB742a7baC4C67656c2467A7f3da99614a6"; // NanAppCatalog on Base; written automatically by scripts/deploy-app-catalog.mjs
+const APP_CATALOG_ADDRESS = "0x17071414BD19fDFdA8E58559d2CcFb99b2c8d0FC"; // NanAppCatalog on Base; written automatically by scripts/deploy-app-catalog.mjs
 const APP_CATALOG_CHAIN   = 8453;                        // Base mainnet (kept in sync by the deploy script; 84532 = Base Sepolia)
-const APP_CATALOG_RPC     = "https://base-rpc.publicnode.com";  // preferred read endpoint (CORS-enabled; browsing needs no wallet)
+const APP_CATALOG_RPC     = "https://mainnet.base.org";  // preferred read endpoint (CORS-enabled; browsing needs no wallet)
 // Failover pool: reads are stateless, and every public Base RPC rate-limits by
 // IP - the official mainnet.base.org hard enough that one catalog load can
 // trip "over rate limit". Calls start on the last endpoint that worked and

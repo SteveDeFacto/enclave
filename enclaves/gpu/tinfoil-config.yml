@@ -83,7 +83,7 @@ containers:
       # ipfs:// app deploys are REFUSED unless the catalog owner has Approved that
       # version (setApproval tx signed by the catalog's deployer key). Empty =
       # catalog apps can't deploy at all; baked-in ids still can (attested image).
-      - APP_CATALOG_ADDRESS: "0x9BDe7CB742a7baC4C67656c2467A7f3da99614a6"                          # set after deploying NanAppCatalog.sol (must be on CHAIN_ID's chain, read via BASE_RPC)
+      - APP_CATALOG_ADDRESS: "0x17071414BD19fDFdA8E58559d2CcFb99b2c8d0FC"                          # set after deploying NanAppCatalog.sol (must be on CHAIN_ID's chain, read via BASE_RPC)
       - PAYMENT_WINDOW_SEC: "600"                        # unpaid deployments release the reservation
       - GRACE_SEC: "90"                                  # grace after expiry before teardown (top-up window)
       - PAY_POLL_SEC: "12"
