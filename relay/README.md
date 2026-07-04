@@ -23,7 +23,7 @@ ENCLAVES=https://enclave1...,https://enclave2... node api-relay.js
 | route | |
 |---|---|
 | `GET /enclaves` | live fleet table + aggregate free capacity |
-| `GET /route?vramGb=8&gpuTflops=50&memMb=2048&cpuTflops=0.1` | best enclave that fits the exact resources on all four axes (GPU axes 0 = CPU-only: CPU enclaves first, GPU leftovers as fallback; shares are calculated per enclave): `{ endpoint, repo, availability }` |
+| `GET /route?gpuShare=0.25&cpuShare=0.05` | best enclave with both shares free (gpuShare 0 = CPU-only: CPU enclaves first, GPU leftovers as fallback; derive minimum shares from the app's specs against /availability): `{ endpoint, repo, availability }` |
 | `ANY /v1/*`, `/availability` | `307` redirect to the current best enclave |
 | `GET /health` | poller freshness |
 

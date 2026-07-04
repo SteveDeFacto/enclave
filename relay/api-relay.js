@@ -119,7 +119,7 @@ async function pollAvailability() {
 // Share-based routing — same rule as nan-discover.mjs. Deployments buy two
 // shares, so callers route on the shares they intend to buy (the app's specs
 // only set the MINIMUM shares — compute those from /availability's
-// cardVramGb/cardTflops/nodeRamGb/nodeTflops if you're sizing from specs).
+// cardVramGb/cardTflops/nodeRamGb/nodeGflops if you're sizing from specs).
 // GPU work (gpuShare > 0) needs a GPU enclave whose free card slice AND cpu
 // pool both fit. CPU-only work prefers CPU-only enclaves; GPU enclaves are the
 // FALLBACK, serving it out of leftover cpu pool (a tenant buying a whole card
