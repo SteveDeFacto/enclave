@@ -21,7 +21,8 @@ TAG="${TAG:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CONFIG="$REPO_ROOT/enclaves/gpu/tinfoil-config.yml"
-CONFIG_CPU="$REPO_ROOT/enclaves/cpu/tinfoil-config.yml"  # CPU-only flavor; shares the supervisor + wasm-manager images
+CONFIG_CPU="$REPO_ROOT/enclaves/cpu/tinfoil-config.yml"    # CPU-only flavor; shares the supervisor + wasm-manager images
+CONFIG_GPU8="$REPO_ROOT/enclaves/gpu8/tinfoil-config.yml"  # 8xGPU platform-model flavor; shares the supervisor image, adds nan-vllm
 cd "$REPO_ROOT"
 
 # image short-name -> build context (Dockerfile is <context>/Dockerfile unless
@@ -31,12 +32,13 @@ declare -A CONTEXT=(
   [nan-worker]="worker"
   [nan]="."
   [nan-wasm-manager]="wasm"
+  [nan-vllm]="vllm"
 )
 # per-image Dockerfile override (default: <context>/Dockerfile).
 declare -A DOCKERFILE=(
   [nan-wasm-manager]="wasm/Dockerfile.wasm"
 )
-ORDER=(nan-mps nan-worker nan nan-wasm-manager)   # deterministic build order
+ORDER=(nan-mps nan-worker nan nan-wasm-manager nan-vllm)   # deterministic build order
 
 # pick the subset (positional args) or all
 TARGETS=("$@"); [ ${#TARGETS[@]} -eq 0 ] && TARGETS=("${ORDER[@]}")
@@ -54,7 +56,7 @@ repin(){ # $1=image name, $2=digest (sha256:...) — pins into EVERY config that
   local name="$1" digest="$2" cfg
   local pat="(image: \"${REGISTRY//./\\.}/${ORG}/${name})[:@][^\"]*\""
   local rep="\\1${DIGEST_SEP}${digest}\""
-  for cfg in "$CONFIG" "$CONFIG_CPU"; do
+  for cfg in "$CONFIG" "$CONFIG_CPU" "$CONFIG_GPU8"; do
     [ -f "$cfg" ] || continue
     grep -qE "image: \"${REGISTRY}/${ORG}/${name}[:@]" "$cfg" || continue  # this flavor doesn't ship it
     sed -i -E "s#${pat}#${rep}#" "$cfg"
@@ -87,13 +89,13 @@ for name in "${TARGETS[@]}"; do
 done
 
 # validate the configs still parse
-for cfg in "$CONFIG" "$CONFIG_CPU"; do
+for cfg in "$CONFIG" "$CONFIG_CPU" "$CONFIG_GPU8"; do
   [ -f "$cfg" ] || continue
   python3 -c "import yaml; yaml.safe_load(open('$cfg'))" \
     && say "$(basename "$cfg") valid"
 done
 
 say "done. pinned images:"
-grep -nE 'image:' "$CONFIG" "$CONFIG_CPU" 2>/dev/null | sed 's/^/    /'
+grep -nE "image:" "$CONFIG" "$CONFIG_CPU" "$CONFIG_GPU8" 2>/dev/null | sed 's/^/    /'
 [ "$DRY_RUN" = "1" ] && say "DRY_RUN: no images were built or pushed; digests are fake."
 say "reminder: confirm each package is PUBLIC so Tinfoil can pull it anonymously."

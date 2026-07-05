@@ -1,0 +1,93 @@
+# NAN enclave - 8xGPU PLATFORM-MODEL flavor (confidential GLM-5.2).
+#
+# A dedicated big-model node: instead of per-tenant wasm apps, it runs ONE large
+# model (GLM-5.2-FP8, 753B MoE) across all 8 H200s with vLLM, and serves it over
+# an OpenAI-compatible API. The weights arrive as a Tinfoil Modelwrap volume
+# (dm-verity image whose root hash is in the enclave measurement), so the
+# attestation commits to the EXACT model bytes - a client that verifies the
+# enclave knows it is talking to precisely GLM-5.2-FP8, privately.
+#
+#   supervisor - control plane + attestation + the platform-model proxy. Public
+#                via the shim; forwards /v1/{chat/completions,completions,models}
+#                to the vLLM sidecar on loopback.
+#   vllm       - loads the Modelwrap-mounted model on all 8 cards (tensor
+#                parallel) and serves the OpenAI API on 127.0.0.1:8000.
+#
+# Released as v<X.Y.Z>-gpu8 via "Tinfoil Release (8xGPU)". Like the CPU flavor,
+# the workflow copies THIS file to the repo-root tinfoil-config.yml in the tag
+# commit (the dashboard only reads the default path); point the dashboard at a
+# -gpu8 tag to get this flavor. Image digests are pinned by scripts/release.sh /
+# the workflow.
+cvm-version: 0.7.5
+cpus: 64
+memory: 262144     # 256 GiB host RAM (weight staging + KV overflow; adjust to the box)
+gpus: 8            # all 8 H200s attached (CC allows 1 or 8)
+
+containers:
+  # --- vLLM: serves the attested Modelwrap model across all 8 GPUs ------------
+  - name: "vllm"
+    image: "ghcr.io/stevedefacto/nan-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000"  # pinned by release.sh / the release workflow
+    runtime: nvidia
+    gpus: all
+    ipc: host          # NCCL tensor-parallel uses shared-memory transport across the 8 cards
+    restart: always
+    env:
+      - SERVED_MODEL_NAME: "glm-5.2"
+      - TENSOR_PARALLEL: "8"
+      - KV_CACHE_DTYPE: "fp8"          # halves the KV cache; Hopper-native
+      - MAX_MODEL_LEN: "262144"        # 256K context (GLM supports up to 1M; raise as KV headroom allows)
+      - VLLM_PORT: "8000"
+      # MODEL_DIR is auto-discovered from the single /tinfoil/mpk/mpk-* mount;
+      # set it explicitly only if more than one model volume is attached.
+    healthcheck:
+      # vLLM cold-loads ~750GB over minutes; give it a long start_period.
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 20
+      start_period: 900s
+
+  # --- supervisor: control plane + platform-model proxy, public ingress -------
+  - name: "supervisor"
+    image: "ghcr.io/stevedefacto/nan@sha256:57a458ea614935acf1f021409bb34ea24ab6a0c8ddbd95a1c18666dde4df4a52"
+    restart: always
+    env:
+      - PORT: "8080"
+      # This flavor hosts no per-tenant apps: no wasm-manager, no worker, no
+      # claim loop. It is a single attested model endpoint.
+      - CLAIM_ENABLED: "0"
+      - PROVISION_BACKEND: "vm"        # inert here (no VMMGR); kept so shared code paths don't special-case
+      - SIWE_DOMAIN: "nan.host"
+      - SIWE_URI: "https://nan.host"
+      - CHAIN_ID: "8453"
+      - CORS_ORIGINS: "https://nan.host"
+      - BASE_RPC: "https://mainnet.base.org"
+      - ENCLAVE_REPO: "SteveDeFacto/nan"
+      # --- platform model: proxy the OpenAI surface to the vLLM sidecar --------
+      - PLATFORM_MODEL_URL: "http://127.0.0.1:8000"   # the vLLM container on loopback
+      - PLATFORM_MODEL_NAME: "glm-5.2"
+      # PLATFORM_MODEL_KEY (Bearer gate on /v1/*) is an enclave SECRET, not a
+      # plaintext env - see secrets below. Empty secret = open endpoint (pilot).
+    secrets:
+      - SECRET
+      - PLATFORM_MODEL_KEY            # optional Bearer key gating the model API (empty = open)
+    command: ["node", "supervisor.js"]
+
+# --- attested model weights (Tinfoil Modelwrap) -----------------------------
+# GLM-5.2-FP8: 753B-param MoE, ~750GB FP8 weights, fits 8x141GB. Generate the
+# `mpk` in the Tinfoil Models tab from the pinned HF repo, then paste it here.
+# The mount lands at /tinfoil/mpk/mpk-<root_hash>; the vLLM entrypoint discovers
+# it. On Blackwell (B200) swap to nvidia/GLM-5.2-NVFP4 (4-bit, ~400GB) - NVFP4 is
+# not Hopper-native, so H200 uses FP8.
+models:
+  - name: "glm-5.2"
+    repo: "zai-org/GLM-5.2-FP8@REPLACE_WITH_PINNED_COMMIT"
+    mpk: "REPLACE_WITH_HASH_FROM_MODELS_TAB"
+
+# Single ingress -> supervisor. The platform model rides /v1/* (the proxy).
+shim:
+  upstream-port: 8080
+  paths:
+    - /health
+    - /v1/*
+    - /availability

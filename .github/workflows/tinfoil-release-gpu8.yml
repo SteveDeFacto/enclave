@@ -1,0 +1,139 @@
+# Tinfoil Containers release workflow — 8xGPU PLATFORM-MODEL flavor (phase 1).
+#
+# Mirrors tinfoil-release-cpu.yml but releases the 8xGPU config
+# (enclaves/gpu8/tinfoil-config.yml: supervisor + vllm, serving GLM-5.2 over an
+# attested OpenAI API). The supervisor image is the SAME build as the other
+# flavors — the flavor is picked by the measured config (PLATFORM_MODEL_URL set,
+# CLAIM_ENABLED=0), not by the image. The nan-vllm image is pinned by DIGEST in
+# the config (pre-built by scripts/release.sh / the vllm-image workflow); this
+# workflow only rebuilds + repins the supervisor.
+#
+# The Tinfoil dashboard reads only the DEFAULT path (tinfoil-config.yml at the
+# repo root), so this workflow COPIES enclaves/gpu8/tinfoil-config.yml to the
+# root in the tag commit (pinning the fresh supervisor digest); point the
+# dashboard at a -gpu8 tag to get this flavor.
+#
+# Versions MUST end in "-gpu8". NOTE: verifiers that check this repo's LATEST
+# release see the GPU flavor's measurement — point them at the matching -gpu8
+# release explicitly. The nan-vllm digest MUST be pinned in the config before
+# running this (release.sh nan-vllm), and the GLM Modelwrap models: entry must
+# carry a real mpk from the Tinfoil Models tab.
+
+name: Tinfoil Release (8xGPU)
+
+run-name: Release ${{ inputs.version }} (8xGPU platform-model flavor)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '8xGPU flavor version to release (must end in -gpu8, e.g. v1.0.0-gpu8)'
+        required: true
+        type: string
+
+concurrency:
+  group: tinfoil-container-release-${{ inputs.version }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate version and check the tag does not exist
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ -gpu8$ ]]; then
+            echo "::error::8xGPU flavor versions must end in -gpu8 (got: $VERSION)"
+            exit 1
+          fi
+          if git ls-remote --tags origin "refs/tags/$VERSION" | grep -q .; then
+            echo "::error::Tag $VERSION already exists"
+            exit 1
+          fi
+
+      - name: Guard against unpinned nan-vllm / unfilled Modelwrap entry
+        run: |
+          cfg=enclaves/gpu8/tinfoil-config.yml
+          if grep -q 'nan-vllm@sha256:0\{64\}' "$cfg"; then
+            echo "::error::nan-vllm digest is the zero placeholder in $cfg - run scripts/release.sh nan-vllm first, commit the pin, then release."
+            exit 1
+          fi
+          if grep -qE 'REPLACE_WITH_(PINNED_COMMIT|HASH_FROM_MODELS_TAB)' "$cfg"; then
+            echo "::error::GLM Modelwrap models: entry still has placeholders in $cfg - pin the HF commit and paste the mpk from the Tinfoil Models tab first."
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the supervisor image
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        env:
+          SOURCE_DATE_EPOCH: 0
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/stevedefacto/nan:${{ inputs.version }}
+
+  prepare-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+
+    steps:
+      - name: Checkout source commit
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: true
+
+      - name: Generate root tinfoil-config.yml from the 8xGPU flavor and tag the release
+        env:
+          VERSION: ${{ inputs.version }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cp enclaves/gpu8/tinfoil-config.yml tinfoil-config.yml
+          # `nan[:@]` cannot match nan-vllm (next char is '-'), so only the
+          # supervisor line is repinned; the nan-vllm pin stays as committed.
+          sed -i -E "s#(image: \"ghcr\.io/stevedefacto/nan)[:@][^\"]*\"#\1@${DIGEST}\"#" tinfoil-config.yml
+          grep -q "ghcr.io/stevedefacto/nan@${DIGEST}" tinfoil-config.yml \
+            || { echo "::error::failed to pin supervisor digest into tinfoil-config.yml"; exit 1; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f tinfoil-config.yml
+          git commit -m "Release ${VERSION}: root config from enclaves/gpu8, supervisor digest pinned"
+          git tag "$VERSION"
+          git push origin "refs/tags/$VERSION"
+
+      - name: Dispatch the publish workflow on the new tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          # never mark -gpu8 releases "latest": default verification resolves to
+          # the GPU flavor's latest release.
+          gh workflow run tinfoil-release-publish.yml --ref "$VERSION" -f mark-as-latest=false

@@ -79,6 +79,15 @@ const ADMIN_TOKEN          = process.env.ADMIN_TOKEN || "";
 const BASE_RPC       = process.env.BASE_RPC || "https://mainnet.base.org";
 const SESSION_TTL    = parseInt(process.env.SESSION_TTL || "43200", 10); // 12h: long enough to cover a deployment's data-path use
 const SSH_USER       = process.env.SSH_USER || "instance"; // login user the supervisor's sshd drops into
+// --- platform model (vLLM tier) ---------------------------------------------
+// On a big-model flavor (e.g. 8xH200 serving GLM-5.2), a vLLM sidecar loads an
+// attested Modelwrap volume and serves the OpenAI API on loopback. The shim
+// only exposes the supervisor, so we proxy /v1/{chat/completions,completions,
+// models} straight through to it. Unset PLATFORM_MODEL_URL = no platform model
+// (the gpu/cpu flavors), and those paths 404 like any other unknown route.
+const PLATFORM_MODEL_URL  = (process.env.PLATFORM_MODEL_URL || "").replace(/\/+$/, "");
+const PLATFORM_MODEL_NAME = process.env.PLATFORM_MODEL_NAME || "";      // advertised id (informational)
+const PLATFORM_MODEL_KEY  = process.env.PLATFORM_MODEL_KEY || "";       // optional Bearer gate on the model API
 const DEFAULT_IMAGE  = process.env.DEFAULT_IMAGE || "debian:bookworm-slim"; // any stock image; sshd is hosted by the supervisor, not the image
 // --- worker launch (per-tenant container = the only isolation boundary) ------
 const DOCKER_SOCK    = process.env.DOCKER_SOCK || "/var/run/docker.sock";  // Engine API endpoint (mounted into the supervisor)
@@ -1150,6 +1159,40 @@ app.use("/x/:id", async (req, res) => {
   req.pipe(up);
 });
 
+// Platform model (vLLM tier): proxy the OpenAI-compatible surface straight to
+// the loopback vLLM sidecar. Registered BEFORE express.json so bodies and SSE
+// stream through raw (a chat completion can be large; streaming responses must
+// not be buffered). Only mounted when PLATFORM_MODEL_URL is set; the model's
+// weights are attested by the enclave measurement (Modelwrap), so a client that
+// verifies the enclave is talking to exactly this model, privately.
+if (PLATFORM_MODEL_URL) {
+  const upstream = new URL(PLATFORM_MODEL_URL);
+  app.use(["/v1/chat/completions", "/v1/completions", "/v1/models", "/v1/embeddings"], (req, res) => {
+    if (PLATFORM_MODEL_KEY) {
+      const h = String(req.headers.authorization || "");
+      const tok = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+      if (tok !== PLATFORM_MODEL_KEY) return fail(res, 401, "unauthorized", "Missing or invalid API key for the platform model.");
+    }
+    // req.baseUrl is the matched mount (e.g. /v1/chat/completions); req.url is
+    // the remainder (usually "/"). Reconstruct the OpenAI path for vLLM.
+    const path = (req.baseUrl + (req.url === "/" ? "" : req.url)) || req.originalUrl;
+    const headers = { ...req.headers, host: upstream.host };
+    delete headers.authorization;   // the platform key stays here; vLLM runs open on loopback
+    const up = http.request(
+      { host: upstream.hostname, port: upstream.port || 80, method: req.method, path, headers },
+      (r) => { res.writeHead(r.statusCode || 502, r.headers); r.pipe(res); });
+    up.on("error", (e) => {
+      if (res.headersSent) return res.end();
+      // vLLM cold-loads a multi-hundred-GB model over minutes; a refused
+      // connection means it isn't serving yet, not that it's broken.
+      const loading = /ECONNREFUSED|ECONNRESET/.test(e.code || e.message || "");
+      fail(res, loading ? 503 : 502, loading ? "model_loading" : "upstream_error",
+        loading ? "The platform model is still loading (large weights); retry shortly." : ("platform model upstream error: " + e.message));
+    });
+    req.pipe(up);
+  });
+}
+
 app.use(express.json({ limit: "256kb" }));
 
 async function authed(req, res, next) {
@@ -1165,7 +1208,10 @@ app.get("/v1/health", (_req, res) => res.json({ status: "ok", deployments: deplo
   // watcher freshness is billing-critical: while it's stale, funded clocks are frozen
   watcher: FORWARDER_ADDRESS ? { lastPollOkAt: _lastPollOkAt ? new Date(_lastPollOkAt).toISOString() : null,
                                  fresh: (Date.now() - _lastPollOkAt) < WATCHER_STALE_SEC * 1000 } : null }));
-app.get("/v1/version", (_req, res) => res.json({ service: "nan-supervisor/0.1.0", contract: "nan-openapi/1.0.0", chainId: CHAIN_ID }));
+app.get("/v1/version", (_req, res) => res.json({ service: "nan-supervisor/0.1.0", contract: "nan-openapi/1.0.0", chainId: CHAIN_ID,
+  // a big-model flavor advertises the attested platform model it serves at
+  // /v1/chat/completions (OpenAI-compatible; auth-gated when a key is set)
+  platformModel: PLATFORM_MODEL_URL ? { name: PLATFORM_MODEL_NAME || "platform-model", api: "/v1", auth: !!PLATFORM_MODEL_KEY } : null }));
 
 app.get("/v1/pricing", async (_req, res) => {
   // One model on every flavor: apps specify EXACT resources, the two billing
