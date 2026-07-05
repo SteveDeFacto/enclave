@@ -1,17 +1,42 @@
-Honest ExecutionTarget::Gpu: fail load() when the CUDA execution provider
-cannot initialize, instead of ORT's default silent CPU fallback.
+NAN patches to the wasmtime wasi-nn ONNX backend (applied by
+Dockerfile.wasmtime before building the toolchain image). Two hunks:
 
-Why (NAN): a tenant that bought a GPU share and asked for ::Gpu must get the
-card or an error — never a quiet downgrade to CPU that still looks like a
-successful GPU inference. Silent fallback would also make the demo/verification
-app lie on GPU-less nodes. Applied to the wasmtime source by
-Dockerfile.wasmtime before building the toolchain image.
+1. Honest ExecutionTarget::Gpu - fail load() when the CUDA execution
+   provider cannot initialize, instead of ORT's default silent CPU
+   fallback. A tenant that bought a GPU share and asked for ::Gpu gets
+   the card or an error, never a quiet downgrade that still looks like
+   a successful GPU inference.
+
+2. Calm, small ORT thread pool - ORT's default intra-op pool is one
+   SPINNING thread per core. Wrong twice over on this platform: a 1%
+   tenant must not burn 16 cores busy-waiting (multi-tenant fairness),
+   and 16 saturating spinners starve libcuda's init wait-loops on a
+   fully-committed TDX guest (observed livelock on H200 CC: gdb shows
+   ThreadPoolTempl::WorkerLoop spinners while CUDA EP init never
+   completes). Two threads, spinning disabled.
 
 diff --git a/crates/wasi-nn/src/backend/onnx.rs b/crates/wasi-nn/src/backend/onnx.rs
-index c7cc645..b70dc93 100644
+index c7cc645..5896897 100644
 --- a/crates/wasi-nn/src/backend/onnx.rs
 +++ b/crates/wasi-nn/src/backend/onnx.rs
-@@ -67,9 +67,12 @@ fn configure_execution_providers(
+@@ -42,6 +42,16 @@ impl BackendInner for OnnxBackend {
+         let session = Session::builder()?
+             .with_execution_providers(execution_providers)?
+             .with_optimization_level(GraphOptimizationLevel::Level3)?
++            // NAN: ORT's default intra-op pool is one SPINNING thread per core
++            // - wrong for a multi-tenant node (a 1% tenant must not burn 16
++            // cores busy-waiting), and the saturating spinners starve libcuda's
++            // init wait-loops on fully-committed TDX guests (observed livelock
++            // on H200 CC: gdb shows WorkerLoop spinners while EP init never
++            // completes). Two calm threads, no spinning.
++            .with_intra_threads(2)?
++            .with_inter_threads(1)?
++            .with_intra_op_spinning(false)?
++            .with_inter_op_spinning(false)?
+             .commit_from_memory(builders[0])?;
+ 
+         let box_: Box<dyn BackendGraph> =
+@@ -67,9 +77,12 @@ fn configure_execution_providers(
          ExecutionTarget::Gpu => {
              #[cfg(feature = "onnx-cuda")]
              {

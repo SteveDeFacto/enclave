@@ -29,9 +29,11 @@ RUN git clone --depth 1 --branch "${WASMTIME_VERSION}" \
       https://github.com/bytecodealliance/wasmtime /src/wasmtime
 WORKDIR /src/wasmtime
 
-# Honest ExecutionTarget::Gpu: ORT registers execution providers non-fatally,
-# so an out-of-the-box "GPU" load silently falls back to the CPU when CUDA
-# can't initialize. Tenants BUY the GPU share — they get the card or an error.
+# NAN patches (see the .patch header): 1) strict ExecutionTarget::Gpu - the
+# CUDA provider initializes or load() fails, never ORT's silent CPU fallback
+# (tenants BUY the share); 2) small, non-spinning ORT thread pool - fair on a
+# multi-tenant node, and ORT's default per-core spinners livelock CUDA init
+# on fully-committed TDX guests.
 COPY wasmtime-onnx-gpu-strict.patch /tmp/
 RUN git apply --check /tmp/wasmtime-onnx-gpu-strict.patch \
  && git apply /tmp/wasmtime-onnx-gpu-strict.patch
