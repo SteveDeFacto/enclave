@@ -1,0 +1,15 @@
+{
+  "name": "qwen2.5-0.5b-instruct",
+  "n_layers": 24,
+  "n_kv_heads": 2,
+  "head_dim": 64,
+  "vocab": 151936,
+  "eos": [151645, 151643],
+  "template": "chatml",
+  "system_prompt": "You are Qwen, a helpful AI assistant. Answer concisely and accurately.",
+  "max_prompt_tokens": 3072,
+  "default_max_new": 512,
+  "max_new_cap": 2048,
+  "rep_penalty": 1.1,
+  "rep_window": 64
+}
