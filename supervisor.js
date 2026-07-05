@@ -1838,7 +1838,9 @@ async function instanceAlive(rec) {
   if (!rec._vmId) return false;
   const r = await vmReq("GET", `/vms/${encodeURIComponent(rec._vmId)}`, null, 5000).catch(() => null);
   if (!r) return false;                        // manager unreachable mid-tick: freeze, don't respawn
-  return r.status === 200;
+  // the manager reports crashed processes as status "failed" (with the exit
+  // signal in .error) - an existing record is NOT the same as a live app
+  return r.status === 200 && r.body && r.body.status === "running";
 }
 function pauseRec(rec, reason) {
   if (!rec.paused || rec.pauseReason !== reason) {
@@ -2508,6 +2510,30 @@ async function auditClaims() {
       }
     } else {
       rec._loseStrikes = 0;                   // healthy pass: chain agrees the lease is ours
+      // Crash recovery for a DIED app instance (fatal signal, OOM-kill): the
+      // lease is ours and paid, the wasm is cached - relaunch. Bounded: an
+      // app that keeps dying (crash-on-first-request) gets handed back after
+      // 3 deaths instead of flapping forever on the owner's dime.
+      if (rec.status === "running" && !(await instanceAlive(rec))) {
+        rec._deaths = (rec._deaths || 0) + 1;
+        if (rec._deaths > 3) {
+          console.warn(`[claim] ${rec.id} app died ${rec._deaths}x; giving it back`);
+          rec.status = "failed"; rec.error = rec.error || "app process kept dying";
+          if (rec._gpu) { releaseGpu(rec._gpu); rec._gpu = null; }
+          noteProvisionFailure(rec.id);
+          releaseLease(rec.id, "app kept dying").catch(() => {});
+          saveStateSoon();
+          continue;
+        }
+        console.warn(`[claim] ${rec.id} app instance died; relaunching (death ${rec._deaths}/3)`);
+        try { if (rec._vmId) await vmReq("DELETE", `/vms/${encodeURIComponent(rec._vmId)}`, null, 15000).catch(() => {}); } catch {}
+        rec.status = "claimed";               // provision path's input state
+        if (!(await provisionTenant(rec))) {
+          noteProvisionFailure(rec.id);
+          releaseLease(rec.id, "relaunch after app death failed").catch(() => {});
+        }
+        saveStateSoon();
+      }
     }
   }
 }

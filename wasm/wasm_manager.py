@@ -260,6 +260,15 @@ def _nn_tenant_env(gpu_share: float, pinned: bool) -> dict:
     # host-side wasi-nn traces into the tenant's log file (owner-readable via
     # the deployment logs endpoint) - names the backend step a hang died in
     env.setdefault("WASMTIME_LOG", "wasmtime_wasi_nn=debug")
+    # ORT's sm_90 FLASH-ATTENTION path (GroupQueryAttention et al) computes
+    # kernel-launch heuristics that integer-divide by the device's SM budget;
+    # under a small MPS partition (e.g. a 2% tenant of an H200) a denominator
+    # floors to zero and the whole process dies with SIGFPE mid-compute
+    # (observed live 2026-07-05: exit -8 on llm-chat's first prefill; the
+    # identical stack on consumer sm_86 is fine - different kernel family).
+    # Disable flash attention for tenants: attention falls back to the
+    # memory-efficient kernels, which don't carry that heuristic.
+    env.setdefault("ORT_DISABLE_FLASH_ATTENTION", "1")
     # whatever the probe's GPU bisect adopted (e.g. CUDA_MODULE_LOADING=EAGER
     # when lazy loading deadlocks under MPS) applies to every tenant
     env.update(_NN_PROBE.get("env") or {})
@@ -1187,7 +1196,23 @@ def teardown(vid: str) -> bool:
     return True
 
 
+def _refresh_status(rec: dict) -> None:
+    """A tenant that died on its own (fatal signal, OOM-kill, crash) must not
+    keep reporting "running": the supervisor routes traffic and RENEWS leases
+    on this status (observed live: a SIGFPE'd app served ECONNREFUSED for an
+    hour while its lease kept being paid)."""
+    proc = rec.get("_proc")
+    if rec.get("status") == "running" and proc is not None:
+        code = proc.poll()
+        if code is not None:
+            rec["status"] = "failed"
+            rec["error"] = (f"app process died: signal {-code}" if code < 0
+                            else f"app process exited (code {code})")
+            print(f"[audit] {rec['id']} died: exit={code}", flush=True)
+
+
 def _public(rec: dict) -> dict:
+    _refresh_status(rec)
     return {k: v for k, v in rec.items() if not k.startswith("_")}
 
 
