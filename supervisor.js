@@ -1203,6 +1203,17 @@ app.post("/v1/claim-hint", async (req, res) => {
   try {
     const d = await readOnchainDeployment(id);
     if (!d || !Number(d.createdAt)) return fail(res, 404, "not_found", "No such deployment on the ledger.");
+    // Preflight the CONTRACT's own gating synchronously (simulate the exact
+    // claim tx) so structural failures - a stale registry pointer, an expired
+    // entry, a lease race - surface HERE with the revert reason, instead of
+    // "accepted: true" followed by a silent background failure. This is how
+    // the 2026-07-05 wrong-registry-pointer bug should have been caught.
+    try {
+      await chainClient.simulateContract({ address: getAddress(DEPLOYMENTS_ADDRESS), abi: DEPLOYMENTS_ABI,
+        functionName: "claim", args: [id, _enclaveId], account: claimSigner().account });
+    } catch (e) {
+      return res.json({ accepted: false, reason: "claim would revert on-chain: " + (e.shortMessage || e.message) });
+    }
     const reason = await considerClaim(d, { hinted: true, background: true });
     if (reason) return res.json({ accepted: false, reason });
     res.json({ accepted: true, status: "claiming" });
