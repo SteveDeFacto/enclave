@@ -65,6 +65,14 @@ jobs:
           git apply --check "$GITHUB_WORKSPACE/wasm/onnxruntime-sm90-mps.patch"
           git apply "$GITHUB_WORKSPACE/wasm/onnxruntime-sm90-mps.patch"
 
+      - name: Repin eigen (GitLab regenerated the archive; content verified identical)
+        run: |
+          # Same pinned commit 1d8b82b0 (eigen 3.4.90) - GitLab re-zipped it and
+          # the bytes changed. New sha1 verified locally against the commit
+          # contents on 2026-07-05 before trusting it here.
+          sed -i 's/5ea4d05e62d7f954a46b3213f9b2535bdd866803/51982be81bbe52572b54180454df11a3ece9a934/' /tmp/ort/cmake/deps.txt
+          grep eigen /tmp/ort/cmake/deps.txt | tail -1
+
       - name: Build (Release, CUDA, shared lib, sm_86+sm_90)
         run: |
           cd /tmp/ort
