@@ -1,0 +1,224 @@
+# NAN enclave - SUBMISSION MODEL (multi-container, all measured & attested).
+#
+# Three containers share one confidential VM (shared localhost network, shared
+# /mnt/ramdisk volume, ipc:host so MPS shared-memory works):
+#
+#   supervisor   - control plane (auth, billing, quota, routing). No GPU. Public via shim.
+#   mps-control  - runs the MPS daemon so per-tenant worker processes get HARDWARE-
+#                  enforced SM% + VRAM caps (validated under CC). Owns /tmp/nvidia-mps.
+#   worker       - GPU container. Holds the card, forks one MPS-capped CUDA process
+#                  per tenant, runs submitted compute. Reached by the supervisor on localhost.
+#
+# Tenants do NOT bring containers (Tinfoil forbids runtime container creation) - they
+# SUBMIT work to the worker. That is the only model the platform allows.
+#
+# Images are built+pinned by CI; leave the :placeholder tags, the Release workflow
+# rewrites the @sha256 digests. Tinfoil REQUIRES a digest on every image to attest it.
+cvm-version: 0.7.5
+cpus: 16
+memory: 65536      # 64 GiB
+gpus: 1            # whole H200 attached to the enclave (CC allows 1 or 8)
+
+containers:
+  # --- MPS daemon: makes per-tenant SM%/VRAM caps enforceable in prod -----------
+  - name: "mps-control"
+    image: "ghcr.io/stevedefacto/nan-mps@sha256:67ca6671620a2c5605a9f427f6d5eb1e9aa21e8a9d3660d2826cc67c78e1794f"
+    runtime: nvidia
+    gpus: all
+    ipc: host
+    restart: always
+    volumes:
+      - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # shared MPS pipe dir
+      - /mnt/ramdisk/nvidia-mps-log:/tmp/nvidia-mps-log
+    healthcheck:
+      test: ["CMD-SHELL", "echo get_server_list | nvidia-cuda-mps-control >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # --- GPU worker: forks MPS-capped CUDA processes per tenant, runs submitted jobs
+  - name: "worker"
+    image: "ghcr.io/stevedefacto/nan-worker@sha256:04283c46554e3cea5901663ec2045d5a6b578e7941a933542d7bb8b3f9e2155e"
+    runtime: nvidia
+    gpus: all
+    ipc: host
+    restart: always
+    env:
+      - WORKER_PORT: "8090"
+      - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
+      - GPU_VRAM_GB: "141"
+    volumes:
+      - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # join the MPS daemon
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # --- supervisor: control plane (no GPU), public ingress -----------------------
+  - name: "supervisor"
+    image: "ghcr.io/stevedefacto/nan@sha256:4e0b5be05bc5c8153a10e69baa33c2c81c81e6e8188877b52f824a10dbd99060"
+    restart: always
+    env:
+      - PORT: "8080"
+      - WORKER_URL: "http://localhost:8090"              # GPU worker (PTX submission backend)
+      # tenant-app hosting: the wasm-manager runs each app as a `wasmtime serve` process.
+      - PROVISION_BACKEND: "vm"                          # "vm" = wasm app hosting (wasm-manager); "worker" = GPU PTX
+      - VMMGR_URL: "http://localhost:8091"               # the wasm-manager (container below); "vm"/VMMGR names are legacy
+      - PUBLIC_URL: ""                                  # empty: supervisor derives its origin per-request from the Host header (handles enclave1..N with one config). Verify the returned network.endpoint on first deploy.
+      - SIWE_DOMAIN: "nan.host"
+      - SIWE_URI: "https://nan.host"
+      - CHAIN_ID: "8453"
+      - CORS_ORIGINS: "https://nan.host"
+      - BASE_RPC: "https://mainnet.base.org"
+      # pay-per-deploy (no custody): supervisor WATCHES this forwarder for payments.
+      # FORWARDER_ADDRESS = deployed NanPay contract. USDC funds go straight to the
+      # payout wallet set INSIDE that contract (nan.eth's cold wallet) - never here.
+      # NOTE: requires outbound egress from the enclave to BASE_RPC. Confirm with Tinfoil.
+      - FORWARDER_ADDRESS: "0xaA943DfDF4e9F9F33C04e35D31E2645C69C7D8D9"                            # set after deploying NanPay.sol
+      - USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"   # USDC on Base
+      # app approval gate: NanAppCatalog (read-only, written by scripts/deploy-app-catalog.mjs).
+      # ipfs:// app deploys are REFUSED unless the catalog owner has Approved that
+      # version (setApproval tx signed by the catalog's deployer key). Empty =
+      # catalog apps can't deploy at all; baked-in ids still can (attested image).
+      - APP_CATALOG_ADDRESS: "0x17071414BD19fDFdA8E58559d2CcFb99b2c8d0FC"                          # set after deploying NanAppCatalog.sol (must be on CHAIN_ID's chain, read via BASE_RPC)
+      - PAYMENT_WINDOW_SEC: "600"                        # unpaid deployments release the reservation
+      - GRACE_SEC: "90"                                  # grace after expiry before teardown (top-up window)
+      - PAY_POLL_SEC: "12"
+      - SESSION_TTL: "43200"
+      # attestation: /v1/attestation relays the shim's Remote Attestation Document
+      # (fetched from /.well-known/tinfoil-attestation on loopback; ATTESTATION_URL
+      # overrides discovery if the shim binds elsewhere). ENCLAVE_REPO is the repo
+      # whose Sigstore-signed release measurements verifiers compare the quote to.
+      # MUST match the canonical GitHub casing exactly: Sigstore's policy check
+      # compares it verbatim to the cert's GitHubWorkflowRepository claim, and
+      # "SteveDeFacto/Nan" vs "SteveDeFacto/nan" fails verification.
+      - ENCLAVE_REPO: "SteveDeFacto/nan"
+      # on-chain discovery: with these set, the supervisor self-registers this
+      # enclave in NanRegistry and heartbeats every 15 min (registerOnChain in
+      # supervisor.js), so callers discover enclaves from the chain with no
+      # trusted gateway. Non-fatal: if anything here is missing the enclave still
+      # serves, it just doesn't advertise. Registration signs on Base mainnet over
+      # BASE_RPC and needs the REGISTRY_PRIVATE_KEY secret funded with a little ETH
+      # for gas. The advertised URL is NOT configured — it's derived from the
+      # hostname callers actually reach (the attested origin), registered lazily on
+      # the first external request. (Pin it with PUBLIC_URL only if you must.)
+      - REGISTRY_ENABLED: "1"
+      - REGISTRY_ADDRESS: "0x13deE63b80353a15C6E03D54240EE463B420353F"                             # set by scripts/deploy-registry.mjs
+      # - REGISTRY_HEARTBEAT_SEC: "900"                  # optional, default 15 min
+      # Portable deployments (contracts/DEPLOYMENTS.md): with CLAIM_ENABLED the
+      # enclave polls the NanDeployments ledger and claims funded, unleased
+      # deployments it can serve — including ones whose previous runner died.
+      # Claims sign with REGISTRY_PRIVATE_KEY (the contract gates claims to this
+      # registry entry's operator), so registry advertising above is a hard
+      # prerequisite, as is PROVISION_BACKEND=vm (claims run catalog wasm apps).
+      - CLAIM_ENABLED: "1"
+      - DEPLOYMENTS_ADDRESS: "0x81037A2081bc000F12B8aA771bede0d36742ec4b"                          # set by scripts/deploy-deployments.mjs
+      # - CLAIM_POLL_SEC: "60"                           # optional: queue sweep / lease audit cadence
+      # - RENEW_MARGIN_SEC: "300"                        # optional: renew when less lease than this remains
+      # - CPU_CLAIM_GRACE_SEC: "120"                     # optional: how long CPU-only work waits for a CPU enclave before we bid on it
+      - GPU_COUNT: "1"
+      - GPU_VRAM_GB: "141"
+      - GPU_TFLOPS: "989"                                # GPU compute per card (H200 FP16 dense); exact gpuTflops asks divide by this
+      - NODE_GFLOPS: "1000"                              # CPU compute per node in GFLOPS (16 vCPU ≈ 1 TFLOPS); exact cpuGflops asks divide by this
+      - SM_TOTAL: "132"
+      - MIN_COMPUTE_PCT: "1"
+      - VRAM_GRANULARITY_GB: "1"
+      - CTX_OVERHEAD_GB: "0.5"
+      # public UDP: the UDP relay box's routed /64. Each deployment declaring a
+      # udp:N port gets its own IPv6 from this prefix (deterministic from the id),
+      # advertised in the deploy response and /v1/udp-map. Empty = udp ports stay
+      # in-enclave-only (no public datagram path). See relay/README.md.
+      - UDP_ADDR_PREFIX: "2a01:4f9:c013:9b52::/64"       # nan-relay's routed /64 (46.62.128.36); MUST match the udp-relay box
+      # manual-billing / pilot: boot deployments without an on-chain payment.
+      # AUTO_PROVISION="1" provisions EVERY deploy for free (use only for a closed
+      # pilot). Leave "" and use the ADMIN_TOKEN-gated provision endpoint instead to
+      # provision one deployment at a time. AUTO_PROVISION_HOURS=0 means no auto-expiry.
+      - AUTO_PROVISION: ""
+      - AUTO_PROVISION_HOURS: "0"
+      # public-TCP relay support (relay/README.md): the SNI suffix the relay
+      # serves (deployments are reached at <dep-id>.tcp.<domain>). Setting it
+      # enables /x/:id/tls/:port — at boot the supervisor MINTS the TLS key +
+      # self-signed cert for *.<domain> IN-ENCLAVE (initTlsBridge), so the key
+      # never exists outside the CVM (no ACME account, no secret store, no
+      # operator copy) and the untrusted relay only ever forwards ciphertext.
+      # /v1/tls-bridge publishes the cert's fingerprints over the attested
+      # origin so clients can pin the relay-path session to the enclave; being
+      # plain (measured) config, the domain itself is attested too. Empty =
+      # the /tls/ bridge is disabled.
+      - TLS_BRIDGE_DOMAIN: "tcp.nan.host"
+    # fair-billing state (deployments, funded-time balances, payment-scan cursor).
+    # Persisting it means a supervisor restart FREEZES every deployment's clock and
+    # payment watching resumes where it stopped, instead of forfeiting paid time.
+    # NOTE: the ramdisk survives container restarts within one CVM boot, NOT a full
+    # CVM relaunch - a relaunch still starts fresh (payments made while fully down
+    # are re-scanned only within the persisted cursor's window).
+    volumes:
+      - /mnt/ramdisk/nan-state:/var/lib/nan
+    secrets:
+      - SECRET
+      - ADMIN_TOKEN              # operator token for POST /v1/admin/deployments/:id/provision
+      - REGISTRY_PRIVATE_KEY     # NanRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
+      # NOTE: the TLS-bridge key/cert are NOT secrets — they are minted
+      # in-enclave at boot (see TLS_BRIDGE_DOMAIN above), so nothing outside
+      # the CVM ever holds the private key.
+    command: ["node", "supervisor.js"]
+
+  # --- wasm manager: tenant apps via `wasmtime serve` --------------------------
+  # Nested container runtimes (qemu microVM, then gVisor) are both blocked: the
+  # enclave confines this container so it can't create namespaces/mounts or let a
+  # runtime fork/exec its helpers, and privileged: true isn't honored (Tinfoil's
+  # config has no such field). A Wasm runtime needs NONE of those ops, so it runs
+  # inside the confinement as-is. Each tenant app is a `wasmtime serve` subprocess
+  # on a private loopback port; isolation = Wasm sandbox + OS process + curated
+  # WASI (no fs, no host env, no net beyond the served socket). The supervisor
+  # (PROVISION_BACKEND="vm") speaks the SAME /vms contract and proxies /x/:id to
+  # the app's loopback port. No privileged, no netns, no cgroups.
+  #
+  # The app catalog is baked into the image (apps/*.wasm + catalog.json), so what
+  # runs is exactly what Tinfoil attested. Apps are wasi:http components.
+  # wasi-nn GPU interface: this container holds the card because tenant
+  # wasmtime processes ARE the CUDA processes — a deployment that buys a GPU
+  # share is launched with `-S nn` and runs ONNX inference through the host's
+  # ONNX Runtime CUDA provider. Isolation is the SAME scheme as the worker
+  # backend's PTX children: each tenant process joins the mps-control daemon
+  # (shared pipe dir + ipc:host) with CUDA_MPS_ACTIVE_THREAD_PERCENTAGE and
+  # CUDA_MPS_PINNED_DEVICE_MEM_LIMIT set from its bought share, so SM% and VRAM
+  # are hardware-enforced per process. Tenants without a GPU share never get
+  # the wasi-nn import at all.
+  - name: "wasm-manager"
+    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:e42a7982df78308fc134e694e80f783b8ac35935aa993ae535132e30668d0f53"
+    runtime: nvidia
+    gpus: all
+    ipc: host
+    restart: always
+    env:
+      - WASM_MANAGER_PORT: "8091"   # same port the supervisor's VMMGR_URL already targets
+      - NODE_VCPUS: "16"
+      - NODE_RAM_GB: "64"
+      - NODE_HAS_GPU: "1"           # GPU node: catalog apps with vram_mb > 0 may launch here (CPU flavor sets "0")
+      - GPU_VRAM_GB: "141"          # VRAM budget base: a tenant's MPS mem limit = gpuShare × this
+      - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
+      # each app's memory cap is its deployment's cpuShare × NODE_RAM_GB
+      # (>= the mem_mb its specs declare); WASM_APP_MIN_MEM_MB (64) is the floor
+    volumes:
+      - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # join the MPS daemon (SM%/VRAM caps)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+# Single ingress → supervisor. Only these paths are reachable from outside.
+shim:
+  upstream-port: 8080
+  paths:
+    - /health
+    - /v1/*
+    - /availability
+    - /x/*
+    # app deploys need NO new shim path: /v1/vms/* falls under /v1/* (the
+    # supervisor proxies it to the wasm-manager on :8091), and the app's server is reached via /x/*.
