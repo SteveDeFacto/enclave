@@ -2438,18 +2438,52 @@ async function auditClaims() {
       if (mine) releaseLease(rec.id, "owner setActive(false)").catch(() => {});
       saveStateSoon();
     } else if (!mine) {
+      const opMine = (d.runnerOperator || "").toLowerCase() === me;
+      const leaseLive = Number(d.leaseUntil) * 1000 > Date.now();
+      // OUR lease that lapsed (a missed renew, or our own fresh claim not yet
+      // visible on a lagging node) around a still-healthy tenant: re-acquire
+      // in place. Tearing down a serving app to re-claim it seconds later
+      // helps nobody and burns the user's lease.
+      if (opMine && !leaseLive && rec.status === "running") {
+        try {
+          const hash = await sendClaimTx("claim", [rec.id, _enclaveId]);
+          await chainClient.waitForTransactionReceipt({ hash });
+          const fresh = await readOnchainDeployment(rec.id);
+          if ((fresh.runnerOperator || "").toLowerCase() === me && Number(fresh.leaseUntil) * 1000 > Date.now()) {
+            rec._leaseUntil = Number(fresh.leaseUntil);
+            rec.remainingMs = rec._leaseUntil * 1000 - Date.now();
+            rec._loseStrikes = 0;
+            console.log(`[claim] ${rec.id} re-acquired our lapsed lease in place`);
+            saveStateSoon();
+            continue;
+          }
+        } catch (e) { /* someone else won it - fall through to the strikes */ }
+      }
+      // Public RPC nodes can serve STALE state right after a confirmation
+      // (observed live: an audit pass read the pre-claim lease one minute
+      // after our own claim and tore down a freshly provisioned tenant).
+      // One read never kills a serving tenant: it takes two consecutive
+      // audit passes agreeing that the lease is lost.
+      rec._loseStrikes = (rec._loseStrikes || 0) + 1;
+      if (rec._loseStrikes < 2) {
+        console.log(`[claim] ${rec.id} lease looks lost (strike 1/2; chain says runner=${d.runnerOperator}, leaseUntil=${d.leaseUntil}); re-checking next pass`);
+        continue;
+      }
       console.log(`[claim] ${rec.id} lease lost -> teardown (chain says runner=${d.runnerOperator})`);
       try { await stopContainer(rec); } catch {}
       if (rec._gpu) { releaseGpu(rec._gpu); rec._gpu = null; }
       rec.status = "expired";                 // sweep may legitimately re-claim it later
       saveStateSoon();
     } else if (rec.status === "claimed") {    // crashed after claim, before provision
+      rec._loseStrikes = 0;
       if (!(await provisionTenant(rec))) {
         // keep the "failed" record as the owner's evidence (see adopt())
         noteProvisionFailure(rec.id);
         releaseLease(rec.id, "provision failed after crash recovery").catch(() => {});
         saveStateSoon();
       }
+    } else {
+      rec._loseStrikes = 0;                   // healthy pass: chain agrees the lease is ours
     }
   }
 }
