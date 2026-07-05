@@ -1,3 +1,5 @@
 # build artifacts of the in-tree app sources; only the committed .wasm ships
 apps/*/target/
 __pycache__/
+# model + tokenizer fetched by fetch-model.sh; baked into llm_chat.wasm at build
+apps/*/assets/

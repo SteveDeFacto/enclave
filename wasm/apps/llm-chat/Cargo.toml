@@ -1,0 +1,36 @@
+[package]
+name = "llm-chat"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { version = "0.39.0", features = ["bitflags"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# unstable_wasm swaps the C regex backend (onig) for pure-Rust fancy-regex so
+# the tokenizer compiles to wasm32-wasip2.
+tokenizers = { version = "0.21", default-features = false, features = ["unstable_wasm"] }
+
+[profile.release]
+codegen-units = 1
+opt-level = 3        # code size is noise next to the embedded model
+strip = true
+lto = true
+
+[package.metadata.component]
+package = "nan:llm-chat"
+
+[package.metadata.component.target]
+path = "wit"
+world = "llm-chat"
+
+# WIT deps vendored from wasmtime v45 (see wit/world.wit)
+[package.metadata.component.target.dependencies]
+"wasi:nn" = { path = "wit/deps/nn" }
+"wasi:http" = { path = "wit/deps/http" }
+"wasi:io" = { path = "wit/deps/io" }
+"wasi:clocks" = { path = "wit/deps/clocks" }

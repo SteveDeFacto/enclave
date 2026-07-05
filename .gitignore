@@ -11,3 +11,4 @@ __pycache__/
 # in-tree wasm app crates: build artifacts + cargo-component's generated bindings
 wasm/apps/*/target/
 wasm/apps/*/src/bindings.rs
+wasm/apps/*/assets/

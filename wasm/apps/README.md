@@ -149,6 +149,19 @@ old no-filesystem sandbox). Operators can disable the feature fleet-wide with
              enforced by the audit sweep. Optional; defaults to
              `WASM_APP_STORAGE_MB` (256). `0` disables `/data` for this app.
 
+## Oversized artifacts (llm-chat)
+
+`llm-chat` bakes a whole model into the component (SmolLM2-135M-Instruct,
+ONNX q4f16 + tokenizer + chat UI = 123MB), which is past git's 100MB file
+limit. Its artifact therefore ships as a **GitHub release asset** instead of
+a committed `.wasm`: `Dockerfile.wasm` downloads it at image build, pinned by
+URL + sha256, so the measured image still pins exactly what runs. Source
+lives in `llm-chat/` (model fetched by `fetch-model.sh`, pinned to an exact
+HF revision + sha256). Rebuild + re-upload via the manual **Wasm Apps**
+workflow, then bump `LLM_CHAT_URL`/`LLM_CHAT_SHA256` in `Dockerfile.wasm`.
+Note it needs the nan-wasmtime toolchain with tensor-dtype support (patch
+hunks 3+4): i64 token ids, fp16 outputs, zero-size KV bootstrap tensors.
+
 ## Building the sample `hello.wasm`
 
 Requires the Rust toolchain and `cargo-component`:

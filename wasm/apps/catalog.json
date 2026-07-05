@@ -11,6 +11,17 @@
       "cpu_gflops": 0
     },
     {
+      "id": "llm-chat",
+      "name": "LLM Chat (SmolLM2-135M)",
+      "file": "llm-chat.wasm",
+      "description": "A small LLM compiled into the app: SmolLM2-135M-Instruct (ONNX, 4-bit weights) plus its tokenizer and a self-contained web chat UI, generating on the GPU through wasi-nn. GET / serves the chat page; POST /chat streams tokens over server-sent events (KV-cache decode, greedy sampling with repetition penalty). Requests pin target=gpu|cpu or default to gpu with a reported cpu fallback. 135M parameters: quick, tiny and frequently wrong - it demos the platform's GPU inference path, not model intelligence.",
+      "vram_mb": 1024,
+      "gpu_gflops": 10,
+      "mem_mb": 512,
+      "cpu_gflops": 10,
+      "storage_mb": 0
+    },
+    {
       "id": "nn-demo",
       "name": "NN Demo (wasi-nn)",
       "file": "nn-demo.wasm",
