@@ -3,9 +3,15 @@
 #
 # Why this exists: the browser's checks (extension, size, wasm preamble) are UX only
 # — anyone can bypass them by POSTing straight to Kubo. So we do NOT expose Kubo's
-# /api/v0/add to the internet. Caddy forwards ONLY /add-wasm to this gateway (on
-# 127.0.0.1); the gateway validates the bytes, then adds+pins to Kubo with hardcoded
-# params and returns {"cid": ...}. Kubo's API stays bound to localhost.
+# /api/v0/add to the internet. Caddy forwards ONLY /add-wasm and /add-json to this
+# gateway (on 127.0.0.1); the gateway validates the bytes, then adds+pins to Kubo
+# with hardcoded params and returns {"cid": ...}. Kubo's API stays bound to localhost.
+#
+# Routes:
+#   POST /add-wasm  - a wasm component (validated), for app publishing.
+#   POST /add-json  - a small JSON object, for deployment config (the console
+#                     pins a {"volumes":[...], ...} config and uses the CID as
+#                     the deployment's configCid). Enclaves re-verify the CID.
 #
 # Validation tiers:
 #   Tier 1 (always): size cap + wasm magic (\0asm) + component *layer* field
@@ -59,11 +65,17 @@ def wasm_tools_error(data: bytes):
     return None
 
 
-def kubo_add(data: bytes):
+# Cap for /add-json config pins: a deployment config is small (volume names,
+# a system prompt, an API key). Keep it well under the wasm cap so this path
+# can't be abused to pin large blobs.
+MAX_JSON_BYTES = int(os.environ.get("MAX_CONFIG_BYTES", str(256 * 1024)))
+
+
+def kubo_add(data: bytes, filename="app.wasm"):
     """Add+pin to the local Kubo node with fixed params; return the CID."""
     boundary = "----nanwasm" + uuid.uuid4().hex
-    pre = ("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"app.wasm\"\r\n"
-           "Content-Type: application/octet-stream\r\n\r\n" % boundary).encode()
+    pre = ("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
+           "Content-Type: application/octet-stream\r\n\r\n" % (boundary, filename)).encode()
     post = ("\r\n--%s--\r\n" % boundary).encode()
     req = urllib.request.Request(
         KUBO_API + "/api/v0/add?cid-version=1&pin=true",
@@ -98,16 +110,34 @@ class Handler(BaseHTTPRequestHandler):
                           {"ok": True} if self.path == "/healthz" else {"error": "not found"})
 
     def do_POST(self):
-        if self.path.split("?")[0] != "/add-wasm":
+        route = self.path.split("?")[0]
+        if route not in ("/add-wasm", "/add-json"):
             return self._json(404, {"error": "not found"})
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
             return self._json(411, {"error": "Content-Length required"})
-        if length > MAX_BYTES:
-            return self._json(413, {"error": "too large (max %d bytes)" % MAX_BYTES})
+        cap = MAX_JSON_BYTES if route == "/add-json" else MAX_BYTES
+        if length > cap:
+            return self._json(413, {"error": "too large (max %d bytes)" % cap})
         data = self.rfile.read(length)
         if len(data) != length:
             return self._json(400, {"error": "short read"})
+
+        # /add-json: pin a deployment config (must be a JSON OBJECT). The
+        # enclave re-fetches + hash-verifies it, so this is UX/availability,
+        # not trust - but validate the shape so a bad pin fails here.
+        if route == "/add-json":
+            try:
+                obj = json.loads(data.decode("utf-8"))
+            except Exception as e:
+                return self._json(415, {"error": "not valid UTF-8 JSON: %s" % e})
+            if not isinstance(obj, dict):
+                return self._json(415, {"error": "config must be a JSON object"})
+            try:
+                cid = kubo_add(data, filename="config.json")
+            except Exception as e:  # noqa: BLE001
+                return self._json(502, {"error": "ipfs add failed: %s" % e})
+            return self._json(200, {"cid": cid}) if cid else self._json(502, {"error": "ipfs returned no CID"})
 
         err = preamble_error(data) or wasm_tools_error(data)
         if err:

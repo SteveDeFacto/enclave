@@ -584,8 +584,12 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
           <label for="cfgPorts">Firewall <span class="dim">(ports the app may bind · defaulted from the catalog by “Use in Deploy” · empty = standard web app)</span></label>
           <input type="text" id="cfgPorts" value="" placeholder="empty · or http:8088, tcp:5432, udp:9053" spellcheck="false" autocapitalize="off" autocomplete="off" />
         </div>
+        <div class="field" id="volField" hidden>
+          <label>Model volumes <span class="dim">(attested read-only weights the enclave carries · mounted at /models/&lt;name&gt; · picking any builds &amp; pins the app config for you)</span></label>
+          <div id="volList" class="fleet-list"></div>
+        </div>
         <div class="field">
-          <label for="cfgConfig">App config CID <span class="dim">(optional · IPFS CID of a JSON config the enclave verifies and hands the app as NAN_CONFIG · e.g. pick a model or set an API key for llm-chat)</span></label>
+          <label for="cfgConfig">App config CID <span class="dim">(optional · IPFS CID of a JSON config the enclave verifies and hands the app as NAN_CONFIG · e.g. pick a model or set an API key for llm-chat · leave empty when using the volume picker above)</span></label>
           <input type="text" id="cfgConfig" value="" placeholder="empty · or bafybei… (ipfs add your config.json)" spellcheck="false" autocapitalize="off" autocomplete="off" />
         </div>
         <div class="field">
@@ -4305,7 +4309,7 @@ function shareRates(gpuPct, cpuPct){  // what the two dials buy on this server s
            vramGb: (g / 100) * CARD_GB, tflops: (g / 100) * CARD_TFLOPS,
            ramGb: (c / 100) * NODE_RAM_GB, vcpus: (c / 100) * NODE_VCPUS, gflops: (c / 100) * NODE_GFLOPS };
 }
-const dep = { gpuPct: 25, cpuPct: 5, minGpuPct: 0, minCpuPct: 1, asset: "USDC", public: true, gpuEnclave: true };  // gpuEnclave: from /availability (gpu:false = CPU-only enclave)
+const dep = { gpuPct: 25, cpuPct: 5, minGpuPct: 0, minCpuPct: 1, asset: "USDC", public: true, gpuEnclave: true, volumes: new Set() };  // gpuEnclave: from /availability (gpu:false = CPU-only enclave); volumes: attached model volume names
 function renderAccessNote(){
   const el = $("#accessNote"); if (!el) return;
   el.innerHTML = dep.public
@@ -4382,7 +4386,8 @@ function deployBody(){
   // GPU attestation only exists when the deployment holds a card slice.
   if (gp > 0 && dep.gpuEnclave) body.attestationPolicy = { requireGpuAttestation: true };
   const cc = ($("#cfgConfig") && $("#cfgConfig").value || "").trim();
-  if (cc) body.configCid = cc;   // per-deployment config, delivered to the app as NAN_CONFIG
+  if (dep.volumes.size) body.volumes = [...dep.volumes];   // attached model volumes (built into configCid at deploy)
+  else if (cc) body.configCid = cc;                        // per-deployment config, delivered to the app as NAN_CONFIG
   body.region = "auto";
   return body;
 }
@@ -4634,12 +4639,14 @@ async function runDeploy(){
   const portsCsv = (fwCsv.length && !(fwCsv.length === 1 && fwCsv[0] === "http")) ? fwCsv.join(",") : "";
   const httpEntry = fwCsv.find(x => /^http:\d+$/.test(x));
   const appPort = httpEntry ? parseInt(httpEntry.split(":")[1], 10) : 8080;
-  const configCid = ($("#cfgConfig") && $("#cfgConfig").value || "").trim();
+  let configCid = ($("#cfgConfig") && $("#cfgConfig").value || "").trim();
+  const volNames = [...dep.volumes];
 
   if (dry){
     termLine(term, "warn", "// dry run: nothing is sent");
+    if (volNames.length) termLine(term, "info", "0) volumes " + JSON.stringify(volNames) + " -> the console pins {\"volumes\":[…]} to IPFS and passes its CID as configCid");
     termLine(term, "p", "1) NanDeployments.create(app, shares, ports) - one wallet tx; you own the record");
-    termLine(term, "dimln", "   create(\"" + rref.reference + "\", " + gpuMilli + ", " + cpuMilli + ", " + appPort + ", \"" + portsCsv + "\", " + dep.public + ", \"\", \"" + configCid + "\")");
+    termLine(term, "dimln", "   create(\"" + rref.reference + "\", " + gpuMilli + ", " + cpuMilli + ", " + appPort + ", \"" + portsCsv + "\", " + dep.public + ", \"\", \"" + (volNames.length ? "<pinned config CID>" : configCid) + "\")");
     termLine(term, "p", dep.asset === "ETH"
       ? "2) fundEth(id) with ≈ $" + fund + " of ETH - one wallet tx; credited on-chain"
       : "2) sign a " + fund + " USDC authorization (EIP-3009) + one fundWithAuthorization(id) tx - credited on-chain");
@@ -4672,6 +4679,22 @@ async function runDeploy(){
     if (rate6 > 0n){
       const rate = Number(rate6) / 1e6;
       termLine(term, "info", "    " + fund + " USDC ≈ " + fmtDur(fund / rate) + " of runtime at $" + (rate * 3600).toFixed(2) + "/hr");
+    }
+
+    // 0) attached volumes: build + pin a config the enclave mounts. If the
+    // user also typed a config CID, the volume picker takes precedence (the
+    // two can't be merged client-side - a CID is opaque).
+    if (volNames.length){
+      termLine(term, "p", "$ pin app config  (volumes -> IPFS -> configCid)");
+      if (configCid) termLine(term, "warn", "    (ignoring the pasted config CID - the volume picker builds the config; put volumes in your own config to combine)");
+      const jsonUrl = (IPFS_UPLOAD_URL || "").replace(/\/add-wasm$/, "/add-json");
+      if (!jsonUrl) throw new NanError("volume attach needs the upload gateway; not configured here. Pin {\"volumes\":[…]} yourself and paste its CID.", 0);
+      const cfgObj = { volumes: volNames };
+      const pr = await fetch(jsonUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(cfgObj) });
+      const pj = await pr.json().catch(() => ({}));
+      if (!pr.ok || !pj.cid) throw new NanError("config pin failed: " + (pj.error || ("HTTP " + pr.status)), 0);
+      configCid = pj.cid;
+      termLine(term, "ok", "[✓] config pinned " + configCid + "  (mounts: " + volNames.join(", ") + " -> /models/…)");
     }
 
     // 1) create: one tx from YOUR wallet - msg.sender owns the on-chain record
@@ -4998,7 +5021,42 @@ async function refreshFleet(){
             + '</div>';
         }).join("");
     field.hidden = false;
+    renderVolumes(rows);
   } catch(e){ field.hidden = true; }
+}
+// Model volumes the fleet advertises (Modelwrap): union across enclaves, each
+// tagged with which enclaves carry it. Picking any builds+pins the config CID.
+function renderVolumes(rows){
+  const field = $("#volField"), list = $("#volList");
+  if (!field || !list) return;
+  const byName = new Map();
+  for (const e of (rows || [])){
+    for (const v of ((e.availability && e.availability.volumes) || [])){
+      if (!v || !v.name) continue;
+      const cur = byName.get(v.name) || { name: v.name, bytes: 0, onnx: false, count: 0 };
+      cur.bytes = Math.max(cur.bytes, v.bytes || 0); cur.onnx = cur.onnx || !!v.onnx; cur.count++;
+      byName.set(v.name, cur);
+    }
+  }
+  const vols = [...byName.values()].sort((a,b) => a.name.localeCompare(b.name));
+  if (!vols.length){ field.hidden = true; return; }
+  field.hidden = false;
+  list.innerHTML = vols.map(v => {
+    const on = dep.volumes.has(v.name);
+    const gb = v.bytes ? (v.bytes/1073741824).toFixed(v.bytes > 1073741824 ? 1 : 2) + " GB" : "";
+    return '<label class="vol-row' + (on ? " on" : "") + '">'
+      + '<input type="checkbox" data-vol="' + esc(v.name) + '"' + (on ? " checked" : "") + ' />'
+      + '<span class="vol-name">' + esc(v.name) + '</span>'
+      + (v.onnx ? '<span class="ap-badge info">onnx</span>' : "")
+      + (gb ? '<span class="vol-size dim">' + gb + '</span>' : "")
+      + '<span class="vol-where dim">' + v.count + (v.count === 1 ? " enclave" : " enclaves") + '</span>'
+      + '</label>';
+  }).join("");
+  list.querySelectorAll('input[data-vol]').forEach(cb => cb.addEventListener("change", () => {
+    if (cb.checked) dep.volumes.add(cb.dataset.vol); else dep.volumes.delete(cb.dataset.vol);
+    cb.closest(".vol-row").classList.toggle("on", cb.checked);
+    renderDeploy();
+  }));
 }
 function startAvailPoll(){
   refreshAvailability(); refreshFleet();
@@ -5028,6 +5086,8 @@ function initDeploy(){
     $("#cfgImage").value = "";
     const fp0 = $("#cfgPorts"); if (fp0) fp0.value = "";
     const cc0 = $("#cfgConfig"); if (cc0) cc0.value = "";
+    dep.volumes.clear();
+    document.querySelectorAll('#volList input[data-vol]').forEach(cb => { cb.checked = false; cb.closest(".vol-row").classList.remove("on"); });
     $("#cfgBudget").value = "10";
     $("#cfgGpuShare").value = "25"; dep.gpuPct = 25;
     const cp0 = $("#cfgCpuShare"); if (cp0) cp0.value = "5"; dep.cpuPct = 5;
@@ -5174,6 +5234,13 @@ function injectLiveStyles(){
     ".fleet-meter{display:inline-block;width:56px;height:5px;border-radius:3px;background:rgba(255,255,255,.07);overflow:hidden;}",
     ".fleet-meter b{display:block;height:100%;background:linear-gradient(90deg,var(--jade),var(--jade-2));border-radius:3px;}",
     ".fleet-empty{padding:10px 12px;font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted);}",
+    ".vol-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line-soft);font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted);cursor:pointer;}",
+    ".vol-row:last-child{border-bottom:0;}",
+    ".vol-row.on{background:rgba(52,211,153,.06);}",
+    ".vol-row input{accent-color:var(--jade);margin:0;}",
+    ".vol-name{color:var(--text);font-size:.76rem;}",
+    ".vol-size,.vol-where{margin-left:auto;}",
+    ".vol-where{margin-left:0;}",
     ".enc-row{border-bottom:1px solid var(--line-soft);padding:12px 18px;}",
     ".enc-row:last-child{border-bottom:0;}",
     ".enc-row.enc-new{box-shadow:inset 3px 0 0 var(--jade);background:rgba(47,230,168,.04);}",
