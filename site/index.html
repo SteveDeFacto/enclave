@@ -253,7 +253,7 @@ section{padding:84px 0;position:relative;}
 .run-row .hint{font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);margin-left:auto;}
 
 /* terminal sim */
-.term{font-family:var(--font-mono);font-size:.8rem;padding:16px;line-height:1.7;color:#B9C6D6;min-height:300px;}
+.term{font-family:var(--font-mono);font-size:.8rem;padding:16px;line-height:1.7;color:#B9C6D6;min-height:300px;max-height:min(480px,60vh);overflow-y:auto;}
 .term .ln{display:block;white-space:pre-wrap;}
 .term .p{color:var(--jade);}
 .term .ok{color:var(--jade);}
@@ -4452,9 +4452,23 @@ function switchPane(name){
 
 /* ---- terminal helpers ---- */
 function termLine(term, cls, txt){
+  // follow the tail only if the user is already at (or near) the bottom -
+  // don't yank the view away from someone reading scrollback
+  const follow = term.scrollHeight - term.scrollTop - term.clientHeight < 48;
+  // collapse runs of identical lines (poll loops can emit hundreds of
+  // "no live enclave has ..." retries) into one line with a repeat counter
+  const last = term.lastElementChild;
+  if (last && last.dataset && last.dataset.raw === txt && last.className === "ln " + cls){
+    const n = parseInt(last.dataset.n || "1", 10) + 1;
+    last.dataset.n = String(n);
+    last.textContent = txt + "  (x" + n + ")";
+    if (follow) term.scrollTop = term.scrollHeight;
+    return last;
+  }
   const s = document.createElement("span");
-  s.className = "ln " + cls; s.textContent = txt;
-  term.appendChild(s); term.scrollTop = term.scrollHeight;
+  s.className = "ln " + cls; s.textContent = txt; s.dataset.raw = txt;
+  term.appendChild(s);
+  if (follow) term.scrollTop = term.scrollHeight;
   return s;
 }
 function statusCls(st){
