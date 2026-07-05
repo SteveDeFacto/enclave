@@ -277,6 +277,15 @@ def _nn_tenant_env(gpu_share: float, pinned: bool) -> dict:
     # Disable flash attention for tenants: attention falls back to the
     # memory-efficient kernels, which don't carry that heuristic.
     env.setdefault("ORT_DISABLE_FLASH_ATTENTION", "1")
+    # ... and the memory-efficient kernels have their own sm_90-under-MPS
+    # failure (observed live 2026-07-05: Qwen2.5's GQA, 14Q/2KV heads, emits
+    # one decode token then the process dies - ECONNREFUSED mid-stream - on a
+    # 4% H200 slice, while the identical artifact streams fine on sm_86 and
+    # on CPU). With both fused paths off, GroupQueryAttention takes its plain
+    # unfused kernels: slower, but they don't size launches off the
+    # MPS-partitioned SM budget. Revisit if/when upstream ORT fixes the
+    # Hopper attention heuristics for small CUDA_MPS_ACTIVE_THREAD_PERCENTAGE.
+    env.setdefault("ORT_DISABLE_MEMORY_EFFICIENT_ATTENTION", "1")
     # whatever the probe's GPU bisect adopted (e.g. CUDA_MODULE_LOADING=EAGER
     # when lazy loading deadlocks under MPS) applies to every tenant
     env.update(_NN_PROBE.get("env") or {})
