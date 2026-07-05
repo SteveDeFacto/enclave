@@ -1081,7 +1081,14 @@ const udpMap = () => [...deployments.values()]
   .map((r) => ({ id: r.id, address: udpAddrFor(r.id), ports: fwUdpPorts(r) }));
 
 app.use("/x/:id", async (req, res) => {
-  const rec = deployments.get(req.params.id);
+  let rec = deployments.get(req.params.id);
+  // On-chain ids are bytes32, and a full 64-hex id exceeds DNS's 63-char label
+  // limit - app subdomains carry a hex PREFIX of the id instead, resolved here
+  // (unique match only; 16+ chars makes accidental collisions imaginary).
+  if (!rec && /^0x[0-9a-f]{16,64}$/.test(req.params.id)) {
+    const hits = [...deployments.keys()].filter(k => k.startsWith(req.params.id));
+    if (hits.length === 1) rec = deployments.get(hits[0]);
+  }
   if (!rec) return fail(res, 404, "not_found", "Unknown deployment.");
   // Public deployments serve anyone (websites/APIs). Private ones require the owner's
   // token (checked before status so a private deployment's state isn't leaked). SSH
@@ -1105,7 +1112,7 @@ app.use("/x/:id", async (req, res) => {
     }
     target = new URL(`http://127.0.0.1:${rec._vmHostPort}/${sub}`);
   } else {
-    target = new URL(`${WORKER_MGR_URL}/tenants/${encodeURIComponent(req.params.id)}/${sub}`);
+    target = new URL(`${WORKER_MGR_URL}/tenants/${encodeURIComponent(rec.id)}/${sub}`);
   }
   const headers = { ...req.headers, host: target.host };
   delete headers.authorization; // the NAN token stays at the supervisor; the worker never sees it
@@ -1134,12 +1141,21 @@ app.get("/v1/health", (_req, res) => res.json({ status: "ok", deployments: deplo
                                  fresh: (Date.now() - _lastPollOkAt) < WATCHER_STALE_SEC * 1000 } : null }));
 app.get("/v1/version", (_req, res) => res.json({ service: "nan-supervisor/0.1.0", contract: "nan-openapi/1.0.0", chainId: CHAIN_ID }));
 
-app.get("/v1/pricing", (_req, res) => {
+app.get("/v1/pricing", async (_req, res) => {
   // One model on every flavor: apps specify EXACT resources, the two billing
   // shares are CALCULATED from them. A CPU-only enclave simply has no card to
   // sell (vramGb must be 0 here).
+  // Deploy coordinates ride along: deployments are created and funded on the
+  // NanDeployments ledger (see POST /v1/deployments for the method shapes),
+  // and the console needs the contract, the USDC EIP-712 domain, and an
+  // ETH/USD quote for fundEth estimates - all public, all cache-friendly.
+  const [ethUsd8, usdcDomain] = await Promise.all([
+    ethUsdPrice8().catch(() => null), refreshUsdcDomain().catch(() => null)]);
   const base = {
     assets: ["ETH","USDC"], gpu: IS_GPU,
+    deploymentsContract: DEPLOYMENTS_ADDRESS || null, chainId: CHAIN_ID,
+    usdc: USDC_ADDRESS, usdcDomain,
+    ethUsd: ethUsd8 ? (Number(ethUsd8) / 1e8).toFixed(2) : null,
     model: "Deployments buy TWO shares: gpuShare (0..1 of ONE GPU card — VRAM and compute move together; 0 = CPU-only app) and cpuShare (0..1 of the node's vCPU+RAM). Apps declare their exact specs in the catalog — VRAM GB + GPU TFLOPS of a card, RAM MB + CPU GFLOPS of the node; those specs divided by this server's spec (the LARGER of the memory and compute axes per pool, rounded up to the whole percent) are the MINIMUM shares a deployment may buy. A GPU app's gpuShare must be >= its cpuShare. Billed per second, additively.",
     node: { vcpus: NODE_VCPUS, ramGb: NODE_RAM_GB, gflops: NODE_GFLOPS,
             wholeNodePerSecondUsdc: CPU_RATE.toFixed(7), wholeNodePerHourUsdc: (CPU_RATE * 3600).toFixed(2) },
@@ -1166,6 +1182,33 @@ app.get("/v1/pricing", (_req, res) => {
     vramGranularityGb: GRANULARITY_GB,
     examples: [[1, 0.1], [0.5, 0.1], [0.25, 0.05], [0.05, 0.05]].map(([g, c]) => example(g, c)),
   });
+});
+
+// Fast-path claim: a freshly funded on-chain deployment shouldn't wait out
+// the sweep cadence (up to CLAIM_POLL_SEC + jitter + the CPU-first grace).
+// Unauthenticated on purpose - a hint is just "look at this id now"; every
+// fact is re-read from the chain and the claim tx is gated exactly like the
+// sweep, so the worst a bogus hint costs is a few RPC reads.
+const _hintBusy = new Set();
+app.post("/v1/claim-hint", async (req, res) => {
+  const id = String((req.body && req.body.id) || "").toLowerCase().trim();
+  if (!/^0x[0-9a-f]{64}$/.test(id))
+    return fail(res, 422, "invalid_spec", "id must be the bytes32 deployment id (0x + 64 hex chars).");
+  if (!CLAIM_READY || !_enclaveId)
+    return fail(res, 503, "not_claiming", "This enclave is not claiming on-chain deployments right now.");
+  const ex = deployments.get(id);
+  if (ex && !CLAIM_TERMINAL.has(ex.status)) return res.json({ accepted: true, status: ex.status });
+  if (_hintBusy.has(id)) return res.json({ accepted: true, status: "evaluating" });
+  _hintBusy.add(id);
+  try {
+    const d = await readOnchainDeployment(id);
+    if (!d || !Number(d.createdAt)) return fail(res, 404, "not_found", "No such deployment on the ledger.");
+    const reason = await considerClaim(d, { hinted: true, background: true });
+    if (reason) return res.json({ accepted: false, reason });
+    res.json({ accepted: true, status: "claiming" });
+  } catch (e) {
+    fail(res, 502, "chain_unreachable", "Could not evaluate the hint: " + (e.shortMessage || e.message));
+  } finally { _hintBusy.delete(id); }
 });
 
 app.get("/availability", async (_req, res) => {
@@ -1478,6 +1521,31 @@ async function gateAppReference(reference) {
 
 app.post("/v1/deployments", authed, async (req, res) => {
   const b = req.body || {};
+  // RETIRED on the wasm backend (Steven, 2026-07-05): this path held the spec
+  // and the funded clock in enclave-local state, which died with the CVM on
+  // every update. Deployments are created ON-CHAIN instead (NanDeployments):
+  // create() from the owner's wallet, fund with fundWithAuthorization (EIP-3009
+  // USDC) or fundEth, and any enclave claims, serves, renews - and re-claims
+  // after this one is updated or dies. The ledger IS the deployment; an
+  // enclave is just its current runner.
+  if (PROVISION_BACKEND === "vm") {
+    return res.status(410).json({
+      code: "deploy_on_chain",
+      message: "Deployments are created on-chain, not through this endpoint: send create() to the "
+             + "NanDeployments contract from your wallet (you own the record), fund it via "
+             + "fundWithAuthorization (EIP-3009 USDC, nonce prefixed with the id's first 16 bytes) or "
+             + "fundEth, then POST /v1/claim-hint {id} to start it immediately. The deploy console at "
+             + "the site does all of this for you. On-chain deployments survive enclave updates: the "
+             + "ledger holds the spec and balance, and runners hold expiring leases.",
+      onchain: {
+        contract: DEPLOYMENTS_ADDRESS || null, chainId: CHAIN_ID, usdc: USDC_ADDRESS,
+        createMethod: "create(string appRef, uint16 gpuMilli, uint16 cpuMilli, uint32 appPort, string ports, bool isPublic, string sshPubKey, string configCid) returns (bytes32 id)",
+        fundMethod: "fundWithAuthorization(bytes32 id, address from, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce, bytes signature)",
+        fundEthMethod: "fundEth(bytes32 id) payable",
+        hint: "POST /v1/claim-hint {\"id\": \"0x…\"}",
+      },
+    });
+  }
   let image = (b.image && b.image.reference) ? b.image : { reference: DEFAULT_IMAGE };
   // Approval gate (vm backend runs catalog apps): only ipfs:// CIDs whose
   // version the catalog owner APPROVED may deploy. Checked before any
@@ -2357,51 +2425,70 @@ async function claimSweep() {
   for (let start = 0n; ; start += BigInt(CLAIM_PAGE)) {
     const page = await chainClient.readContract({ address: getAddress(DEPLOYMENTS_ADDRESS),
       abi: DEPLOYMENTS_ABI, functionName: "getPage", args: [start, BigInt(CLAIM_PAGE)] });
-    for (const d of page) {
-      const ex = deployments.get(d.id);
-      if (ex && !CLAIM_TERMINAL.has(ex.status)) continue;                 // already ours
-      if (!d.active || Number(d.leaseUntil) * 1000 > Date.now()) continue; // stopped or leased
-      if (d.balance6 < d.rate) continue;                                  // out of funded time
-      let firewall;
-      try { firewall = parseFirewall({ ports: d.ports ? String(d.ports).split(",") : [] }); }
-      catch (e) { continue; }                 // port spec we won't serve (mirrors the HTTP 422)
-      // Routing: the deployment bought two shares. GPU work (gpuMilli > 0)
-      // runs ONLY on GPU enclaves and must fit a card AND the node's cpu pool.
-      // CPU-only work runs on CPU enclaves immediately; a GPU enclave bids on
-      // it only after CPU_CLAIM_GRACE_SEC (CPU enclaves get first claim) and
-      // only out of LEFTOVER cpu pool.
-      const gpuShare = Number(d.gpuMilli) / 1000, cpuShare = Number(d.cpuMilli) / 1000;
-      let slice;
-      if (gpuShare > 0) {
-        if (!IS_GPU) continue;                // GPU work never runs on a CPU-only enclave
-        slice = normalizeGpuReq(gpuShare, cpuShare);
-        if (slice.vramGb > maxFreeVram() + 1e-9 || slice.cpuShare > maxFreeCpu() + 1e-9) continue;
-      } else {
-        if (IS_GPU) {
-          const claimableSince = Math.max(Number(d.createdAt), Number(d.leaseUntil));
-          if (Date.now() < (claimableSince + CPU_CLAIM_GRACE_SEC) * 1000) continue;
-        }
-        slice = normalizeCpuReq(cpuShare);
-        if (slice.cpuShare > maxFreeCpu() + 1e-9) continue;
-      }
-      const g = await gateAppReference(d.appRef);
-      if (g.error) continue;                  // unapproved/unlisted CID (or catalog unreachable: fail closed)
-      // the app's catalog specs set its MINIMUM shares on our hardware, gating
-      // claims exactly like HTTP deploys: a deployment that bought less than
-      // the app needs is nobody's work item
-      const mins = minSharesOf(g.min);
-      if (gpuShare < mins.gpuShare - 1e-9 || cpuShare < mins.cpuShare - 1e-9) continue;
-      await tryClaim(d, g.ref, firewall, slice);
-    }
+    for (const d of page) await considerClaim(d);
     if (page.length < CLAIM_PAGE) break;
   }
+}
+
+// One deployment through the full claim gauntlet. Returns a reason string
+// when we pass (shared by the sweep, which drops it, and POST /v1/claim-hint,
+// which surfaces it to the deployer); null/undefined = a claim was attempted.
+// `hinted` skips the CPU-first grace and the anti-stampede jitter: a hint is
+// the deploying user asking THIS enclave to start their work now. `background`
+// fires the claim without awaiting it (claim tx + provision can take tens of
+// seconds - an IPFS fetch of a 100MB+ app is part of it - and a hint response
+// must not hang that long; the deployer watches the ledger for the runner).
+async function considerClaim(d, { hinted = false, background = false } = {}) {
+  const ex = deployments.get(d.id);
+  if (ex && !CLAIM_TERMINAL.has(ex.status)) return "already serving it here (status " + ex.status + ")";
+  if (!d.active) return "deployment is deactivated (owner setActive(false))";
+  if (Number(d.leaseUntil) * 1000 > Date.now()) return "another enclave holds a live lease";
+  if (d.balance6 < d.rate) return "out of funded time - fund it and retry";
+  let firewall;
+  try { firewall = parseFirewall({ ports: d.ports ? String(d.ports).split(",") : [] }); }
+  catch (e) { return "port spec not servable: " + e.message; }  // mirrors the HTTP 422
+  // Routing: the deployment bought two shares. GPU work (gpuMilli > 0)
+  // runs ONLY on GPU enclaves and must fit a card AND the node's cpu pool.
+  // CPU-only work runs on CPU enclaves immediately; a GPU enclave bids on
+  // it only after CPU_CLAIM_GRACE_SEC (CPU enclaves get first claim) and
+  // only out of LEFTOVER cpu pool.
+  const gpuShare = Number(d.gpuMilli) / 1000, cpuShare = Number(d.cpuMilli) / 1000;
+  let slice;
+  if (gpuShare > 0) {
+    if (!IS_GPU) return "GPU work on a CPU-only enclave";
+    slice = normalizeGpuReq(gpuShare, cpuShare);
+    if (slice.vramGb > maxFreeVram() + 1e-9 || slice.cpuShare > maxFreeCpu() + 1e-9)
+      return "no free capacity for those shares here right now";
+  } else {
+    if (IS_GPU && !hinted) {
+      const claimableSince = Math.max(Number(d.createdAt), Number(d.leaseUntil));
+      if (Date.now() < (claimableSince + CPU_CLAIM_GRACE_SEC) * 1000) return "cpu-first grace";
+    }
+    slice = normalizeCpuReq(cpuShare);
+    if (slice.cpuShare > maxFreeCpu() + 1e-9) return "no free CPU capacity here right now";
+  }
+  const g = await gateAppReference(d.appRef);
+  if (g.error) return "app not deployable: " + g.error.msg;   // unapproved/unlisted CID (or catalog unreachable: fail closed)
+  // the app's catalog specs set its MINIMUM shares on our hardware, gating
+  // claims exactly like HTTP deploys: a deployment that bought less than
+  // the app needs is nobody's work item
+  const mins = minSharesOf(g.min);
+  if (gpuShare < mins.gpuShare - 1e-9 || cpuShare < mins.cpuShare - 1e-9)
+    return `below the app's minimum shares on this hardware (needs gpuShare ${round3(mins.gpuShare)} / cpuShare ${round3(mins.cpuShare)})`;
+  if (background) {
+    tryClaim(d, g.ref, firewall, slice, { hinted })
+      .catch(e => console.warn(`[claim] hinted claim ${d.id} failed: ${e.shortMessage || e.message}`));
+    return null;
+  }
+  await tryClaim(d, g.ref, firewall, slice, { hinted });
+  return null;
 }
 
 // Jitter de-syncs enclaves that saw the same queue state; the claimable()
 // re-check catches a claim that landed during the wait without paying for a
 // reverted tx. Losing the race anyway costs one reverted tx (cents on Base).
-async function tryClaim(d, ref, firewall, slice) {
-  await new Promise(r => setTimeout(r, Math.random() * 5000));
+async function tryClaim(d, ref, firewall, slice, { hinted = false } = {}) {
+  if (!hinted) await new Promise(r => setTimeout(r, Math.random() * 5000));
   const open = await chainClient.readContract({ address: getAddress(DEPLOYMENTS_ADDRESS),
     abi: DEPLOYMENTS_ABI, functionName: "claimable", args: [d.id] });
   if (!open) return;

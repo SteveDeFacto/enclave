@@ -315,6 +315,26 @@ async function gateway(u, req, res) {
     return proxyTo(owner, req, res, { idleMs: 180000 });
   }
 
+  if (p === "/v1/claim-hint" && req.method === "POST") {
+    // Fan the hint to every live enclave: CPU-only enclaves take CPU work
+    // immediately, GPU enclaves skip their CPU-first grace when hinted, and
+    // the NanDeployments contract referees any race (the loser's claim tx
+    // reverts; gas is cents). Enclaves answer fast - the actual claim runs in
+    // their background; deployers watch the ledger for the runner.
+    let body; try { body = await readBody(req); } catch (e) { return json(res, 413, { error: "too_large", message: e.message }, req); }
+    const results = await Promise.all(live.map(async (e) => {
+      try {
+        const r = await fetch(e.endpoint + "/v1/claim-hint",
+          { method: "POST", headers: { "content-type": "application/json" },
+            body, signal: AbortSignal.timeout(15_000) });
+        return await r.json();
+      } catch { return null; }
+    }));
+    const best = results.find(r => r && r.accepted) || results.find(Boolean)
+              || { accepted: false, reason: "No live enclave answered the hint; the sweep will still pick the deployment up." };
+    return json(res, 200, best, req);
+  }
+
   if (p === "/v1/deployments" && req.method === "POST") {    // placement: the ONE routing decision
     let body; try { body = await readBody(req); } catch (e) { return json(res, 413, { error: "too_large", message: e.message }, req); }
     let want = {};
@@ -357,6 +377,13 @@ function depFromHost(host) {
   host = (host || "").toLowerCase().split(":")[0];
   if (!host.endsWith("." + APP_DOMAIN)) return null;
   const label = host.slice(0, -(APP_DOMAIN.length + 1)).replace(/^dep[-_]/, "");   // strip a legacy prefix if present
+  // On-chain (NanDeployments) ids are bytes32; a full 64-hex id exceeds DNS's
+  // 63-char label limit, so their subdomain is a hex PREFIX of the id (16+
+  // chars). Enclaves resolve the prefix to the unique matching deployment.
+  // Legacy HTTP ids (dep_ + 9 base36 chars) never reach 16 hex chars, so the
+  // two namespaces cannot collide.
+  const hex = label.startsWith("0x") ? label.slice(2) : label;
+  if (/^[0-9a-f]{16,64}$/.test(hex)) return "0x" + hex;
   const id = "dep_" + label;
   return /^dep_[a-z0-9]+$/.test(id) ? id : null;
 }

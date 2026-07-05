@@ -174,6 +174,20 @@ function writeDeploymentsAddress(addr) {
     fs.writeFileSync(file, cfg);
     console.log(`Wrote DEPLOYMENTS_ADDRESS="${addr}" into ${path.relative(REPO, file)}`);
   }
+  // The deploy console creates + funds deployments against this contract
+  // directly from the browser - keep its constant in lockstep (same pattern
+  // as deploy-app-catalog.mjs and the site's APP_CATALOG_ADDRESS).
+  const SITE = path.join(REPO, "site", "index.html");
+  if (fs.existsSync(SITE)) {
+    const sre = /(const DEPLOYMENTS_ADDRESS = )"0x[0-9a-fA-F]{40}"/;
+    let html = fs.readFileSync(SITE, "utf8");
+    if (sre.test(html)) {
+      fs.writeFileSync(SITE, html.replace(sre, `$1"${addr}"`));
+      console.log(`Wrote DEPLOYMENTS_ADDRESS="${addr}" into site/index.html`);
+    } else {
+      console.log(`No DEPLOYMENTS_ADDRESS const in site/index.html; update it by hand: ${addr}`);
+    }
+  }
 }
 
 // Base's public RPC caps EIP-7702 delegated EOAs at ONE in-flight tx, and its

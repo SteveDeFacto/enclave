@@ -1120,49 +1120,43 @@ const { token }   = await (await fetch(`${API}/auth/login`, {
   body: JSON.stringify({ message, signature }),
 })).json();          // short-lived bearer token, bound to your address</code></pre></div>
 
-          <h4>Create the deployment</h4>
-          <div class="code"><div class="codebar"><span class="fn">deploy.js · POST /v1/deployments</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>const dep = await (await fetch(`${API}/deployments`, {
-  method: "POST",
-  headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-  body: JSON.stringify({
-    image:     { reference: "ipfs://bafybei…" },   // your published, approved CID
-    resources: { gpuShare: 0.25, cpuShare: 0.05 }, // the two dials; the app's catalog specs set the minimums
-    public:    true,                               // anyone may call it (false = owner-token only)
-    region:    "auto",
-  }),
-})).json();
+          <h4>Create the deployment: one transaction, you own the record</h4>
+          <p>A deployment is an <b>on-chain work item</b>, not one enclave's private state. <code>create()</code> on the <code>NanDeployments</code> contract records the intent - app CID, the two shares (in 1/1000ths), ports, visibility - under <i>your</i> address, and mints the id (<code>keccak256(sender, nonce)</code>, the <code>Created</code> event's first topic). Because the ledger holds the spec and the balance, the deployment <b>survives enclave updates and crashes</b>: runners serve it under expiring leases, and when a runner dies, any other enclave picks the work up. Nothing to sign in besides your wallet.</p>
+          <div class="code"><div class="codebar"><span class="fn">deploy.js · NanDeployments.create()</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>// create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid)
+// shares are 1/1000ths: gpuShare 0.25 -&gt; 250; a GPU app needs gpuMilli &gt;= cpuMilli
+create("ipfs://bafybei…", 250, 50, 8080, "", true, "", "")
+// -&gt; the receipt's Created event: topics[1] is your deployment id (bytes32)</code></pre></div>
 
-console.log(dep.id, dep.status);   // dep_… awaiting_payment
-console.log(dep.payment);          // how to fund it ↓</code></pre></div>
+          <h4>Fund it: pay-per-second, credited on-chain, no custody</h4>
+          <p>Funding lands in the deployment's on-chain <code>balance6</code> (the USDC itself forwards to NaN in the same transaction - the contract holds nothing). Your rate is snapshotted at create: <code>gpuShare × $6/hr + cpuShare × $2/hr</code>. Pay either way:</p>
+          <div class="code"><div class="codebar"><span class="fn">NanDeployments · two ways to fund</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>// USDC: sign an EIP-3009 ReceiveWithAuthorization (gas-free wallet signature,
+// to = the NanDeployments contract, nonce prefixed with the id's first 16 bytes), then ONE tx:
+fundWithAuthorization(bytes32 id, address from, uint256 value,
+                      uint256 validAfter, uint256 validBefore,
+                      bytes32 nonce, bytes signature)
 
-          <h4>Fund it: pay-per-second, straight through, no custody</h4>
-          <p>The deployment comes back <code>awaiting_payment</code> with a <code>payment</code> block: the <code>NanPay</code> forwarder address on Base, a <code>deploymentRef</code>, the USDC EIP-712 domain, and your <code>ratePerSecondUsdc</code> (the shares calculated from your VRAM/RAM ask: gpuShare × $6/hr + cpuShare × $2/hr). Pay either way:</p>
-          <div class="code"><div class="codebar"><span class="fn">NanPay · two ways to pay</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>// USDC: sign an EIP-3009 ReceiveWithAuthorization (gas-free wallet signature,
-// to = forwarder, nonce prefixed with deploymentRef's first 16 bytes), then ONE tx:
-payWithAuthorization(bytes32 deploymentId, address from, uint256 value,
-                     uint256 validAfter, uint256 validBefore,
-                     bytes32 nonce, bytes signature)
-
-// ETH: one payable call; the enclave credits the wei at the live Chainlink ETH/USD rate:
-payEth(bytes32 deploymentId) payable</code></pre></div>
-          <p>The enclave watches the chain, sees the payment, launches your app, and starts the clock: <code>amount / ratePerSecondUsdc</code> seconds of runtime. Unpaid reservations are released after a window. The console does all of the signing and encoding for you.</p>
+// ETH: one payable call; credited at the Chainlink ETH/USD rate read IN the contract:
+fundEth(bytes32 id) payable</code></pre></div>
+          <p>Enclaves sweep the ledger for funded, unleased work about once a minute; <code>POST /v1/claim-hint {"id": …}</code> skips the wait by asking the fleet to claim right now. The claiming enclave fetches your wasm from IPFS, verifies it hashes to the CID, launches it, and renews its lease while healthy - <code>balance / rate</code> seconds of runtime, burned lease by lease, with clean handovers refunding the unused tail. The console does all of the signing and encoding for you.</p>
 
           <h4>Watch it come up</h4>
-          <div class="code"><div class="codebar"><span class="fn">deploy.js · poll until running</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>let d;
+          <p>The ledger shows the claim (<code>get(id).runner</code> + a live <code>leaseUntil</code>); the runner's status API shows the launch. The SIWE token from above authorizes the owner-only status route - sign in with the same wallet that sent <code>create()</code>.</p>
+          <div class="code"><div class="codebar"><span class="fn">deploy.js · poll until running</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code>let d;                                   // id = the bytes32 from the Created event
 do {
   await new Promise(r =&gt; setTimeout(r, 2000));
-  d = await (await fetch(`${API}/deployments/${dep.id}`, {
+  d = await (await fetch(`${API}/deployments/${id}`, {
     headers: { "Authorization": `Bearer ${token}` },
   })).json();
 } while (d.status !== "running");
 
-console.log(d.network.endpoint);     // https://…/x/dep_…
-console.log(d.timeRemainingSec);     // funded runtime balance</code></pre></div>
+console.log(d.network.endpoint);     // https://…/x/0x…
+// your app's own origin: the id's first 24 hex chars as a subdomain
+console.log(`https://${id.slice(2, 26)}.app.nan.host`);</code></pre></div>
           <h4>Keep it alive, or stop it</h4>
           <ul>
-            <li><b>Top up</b>: <code>POST /v1/deployments/{id}/topup</code> returns fresh payment instructions; each payment adds <code>amount / rate</code> seconds. Send it before expiry (a short grace period covers in-flight top-ups).</li>
-            <li><b>Terminate</b>: <code>DELETE /v1/deployments/{id}</code> tears the app down immediately; the deployment finishes as <code>terminated</code> (an unpaid reservation is removed outright instead).</li>
-            <li><b>Fair clock</b>: if the platform itself isn't serving, your balance freezes (<code>paused: true</code> with a reason) and resumes automatically; funded time never drains during an outage.</li>
+            <li><b>Top up</b>: another <code>fundWithAuthorization</code> / <code>fundEth</code> with a fresh nonce, any time - each payment adds <code>amount / rate</code> seconds to the on-chain balance.</li>
+            <li><b>Stop</b>: <code>setActive(false)</code> on the contract (owner-only) takes the work off the queue for good - the current runner's watcher tears it down and releases the lease, refunding the unused tail to your balance. <code>DELETE /v1/deployments/{id}</code> alone only stops the CURRENT run; an active, funded deployment gets re-claimed.</li>
+            <li><b>Fairness</b>: the quantum of trust is the lease (30 min). A runner that dies mid-lease has burned that lease - that is the worst case; clean shutdowns and enclave updates <code>release()</code> and lose you nothing, and another enclave resumes your app from its CID.</li>
           </ul>
         </article>
 
@@ -1861,7 +1855,7 @@ const SPEC = {
         ],
         "operationId": "createDeployment",
         "summary": "Create a deployment (awaiting payment)",
-        "description": "Reserves the two shares asked for (resources.gpuShare of one GPU card, resources.cpuShare of the node's vCPU+RAM) and returns a deployment in `awaiting_payment` with a `payment` block. The app's exact specs in the catalog set the MINIMUM shares - asking for less is refused (422). gpuShare > 0 needs a GPU enclave and must be >= cpuShare; gpuShare 0 (CPU-only) is served by CPU-only enclaves and by GPU enclaves with leftover CPU/RAM. The Wasm app is NOT started yet: sign a USDC payment authorization (EIP-3009 ReceiveWithAuthorization) and submit payWithAuthorization(deploymentRef, ...); the enclave sees the payment, launches your app as its own sandboxed worker process (MPS-capped on the confidential GPU when gpuShare > 0), and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. Shares are software caps (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles). Catalog apps (ipfs://<cid> references) deploy only after the catalog owner has approved that version on-chain; unapproved or rejected versions return 403 not_approved.",
+        "description": "RETIRED on Wasm enclaves - returns 410 `deploy_on_chain` with the on-chain coordinates. Deployments are created on the NanDeployments contract (Base), not through this endpoint: the ledger holds the spec and the funded balance, so a deployment survives enclave updates and crashes (runners serve it under expiring leases; a dead runner's lease lapses and any enclave re-claims the work). Flow: (1) create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid) from YOUR wallet - msg.sender owns the record; the id is the Created event's first topic; shares are 1/1000ths and the app's catalog specs set the minimums runners will accept. (2) Fund it: fundWithAuthorization (EIP-3009 USDC ReceiveWithAuthorization signed to the contract, nonce prefixed with the id's first 16 bytes) or fundEth (credited at the contract's Chainlink ETH/USD read); funds forward to NaN in the same tx, the credit lands in on-chain balance6. (3) Optionally POST /claim-hint {id} so the fleet claims immediately instead of on the ~60s sweep. Runners enforce the same catalog-approval gate (403-equivalent: unapproved CIDs are never claimed) and the same share minimums. GET /pricing carries the contract address, USDC EIP-712 domain, and an ETH/USD quote.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1952,6 +1946,25 @@ const SPEC = {
               }
             }
           }
+        }
+      }
+    },
+    "/claim-hint": {
+      "post": {
+        "operationId": "claimHint",
+        "summary": "Nudge the fleet to claim a funded on-chain deployment right now",
+        "description": "Unauthenticated fast-path for NanDeployments work items: after create() + funding, POST the bytes32 id here and every live enclave immediately evaluates the deployment (capacity, catalog approval, share minimums) and races to claim it - the contract referees, the loser's tx reverts. Without a hint the sweep claims funded work within about a minute. The response is advisory: accepted=true means an enclave is attempting the claim in its background; watch NanDeployments.get(id).runner/leaseUntil for the authoritative result.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["id"], "properties": {
+            "id": { "type": "string", "description": "The bytes32 deployment id from the Created event (0x + 64 hex).", "example": "0x8b7a…" } } } } }
+        },
+        "responses": {
+          "200": { "description": "Evaluation result from the first enclave that accepted (or the last refusal reason).",
+            "content": { "application/json": { "schema": { "type": "object", "properties": {
+              "accepted": { "type": "boolean" }, "status": { "type": "string" },
+              "reason": { "type": "string", "description": "Why no enclave took it (unfunded, leased elsewhere, below app minimums, no capacity, unapproved CID, ...)." } } } } } },
+          "422": { "description": "Malformed id." }
         }
       }
     },
@@ -3898,8 +3911,8 @@ function initTicker() {
 
 const STEPS = [
   { t: "Sign in with your wallet", d: "Prove control of your address, with no email and no password.", method: "POST", path: "/auth/login" },
-  { t: "Create a deployment",      d: "Pick a Wasm app and two shares - GPU % and CPU % (the app's specs set the minimums). Get back a payment reference.", method: "POST", path: "/deployments" },
-  { t: "Pay for runtime",          d: "Sign a USDC authorization (EIP-3009) and submit one payWithAuthorization tx; the enclave provisions and starts the clock. Pay again to extend.", method: "POST", path: "/deployments/{id}/topup" },
+  { t: "Create a deployment",      d: "One create() tx on NanDeployments from your wallet: app CID + two shares in 1/1000ths (the app's specs set the minimums). You own the on-chain record; it survives enclave updates.", method: "TX", path: "NanDeployments.create()" },
+  { t: "Fund runtime",             d: "fundWithAuthorization (EIP-3009 USDC) or fundEth on NanDeployments credits the deployment's on-chain balance; enclaves claim funded work and serve it under leases. Fund again any time to extend.", method: "POST", path: "/claim-hint" },
   { t: "Verify the enclave",       d: "Pull the TDX quote + GPU report and check them yourself.", method: "GET",  path: "/deployments/{id}/attestation" },
   { t: "Stop (or let it expire)",  d: "Tear down and release the share. No held balance to reclaim.", method: "DELETE", path: "/deployments/{id}" }
 ];
@@ -4368,23 +4381,32 @@ function deployBody(){
   return body;
 }
 function deployFetch(b){
-  return '// 1) SIWE handshake (once): GET /auth/nonce -> wallet.personal_sign -> POST /auth/login -> { token }\n'
-    + 'const res = await fetch("' + Nan.base + '/deployments", {\n'
-    + '  method: "POST",\n'
-    + '  headers: {\n'
-    + '    "Authorization": `Bearer ${token}`,\n'
-    + '    "Content-Type": "application/json"\n'
-    + '  },\n'
-    + '  body: JSON.stringify(' + JSON.stringify(b, null, 2) + ')\n'
-    + '});\n'
-    + 'const deployment = await res.json();   // 201 -> { id, status, network, ... }\n'
-    + 'console.log(deployment.id, deployment.status);';
+  const r = (b.image && b.image.reference) || "ipfs://…";
+  const g = Math.round(((b.resources && b.resources.gpuShare) || 0) * 1000);
+  const c = Math.round(((b.resources && b.resources.cpuShare) || 0.05) * 1000);
+  const fw = (b.firewall && b.firewall.ports || []).join(",");
+  return '// Deployments are ON-CHAIN work items (NanDeployments on Base): the ledger\n'
+    + '// holds the spec + funded balance, so they survive enclave updates and crashes.\n'
+    + '// 1) create() from your wallet - one tx; msg.sender owns the record:\n'
+    + '//    create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid)\n'
+    + 'const { id } = await createOnChain("' + DEPLOYMENTS_ADDRESS + '",\n'
+    + '  ["' + r + '", ' + g + ', ' + c + ', 8080, "' + fw + '", ' + !!b.public + ', "", ""]);\n'
+    + '//    id = topics[1] of the Created event in the receipt\n'
+    + '// 2) fund it - credited to the on-chain balance (funds forward to NaN):\n'
+    + '//    fundWithAuthorization(id, …EIP-3009 USDC sig…)  or  fundEth(id) payable\n'
+    + '// 3) nudge the fleet (optional; the sweep claims funded work within ~1 min):\n'
+    + 'await fetch("' + Nan.base + '/claim-hint", { method: "POST",\n'
+    + '  headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) });\n'
+    + '// 4) NanDeployments.get(id).runner is the serving enclave; your app origin is\n'
+    + '//    https://<first 24 hex chars of id>.' + APP_DOMAIN;
 }
 function deployCurl(b){
-  return "curl -X POST " + Nan.base + "/deployments \\\n"
-    + '  -H "Authorization: Bearer $NAN_TOKEN" \\\n'
+  return "# deployments are created on-chain, not by POST (see the JS tab):\n"
+    + "#   1) create() + 2) fundWithAuthorization()/fundEth() from your wallet\n"
+    + "# then nudge the fleet to claim it right away:\n"
+    + "curl -X POST " + Nan.base + "/claim-hint \\\n"
     + '  -H "Content-Type: application/json" \\\n'
-    + "  -d '" + JSON.stringify(b, null, 2) + "'";
+    + "  -d '{\"id\": \"0x<deployment id>\"}'";
 }
 function renderDeploy(){
   const body = deployBody();
@@ -4465,6 +4487,14 @@ const dataPayWithAuth = (ref, from, amt6, validAfter, validBefore, nonce, sig) =
        + encUint(validAfter) + encUint(validBefore) + encBytes32(nonce)
        + encUint(7 * 32) + encBytesTail(sig);
 const dataPayEth = (ref) => "0x" + SEL_PAYETH + encBytes32(ref);
+// NanDeployments funding: byte-identical parameter shape to NanPay's pair, but
+// the credit lands in the deployment's ON-CHAIN balance6 (funds still forward
+// to the payout in the same tx - nothing is custodied by the contract).
+const dataFundWithAuth = (ref, from, amt6, validAfter, validBefore, nonce, sig) =>
+  "0x" + DEP_SEL.fundAuth + encBytes32(ref) + encAddr(from) + encUint(amt6)
+       + encUint(validAfter) + encUint(validBefore) + encBytes32(nonce)
+       + encUint(7 * 32) + encBytesTail(sig);
+const dataFundEth = (ref) => "0x" + DEP_SEL.fundEth + encBytes32(ref);
 // USD -> wei at the enclave's quoted ETH/USD rate (an ESTIMATE for the tx amount;
 // the enclave credits the actual wei at its own live Chainlink read on arrival)
 function usdToWei(usd, ethUsd){
@@ -4491,24 +4521,32 @@ async function sendTx(to, data, value){
    ETH:  payEth(ref) with msg.value: ONE transaction; the enclave credits the wei
          as USDC-equivalent at its live Chainlink ETH/USD read when the event lands. */
 async function payForRuntime(term, pay, fundUsdc){
-  if (!pay || !pay.forwarder) throw new NanError("This enclave returned no payment instructions (forwarder not configured).", 0);
+  // Two receivers, one shape: the NanPay forwarder (legacy container flavor,
+  // off-chain clock) or the NanDeployments ledger (pay.contract - the credit
+  // lands in the deployment's on-chain balance6, so ANY enclave can serve it).
+  const ledger = !(pay && pay.forwarder);
+  const to = pay && (pay.forwarder || pay.contract);
+  if (!to) throw new NanError("No payment instructions (neither a forwarder nor the deployments contract was returned).", 0);
   await ensureBaseChain();
   const amt6 = usdc6(fundUsdc);                       // cent-rounded 6dp USDC
   if (amt6 <= 0n) throw new NanError("Fund at least $0.01 (USDC).", 0);
   const usd = (Number(amt6) / 1e6).toFixed(2);        // e.g. "10.00", what actually gets signed/paid
   if (dep.asset === "ETH"){
-    if (!pay.payEthMethod) throw new NanError("This enclave doesn't accept ETH yet (older release); pay in USDC.", 0);
+    if (!ledger && !pay.payEthMethod) throw new NanError("This enclave doesn't accept ETH yet (older release); pay in USDC.", 0);
+    if (!pay.ethUsd) throw new NanError("No ETH/USD quote available right now; fund in USDC instead.", 0);
     const wei = usdToWei(Number(amt6) / 1e6, pay.ethUsd);
     const eth = (Number(wei) / 1e18).toFixed(6);
-    termLine(term, "info", "[*] payEth \u2248 " + eth + " ETH (\u2248 $" + usd + " @ $" + pay.ethUsd + "/ETH)\u2026 (wallet \u00b7 one tx)");
-    const ph = await sendTx(pay.forwarder, dataPayEth(pay.deploymentRef), "0x" + wei.toString(16));
+    termLine(term, "info", "[*] " + (ledger ? "fundEth" : "payEth") + " \u2248 " + eth + " ETH (\u2248 $" + usd + " @ $" + pay.ethUsd + "/ETH)\u2026 (wallet \u00b7 one tx)");
+    const ph = await sendTx(to, (ledger ? dataFundEth : dataPayEth)(pay.deploymentRef), "0x" + wei.toString(16));
     termLine(term, "ok", "[\u2713] payment sent " + ph);
-    termLine(term, "dimln", "    ETH goes straight to NaN; the enclave credits it at the live Chainlink rate");
+    termLine(term, "dimln", ledger
+      ? "    credited to the deployment's on-chain balance at the contract's live Chainlink rate; funds forward to NaN"
+      : "    ETH goes straight to NaN; the enclave credits it at the live Chainlink rate");
     return ph;
   }
   // EIP-3009: the nonce must start with the deployment ref's first 16 bytes (the
-  // forwarder enforces this, binding the signature to THIS deployment); the other
-  // 16 are random so repeat top-ups from the same wallet never collide.
+  // receiving contract enforces this, binding the signature to THIS deployment);
+  // the other 16 are random so repeat top-ups from the same wallet never collide.
   const nonce = "0x" + encBytes32(pay.deploymentRef).slice(0, 32) + randHex(16);
   const validBefore = Math.floor(Date.now() / 1000) + 3600;   // 1h to get the tx mined
   // sign against the TOKEN's own EIP-712 domain (enclave reads it from the chain;
@@ -4526,7 +4564,7 @@ async function payForRuntime(term, pay, fundUsdc){
     },
     domain: { name: dom.name, version: dom.version, chainId: Number(dom.chainId), verifyingContract: dom.verifyingContract },
     primaryType: "ReceiveWithAuthorization",
-    message: { from: Nan.address, to: pay.forwarder, value: amt6.toString(),
+    message: { from: Nan.address, to: to, value: amt6.toString(),
                validAfter: "0", validBefore: String(validBefore), nonce: nonce },
   };
   termLine(term, "info", "[*] sign a " + usd + " USDC payment authorization (EIP-3009)\u2026 (wallet \u00b7 gas-free signature)");
@@ -4538,9 +4576,11 @@ async function payForRuntime(term, pay, fundUsdc){
     if (v === 0 || v === 1) sig = sig.slice(0, -2) + (v + 27).toString(16);
   }
   termLine(term, "info", "[*] pay " + usd + " USDC \u00b7 buys runtime\u2026 (wallet \u00b7 one tx, no approve)");
-  const ph = await sendTx(pay.forwarder, dataPayWithAuth(pay.deploymentRef, Nan.address, amt6, 0, validBefore, nonce, sig));
+  const ph = await sendTx(to, (ledger ? dataFundWithAuth : dataPayWithAuth)(pay.deploymentRef, Nan.address, amt6, 0, validBefore, nonce, sig));
   termLine(term, "ok", "[\u2713] payment sent " + ph);
-  termLine(term, "dimln", "    funds go straight to NaN; nothing is custodied");
+  termLine(term, "dimln", ledger
+    ? "    credited to the deployment's on-chain balance; funds forward to NaN - nothing is custodied"
+    : "    funds go straight to NaN; nothing is custodied");
   return ph;
 }
 
@@ -4559,71 +4599,107 @@ async function runDeploy(){
   if (rref.pending){ termLine(term, "warn", "[!] couldn’t reach the catalog to resolve " + raw + "; open the Apps tab, or paste ipfs://<cid>."); return; }
   const fwErr = validPortsCsv($("#cfgPorts") ? $("#cfgPorts").value : "");
   if (fwErr){ termLine(term, "warn", "[!] firewall: " + fwErr); return; }
-  const body = deployBody();
   const fund = parseFloat($("#cfgBudget").value) || 0;
   const dry = $("#dryRun") && $("#dryRun").checked;
 
+  // ---- ON-CHAIN deploy (NanDeployments): the ledger, not any one enclave,
+  // holds the spec and the funded balance, so the deployment survives enclave
+  // updates and crashes - runners hold expiring leases and re-claim work.
+  const gpuMilli = dep.gpuEnclave ? Math.round(Math.max(0, Math.min(100, dep.gpuPct))) * 10 : 0;
+  const cpuMilli = Math.round(Math.max(1, Math.min(100, dep.cpuPct))) * 10;
+  const fwCsv = ($("#cfgPorts") && $("#cfgPorts").value || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
+  const portsCsv = (fwCsv.length && !(fwCsv.length === 1 && fwCsv[0] === "http")) ? fwCsv.join(",") : "";
+  const httpEntry = fwCsv.find(x => /^http:\d+$/.test(x));
+  const appPort = httpEntry ? parseInt(httpEntry.split(":")[1], 10) : 8080;
+
   if (dry){
     termLine(term, "warn", "// dry run: nothing is sent");
-    termLine(term, "p", "POST " + Nan.base + "/deployments");
-    JSON.stringify(body, null, 2).split("\n").forEach(l => termLine(term, "dimln", "  " + l));
-    termLine(term, "info", dep.asset === "ETH"
-      ? "then: payEth() the forwarder with ≈ $" + fund + " of ETH to fund runtime (one tx)"
-      : "then: sign a " + fund + " USDC authorization (EIP-3009) + one payWithAuthorization() tx to fund runtime");
-    termLine(term, "info", "uncheck \u201cDry run\u201d to deploy for real");
+    termLine(term, "p", "1) NanDeployments.create(app, shares, ports) - one wallet tx; you own the record");
+    termLine(term, "dimln", "   create(\"" + rref.reference + "\", " + gpuMilli + ", " + cpuMilli + ", " + appPort + ", \"" + portsCsv + "\", " + dep.public + ", \"\", \"\")");
+    termLine(term, "p", dep.asset === "ETH"
+      ? "2) fundEth(id) with ≈ $" + fund + " of ETH - one wallet tx; credited on-chain"
+      : "2) sign a " + fund + " USDC authorization (EIP-3009) + one fundWithAuthorization(id) tx - credited on-chain");
+    termLine(term, "p", "3) POST /v1/claim-hint - an enclave claims the work and serves it");
+    termLine(term, "dimln", "   the balance and spec live on Base: any enclave can take over if the runner dies");
+    termLine(term, "info", "uncheck “Dry run” to deploy for real");
     return;
   }
 
-  btn.disabled = true; const lbl = btn.textContent; btn.textContent = "working\u2026";
+  btn.disabled = true; const lbl = btn.textContent; btn.textContent = "working…";
   try {
     if (!Nan.token){
-      termLine(term, "info", "[*] connecting wallet + signing in (SIWE)\u2026");
+      termLine(term, "info", "[*] connecting wallet + signing in (SIWE)…");
       await authenticate();
-      termLine(term, "ok", "[\u2713] signed in as " + short(Nan.address));
+      termLine(term, "ok", "[✓] signed in as " + short(Nan.address));
     }
-    termLine(term, "p", "$ POST " + Nan.base + "/deployments");
-    let created;
+    await ensureBaseChain();
+
+    // rate estimate straight from the contract (same ceil math as create)
+    let rate6 = 0n;
+    try { rate6 = await depRate6(gpuMilli, cpuMilli); } catch(e){}
+    if (rate6 > 0n){
+      const rate = Number(rate6) / 1e6;
+      termLine(term, "info", "    " + fund + " USDC ≈ " + fmtDur(fund / rate) + " of runtime at $" + (rate * 3600).toFixed(2) + "/hr");
+    }
+
+    // 1) create: one tx from YOUR wallet - msg.sender owns the on-chain record
+    termLine(term, "p", "$ NanDeployments.create(…)  (wallet · one tx · you own the record)");
+    const cdata = encCall(DEP_SEL.create, [
+      { t: "str", v: rref.reference }, { t: "uint", v: gpuMilli }, { t: "uint", v: cpuMilli },
+      { t: "uint", v: appPort }, { t: "str", v: portsCsv }, { t: "bool", v: dep.public },
+      { t: "str", v: "" }, { t: "str", v: "" },
+    ]);
+    const chash = await sendTx(DEPLOYMENTS_ADDRESS, cdata);
+    termLine(term, "dimln", "  ↳ sent " + chash + " · waiting for confirmation…");
+    const rcpt = await waitReceipt(chash);
+    const clog = (rcpt.logs || []).find(l => (l.topics || [])[0] === DEP_CREATED_TOPIC
+      && (l.address || "").toLowerCase() === DEPLOYMENTS_ADDRESS.toLowerCase());
+    if (!clog) throw new NanError("create() confirmed but no Created event found in the receipt", 0);
+    const id = clog.topics[1];
+    termLine(term, "ok", "[✓] created " + id);
+
+    // 2) fund: the credit lands in the deployment's on-chain balance
+    let pricing = null;
+    try { pricing = await (await fetch(Nan.base + "/pricing")).json(); } catch(e){}
     try {
-      created = await Nan.createDeployment(body);
+      await payForRuntime(term, {
+        contract: DEPLOYMENTS_ADDRESS, deploymentRef: id,
+        usdcDomain: pricing && pricing.usdcDomain, usdc: (pricing && pricing.usdc) || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        ethUsd: pricing && pricing.ethUsd,
+      }, fund);
     } catch(e){
-      if (e.status === 401){ termLine(term, "warn", "[!] session expired; re-signing\u2026"); Nan.token = null; await authenticate(); created = await Nan.createDeployment(body); }
-      else if (e.status === 409){ termLine(term, "warn", "[!] no capacity: " + e.message); return; }
-      else if (e.status === 422){ termLine(term, "warn", "[!] invalid spec: " + e.message); return; }
-      else throw e;
-    }
-    termLine(term, "dimln", "  \u21b3 201 " + created.id + " \u00b7 status=" + created.status);
-
-    // pay-per-deploy: fund runtime; the enclave provisions once it sees the payment
-    if (created.status === "awaiting_payment"){
-      const rate = parseFloat((created.payment && created.payment.ratePerSecondUsdc) || "0");
-      if (rate > 0) termLine(term, "info", "    " + fund + " USDC \u2248 " + fmtDur(fund / rate) + " of runtime at $" + (rate*3600).toFixed(2) + "/hr");
-      try {
-        await payForRuntime(term, created.payment, fund);
-      } catch(e){
-        // user said no in the wallet (EIP-1193 4001, or wallets that only set a
-        // message): cancel the reservation right away instead of leaving an
-        // awaiting_payment ghost on the page for the 10-min window.
-        const rejected = (e && e.code === 4001) || /reject|denied|declin|cancell/i.test(e && e.message || "");
-        if (rejected){
-          termLine(term, "warn", "[x] payment rejected in wallet; canceling the reservation\u2026");
-          try {
-            await Nan.terminateDeployment(created.id);
-            termLine(term, "ok", "[\u2713] " + created.id + " canceled; nothing was charged.");
-          } catch(e2){
-            termLine(term, "dimln", "    couldn\u2019t cancel (" + (e2.message || e2) + "); the reservation releases itself in ~10 min.");
-          }
-          refreshEnclaves();
-          return;
-        }
-        termLine(term, "warn", "[x] payment failed: " + (e.message || e));
-        termLine(term, "dimln", "    " + created.id + " stays awaiting_payment; pay later to start it (Top up).");
-        return;
-      }
-      termLine(term, "info", "[*] waiting for the enclave to confirm payment + provision\u2026");
+      const rejected = (e && e.code === 4001) || /reject|denied|declin|cancell/i.test(e && e.message || "");
+      termLine(term, "warn", rejected ? "[x] funding rejected in wallet." : "[x] funding failed: " + (e.message || e));
+      termLine(term, "dimln", "    " + id + " exists on-chain but is unfunded (inert, costs nothing). Fund it any time - it starts once it has balance.");
+      return;
     }
 
-    const final = await pollDeployment(created.id, term);
-    refreshEnclaves({ highlight: (final || created).id });
+    // 3) nudge the fleet - otherwise the next sweep (<=60s) picks it up
+    termLine(term, "info", "[*] hinting enclaves to claim…");
+    try {
+      const h = await (await fetch(Nan.base + "/claim-hint", { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) })).json();
+      if (h && h.accepted === false && h.reason) termLine(term, "dimln", "    hint declined: " + h.reason + " (the sweep may still claim it)");
+    } catch(e){ termLine(term, "dimln", "    hint failed (" + (e.message || e) + "); the sweep claims funded work within ~1 min"); }
+
+    // 4) watch the ledger for a runner, then the runner for "running"
+    let claimed = null;
+    for (let i = 0; i < 90 && !claimed; i++){
+      await wait(2000);
+      let d = null; try { d = await depGet(id); } catch(e){}
+      if (d && d.runner && !/^0x0+$/.test(d.runner) && d.leaseUntil * 1000 > Date.now()) claimed = d;
+      else if (i === 1) termLine(term, "info", "[*] waiting for an enclave to claim (the lease appears on-chain)…");
+    }
+    if (!claimed){
+      termLine(term, "warn", "[!] no enclave has claimed yet - the deployment stays on the queue (funded work is claimed as capacity frees up). Check back on the dashboard.");
+      refreshEnclaves(); return;
+    }
+    termLine(term, "ok", "[✓] claimed by enclave operator " + short(claimed.runnerOperator) + " · lease until " + new Date(claimed.leaseUntil * 1000).toLocaleTimeString());
+    const label = id.slice(2, 26);
+    termLine(term, "dimln", "    app origin: https://" + label + "." + APP_DOMAIN + "  (first request may take a moment: the enclave fetches + verifies your wasm from IPFS)");
+
+    const final = await pollDeployment(id, term);
+    refreshEnclaves({ highlight: (final && final.id) || id });
   } catch(e){
     termLine(term, "warn", "[x] " + (e.message || String(e)));
     if (e.status === 0) termLine(term, "dimln", "    set a reachable endpoint above, then retry.");
@@ -4780,7 +4856,25 @@ async function encVerify(id, btn){
 
 async function encKill(id, btn){
   if (btn){ btn.disabled = true; btn.textContent = "terminating\u2026"; }
-  try { const r = await Nan.terminateDeployment(id); showToast((r && r.status === "terminated" ? "terminated " : "terminating ") + id); setTimeout(() => refreshEnclaves(), 900); }
+  try {
+    // On-chain deployments (bytes32 ids) are WORK ITEMS: the enclave DELETE
+    // only releases the current lease - any enclave would re-claim while the
+    // record stays active and funded. A real stop is the owner's
+    // setActive(false) on the ledger (one wallet tx), then the enclave release.
+    if (/^0x[0-9a-f]{64}$/i.test(id)){
+      showToast("confirm setActive(false) in your wallet - this takes it off the queue");
+      await ensureBaseChain();
+      const th = await sendTx(DEPLOYMENTS_ADDRESS, "0x" + DEP_SEL.setActive + pad32(id.replace(/^0x/, "")) + encUint(0));
+      await waitReceipt(th);
+    }
+    const r = await Nan.terminateDeployment(id).catch(e => {
+      // the enclave's owner-stop watcher may already have torn it down
+      if (/^0x[0-9a-f]{64}$/i.test(id)) return null;
+      throw e;
+    });
+    showToast((r && r.status === "terminated" ? "terminated " : "terminating ") + id);
+    setTimeout(() => refreshEnclaves(), 900);
+  }
   catch(e){ showToast(e.message); if (btn){ btn.disabled = false; btn.textContent = "Terminate"; } }
 }
 
@@ -5297,6 +5391,21 @@ function initViews(){
    same hand-rolled ABI codec as the pay flow (no web3 lib on-page).
    ============================================================ */
 const APP_CATALOG_ADDRESS = "0x17071414BD19fDFdA8E58559d2CcFb99b2c8d0FC"; // NanAppCatalog on Base; written automatically by scripts/deploy-app-catalog.mjs
+const DEPLOYMENTS_ADDRESS = "0x22001e15fb846dfb786f0F2136E89913610a6837"; // NanDeployments on Base; written automatically by scripts/deploy-deployments.mjs
+// Deployments are ON-CHAIN work items (contracts/DEPLOYMENTS.md): create() from
+// the deployer's wallet (they own the record), fund it (EIP-3009 USDC or ETH),
+// and enclaves claim + serve it under expiring leases - so a deployment
+// outlives any single enclave, its update, or its crash.
+const DEP_SEL = { create:"1a8e502a", fundAuth:"209c0069", fundEth:"9f33dca0", get:"8eaa6ac0",
+                  price:"1e897c58", cpuPrice:"3f6195cc", setActive:"6485d678" };
+const DEP_CREATED_TOPIC = "0x3b201eb11e77934b296f908775fc0a82679683fd83a1232579f1014bcf7d3239"; // Created(bytes32,address,string,uint16,uint16,uint256)
+const DEP_SCHEMA = [   // mirrors NanDeployments.Deployment field order exactly
+  {k:"id",t:"bytes32"},{k:"owner",t:"addr"},{k:"appRef",t:"str"},{k:"ports",t:"str"},
+  {k:"sshPubKey",t:"str"},{k:"configCid",t:"str"},{k:"gpuMilli",t:"uint"},{k:"cpuMilli",t:"uint"},
+  {k:"appPort",t:"uint"},{k:"isPublic",t:"bool"},{k:"active",t:"bool"},{k:"createdAt",t:"uint"},
+  {k:"rate",t:"uint"},{k:"balance6",t:"uint"},{k:"spent6",t:"uint"},
+  {k:"runner",t:"bytes32"},{k:"runnerOperator",t:"addr"},{k:"leaseUntil",t:"uint"},
+];
 const APP_CATALOG_CHAIN   = 8453;                        // Base mainnet (kept in sync by the deploy script; 84532 = Base Sepolia)
 const APP_CATALOG_RPC     = "https://base-rpc.publicnode.com";  // preferred read endpoint (CORS-enabled; browsing needs no wallet)
 // Failover pool: reads are stateless, and every public Base RPC rate-limits by
@@ -5374,6 +5483,34 @@ async function baseRpc(method, params){
 }
 async function ethCall(data){
   return (await baseRpc("eth_call", [{ to: APP_CATALOG_ADDRESS, data }, "latest"])) || "0x";
+}
+async function depCall(data){
+  return (await baseRpc("eth_call", [{ to: DEPLOYMENTS_ADDRESS, data }, "latest"])) || "0x";
+}
+// NanDeployments.get(id) -> one Deployment struct (see DEP_SCHEMA). The tuple
+// contains dynamic strings, so the return is offset-prefixed like a dynamic type.
+async function depGet(id){
+  const hex = (await depCall("0x" + DEP_SEL.get + pad32(id.replace(/^0x/, "")))).replace(/^0x/, "");
+  if (hex.length < 64) return null;
+  const ru   = (o) => BigInt("0x" + hex.slice(o * 2, o * 2 + 64));
+  const ts   = Number(ru(0));                                 // offset to the tuple head
+  const obj = {};
+  DEP_SCHEMA.forEach((f, fi) => {
+    const w = ts + fi * 32;
+    if (f.t === "str"){ const so = ts + Number(ru(w)); const len = Number(ru(so)); obj[f.k] = hexToUtf8(hex.slice((so + 32) * 2, (so + 32) * 2 + len * 2)); }
+    else if (f.t === "uint") obj[f.k] = Number(ru(w));
+    else if (f.t === "addr") obj[f.k] = "0x" + hex.slice(w * 2 + 24, w * 2 + 64);
+    else if (f.t === "bool") obj[f.k] = ru(w) !== 0n;
+    else obj[f.k] = "0x" + hex.slice(w * 2, w * 2 + 64);      // bytes32
+  });
+  return Number(obj.createdAt) ? obj : null;
+}
+// The contract's exact per-second rate (6dp USDC) for two share dials in
+// 1/1000ths - mirrors _initScalars' ceil math so estimates match on-chain.
+async function depRate6(gpuMilli, cpuMilli){
+  const [p, c] = await Promise.all([
+    depCall("0x" + DEP_SEL.price), depCall("0x" + DEP_SEL.cpuPrice)]);
+  return (BigInt(p || "0x0") * BigInt(gpuMilli) + BigInt(c || "0x0") * BigInt(cpuMilli) + 999n) / 1000n;
 }
 
 /* ---- minimal ABI codec (generic encode + struct-array decode), verified vs viem ---- */

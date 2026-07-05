@@ -255,7 +255,7 @@
         ],
         "operationId": "createDeployment",
         "summary": "Create a deployment (awaiting payment)",
-        "description": "Reserves the two shares asked for (resources.gpuShare of one GPU card, resources.cpuShare of the node's vCPU+RAM) and returns a deployment in `awaiting_payment` with a `payment` block. The app's exact specs in the catalog set the MINIMUM shares - asking for less is refused (422). gpuShare > 0 needs a GPU enclave and must be >= cpuShare; gpuShare 0 (CPU-only) is served by CPU-only enclaves and by GPU enclaves with leftover CPU/RAM. The Wasm app is NOT started yet: sign a USDC payment authorization (EIP-3009 ReceiveWithAuthorization) and submit payWithAuthorization(deploymentRef, ...); the enclave sees the payment, launches your app as its own sandboxed worker process (MPS-capped on the confidential GPU when gpuShare > 0), and starts the clock. amount(6dp) / ratePerSecondUsdc = seconds of runtime. Unpaid reservations are released after a window. Shares are software caps (MPS under NVIDIA CC; CC disables MIG, so splits are arbitrary, not fixed profiles). Catalog apps (ipfs://<cid> references) deploy only after the catalog owner has approved that version on-chain; unapproved or rejected versions return 403 not_approved.",
+        "description": "RETIRED on Wasm enclaves - returns 410 `deploy_on_chain` with the on-chain coordinates. Deployments are created on the NanDeployments contract (Base), not through this endpoint: the ledger holds the spec and the funded balance, so a deployment survives enclave updates and crashes (runners serve it under expiring leases; a dead runner's lease lapses and any enclave re-claims the work). Flow: (1) create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid) from YOUR wallet - msg.sender owns the record; the id is the Created event's first topic; shares are 1/1000ths and the app's catalog specs set the minimums runners will accept. (2) Fund it: fundWithAuthorization (EIP-3009 USDC ReceiveWithAuthorization signed to the contract, nonce prefixed with the id's first 16 bytes) or fundEth (credited at the contract's Chainlink ETH/USD read); funds forward to NaN in the same tx, the credit lands in on-chain balance6. (3) Optionally POST /claim-hint {id} so the fleet claims immediately instead of on the ~60s sweep. Runners enforce the same catalog-approval gate (403-equivalent: unapproved CIDs are never claimed) and the same share minimums. GET /pricing carries the contract address, USDC EIP-712 domain, and an ETH/USD quote.",
         "requestBody": {
           "required": true,
           "content": {
@@ -346,6 +346,25 @@
               }
             }
           }
+        }
+      }
+    },
+    "/claim-hint": {
+      "post": {
+        "operationId": "claimHint",
+        "summary": "Nudge the fleet to claim a funded on-chain deployment right now",
+        "description": "Unauthenticated fast-path for NanDeployments work items: after create() + funding, POST the bytes32 id here and every live enclave immediately evaluates the deployment (capacity, catalog approval, share minimums) and races to claim it - the contract referees, the loser's tx reverts. Without a hint the sweep claims funded work within about a minute. The response is advisory: accepted=true means an enclave is attempting the claim in its background; watch NanDeployments.get(id).runner/leaseUntil for the authoritative result.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["id"], "properties": {
+            "id": { "type": "string", "description": "The bytes32 deployment id from the Created event (0x + 64 hex).", "example": "0x8b7a…" } } } } }
+        },
+        "responses": {
+          "200": { "description": "Evaluation result from the first enclave that accepted (or the last refusal reason).",
+            "content": { "application/json": { "schema": { "type": "object", "properties": {
+              "accepted": { "type": "boolean" }, "status": { "type": "string" },
+              "reason": { "type": "string", "description": "Why no enclave took it (unfunded, leased elsewhere, below app minimums, no capacity, unapproved CID, ...)." } } } } } },
+          "422": { "description": "Malformed id." }
         }
       }
     },
