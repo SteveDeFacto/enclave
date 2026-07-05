@@ -20,8 +20,10 @@ FROM ${WASMTIME_IMAGE} AS wasmtime
 
 FROM nvidia/cuda:12.6.2-cudnn-runtime-ubuntu24.04
 
+# gdb: the nn readiness probe captures symbol-level stacks of a hung GPU
+# init (spawns the e2e wasmtime UNDER gdb, interrupts, thread apply all bt)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 ca-certificates curl \
+      python3 ca-certificates curl gdb \
     && rm -rf /var/lib/apt/lists/*
 
 # wasmtime CLI with wasi-nn (ONNX Runtime backend, CUDA EP) + the ORT dylibs it

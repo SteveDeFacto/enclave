@@ -391,6 +391,14 @@ def step(name): log.write("STEP " + name + "\n")
 def ck(name, rc):
     if rc != 0:
         log.write(f"FAIL {name} rc={rc}\n"); sys.exit(2)
+if len(sys.argv) > 2 and sys.argv[2] == "threads":
+    # mimic wasmtime's thread pressure OUTSIDE wasmtime: ~50 threads on the
+    # 16-vCPU TDX guest before any CUDA call. If the walk spins HERE too, the
+    # hang is thread-count x driver x TDX - wasmtime fully exonerated.
+    import threading, time as _t
+    step("spawn 48 sleeper threads")
+    for _ in range(48):
+        threading.Thread(target=_t.sleep, args=(3600,), daemon=True).start()
 step("dlopen libcudart.so.12")
 try:
     rt = ctypes.CDLL("libcudart.so.12")
@@ -421,12 +429,14 @@ log.write("ok\n")
 """
 
 
-def _nn_probe_rt(env: dict) -> tuple:
+def _nn_probe_rt(env: dict, threaded=False) -> tuple:
     """(ok, detail). Runs the runtime-API bisect with a hard deadline; on a
-    hang, reports the exact CUDA call it died in (journal's last STEP)."""
+    hang, reports the exact CUDA call it died in (journal's last STEP).
+    threaded=True first spawns ~50 sleeper threads (wasmtime-like pressure)."""
     jpath = LOG_DIR / f"nn-rt-{uuid.uuid4().hex[:6]}.log"
+    argv = ["python3", "-c", _NN_RT_SRC, str(jpath)] + (["threads"] if threaded else [])
     try:
-        proc = subprocess.Popen(["python3", "-c", _NN_RT_SRC, str(jpath)], env=env,
+        proc = subprocess.Popen(argv, env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 preexec_fn=_preexec)
     except Exception as e:                                       # noqa: BLE001
@@ -454,6 +464,67 @@ def _nn_probe_rt(env: dict) -> tuple:
     last = lines[-1] if lines else "(no journal)"
     return (False, (f"HUNG at '{last}' after {NN_PROBE_TIMEOUT:.0f}s" if hung
                     else f"stopped at '{last}' rc={proc.returncode}"))
+
+
+def _nn_probe_gdb(env, extra_args=()) -> str:
+    """Symbol-level stacks of the hang: spawn the e2e wasmtime UNDER gdb (gdb
+    as parent dodges ptrace-scope), trigger one gpu load, let it wedge, SIGINT
+    gdb (it stops the inferior; batch mode then runs the queued commands), and
+    harvest `thread apply all bt`. The full dump goes to the manager log; the
+    CUDA/ORT-relevant frames come back for the public trail."""
+    if not shutil.which("gdb"):
+        return "gdb not in image"
+    wasm = APPS_DIR / "nn-demo.wasm"
+    if not wasm.is_file():
+        return "no nn-demo.wasm"
+    port = _free_port()
+    cmd = ["gdb", "--batch", "-q",
+           "-ex", "set pagination off", "-ex", "set confirm off", "-ex", "run",
+           "-ex", "thread apply all bt 24",
+           "--args", WASMTIME, "serve", "-Scli", "-Shttp", *P3_FLAGS, "-Snn", *extra_args,
+           "--addr", f"{HOST_IP}:{port}", str(wasm)]
+    try:
+        proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, preexec_fn=_preexec)
+    except Exception as e:                                       # noqa: BLE001
+        return f"gdb spawn failed: {e}"
+    out = ""
+    try:
+        deadline = time.time() + 40
+        while time.time() < deadline and not _port_open(port):
+            if proc.poll() is not None:
+                out, _ = proc.communicate(timeout=10)
+                return f"gdb/wasmtime exited rc={proc.returncode} before serving: {(out or '')[-200:]}"
+            time.sleep(0.3)
+        if _port_open(port):
+            threading.Thread(target=lambda: urllib.request.urlopen(
+                f"http://{HOST_IP}:{port}/?target=gpu", timeout=120).read(),
+                daemon=True).start()
+            time.sleep(45)   # let the init wedge properly before snapping
+        try:
+            os.kill(proc.pid, signal.SIGINT)   # gdb only: stops the inferior, then bt runs
+        except Exception:                                        # noqa: BLE001
+            pass
+        try:
+            out, _ = proc.communicate(timeout=90)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            out, _ = proc.communicate(timeout=10)
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:                                        # noqa: BLE001
+            pass
+    out = out or ""
+    print("[nn-probe] gdb full dump (tail):\n" + out[-20000:], flush=True)
+    frames = [l.strip() for l in out.splitlines()
+              if re.match(r"#\d+ ", l.strip())
+              and re.search(r"cuda|cublas|cudnn|onnx|ort_|wasi|nvcuda", l, re.I)]
+    if not frames:
+        frames = [l.strip() for l in out.splitlines() if re.match(r"#\d+ ", l.strip())][:12]
+    return ("frames: " + " | ".join(frames[:12])[:900]) if frames else \
+        f"no frames captured (gdb said: {out[-220:]})"
 
 
 def _nn_probe_worker_control() -> tuple:
@@ -574,62 +645,33 @@ def _nn_probe_run():
         _NN_PROBE.update(state="failed", mode=mode, stage="done",
                          detail="ORT fails on the CPU provider itself - " + "; ".join(history))
         return
-    # GPU-only failure: bisect the known failure classes, one fresh CUDA init
-    # each. First success is adopted for every tenant launch.
-    #   eager   - CUDA 12 defaults to lazy module loading, a known deadlock
-    #             class under MPS; EAGER loads kernels at init instead.
-    #   nopin   - the per-client VRAM limit only bites when the EP builds its
-    #             arena (the driver-layer bisect can pass while this hangs).
-    #   patient - not hung, just glacial: CC first-load of cuBLAS/cuDNN kernel
-    #             modules through encrypted buffers can take minutes. Adopting
-    #             it means tenants work but their FIRST GPU request is slow.
-    # The wasmtime-process peculiarities a plain python process doesn't have,
-    # each individually killable by a flag (kryptos data: the FULL CUDA stack
-    # works from a plain process in this container; only inside wasmtime does
-    # init hang - so one of these, or their combination, is the poison):
-    #   NOPOOL  - serve's default pooling allocator (~6TB VA reservations)
-    #   NOTRAPS - the SIGSEGV/altstack trap machinery for wasm bounds checks
-    #   NOCOW   - memfd/copy-on-write linear-memory images (madvise churn)
-    NOPOOL = ["-O", "pooling-allocator=n"]
-    NOTRAPS = ["-O", "signals-based-traps=n"]
-    NOCOW = ["-O", "memory-init-cow=n"]
-    BARE = NOPOOL + NOTRAPS + NOCOW
-    variants = [
-        ("nopool", base, NN_PROBE_TIMEOUT, NOPOOL,
-         lambda: _NN_PROBE.update(args=NOPOOL),
-         "wasmtime's pooling-allocator VA reservations break CUDA init under TDX; nn tenants run with pooling off"),
-        ("notraps", base, NN_PROBE_TIMEOUT, NOTRAPS,
-         lambda: _NN_PROBE.update(args=NOTRAPS),
-         "wasmtime's signal-based trap machinery breaks CUDA init here; nn tenants use explicit bounds checks"),
-        ("nocow", base, NN_PROBE_TIMEOUT, NOCOW,
-         lambda: _NN_PROBE.update(args=NOCOW),
-         "memfd/CoW memory images break CUDA init here; nn tenants run without CoW init"),
-        ("bare", base, NN_PROBE_TIMEOUT, BARE,
-         lambda: _NN_PROBE.update(args=BARE),
-         "only the combination heals it; nn tenants run with pooling, signal traps, and CoW init all off"),
-        ("eager", {**base, "CUDA_MODULE_LOADING": "EAGER"}, NN_PROBE_TIMEOUT, (),
-         lambda: _NN_PROBE.update(env={"CUDA_MODULE_LOADING": "EAGER"}),
-         "lazy module loading deadlocks under MPS here; tenants get CUDA_MODULE_LOADING=EAGER"),
-        ("nopin-ort", {k: v for k, v in base.items() if k != "CUDA_MPS_PINNED_DEVICE_MEM_LIMIT"},
-         NN_PROBE_TIMEOUT, (),
-         lambda: _NN_PROBE.update(mode="nopin"),
-         "the pinned-VRAM limit hangs the ORT arena; tenants run SM-capped only (VRAM stays allocator-accounted)"),
-        ("bare-patient", base, NN_PROBE_LONG, BARE,
-         lambda: _NN_PROBE.update(args=BARE),
-         "bare flags AND long first-init: nn tenants run bare; a deployment's FIRST GPU request is slow"),
-    ]
-    for name, env, tmo, extra, adopt, meaning in variants:
-        t0 = time.time()
-        _NN_PROBE["stage"] = f"ORT e2e gpu variant '{name}' ({tmo:.0f}s budget)"
-        vres, vdetail = _nn_probe_e2e(env, targets=("gpu",), timeout=tmo, extra_args=extra)
-        note(f"{name}: {vdetail}")
-        print(f"[nn-probe] gpu variant {name}: {vdetail}", flush=True)
-        if vres.get("gpu"):
-            adopt()
-            note(f"ADOPTED {name} ({time.time() - t0:.0f}s): {meaning}")
-            print(f"[nn-probe] ADOPTED {name}: {meaning}", flush=True)
-            _NN_PROBE.update(state="ok", stage="done", detail="; ".join(history))
-            return
+    # GPU-only failure. The v0.5.15-0.5.20 exoneration ladder cleared MPS, the
+    # pinned limit, lazy loading, slow-CC-load, pooling VA, signal traps, and
+    # CoW init individually (kryptos hangs are a userspace SPIN during ORT's
+    # CUDA init: one R-state thread, no D-state, driver event thread healthy).
+    # This path now EXTRACTS rather than guesses:
+    #   rtapi-threaded - the plain-process CUDA walk under wasmtime-like
+    #                    thread pressure; a spin HERE fully exonerates wasmtime
+    #   gdb            - symbol-level stacks of the actual hang
+    #   bare           - the one remaining heal candidate (all flags off)
+    _NN_PROBE["stage"] = "rtapi under thread pressure (48 sleepers)"
+    tok, tdetail = _nn_probe_rt(base, threaded=True)
+    note(f"rtapi-threaded: {tdetail}")
+    print(f"[nn-probe] rtapi threaded: {tdetail}", flush=True)
+    _NN_PROBE["stage"] = "gdb stack capture of the hang (~2.5 min)"
+    gdetail = _nn_probe_gdb(base)
+    note(f"gdb: {gdetail}")
+    print(f"[nn-probe] gdb frames: {gdetail}", flush=True)
+    BARE = ["-O", "pooling-allocator=n", "-O", "signals-based-traps=n", "-O", "memory-init-cow=n"]
+    _NN_PROBE["stage"] = "ORT e2e gpu variant 'bare' (all wasmtime flags off)"
+    vres, vdetail = _nn_probe_e2e(base, targets=("gpu",), extra_args=BARE)
+    note(f"bare: {vdetail}")
+    print(f"[nn-probe] gpu variant bare: {vdetail}", flush=True)
+    if vres.get("gpu"):
+        _NN_PROBE.update(args=BARE)
+        note("ADOPTED bare: nn tenants run with pooling, signal traps, and CoW init all off")
+        _NN_PROBE.update(state="ok", stage="done", detail="; ".join(history))
+        return
     # Every tenant-shaped variant hung. Endgame diagnostics (adopt NOTHING -
     # both would compromise the share caps - but name the guilty layer):
     #   control - the worker container's VALIDATED cupy-under-MPS path
