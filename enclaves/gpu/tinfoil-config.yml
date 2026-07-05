@@ -205,12 +205,32 @@ containers:
       # (>= the mem_mb its specs declare); WASM_APP_MIN_MEM_MB (64) is the floor
     volumes:
       - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # join the MPS daemon (SM%/VRAM caps)
+      # --- attached model volumes (Tinfoil Modelwrap) -----------------------
+      # Mount the enclave's model images into the manager so deployments can
+      # attach them by name (mounted read-only into the guest at /models/<name>).
+      # Uncomment + add a `models:` block below, then map each mount here:
+      #   - /tinfoil/mpk/mpk-<root_hash>:/models-src/<name>:ro
+      # and set MODEL_VOLUMES so the manager advertises the friendly name:
+      #   env: - MODEL_VOLUMES: "qwen2.5-0.5b:/models-src/qwen2.5-0.5b"
+      # (MODEL_VOLUME_ROOT defaults to /tinfoil/mpk; mounting the specific
+      #  images the manager should expose keeps advertisement explicit.)
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
       start_period: 60s
+
+# --- attested model weights (Tinfoil Modelwrap) -----------------------------
+# Declare read-only model volumes here; each becomes a dm-verity image whose
+# root hash is part of the enclave measurement (the attestation commits to the
+# exact bytes). Generate the `mpk` value in the Tinfoil Models tab. Deployments
+# attach these by name (via the console volume picker or their configCid JSON
+# `volumes` field); the wasm-manager mounts each into the guest at /models/<name>.
+# models:
+#   - name: "qwen2.5-0.5b"
+#     repo: "onnx-community/Qwen2.5-0.5B-Instruct@cc5cc01a65cc3ff17bdb73a7de33d879f62599b0"
+#     mpk: "<hash from the Models tab>"
 
 # Single ingress → supervisor. Only these paths are reachable from outside.
 shim:

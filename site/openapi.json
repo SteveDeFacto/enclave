@@ -1168,6 +1168,19 @@
             "type": "integer",
             "example": 1
           },
+          "volumes": {
+            "type": "array",
+            "description": "Attested read-only model volumes this enclave carries (Tinfoil Modelwrap). A deployment attaches one or more by name (via its configCid JSON `volumes` field, or the console's volume picker); the runner mounts each read-only at /models/<name> inside the guest, so large model weights reach a tenant without riding the app wasm. On the fleet /availability, each entry also carries `endpoints`: which enclaves can mount it (a volume only lives where its enclave declares it).",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string", "example": "qwen2.5-0.5b" },
+                "bytes": { "type": "integer", "description": "total size on disk", "example": 483003582 },
+                "onnx": { "type": "boolean", "description": "the dir contains an ONNX model (model.onnx or *.onnx)" },
+                "endpoints": { "type": "array", "items": { "type": "string" }, "description": "fleet /availability only: enclaves carrying this volume" }
+              }
+            }
+          },
           "source": {
             "type": "string",
             "enum": [
