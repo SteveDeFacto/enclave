@@ -1,22 +1,31 @@
-//! llm-chat: a small LLM (Qwen2.5-0.5B-Instruct, ONNX q4 fp32) compiled into a
-//! wasm component, with a built-in web chat UI, running on NaN's wasi-nn GPU
-//! interface.
+//! llm-chat: a general-purpose LLM service compiled into a wasm component,
+//! running on NaN's wasi-nn GPU interface. Ships with an embedded model
+//! (see assets/app-config.json for which); geometry, chat template, sampling
+//! defaults and the API key are configuration, not code - a deployment can
+//! override any of it via NAN_CONFIG (the platform passes the deployment's
+//! CID-verified configCid JSON through the tenant environment).
 //!
 //! Routes:
-//!   GET  /       - the chat page (self-contained HTML, no external assets).
-//!   POST /chat   - {messages:[{role,content}], target?, max_tokens?} ->
-//!                  Server-Sent Events: {"delta":"..."} per token, then
-//!                  {"done":true, ...stats}. Errors stream as {"error":"..."}.
-//!   GET  /ping   - liveness, touches no wasi-nn.
+//!   GET  /                    - chat playground (self-contained HTML).
+//!   GET  /ping                - liveness, touches no wasi-nn.
+//!   GET  /v1/models           - OpenAI-compatible model list.
+//!   POST /v1/chat/completions - OpenAI-compatible completions, stream and
+//!                               non-stream. Point any OpenAI SDK at the
+//!                               deployment URL. If the config sets api_key,
+//!                               requires `Authorization: Bearer <key>`.
+//!   POST /chat                - legacy SSE endpoint used by the playground.
 //!
 //! Generation: autoregressive decode with the model's KV cache. The trick
 //! that makes this cheap through wasi-nn: `compute()` returns OWNED tensor
-//! resources for the 60 `present.*` KV tensors, and we hand those handles
+//! resources for the `present.*` KV tensors, and we hand those handles
 //! straight back as the next step's `past_key_values.*` inputs - the cache
 //! bytes never cross into guest memory. Only the logits are read out
 //! (one vocab row per decode step).
 #[allow(warnings)]
 mod bindings;
+
+mod config;
+mod sampling;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -32,30 +41,15 @@ use bindings::wasi::nn::graph::{load, ExecutionTarget, GraphEncoding};
 use bindings::wasi::nn::inference::GraphExecutionContext;
 use bindings::wasi::nn::tensor::{Tensor, TensorType};
 
+use config::AppConfig;
+use sampling::{pick_token, Rng, SampleParams};
+
 static MODEL: &[u8] = include_bytes!("../assets/model_q4.onnx");
 static TOKENIZER_JSON: &[u8] = include_bytes!("../assets/tokenizer.json");
 static CHAT_HTML: &str = include_str!("chat.html");
 
-// Qwen2.5-0.5B geometry (config.json of the pinned export)
-const N_LAYERS: u32 = 24;
-const N_KV_HEADS: u32 = 2;
-const HEAD_DIM: u32 = 64;
-const VOCAB: usize = 151936;
-const EOS: [u32; 2] = [151645, 151643]; // <|im_end|>, <|endoftext|>
-
-const SYSTEM_PROMPT: &str =
-    "You are Qwen, a helpful AI assistant. Answer concisely and accurately.";
-// Prompt budget: KV traffic and prefill cost grow with context; a chat demo
-// does not need more. Oldest turns are dropped (system prompt kept).
-const MAX_PROMPT_TOKENS: usize = 768;
 const PREFILL_CHUNK: usize = 128;
-const DEFAULT_MAX_NEW: usize = 200;
-const MAX_NEW_CAP: usize = 400;
-const MAX_BODY_BYTES: usize = 64 * 1024;
-// Mild: Qwen2.5 does not loop the way a 135M model does; a heavy penalty
-// (1.3 was tuned for SmolLM2) visibly degrades its output.
-const REP_PENALTY: f32 = 1.1;
-const REP_WINDOW: usize = 64;
+const MAX_BODY_BYTES: usize = 256 * 1024;
 
 fn now_ms() -> u128 {
     SystemTime::now()
@@ -71,13 +65,13 @@ fn i64_tensor(dims: &[u32], vals: &[i64]) -> Tensor {
     Tensor::new(dims, TensorType::I64, &bytes)
 }
 
-fn empty_past() -> Vec<(String, Tensor)> {
-    let mut past = Vec::with_capacity((N_LAYERS * 2) as usize);
-    for l in 0..N_LAYERS {
+fn empty_past(cfg: &AppConfig) -> Vec<(String, Tensor)> {
+    let mut past = Vec::with_capacity((cfg.n_layers * 2) as usize);
+    for l in 0..cfg.n_layers {
         for kind in ["key", "value"] {
             past.push((
                 format!("past_key_values.{l}.{kind}"),
-                Tensor::new(&[1, N_KV_HEADS, 0, HEAD_DIM], TensorType::Fp32, &[]),
+                Tensor::new(&[1, cfg.n_kv_heads, 0, cfg.head_dim], TensorType::Fp32, &[]),
             ));
         }
     }
@@ -91,14 +85,13 @@ fn nn_err(stage: &str, e: bindings::wasi::nn::errors::Error) -> String {
 // ------------------------------------------------------------- generation --
 
 struct StepResult {
-    /// logits of the LAST position, parsed to f32
     logits: Vec<f32>,
-    /// present.* KV tensors renamed to past_key_values.* for the next step
     past: Vec<(String, Tensor)>,
 }
 
 /// One forward pass. `past` is consumed (the host drops the old cache).
 fn step(
+    cfg: &AppConfig,
     ctx: &GraphExecutionContext,
     ids: &[i64],
     past: Vec<(String, Tensor)>,
@@ -123,13 +116,12 @@ fn step(
     let outputs = ctx.compute(inputs).map_err(|e| nn_err("compute", e))?;
 
     let mut logits = Vec::new();
-    let mut next_past = Vec::with_capacity((N_LAYERS * 2) as usize);
+    let mut next_past = Vec::with_capacity((cfg.n_layers * 2) as usize);
     for (name, tensor) in outputs {
         if name == "logits" {
             if read_logits {
                 let data = tensor.data();
-                // full logits are [1, new_len, VOCAB] f32; keep the last row
-                let row = VOCAB * 4;
+                let row = cfg.vocab * 4;
                 if data.len() < row {
                     return Err(format!("logits too short: {} bytes", data.len()));
                 }
@@ -143,35 +135,23 @@ fn step(
             next_past.push((format!("past_key_values.{rest}"), tensor));
         }
     }
-    if next_past.len() != (N_LAYERS * 2) as usize {
-        return Err(format!("expected {} KV outputs, got {}", N_LAYERS * 2, next_past.len()));
+    if next_past.len() != (cfg.n_layers * 2) as usize {
+        return Err(format!(
+            "expected {} KV outputs, got {} - do the config's n_layers/n_kv_heads match the model?",
+            cfg.n_layers * 2,
+            next_past.len()
+        ));
     }
-    if read_logits && logits.len() != VOCAB {
-        return Err("model returned no logits".into());
+    if read_logits && logits.len() != cfg.vocab {
+        return Err("model returned no logits (config vocab mismatch?)".into());
     }
     Ok(StepResult { logits, past: next_past })
 }
 
-fn pick_token(logits: &mut [f32], recent: &[u32]) -> u32 {
-    // greedy + repetition penalty over the recent window: a 135M model loops
-    // badly without it
-    for &t in recent {
-        let l = &mut logits[t as usize];
-        if *l > 0.0 {
-            *l /= REP_PENALTY;
-        } else {
-            *l *= REP_PENALTY;
-        }
-    }
-    let mut best = 0usize;
-    let mut best_v = f32::NEG_INFINITY;
-    for (i, &v) in logits.iter().enumerate() {
-        if v > best_v {
-            best_v = v;
-            best = i;
-        }
-    }
-    best as u32
+struct GenParams {
+    max_new: usize,
+    sample: SampleParams,
+    stop_strings: Vec<String>,
 }
 
 struct GenStats {
@@ -181,20 +161,22 @@ struct GenStats {
     load_ms: u128,
     prefill_ms: u128,
     decode_ms: u128,
+    finish_reason: &'static str,
+    text: String,
 }
 
-/// Run the full chat completion; `emit` receives text deltas, `status`
-/// receives progress lines (both return false when the client is gone).
-/// Status events double as keepalive bytes: the platform proxy cuts a
-/// connection idle too long, and a cold-start session init is the one long
-/// silence in this handler (the host caches the session per process, so only
-/// the first request after a node boot pays it).
+/// Run the full completion; `emit` receives text deltas as they stabilize
+/// (with a holdback of the longest stop string so a stop sequence is never
+/// partially emitted), `status` receives progress lines. Both return false
+/// when the client is gone. Status events double as keepalive bytes during
+/// the one long silence (cold session init; the host caches sessions).
 fn generate(
+    cfg: &AppConfig,
     tok: &Tokenizer,
     prompt_ids: &[u32],
     target: ExecutionTarget,
     tname: &str,
-    max_new: usize,
+    p: &GenParams,
     emit: &dyn Fn(&str) -> bool,
     status: &dyn Fn(&str) -> bool,
 ) -> Result<GenStats, String> {
@@ -220,13 +202,13 @@ fn generate(
     // -- prefill, in chunks so no single logits tensor gets huge
     let t1 = now_ms();
     let ids: Vec<i64> = prompt_ids.iter().map(|&t| t as i64).collect();
-    let mut past = empty_past();
+    let mut past = empty_past(cfg);
     let mut done = 0usize;
     let mut logits = Vec::new();
     while done < ids.len() {
         let end = (done + PREFILL_CHUNK).min(ids.len());
         let last = end == ids.len();
-        let r = step(&ctx, &ids[done..end], past, done, last)?;
+        let r = step(cfg, &ctx, &ids[done..end], past, done, last)?;
         past = r.past;
         if last {
             logits = r.logits;
@@ -237,40 +219,80 @@ fn generate(
 
     // -- decode
     let t2 = now_ms();
+    let holdback = p.stop_strings.iter().map(|s| s.len()).max().unwrap_or(0);
+    let mut rng = Rng::new(now_ms() as u64 ^ (prompt_ids.len() as u64) << 17);
     let mut generated: Vec<u32> = Vec::new();
     let mut emitted = 0usize; // chars of decoded text already sent
     let mut total_len = ids.len();
+    let mut finish: &'static str = "stop";
+    let mut final_text = String::new();
     loop {
         let recent: Vec<u32> = if generated.is_empty() {
-            prompt_ids[prompt_ids.len().saturating_sub(REP_WINDOW)..].to_vec()
+            prompt_ids[prompt_ids.len().saturating_sub(p.sample.rep_window)..].to_vec()
         } else {
-            generated[generated.len().saturating_sub(REP_WINDOW)..].to_vec()
+            generated[generated.len().saturating_sub(p.sample.rep_window)..].to_vec()
         };
-        let next = pick_token(&mut logits, &recent);
-        if EOS.contains(&next) || generated.len() >= max_new {
+        let next = pick_token(&mut logits, &recent, &p.sample, &mut rng);
+        if cfg.eos.contains(&next) {
+            break;
+        }
+        if generated.len() >= p.max_new {
+            finish = "length";
             break;
         }
         generated.push(next);
 
         // incremental detokenization: decode everything, emit the stable
-        // suffix; hold back while the tail is an incomplete UTF-8 sequence
+        // suffix minus the stop-string holdback; hold while the tail is an
+        // incomplete UTF-8 sequence
         if let Ok(text) = tok.decode(&generated, true) {
-            if !text.ends_with('\u{FFFD}') && text.len() > emitted {
-                // .get() guards the rare case where re-decoding shifted an
-                // earlier byte boundary
-                if let Some(delta) = text.get(emitted..) {
+            // stop-string scan on the full decoded text
+            if let Some(pos) = p
+                .stop_strings
+                .iter()
+                .filter_map(|s| text.find(s.as_str()))
+                .min()
+            {
+                final_text = text[..pos].to_string();
+                if pos > emitted {
+                    if !emit(&text[emitted..pos]) {
+                        return Err("client disconnected".into());
+                    }
+                }
+                let decode_ms = now_ms() - t2;
+                return Ok(GenStats {
+                    target: tname.to_string(),
+                    prompt_tokens: prompt_ids.len(),
+                    tokens: generated.len(),
+                    load_ms,
+                    prefill_ms,
+                    decode_ms,
+                    finish_reason: "stop",
+                    text: final_text,
+                });
+            }
+            let visible = text.len().saturating_sub(holdback);
+            if !text.ends_with('\u{FFFD}') && visible > emitted {
+                if let Some(delta) = text.get(emitted..visible) {
                     if !emit(delta) {
                         break; // client disconnected
                     }
-                    emitted = text.len();
+                    emitted = visible;
                 }
             }
+            final_text = text;
         }
 
-        let r = step(&ctx, &[next as i64], past, total_len, true)?;
+        let r = step(cfg, &ctx, &[next as i64], past, total_len, true)?;
         past = r.past;
         logits = r.logits;
         total_len += 1;
+    }
+    // flush whatever the holdback was withholding
+    if final_text.len() > emitted {
+        if let Some(delta) = final_text.get(emitted..) {
+            let _ = emit(delta);
+        }
     }
     let decode_ms = now_ms() - t2;
 
@@ -281,24 +303,40 @@ fn generate(
         load_ms,
         prefill_ms,
         decode_ms,
+        finish_reason: finish,
+        text: final_text,
     })
 }
 
 // -------------------------------------------------------------------- http --
 
 #[derive(Deserialize)]
-struct ChatReq {
-    messages: Vec<ChatMsg>,
-    #[serde(default)]
-    target: Option<String>,
-    #[serde(default)]
-    max_tokens: Option<usize>,
-}
-
-#[derive(Deserialize)]
 struct ChatMsg {
     role: String,
     content: String,
+}
+
+/// Request shape shared by /chat (legacy) and /v1/chat/completions (OpenAI).
+/// OpenAI fields we don't implement are accepted and ignored.
+#[derive(Deserialize)]
+struct ChatReq {
+    messages: Vec<ChatMsg>,
+    #[serde(default)]
+    target: Option<String>, // NaN extension: cpu | gpu | auto
+    #[serde(default)]
+    max_tokens: Option<usize>,
+    #[serde(default)]
+    max_completion_tokens: Option<usize>, // newer OpenAI name
+    #[serde(default)]
+    temperature: Option<f32>,
+    #[serde(default)]
+    top_p: Option<f32>,
+    #[serde(default)]
+    top_k: Option<usize>, // extension (common in OSS servers)
+    #[serde(default)]
+    stream: Option<bool>,
+    #[serde(default)]
+    stop: Option<serde_json::Value>, // string or [string]
 }
 
 fn read_body(req: &IncomingRequest) -> Result<Vec<u8>, String> {
@@ -320,35 +358,82 @@ fn read_body(req: &IncomingRequest) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// Build the ChatML prompt; drops oldest turns until it fits the budget.
-fn build_prompt(tok: &Tokenizer, messages: &[ChatMsg]) -> Result<Vec<u32>, String> {
-    let mut msgs: Vec<&ChatMsg> = messages
+/// Render + tokenize the conversation; drops oldest turns until it fits.
+/// A `system` message in the request overrides the configured default.
+fn build_prompt(
+    cfg: &AppConfig,
+    tok: &Tokenizer,
+    messages: &[ChatMsg],
+) -> Result<(Vec<u32>, Vec<String>), String> {
+    let system = messages
+        .iter()
+        .find(|m| m.role == "system")
+        .map(|m| m.content.clone())
+        .unwrap_or_else(|| cfg.system_prompt.clone());
+    let mut msgs: Vec<(String, String)> = messages
         .iter()
         .filter(|m| m.role == "user" || m.role == "assistant")
+        .map(|m| (m.role.clone(), m.content.clone()))
         .collect();
     if msgs.is_empty() {
         return Err("no user/assistant messages".into());
     }
     loop {
-        let mut prompt = format!("<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n");
-        for m in &msgs {
-            prompt.push_str(&format!("<|im_start|>{}\n{}<|im_end|>\n", m.role, m.content));
-        }
-        prompt.push_str("<|im_start|>assistant\n");
+        let rendered = config::render_template(&cfg.template, &system, &msgs)?;
         let enc = tok
-            .encode(prompt.as_str(), true)
+            .encode(rendered.prompt.as_str(), true)
             .map_err(|e| format!("tokenize: {e}"))?;
         let ids = enc.get_ids().to_vec();
-        if ids.len() <= MAX_PROMPT_TOKENS || msgs.len() <= 1 {
-            if ids.len() > MAX_PROMPT_TOKENS {
+        if ids.len() <= cfg.max_prompt_tokens || msgs.len() <= 1 {
+            if ids.len() > cfg.max_prompt_tokens {
                 return Err(format!(
-                    "message too long: {} tokens (limit {MAX_PROMPT_TOKENS})",
-                    ids.len()
+                    "message too long: {} tokens (limit {})",
+                    ids.len(),
+                    cfg.max_prompt_tokens
                 ));
             }
-            return Ok(ids);
+            return Ok((ids, rendered.stop_strings));
         }
         msgs.remove(0); // drop the oldest turn and retry
+    }
+}
+
+fn gen_params(cfg: &AppConfig, creq: &ChatReq, extra_stops: Vec<String>) -> GenParams {
+    let mut stops = extra_stops;
+    match &creq.stop {
+        Some(serde_json::Value::String(s)) if !s.is_empty() => stops.push(s.clone()),
+        Some(serde_json::Value::Array(a)) => {
+            for v in a.iter().take(4) {
+                if let Some(s) = v.as_str() {
+                    stops.push(s.to_string());
+                }
+            }
+        }
+        _ => {}
+    }
+    GenParams {
+        max_new: creq
+            .max_tokens
+            .or(creq.max_completion_tokens)
+            .unwrap_or(cfg.default_max_new)
+            .min(cfg.max_new_cap)
+            .max(1),
+        sample: SampleParams {
+            temperature: creq.temperature.unwrap_or(0.7).clamp(0.0, 2.0),
+            top_p: creq.top_p.unwrap_or(0.9).clamp(0.05, 1.0),
+            top_k: creq.top_k.unwrap_or(0),
+            rep_penalty: cfg.rep_penalty,
+            rep_window: cfg.rep_window,
+        },
+        stop_strings: stops,
+    }
+}
+
+fn targets_for(mode: &str) -> Vec<(ExecutionTarget, &'static str)> {
+    match mode {
+        "cpu" => vec![(ExecutionTarget::Cpu, "cpu")],
+        "gpu" => vec![(ExecutionTarget::Gpu, "gpu")],
+        _ => vec![(ExecutionTarget::Gpu, "gpu"), (ExecutionTarget::Cpu, "cpu")],
     }
 }
 
@@ -370,50 +455,53 @@ fn respond_bytes(out: ResponseOutparam, status: u16, ctype: &str, body_bytes: &[
     let _ = OutgoingBody::finish(body, None);
 }
 
-fn handle_chat(req: IncomingRequest, out: ResponseOutparam) {
-    // Parse the request BEFORE opening the response so real errors can carry
-    // proper status codes.
+fn json_err(out: ResponseOutparam, status: u16, msg: &str) {
+    respond_bytes(
+        out,
+        status,
+        "application/json",
+        serde_json::json!({ "error": { "message": msg, "type": "invalid_request_error" } })
+            .to_string()
+            .as_bytes(),
+    );
+}
+
+/// Bearer-token check for /v1/*. No key configured = open (gate with a
+/// private deployment instead when that is the intent).
+fn authorized(cfg: &AppConfig, req: &IncomingRequest) -> bool {
+    let Some(key) = &cfg.api_key else { return true };
+    let headers = req.headers();
+    for v in headers.get(&"authorization".to_string()) {
+        if let Ok(s) = String::from_utf8(v) {
+            if let Some(tok) = s.strip_prefix("Bearer ") {
+                if tok.trim() == key {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+// ------------------------------------------------- legacy /chat (playground) --
+
+fn handle_chat(cfg: &AppConfig, req: IncomingRequest, out: ResponseOutparam) {
     let parsed: Result<ChatReq, String> = read_body(&req)
         .and_then(|b| serde_json::from_slice(&b).map_err(|e| format!("bad JSON: {e}")));
     let creq = match parsed {
         Ok(c) => c,
-        Err(e) => {
-            return respond_bytes(
-                out,
-                400,
-                "application/json",
-                serde_json::json!({ "error": e }).to_string().as_bytes(),
-            );
-        }
+        Err(e) => return json_err(out, 400, &e),
     };
-
     let tok = match Tokenizer::from_bytes(TOKENIZER_JSON) {
         Ok(t) => t,
-        Err(e) => {
-            return respond_bytes(
-                out,
-                500,
-                "application/json",
-                serde_json::json!({ "error": format!("tokenizer: {e}") })
-                    .to_string()
-                    .as_bytes(),
-            );
-        }
+        Err(e) => return json_err(out, 500, &format!("tokenizer: {e}")),
     };
-    let prompt_ids = match build_prompt(&tok, &creq.messages) {
-        Ok(ids) => ids,
-        Err(e) => {
-            return respond_bytes(
-                out,
-                400,
-                "application/json",
-                serde_json::json!({ "error": e }).to_string().as_bytes(),
-            );
-        }
+    let (prompt_ids, stops) = match build_prompt(cfg, &tok, &creq.messages) {
+        Ok(v) => v,
+        Err(e) => return json_err(out, 400, &e),
     };
-    let max_new = creq.max_tokens.unwrap_or(DEFAULT_MAX_NEW).min(MAX_NEW_CAP).max(1);
+    let params = gen_params(cfg, &creq, stops);
 
-    // open the SSE stream
     let headers = Fields::new();
     let _ = headers.set(&"content-type".to_string(), &[b"text/event-stream".to_vec()]);
     let _ = headers.set(&"cache-control".to_string(), &[b"no-cache".to_vec()]);
@@ -432,21 +520,15 @@ fn handle_chat(req: IncomingRequest, out: ResponseOutparam) {
     };
 
     let mode = creq.target.as_deref().unwrap_or("auto");
-    let attempts: Vec<(ExecutionTarget, &str)> = match mode {
-        "cpu" => vec![(ExecutionTarget::Cpu, "cpu")],
-        "gpu" => vec![(ExecutionTarget::Gpu, "gpu")],
-        _ => vec![(ExecutionTarget::Gpu, "gpu"), (ExecutionTarget::Cpu, "cpu")],
-    };
-
     let mut last_err = String::new();
     let mut ok = false;
-    for (i, (target, tname)) in attempts.iter().enumerate() {
+    for (i, (target, tname)) in targets_for(mode).iter().enumerate() {
         if i > 0 && !send(serde_json::json!({ "notice": format!("gpu failed ({last_err}); retrying on cpu") })) {
             break;
         }
         let emit = |delta: &str| send(serde_json::json!({ "delta": delta }));
         let status = |s: &str| send(serde_json::json!({ "status": s }));
-        match generate(&tok, &prompt_ids, *target, tname, max_new, &emit, &status) {
+        match generate(cfg, &tok, &prompt_ids, *target, tname, &params, &emit, &status) {
             Ok(s) => {
                 let gen_s = (s.decode_ms as f64) / 1000.0;
                 let tok_per_s = if gen_s > 0.0 { s.tokens as f64 / gen_s } else { 0.0 };
@@ -455,6 +537,7 @@ fn handle_chat(req: IncomingRequest, out: ResponseOutparam) {
                     "prompt_tokens": s.prompt_tokens, "tokens": s.tokens,
                     "load_ms": s.load_ms as u64, "prefill_ms": s.prefill_ms as u64,
                     "decode_ms": s.decode_ms as u64,
+                    "finish_reason": s.finish_reason,
                     "tok_per_s": (tok_per_s * 10.0).round() / 10.0,
                 }));
                 ok = true;
@@ -470,10 +553,153 @@ fn handle_chat(req: IncomingRequest, out: ResponseOutparam) {
     let _ = OutgoingBody::finish(body, None);
 }
 
+// --------------------------------------- OpenAI-compatible /v1 endpoints --
+
+fn completion_id() -> String {
+    format!("chatcmpl-nan{:x}", now_ms())
+}
+
+fn handle_completions(cfg: &AppConfig, req: IncomingRequest, out: ResponseOutparam) {
+    if !authorized(cfg, &req) {
+        return json_err(out, 401, "missing or invalid API key");
+    }
+    let parsed: Result<ChatReq, String> = read_body(&req)
+        .and_then(|b| serde_json::from_slice(&b).map_err(|e| format!("bad JSON: {e}")));
+    let creq = match parsed {
+        Ok(c) => c,
+        Err(e) => return json_err(out, 400, &e),
+    };
+    let tok = match Tokenizer::from_bytes(TOKENIZER_JSON) {
+        Ok(t) => t,
+        Err(e) => return json_err(out, 500, &format!("tokenizer: {e}")),
+    };
+    let (prompt_ids, stops) = match build_prompt(cfg, &tok, &creq.messages) {
+        Ok(v) => v,
+        Err(e) => return json_err(out, 400, &e),
+    };
+    let params = gen_params(cfg, &creq, stops);
+    let mode = creq.target.as_deref().unwrap_or("auto");
+    let id = completion_id();
+    let created = (now_ms() / 1000) as u64;
+    let model = cfg.name.clone();
+
+    if creq.stream.unwrap_or(false) {
+        // ---- streaming: OpenAI chunk protocol over SSE
+        let headers = Fields::new();
+        let _ = headers.set(&"content-type".to_string(), &[b"text/event-stream".to_vec()]);
+        let _ = headers.set(&"cache-control".to_string(), &[b"no-cache".to_vec()]);
+        let resp = OutgoingResponse::new(headers);
+        let body = resp.body().unwrap();
+        ResponseOutparam::set(out, Ok(resp));
+        let stream = body.write().unwrap();
+        let send_raw = |s: &str| -> bool {
+            for chunk in s.as_bytes().chunks(4000) {
+                if stream.blocking_write_and_flush(chunk).is_err() {
+                    return false;
+                }
+            }
+            true
+        };
+        let chunk = |delta: serde_json::Value, finish: Option<&str>| -> String {
+            format!(
+                "data: {}\n\n",
+                serde_json::json!({
+                    "id": id, "object": "chat.completion.chunk", "created": created,
+                    "model": model,
+                    "choices": [{ "index": 0, "delta": delta, "finish_reason": finish }],
+                })
+            )
+        };
+        // role preamble chunk (OpenAI clients expect it)
+        let _ = send_raw(&chunk(serde_json::json!({ "role": "assistant" }), None));
+
+        let mut last_err = String::new();
+        let mut done_stats: Option<GenStats> = None;
+        for (target, tname) in targets_for(mode).iter() {
+            let emit = |delta: &str| send_raw(&chunk(serde_json::json!({ "content": delta }), None));
+            // OpenAI protocol has no status events; SSE comments keep the
+            // connection warm through cold session init without confusing SDKs
+            let status = |s: &str| send_raw(&format!(": {s}\n\n"));
+            match generate(cfg, &tok, &prompt_ids, *target, tname, &params, &emit, &status) {
+                Ok(s) => {
+                    done_stats = Some(s);
+                    break;
+                }
+                Err(e) => last_err = format!("{tname}: {e}"),
+            }
+        }
+        match done_stats {
+            Some(s) => {
+                let _ = send_raw(&chunk(serde_json::json!({}), Some(s.finish_reason)));
+                let _ = send_raw("data: [DONE]\n\n");
+            }
+            None => {
+                let _ = send_raw(&format!(
+                    "data: {}\n\n",
+                    serde_json::json!({ "error": { "message": last_err, "type": "server_error" } })
+                ));
+            }
+        }
+        drop(stream);
+        let _ = OutgoingBody::finish(body, None);
+    } else {
+        // ---- non-streaming: run to completion, one JSON response
+        let sink = |_: &str| true;
+        let mut last_err = String::new();
+        let mut result: Option<GenStats> = None;
+        for (target, tname) in targets_for(mode).iter() {
+            match generate(cfg, &tok, &prompt_ids, *target, tname, &params, &sink, &sink) {
+                Ok(s) => {
+                    result = Some(s);
+                    break;
+                }
+                Err(e) => last_err = format!("{tname}: {e}"),
+            }
+        }
+        match result {
+            Some(s) => {
+                let body_json = serde_json::json!({
+                    "id": id, "object": "chat.completion", "created": created,
+                    "model": model,
+                    "choices": [{
+                        "index": 0,
+                        "message": { "role": "assistant", "content": s.text },
+                        "finish_reason": s.finish_reason,
+                    }],
+                    "usage": {
+                        "prompt_tokens": s.prompt_tokens,
+                        "completion_tokens": s.tokens,
+                        "total_tokens": s.prompt_tokens + s.tokens,
+                    },
+                    "nan": { "target": s.target, "load_ms": s.load_ms as u64,
+                             "prefill_ms": s.prefill_ms as u64, "decode_ms": s.decode_ms as u64 },
+                });
+                respond_bytes(out, 200, "application/json", body_json.to_string().as_bytes());
+            }
+            None => json_err(out, 500, &last_err),
+        }
+    }
+}
+
+fn handle_models(cfg: &AppConfig, req: IncomingRequest, out: ResponseOutparam) {
+    if !authorized(cfg, &req) {
+        return json_err(out, 401, "missing or invalid API key");
+    }
+    let body = serde_json::json!({
+        "object": "list",
+        "data": [{ "id": cfg.name, "object": "model", "owned_by": "nan-deployment" }],
+    });
+    respond_bytes(out, 200, "application/json", body.to_string().as_bytes());
+}
+
 struct Component;
 
 impl Guest for Component {
     fn handle(req: IncomingRequest, out: ResponseOutparam) {
+        let cfg = match AppConfig::load() {
+            Ok(c) => c,
+            Err(e) => return json_err(out, 500, &format!("configuration error: {e}")),
+        };
         let pq = req.path_with_query().unwrap_or_default();
         let path = pq.split('?').next().unwrap_or("/");
         let method = req.method();
@@ -487,12 +713,13 @@ impl Guest for Component {
                 "application/json",
                 format!("{{\"ok\":true,\"pong\":true,\"t\":{}}}", now_ms()).as_bytes(),
             ),
-            (Method::Post, "/chat") => handle_chat(req, out),
-            _ => respond_bytes(
+            (Method::Post, "/chat") => handle_chat(&cfg, req, out),
+            (Method::Post, "/v1/chat/completions") => handle_completions(&cfg, req, out),
+            (Method::Get, "/v1/models") => handle_models(&cfg, req, out),
+            _ => json_err(
                 out,
                 404,
-                "application/json",
-                b"{\"error\":\"not found; routes: GET /, GET /ping, POST /chat\"}",
+                "not found; routes: GET /, GET /ping, GET /v1/models, POST /v1/chat/completions, POST /chat",
             ),
         }
     }

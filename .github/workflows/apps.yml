@@ -12,7 +12,7 @@ on:
       release_tag:
         description: "Release tag to upload llm_chat.wasm to (created if missing)"
         required: true
-        default: "llm-chat-v0.2.2"
+        default: "llm-chat-v0.3.0"
 
 jobs:
   llm-chat:
