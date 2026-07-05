@@ -1091,6 +1091,15 @@ app.use("/x/:id", async (req, res) => {
     if (hits.length === 1) rec = deployments.get(hits[0]);
   }
   if (!rec) return fail(res, 404, "not_found", "Unknown deployment.");
+  // Ownership probe: the relay (and the TLS-issuance gate) asks HEAD /x/<id>
+  // to learn which enclave serves an id. That is OUR knowledge, not the
+  // app's - proxying it into the tenant made the answer depend on the app's
+  // router treating HEAD / as a route (llm-chat 404'd it, so the relay
+  // thought nobody owned the id and refused to mint the subdomain cert).
+  // Answer bare-root HEADs here; HEAD on a real subpath still proxies.
+  if (req.method === "HEAD" && (req.url === "/" || req.url === "")) {
+    res.writeHead(204); return res.end();
+  }
   // Public deployments serve anyone (websites/APIs). Private ones require the owner's
   // token (checked before status so a private deployment's state isn't leaked). SSH
   // (the WebSocket upgrade below) is ALWAYS owner-only, regardless of `public`.
