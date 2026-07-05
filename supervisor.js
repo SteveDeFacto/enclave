@@ -51,11 +51,11 @@ const CORS_ORIGINS   = (process.env.CORS_ORIGINS || "https://nan.host").split(",
 //     balance, no escrow contract, no key in the enclave that can move funds.
 const FORWARDER_ADDRESS  = process.env.FORWARDER_ADDRESS || "";   // NanPay contract (watch-only)
 const USDC_ADDRESS       = process.env.USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // USDC on Base
-// --- app approval: NanAppCatalog (read-only) is the deploy gate for catalog apps.
-//     Only the catalog's owner (the EOA that deployed it) can approve/reject a
-//     version, by signing a setApproval transaction; an ipfs://<cid> deploy is
-//     refused until its version is Approved. Empty = catalog apps can't deploy
-//     at all (fail closed); baked-in app ids are exempt (attested image content).
+// --- app approval: NanAppCatalog (read-only) is the deploy gate for ALL apps
+//     (the image ships no deployable apps of its own). Only the catalog's owner
+//     (the EOA that deployed it) can approve/reject a version, by signing a
+//     setApproval transaction; an ipfs://<cid> deploy is refused until its
+//     version is Approved. Empty = nothing can deploy at all (fail closed).
 const APP_CATALOG_ADDRESS = process.env.APP_CATALOG_ADDRESS || "";
 const PAYMENT_WINDOW_SEC = parseInt(process.env.PAYMENT_WINDOW_SEC || "600", 10); // unpaid awaiting_payment TTL
 const GRACE_SEC          = parseInt(process.env.GRACE_SEC || "90", 10);           // post-expiry grace before teardown
@@ -1437,17 +1437,16 @@ const CATALOG_ABI = [{ type: "function", name: "cidStatus", stateMutability: "vi
     { name: "res",       type: "uint32[4]" },
   ] }];
 const BARE_CID_RE = /^(baf[a-z0-9]{10,}|Qm[1-9A-HJ-NP-Za-km-z]{20,})$/;
-// Baked-in app ids only — no paths or .wasm filenames. The wasm-manager also
-// resolves bare paths under its APPS_DIR (e.g. a cached ipfs-<cid>.wasm), which
-// would dodge the approval check, so those never get past this API.
-const BAKED_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-
 // Gate a vm-backend app reference on catalog approval. Returns { ref, min }
 // (the reference to run, bare CIDs normalized to ipfs://, plus the version's
-// exact declared minimums { vramMb, gpuGflops, memMb, cpuGflops } — zeros for
-// baked-in ids, whose requirements the wasm-manager's own catalog enforces) or
+// exact declared minimums { vramMb, gpuGflops, memMb, cpuGflops }) or
 // { error }. An RPC failure REJECTS the deploy (fail closed): this is the
-// enforcement point, so an outage must not waive it.
+// enforcement point, so an outage must not waive it. The image ships NO
+// deployable apps (nn-demo.wasm inside it is solely the boot probe's fixture,
+// launched by the manager itself, never through this API), so approved store
+// CIDs are the only deploy surface — anything else is refused here, which
+// also keeps bare paths under the manager's APPS_DIR (e.g. a cached
+// ipfs-<cid>.wasm) from dodging the approval check.
 const NO_MIN = { vramMb: 0, gpuGflops: 0, memMb: 0, cpuGflops: 0 };
 async function gateAppReference(reference) {
   const deny = (status, code, msg) => ({ error: { status, code, msg } });
@@ -1455,8 +1454,7 @@ async function gateAppReference(reference) {
   if (BARE_CID_RE.test(ref)) ref = "ipfs://" + ref;
   const m = /^ipfs:\/\/([^/?#]+)/.exec(ref);
   if (!m) {
-    if (BAKED_ID_RE.test(ref)) return { ref, min: { ...NO_MIN } };  // baked-in id: part of the attested image
-    return deny(422, "invalid_spec", "image.reference must be a baked-in app id or an ipfs://<cid> listed in the app catalog.");
+    return deny(422, "invalid_spec", "image.reference must be an ipfs://<cid> (or bare CID) listed in the app catalog.");
   }
   if (!APP_CATALOG_ADDRESS)
     return deny(503, "approval_unavailable", "Catalog apps are disabled on this enclave: APP_CATALOG_ADDRESS is not configured, so approval cannot be verified.");
@@ -1481,8 +1479,8 @@ async function gateAppReference(reference) {
 app.post("/v1/deployments", authed, async (req, res) => {
   const b = req.body || {};
   let image = (b.image && b.image.reference) ? b.image : { reference: DEFAULT_IMAGE };
-  // Approval gate (vm backend runs catalog apps): only baked-in ids and ipfs://
-  // CIDs whose version the catalog owner APPROVED may deploy. Checked before any
+  // Approval gate (vm backend runs catalog apps): only ipfs:// CIDs whose
+  // version the catalog owner APPROVED may deploy. Checked before any
   // reservation so a refused app never holds capacity or a payment window. The
   // gate also returns the version's exact declared resources — they become the
   // request defaults and the floor a request may not undercut.

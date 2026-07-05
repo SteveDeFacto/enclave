@@ -35,19 +35,16 @@ RUN ldconfig && /usr/local/bin/wasmtime --version
 
 WORKDIR /opt/nan
 
-# The app catalog is baked in, so what runs is exactly what Tinfoil measured.
-# apps/catalog.json + apps/*.wasm. Add wasi:http components here (see apps/README.md).
-COPY apps/ /opt/nan/apps/
-
-# llm-chat: SmolLM2-135M-Instruct baked into a wasm component with a web chat
-# UI - the 123MB artifact exceeds git's file limit, so it ships as a release
-# asset, sha256-pinned here (the measured image thereby still pins exactly
-# what runs). Rebuild from source: apps/llm-chat/ (fetch-model.sh, then
-# cargo component build) or the manual "Wasm Apps" workflow; then bump these.
-ARG LLM_CHAT_URL=https://github.com/SteveDeFacto/nan/releases/download/llm-chat-v0.1.0/llm_chat.wasm
-ARG LLM_CHAT_SHA256=a40b264df59d8d45aa32141bac6ee1a8942aa87b343396fe2ec4ac2ad8a217b7
-RUN curl -fsSL -o /opt/nan/apps/llm-chat.wasm "${LLM_CHAT_URL}" \
- && echo "${LLM_CHAT_SHA256}  /opt/nan/apps/llm-chat.wasm" | sha256sum -c -
+# NO deployable apps ship in the image: every app deploys from the on-chain
+# catalog by ipfs://<cid> (fetched + hash-verified in-enclave, cached under
+# /opt/nan/apps). The ONE .wasm here is the boot probe's fixture: the CUDA
+# readiness probe serves nn-demo through the real wasmtime + ORT stack to
+# prove GPU inference end-to-end before any tenant deploy is allowed - without
+# it the probe would have to skip its most load-bearing stage (the one that
+# caught the sm_90 PTX-JIT hang). It is launched only by the manager itself;
+# the supervisor's approval gate refuses non-CID references, so it is not
+# deployable through the API.
+COPY apps/nn-demo.wasm /opt/nan/apps/nn-demo.wasm
 COPY wasm_manager.py /opt/nan/wasm_manager.py
 COPY ipfs_fetch.py /opt/nan/ipfs_fetch.py
 

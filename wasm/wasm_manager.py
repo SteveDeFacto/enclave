@@ -20,13 +20,17 @@ backend, so the supervisor needs no change:
 
 Notes:
 - `image` is reinterpreted as a Wasm APP REFERENCE:
-    * a catalog id (baked-in, attested .wasm under APPS_DIR), or
-    * `ipfs://<cid>` — fetched from IPFS_GATEWAY and VERIFIED: we pull the DAG as a
-      CAR, check every block hashes to its CID, and reassemble the file rooted at
-      the requested CID (see ipfs_fetch.py). A tampering gateway fails the hash
+    * `ipfs://<cid>` — the normal (and, through the supervisor, the ONLY) form:
+      fetched from IPFS_GATEWAY and VERIFIED: we pull the DAG as a CAR, check
+      every block hashes to its CID, and reassemble the file rooted at the
+      requested CID (see ipfs_fetch.py). A tampering gateway fails the hash
       check, so "what ran == this exact CID" holds without trusting the gateway.
       The verified CID is what the supervisor folds into attestation.
-    * an absolute path to a .wasm already under APPS_DIR.
+    * a catalog id — only if a catalog file exists (WASM_CATALOG; none ships in
+      the image: the only baked .wasm is nn-demo.wasm, the boot probe's fixture,
+      which the probe launches directly without going through this resolution).
+    * an absolute path to a .wasm already under APPS_DIR (internal/debug; the
+      supervisor's approval gate never forwards these).
 - `sshHostPort` is always 0. A Wasm app is not an OS; there is nothing to SSH
   into. The supervisor already tolerates sshPort 0.
 - Apps must be wasi:http components (what `wasmtime serve` runs). A WASIX/wasmer

@@ -4,7 +4,7 @@
     "title": "NaN API",
     "version": "1.0.0",
     "summary": "Trustless on-demand confidential GPU compute for WebAssembly apps.",
-    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority; just the request/response socket the runtime hands it. The app catalog is baked into the attested enclave image, so what runs is exactly what the attestation measured. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
+    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority; just the request/response socket the runtime hands it. Apps are published to the on-chain app catalog (NanAppCatalog on Base) addressed by IPFS CID; the enclave fetches the CID and verifies every byte hashes to it before launch, and the verified CID is folded into the attestation. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
   },
   "servers": [
     {
@@ -1258,15 +1258,15 @@
       },
       "ImageRef": {
         "type": "object",
-        "description": "Reference to the Wasm app to run. The app is a wasi:http component baked into the attested enclave image, so it is covered by the enclave measurement.",
+        "description": "Reference to the Wasm app to run: a wasi:http component published in the on-chain app catalog, addressed by IPFS CID. The enclave fetches the bytes, verifies they hash to the CID (a tampering gateway fails the check), and folds the verified CID into the attestation.",
         "required": [
           "reference"
         ],
         "properties": {
           "reference": {
             "type": "string",
-            "description": "Catalog id of a wasi:http component baked into the attested enclave image (e.g. `hello`). The catalog is measured at deploy, so what runs is exactly what attestation covers. No arbitrary registry pull.",
-            "example": "hello"
+            "description": "`ipfs://<cid>` (or a bare CID) of a wasi:http component whose version the catalog owner has APPROVED in the on-chain app catalog. Nothing else deploys: the enclave image ships no deployable apps, and unapproved or non-CID references are refused. No arbitrary registry pull.",
+            "example": "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
           },
           "digest": {
             "type": "string",
@@ -1387,7 +1387,7 @@
         },
         "example": {
           "image": {
-            "reference": "hello"
+            "reference": "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
           },
           "resources": {
             "gpuShare": 0.25,

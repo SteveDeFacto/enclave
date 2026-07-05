@@ -1,9 +1,9 @@
 # Rebuilds the in-tree wasm apps whose artifacts are too large for git and
 # ship as release assets instead (currently: llm-chat, 123MB - a whole LLM is
-# baked into the component). Manual, like the toolchain workflow: run it after
-# changing the app source, upload lands on the given release tag, then bump
-# LLM_CHAT_URL / LLM_CHAT_SHA256 in wasm/Dockerfile.wasm - THAT commit
-# triggers the ordinary wasm-manager rebuild.
+# baked into the component). Manual: run it after changing the app source;
+# the upload lands on the given release tag. The artifact is NOT part of any
+# image - download it from the release and publish it to the on-chain app
+# catalog (Apps tab) like any other app.
 name: Wasm Apps
 
 on:

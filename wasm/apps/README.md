@@ -1,18 +1,28 @@
-# NAN Wasm app catalog
+# NAN Wasm apps
 
-Every file here is baked into the `nan-wasm-manager` image and therefore covered
-by Tinfoil attestation: what runs in the enclave is exactly what was measured at
-deploy. To add an app, drop its compiled `.wasm` here and add an entry to
-`catalog.json`.
+Sources and prebuilt artifacts for the platform's first-party apps. **Nothing
+here is deployable straight from the image**: every app — first-party or
+community — is published to the **on-chain app catalog** (`NanAppCatalog` on
+Base, the **Apps** tab on the site), addressed by IPFS CID, and deploys as
+`ipfs://<cid>`. The manager fetches the CID in-enclave and verifies the bytes
+hash to it (`ipfs_fetch.py`), so "what ran == this exact CID" holds without
+trusting the gateway, and the verified CID is folded into attestation. The
+supervisor refuses any non-CID reference (and any CID the catalog owner has
+not approved) — one catalog, one deploy path, fail closed.
 
-> **This is the attested, baked-in catalog** — the curated apps the enclave runs
-> today, referenced by id (e.g. `hello`). There is a *second*, separate catalog:
-> the **on-chain community app store** (`NanAppCatalog` on Base, the **Apps** tab
-> on the site) where anyone publishes `wasi:http` apps addressed by IPFS CID. That
-> one is open discovery, not attested — see `contracts/README.md`. Apps from that
-> store deploy by `ipfs://<cid>` (or `slug:version`): the manager fetches the CID,
-> verifies the bytes hash to it (`ipfs_fetch.py`), and runs it. Baked-in apps here
-> are still referenced by id and covered directly by the image measurement.
+> One `.wasm` here IS still copied into the image: `nn-demo.wasm`, as the boot
+> probe's fixture. The CUDA readiness probe serves it through the real
+> wasmtime + ONNX Runtime stack at startup to prove GPU inference end to end
+> before GPU deploys are allowed. It is launched only by the manager itself;
+> it is not deployable by id through the API.
+
+First-party apps to publish (see each directory for source):
+
+| app | artifact | publish specs (exact, GFLOPS = 1/1000 TFLOPS) |
+|---|---|---|
+| `hello` | `hello.wasm` (committed) | vram 0 / gpu 0 / mem 128 MB / cpu ~10 GFLOPS |
+| `nn-demo` | `nn-demo.wasm` (committed) | vram 1024 MB / gpu 10 / mem 128 MB / cpu 10 / storage 64 MB |
+| `llm-chat` | release asset `llm-chat-v0.1.0` (123MB, past git's file limit) | vram 1024 MB / gpu 10 / mem 512 MB / cpu 10 / storage 0 |
 
 ## App requirements
 
@@ -50,10 +60,12 @@ VRAM are hardware-capped. Deployments without a GPU share never get the flag —
 a component importing `wasi:nn` then fails to instantiate ("not found in the
 linker"); the boundary is structural. The platform's wasmtime carries
 `wasm/wasmtime-onnx-gpu-strict.patch`: `::Gpu` either initializes CUDA or
-`load()` fails — never ONNX Runtime's silent CPU fallback. Complete example:
-[`nn-demo/`](nn-demo/) (baked in as `nn-demo`; regenerate its model with
-`gen-model.py`, rebuild with `cargo component build --release --target
-wasm32-wasip2`). Operator kill-switch: `WASM_NN=0` on the wasm-manager.
+`load()` fails — never ONNX Runtime's silent CPU fallback. Complete examples:
+[`nn-demo/`](nn-demo/) (minimal; also the boot probe's fixture inside the
+image) and [`llm-chat/`](llm-chat/) (full transformer decode; regenerate
+nn-demo's model with `gen-model.py`, rebuild either with `cargo component
+build --release --target wasm32-wasip2`). Operator kill-switch: `WASM_NN=0`
+on the wasm-manager.
 
 Declared ports are **logical** — the app's stable, advertised interface, like a
 container's EXPOSE. Each deployment gets its own **actual** loopback bind, so two
@@ -120,47 +132,33 @@ cap doesn't cover). Set `storage_mb: 0` to opt an app out of `/data` entirely (b
 old no-filesystem sandbox). Operators can disable the feature fleet-wide with
 `WASM_FS=0` on the wasm-manager, or relocate the backing dir with `WASM_FS_DIR`.
 
-## catalog.json
+## Publish specs
 
-```json
-{
-  "apps": [
-    { "id": "hello", "name": "Hello", "file": "hello.wasm",
-      "description": "…", "vram_mb": 0, "gpu_gflops": 0,
-      "mem_mb": 128, "cpu_gflops": 0, "storage_mb": 64 }
-  ]
-}
-```
+The on-chain catalog records each version's **exact specs** on four axes:
+memory (MB) and compute (GFLOPS = 1/1000 TFLOPS) of a GPU card and of a node.
+The specs set the MINIMUM shares a deployment must buy: spec / the node's
+spec, the larger of the memory and compute axes, rounded up to the percent
+grain. Either GPU axis > 0 marks a GPU app: it is refused on `NODE_HAS_GPU=0`
+nodes. The guest linear-memory cap is the deployment's `cpuShare ×
+NODE_RAM_GB` (enforced via `wasmtime -W max-memory-size`, floor
+`WASM_APP_MIN_MEM_MB`=64 — not RLIMIT_AS, which would kill wasmtime's
+terabyte-scale virtual reservations), so it is always >= the declared memory.
+`storage_mb` caps the app's `/data` scratch filesystem (see above), enforced
+by the audit sweep; `0` disables `/data`.
 
-- `id`     - what the frontend/user selects; what the supervisor sends as `image`.
-- `file`   - the `.wasm` in this directory.
-- `vram_mb` / `gpu_gflops` / `mem_mb` / `cpu_gflops` - the app's **exact specs**
-             on four axes: memory (MB) and compute (GFLOPS = 1/1000 TFLOPS) of a
-             GPU card and of a node (mirrors NanAppCatalog). The specs set the
-             MINIMUM shares a deployment must buy: spec / the node's spec, the
-             larger of the memory and compute axes, rounded up to the percent
-             grain. Either GPU axis > 0 marks a GPU app: it is refused on
-             `NODE_HAS_GPU=0` nodes. The guest linear-memory cap is the
-             deployment's `cpuShare × NODE_RAM_GB` (enforced via `wasmtime -W
-             max-memory-size`, floor `WASM_APP_MIN_MEM_MB`=64 — not RLIMIT_AS,
-             which would kill wasmtime's terabyte-scale virtual reservations),
-             so it is always >= `mem_mb`.
-- `storage_mb` - ceiling on the app's `/data` scratch filesystem (see above),
-             enforced by the audit sweep. Optional; defaults to
-             `WASM_APP_STORAGE_MB` (256). `0` disables `/data` for this app.
-
-## Oversized artifacts (llm-chat)
+## llm-chat (oversized artifact)
 
 `llm-chat` bakes a whole model into the component (SmolLM2-135M-Instruct,
 ONNX q4f16 + tokenizer + chat UI = 123MB), which is past git's 100MB file
-limit. Its artifact therefore ships as a **GitHub release asset** instead of
-a committed `.wasm`: `Dockerfile.wasm` downloads it at image build, pinned by
-URL + sha256, so the measured image still pins exactly what runs. Source
-lives in `llm-chat/` (model fetched by `fetch-model.sh`, pinned to an exact
-HF revision + sha256). Rebuild + re-upload via the manual **Wasm Apps**
-workflow, then bump `LLM_CHAT_URL`/`LLM_CHAT_SHA256` in `Dockerfile.wasm`.
-Note it needs the nan-wasmtime toolchain with tensor-dtype support (patch
-hunks 3+4): i64 token ids, fp16 outputs, zero-size KV bootstrap tensors.
+limit, so its artifact is not committed: download it from the
+**llm-chat-v0.1.0 GitHub release** (or rebuild from source: `llm-chat/`,
+`fetch-model.sh` pins the model by HF revision + sha256, then
+`cargo component build --release --target wasm32-wasip2`; the manual
+**Wasm Apps** workflow does the same in CI and re-uploads the asset). Publish
+the artifact to the on-chain catalog like any other app — 123MB is under the
+manager's 256MB fetch cap. It needs the nan-wasmtime toolchain with
+tensor-dtype support (patch parts 3+4, enclave release v0.5.24+): i64 token
+ids, fp16 outputs, zero-size KV bootstrap tensors.
 
 ## Building the sample `hello.wasm`
 
@@ -200,11 +198,12 @@ impl wasi::exports::http::incoming_handler::Guest for Component {
 }
 ```
 
-Build and install into the catalog:
+Build, then publish the artifact to the on-chain catalog (Apps tab on the
+site) and deploy it by CID:
 
 ```bash
 cargo component build --release --target wasm32-wasip2
-cp target/wasm32-wasip2/release/hello.wasm /path/to/nan/wasm/apps/hello.wasm
+# artifact: target/wasm32-wasip2/release/hello.wasm
 ```
 
 (Exact WASI binding APIs shift between `wasi` crate versions; pin the crate

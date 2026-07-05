@@ -577,8 +577,8 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
       <div class="cfg">
         <h4>App</h4>
         <div class="field">
-          <label for="cfgImage">Wasm app <span class="dim">(catalog id e.g. <b>hello</b>, or <b>slug:version</b>, or <b>ipfs://&lt;cid&gt;</b>)</span></label>
-          <input type="text" id="cfgImage" value="hello" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="hello  ·  my-app:1.0.0  ·  ipfs://bafy…" />
+          <label for="cfgImage">Wasm app <span class="dim">(<b>slug:version</b> from the <a href="#apps" data-view="apps">Apps</a> catalog, or <b>ipfs://&lt;cid&gt;</b>)</span></label>
+          <input type="text" id="cfgImage" value="" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="my-app:1.0.0  ·  ipfs://bafy…" />
         </div>
         <div class="field">
           <label for="cfgPorts">Firewall <span class="dim">(ports the app may bind · defaulted from the catalog by “Use in Deploy” · empty = standard web app)</span></label>
@@ -983,10 +983,9 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
             <li><b>Web apps</b> (the default, and this guide's walkthrough): export the handler; the platform owns the listener and routes requests to you.</li>
             <li><b>Service apps</b>: declare firewall ports (<code>http:N</code> / <code>tcp:N</code> / <code>udp:N</code>) and run as a long-lived command component that binds its own sockets: databases, IRC servers, DNS resolvers. <a href="#docs-ports">Chapter 09 →</a></li>
           </ul>
-          <p>And two catalogs your app reference can point at:</p>
+          <p>And one catalog every app reference points at:</p>
           <ul>
-            <li><b>Baked-in catalog</b>: curated sample apps compiled into the measured enclave image, referenced by id (<code>hello</code>). Covered directly by attestation.</li>
-            <li><b>On-chain app store</b>: the <a href="#apps" data-view="apps">Apps</a> tab: anyone publishes, bytes live on IPFS addressed by CID, listings live in the <code>NanAppCatalog</code> contract on Base. This is where <i>your</i> app goes. <a href="#docs-publish">Chapter 04 →</a></li>
+            <li><b>The on-chain app store</b>: the <a href="#apps" data-view="apps">Apps</a> tab: anyone publishes, bytes live on IPFS addressed by CID, listings live in the <code>NanAppCatalog</code> contract on Base. First-party samples (<code>hello</code>, <code>nn-demo</code>, <code>llm-chat</code>) are published there too - the enclave image ships no deployable apps, so every deploy resolves to a CID the enclave fetches and hash-verifies. <a href="#docs-publish">Chapter 04 →</a></li>
           </ul>
           <div class="doc-note">
             <span class="nt">The contract</span>
@@ -1097,11 +1096,10 @@ wasmtime serve -Scli -Shttp -Sp3 \
         <!-- 05 ------------------------------------------------------------ -->
         <article class="doc" id="docs-deploy">
           <h3><span class="n">05</span>Deploy it</h3>
-          <p>A deployment names an app, a slice of the card, and who may reach it. The app reference takes three forms:</p>
+          <p>A deployment names an app, a slice of the card, and who may reach it. The app reference takes two forms:</p>
           <div class="tbl"><table class="params">
             <thead><tr><th>reference</th><th>meaning</th></tr></thead>
             <tbody>
-              <tr><td class="pname">hello</td><td>A baked-in catalog id, compiled into the measured enclave image and covered directly by attestation.</td></tr>
               <tr><td class="pname">my-hello:1.0.0</td><td>A store app by slug and version (or <code>&lt;publisher&gt;/my-hello:1.0.0</code> to disambiguate). The <i>browser</i> resolves this against the on-chain catalog to the version's CID; the API itself takes the resolved form below.</td></tr>
               <tr><td class="pname">ipfs://&lt;cid&gt;</td><td>An exact wasm by CID. The enclave fetches it, verifies every block hashes to the CID (a tampering gateway fails the check), confirms it's a component, and runs it. The verified CID is folded into the attestation.</td></tr>
             </tbody>
@@ -1124,7 +1122,7 @@ const { token }   = await (await fetch(`${API}/auth/login`, {
   method: "POST",
   headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
   body: JSON.stringify({
-    image:     { reference: "ipfs://bafybei…" },   // your published CID, or "hello"
+    image:     { reference: "ipfs://bafybei…" },   // your published, approved CID
     resources: { gpuShare: 0.25, cpuShare: 0.05 }, // the two dials; the app's catalog specs set the minimums
     public:    true,                               // anyone may call it (false = owner-token only)
     region:    "auto",
@@ -1408,8 +1406,8 @@ let graph = load(&amp;[MODEL.to_vec()], GraphEncoding::Onnx, ExecutionTarget::Gp
 let ctx   = graph.init_execution_context()?;
 let x     = Tensor::new(&amp;[1, 4], TensorType::Fp32, &amp;input_bytes);   // little-endian f32s
 let out   = ctx.compute(vec![("X".into(), x)])?;                     // named tensors, in and out</code></pre></div>
-          <p>Try it without writing code: the baked-in <code>nn-demo</code> app is exactly this. Deploy it with 1% GPU + 1% CPU and hit <code>/?target=gpu</code>; it runs a tiny ONNX graph and echoes which target served it (its source lives in the repo under <code>wasm/apps/nn-demo/</code>).</p>
-          <p>And for the full-scale proof, deploy the baked-in <code>llm-chat</code> app: an entire LLM (SmolLM2-135M-Instruct, ONNX with 4-bit weights) plus its tokenizer and a web chat UI compiled into one 123&nbsp;MB component. Open its URL and chat - tokens stream from an autoregressive KV-cache decode running through <code>wasi:nn</code> on your MPS slice of the H200. It is everything on this page composed together: i64 token ids in, fp32 logits out, present-tensors handed back as past-tensors, target <code>gpu</code> strict with a reported <code>cpu</code> fallback. Source: <code>wasm/apps/llm-chat/</code>.</p>
+          <p>Try it without writing code: the <code>nn-demo</code> app in the <a href="#apps" data-view="apps">Apps</a> catalog is exactly this. Deploy it with 1% GPU + 1% CPU and hit <code>/?target=gpu</code>; it runs a tiny ONNX graph and echoes which target served it (its source lives in the repo under <code>wasm/apps/nn-demo/</code>).</p>
+          <p>And for the full-scale proof, deploy <code>llm-chat</code> from the same catalog: an entire LLM (SmolLM2-135M-Instruct, ONNX with 4-bit weights) plus its tokenizer and a web chat UI compiled into one 123&nbsp;MB component. Open its URL and chat - tokens stream from an autoregressive KV-cache decode running through <code>wasi:nn</code> on your MPS slice of the H200. It is everything on this page composed together: i64 token ids in, fp32 logits out, present-tensors handed back as past-tensors, target <code>gpu</code> strict with a reported <code>cpu</code> fallback. Source: <code>wasm/apps/llm-chat/</code>.</p>
           <p><b>Getting the model in.</b> Embed it (<code>include_bytes!</code>) for anything small - it ships inside your published CID, so it's attested with your code. The practical ceilings: the wasm artifact is ≤&nbsp;256&nbsp;MB and <code>load()</code> passes the bytes through your linear memory (≤&nbsp;4&nbsp;GiB). Larger models: fetch them at startup over outbound HTTP into memory, and check the hash yourself before loading - the platform verifies your <i>code</i> by CID, a fetched model is your responsibility.</p>
           <div class="doc-note">
             <span class="nt">Local testing</span>
@@ -1609,7 +1607,7 @@ const SPEC = {
     "title": "NaN API",
     "version": "1.0.0",
     "summary": "Trustless on-demand confidential GPU compute for WebAssembly apps.",
-    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority; just the request/response socket the runtime hands it. The app catalog is baked into the attested enclave image, so what runs is exactly what the attestation measured. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
+    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority; just the request/response socket the runtime hands it. Apps are published to the on-chain app catalog (NanAppCatalog on Base) addressed by IPFS CID; the enclave fetches the CID and verifies every byte hashes to it before launch, and the verified CID is folded into the attestation. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
   },
   "servers": [
     {
@@ -2863,15 +2861,15 @@ const SPEC = {
       },
       "ImageRef": {
         "type": "object",
-        "description": "Reference to the Wasm app to run. The app is a wasi:http component baked into the attested enclave image, so it is covered by the enclave measurement.",
+        "description": "Reference to the Wasm app to run: a wasi:http component published in the on-chain app catalog, addressed by IPFS CID. The enclave fetches the bytes, verifies they hash to the CID (a tampering gateway fails the check), and folds the verified CID into the attestation.",
         "required": [
           "reference"
         ],
         "properties": {
           "reference": {
             "type": "string",
-            "description": "Catalog id of a wasi:http component baked into the attested enclave image (e.g. `hello`). The catalog is measured at deploy, so what runs is exactly what attestation covers. No arbitrary registry pull.",
-            "example": "hello"
+            "description": "`ipfs://<cid>` (or a bare CID) of a wasi:http component whose version the catalog owner has APPROVED in the on-chain app catalog. Nothing else deploys: the enclave image ships no deployable apps, and unapproved or non-CID references are refused. No arbitrary registry pull.",
+            "example": "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
           },
           "digest": {
             "type": "string",
@@ -2992,7 +2990,7 @@ const SPEC = {
         },
         "example": {
           "image": {
-            "reference": "hello"
+            "reference": "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
           },
           "resources": {
             "gpuShare": 0.25,
@@ -4317,10 +4315,10 @@ const MINS_CACHE = {};   // friendly "slug:version" -> minimum dial positions { 
 function looksFriendly(s){ return s.includes(":") && !s.startsWith("ipfs://"); }
 function resolveAppRef(input){
   input = (input || "").trim();
-  if (!input) return { reference: "hello" };
+  if (!input) return { reference: "", error: "Pick an app: slug:version from the Apps catalog, or ipfs://<cid>." };
   if (input.startsWith("ipfs://")) return { reference: input };
   if (/^(baf[a-z0-9]{10,}|Qm[1-9A-HJ-NP-Za-km-z]{20,})$/.test(input)) return { reference: "ipfs://" + input };  // bare CID
-  if (!looksFriendly(input)) return { reference: input };                    // baked-in catalog id
+  if (!looksFriendly(input)) return { reference: input, error: "Not a CID or slug:version. The enclave only deploys approved catalog CIDs." };
   if (REF_CACHE[input]) return { reference: REF_CACHE[input], label: input };
   let pub = null, rest = input;
   const slash = input.indexOf("/");
@@ -4342,9 +4340,9 @@ function resolveAppRef(input){
   return { reference: REF_CACHE[input], label: input, mins: MINS_CACHE[input] };
 }
 // The selected app's minimum shares for the two dials. Friendly slug:version
-// refs resolve to their catalog specs; baked-in ids and raw CIDs we can't see
-// specs for get the open floor (0% GPU / 1% CPU) - the enclave still enforces
-// the real minimums server-side.
+// refs resolve to their catalog specs; raw CIDs we can't see specs for get
+// the open floor (0% GPU / 1% CPU) - the enclave still enforces the real
+// minimums server-side.
 function currentMins(){
   const input = ($("#cfgImage") ? $("#cfgImage").value : "").trim();
   return MINS_CACHE[input] || { gpuPct: 0, cpuPct: 1 };
@@ -4890,7 +4888,7 @@ function initDeploy(){
   $$(".console-tabs button").forEach(b => b.addEventListener("click", () => switchPane(b.dataset.pane)));
   $("#deployBtn").addEventListener("click", runDeploy);
   $("#resetBtn").addEventListener("click", () => {
-    $("#cfgImage").value = "hello";
+    $("#cfgImage").value = "";
     const fp0 = $("#cfgPorts"); if (fp0) fp0.value = "";
     $("#cfgBudget").value = "10";
     $("#cfgGpuShare").value = "25"; dep.gpuPct = 25;

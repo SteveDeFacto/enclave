@@ -70,7 +70,7 @@ twice.
 
 ## Resources: apps declare specs, deployments buy shares
 
-**Apps** declare their exact resource specs in the catalogs — `vramMb` + `gpuGflops` of one GPU card (both 0 = CPU-only app) and `memMb` + `cpuGflops` of the node (compute in GFLOPS = 1/1000 TFLOPS; on-chain in NanAppCatalog, `vram_mb`/`gpu_gflops`/`mem_mb`/`cpu_gflops` in `wasm/apps/catalog.json` for baked-in apps).
+**Apps** declare their exact resource specs in the on-chain catalog (NanAppCatalog) — `vramMb` + `gpuGflops` of one GPU card (both 0 = CPU-only app) and `memMb` + `cpuGflops` of the node (compute in GFLOPS = 1/1000 TFLOPS). Every app deploys from that catalog by IPFS CID; the enclave image ships no deployable apps.
 
 **Deployments** buy exactly TWO shares — the only two settings on the deploy page, 0–100% each:
 
@@ -102,7 +102,7 @@ How the routing is enforced:
 
 - **HTTP deploys**: the supervisor takes `resources.{gpuShare, cpuShare}`, floors them at the app's spec-derived minimums, enforces `gpuShare >= cpuShare` for GPU apps, and refuses `gpuShare > 0` on a CPU enclave. CPU-only requests are served on either flavor from the node's CPU pool.
 - **On-chain deploys**: `NanDeployments.create(appRef, gpuMilli, cpuMilli, ...)` takes the two shares in 1/1000ths (the contract enforces the invariant and prices both). GPU enclaves only adopt `gpuMilli > 0` work; CPU-only work goes to CPU enclaves first, with GPU enclaves as a delayed fallback (`CPU_CLAIM_GRACE_SEC`). Each runner re-derives the app's minimum shares from its catalog specs (via `cidStatus`) and skips under-provisioned deployments.
-- **Apps**: catalog apps declare exact specs on four axes — `vramMb`/`gpuGflops`/`memMb`/`cpuGflops` on-chain (NanAppCatalog, returned by `cidStatus`) and `vram_mb`/`gpu_gflops`/`mem_mb`/`cpu_gflops` in `wasm/apps/catalog.json` for baked-in apps. Those specs only set minimum shares; GPU-needing apps are refused on nodes with `NODE_HAS_GPU=0`.
+- **Apps**: catalog apps declare exact specs on four axes — `vramMb`/`gpuGflops`/`memMb`/`cpuGflops` on-chain (NanAppCatalog, returned by `cidStatus`). Those specs only set minimum shares; GPU-needing apps are refused on nodes with `NODE_HAS_GPU=0`.
 
 Verification caveat: verifiers that check against this repo's *latest* release (the `tinfoil-cli` default) will see the GPU flavor's measurement — verify CPU enclaves against their matching `-cpu` release explicitly.
 
