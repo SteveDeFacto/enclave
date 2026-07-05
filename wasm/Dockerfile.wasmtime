@@ -8,9 +8,12 @@
 #                                      with ExecutionTarget::Gpu runs on the card;
 #                                      ::Cpu stays on the CPU EP, so ONE binary
 #                                      serves both enclave flavors.
-#   - `wasmtime-wasi-nn/onnx-download` prebuilt ONNX Runtime binaries pulled at
-#                                      build time (pinned by the ort crate version
-#                                      wasmtime pins; no local ORT compile).
+#   - ONNX Runtime itself is the OFFICIAL Microsoft GPU build (system-linked
+#     via ORT_LIB_LOCATION, pinned by version + sha256). NOT pyke's prebuilt
+#     (ort's download-binaries): that one ships SASS only up to sm_89 plus
+#     compute_80 PTX, so on an H200 (sm_90) the entire 194MB provider library
+#     JIT-compiles at load - the infinite-looking hang chased across
+#     v0.5.13-0.5.22. The MS build carries native sm_90 SASS.
 #
 # This image is NOT rebuilt by CI on every wasm/** change — Dockerfile.wasm
 # COPYs the binary out of it by digest, so wasm-manager rebuilds stay fast
@@ -29,6 +32,16 @@ RUN git clone --depth 1 --branch "${WASMTIME_VERSION}" \
       https://github.com/bytecodealliance/wasmtime /src/wasmtime
 WORKDIR /src/wasmtime
 
+# Official ONNX Runtime GPU distribution (version must match what the ort
+# crate wasmtime pins expects - ort-sys 2.0.0-rc.10 targets 1.22.0).
+ARG ORT_VERSION=1.22.0
+ARG ORT_SHA256=2a19dbfa403672ec27378c3d40a68f793ac7a6327712cd0e8240a86be2b10c55
+RUN curl -fsSL -o /tmp/ort.tgz \
+      "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz" \
+ && echo "${ORT_SHA256}  /tmp/ort.tgz" | sha256sum -c - \
+ && tar -xzf /tmp/ort.tgz -C /opt && rm /tmp/ort.tgz
+ENV ORT_LIB_LOCATION=/opt/onnxruntime-linux-x64-gpu-${ORT_VERSION}
+
 # NAN patches (see the .patch header): 1) strict ExecutionTarget::Gpu - the
 # CUDA provider initializes or load() fails, never ORT's silent CPU fallback
 # (tenants BUY the share); 2) small, non-spinning ORT thread pool - fair on a
@@ -38,18 +51,18 @@ COPY wasmtime-onnx-gpu-strict.patch /tmp/
 RUN git apply --check /tmp/wasmtime-onnx-gpu-strict.patch \
  && git apply /tmp/wasmtime-onnx-gpu-strict.patch
 
-# ORT's core is linked statically into the binary; only the execution-provider
-# dylibs are dynamic (dlopened at session creation). copy-dylibs leaves them as
-# SYMLINKS into ort's download cache, so -L dereferences. We ship exactly the
-# two the CUDA EP needs — providers_shared (the dispatcher) + providers_cuda —
-# and deliberately not providers_tensorrt (never requested; would need TensorRT
-# libs). If a future ort changes this shape, fail the build loudly here.
+# System-linked ORT: the binary NEEDS libonnxruntime.so.1 at runtime; ship it
+# plus the two provider dylibs the CUDA EP dlopens (providers_shared is the
+# dispatcher). providers_tensorrt is deliberately not shipped (never
+# requested; would need TensorRT libs). ldconfig in the consuming image
+# creates the soname link from the versioned file.
 RUN cargo build --release \
-      --features "wasi-nn,wasmtime-wasi-nn/onnx-cuda,wasmtime-wasi-nn/onnx-download" \
+      --features "wasi-nn,wasmtime-wasi-nn/onnx-cuda" \
  && mkdir -p /out/bin /out/lib \
  && cp -a target/release/wasmtime /out/bin/ \
- && cp -L target/release/libonnxruntime_providers_shared.so /out/lib/ \
- && cp -L target/release/libonnxruntime_providers_cuda.so /out/lib/ \
+ && cp -L "${ORT_LIB_LOCATION}/lib/libonnxruntime.so.${ORT_VERSION}" /out/lib/ \
+ && cp -L "${ORT_LIB_LOCATION}/lib/libonnxruntime_providers_shared.so" /out/lib/ \
+ && cp -L "${ORT_LIB_LOCATION}/lib/libonnxruntime_providers_cuda.so" /out/lib/ \
  && ls -laR /out/
 
 # artifact-only image: /bin/wasmtime + /lib/<ORT dylibs>, nothing else
