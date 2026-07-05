@@ -753,7 +753,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
           <input type="text" id="pubVersion" maxlength="32" value="1.0.0" placeholder="1.0.0" spellcheck="false" autocapitalize="off" autocomplete="off" />
         </div>
         <div class="full" id="pubFileRow">
-          <label for="pubFile">Wasm file <span class="dim">(.wasm component · ≤ 256 MB · uploaded &amp; pinned to IPFS)</span></label>
+          <label for="pubFile">Wasm file <span class="dim">(.wasm component · ≤ 1 GB · uploaded &amp; pinned to IPFS)</span></label>
           <input type="file" id="pubFile" accept=".wasm,application/wasm" />
           <div class="hint" id="pubFileHint"></div>
           <div id="pubUpBar" hidden><div></div></div>
@@ -1079,7 +1079,7 @@ wasmtime serve -Scli -Shttp -Sp3 \
           <ol>
             <li>Connect your wallet (header button) and hit <b>+ Publish app</b>.</li>
             <li>Pick a <b>slug</b>, your app's stable id, e.g. <code>my-hello</code> (a–z, 0–9, hyphens, ≤ 40 chars). Slugs live in <i>your wallet's namespace</i>: the on-chain app id is <code>keccak256(publisher, slug)</code>, so nobody can squat or write to your lineage. The slug doesn't have to match your crate name.</li>
-            <li>Set a <b>version</b> label (e.g. <code>1.0.0</code>) and choose your <code>hello.wasm</code>. The file is validated (component check, ≤ 256 MB), uploaded, pinned to IPFS, and the <b>CID</b> field fills in (or paste a CID you pinned yourself).</li>
+            <li>Set a <b>version</b> label (e.g. <code>1.0.0</code>) and choose your <code>hello.wasm</code>. The file is validated (component check, ≤ 1 GB), uploaded, pinned to IPFS, and the <b>CID</b> field fills in (or paste a CID you pinned yourself).</li>
             <li>Set the display name, a description, and the app's <b>exact minimum resources</b> on four axes: the VRAM (GB) and GPU compute (TFLOPS) it needs on one card (both 0 for CPU-only apps, which is most of them), and the RAM (MB - also the runtime-enforced memory cap; the Hello app is fine at 128) and CPU compute (GFLOPS, at least 1 - every app computes something - and note the unit: a whole 16-vCPU node is only ≈1000 GFLOPS ≈ 1 TFLOPS, so declaring "1000" claims the entire node and forces a 100% CPU share; most small apps want 1-50) it needs on the node. These specs set the MINIMUM shares on the deploy page's two dials (spec ÷ server spec, the larger of the memory and compute axes); deploys below them are refused. Only for service apps, add the <b>firewall ports</b> the version may bind (<a href="#docs-ports">chapter 09</a>). Leave ports empty for a standard web app.</li>
             <li><b>Publish to Base</b>: one transaction, signed by your wallet, attributed on-chain to you.</li>
           </ol>
@@ -1404,8 +1404,8 @@ let ctx   = graph.init_execution_context()?;
 let x     = Tensor::new(&amp;[1, 4], TensorType::Fp32, &amp;input_bytes);   // little-endian f32s
 let out   = ctx.compute(vec![("X".into(), x)])?;                     // named tensors, in and out</code></pre></div>
           <p>Try it without writing code: the <code>nn-demo</code> app in the <a href="#apps" data-view="apps">Apps</a> catalog is exactly this. Deploy it with 1% GPU + 1% CPU and hit <code>/?target=gpu</code>; it runs a tiny ONNX graph and echoes which target served it (its source lives in the repo under <code>wasm/apps/nn-demo/</code>).</p>
-          <p>And for the full-scale proof, deploy <code>llm-chat</code> from the same catalog: an entire LLM (SmolLM2-135M-Instruct, ONNX with 4-bit weights) plus its tokenizer and a web chat UI compiled into one 123&nbsp;MB component. Open its URL and chat - tokens stream from an autoregressive KV-cache decode running through <code>wasi:nn</code> on your MPS slice of the H200. It is everything on this page composed together: i64 token ids in, fp32 logits out, present-tensors handed back as past-tensors, target <code>gpu</code> strict with a reported <code>cpu</code> fallback. Source: <code>wasm/apps/llm-chat/</code>.</p>
-          <p><b>Getting the model in.</b> Embed it (<code>include_bytes!</code>) for anything small - it ships inside your published CID, so it's attested with your code. The practical ceilings: the wasm artifact is ≤&nbsp;256&nbsp;MB and <code>load()</code> passes the bytes through your linear memory (≤&nbsp;4&nbsp;GiB). Larger models: fetch them at startup over outbound HTTP into memory, and check the hash yourself before loading - the platform verifies your <i>code</i> by CID, a fetched model is your responsibility.</p>
+          <p>And for the full-scale proof, deploy <code>llm-chat</code> from the same catalog: an entire LLM (Qwen2.5-0.5B-Instruct, ONNX with 4-bit weights) plus its tokenizer and a web chat UI compiled into one 493&nbsp;MB component. Open its URL and chat - tokens stream from an autoregressive KV-cache decode running through <code>wasi:nn</code> on your MPS slice of the H200. It is everything on this page composed together: i64 token ids in, fp32 logits out, present-tensors handed back as past-tensors, target <code>gpu</code> strict with a reported <code>cpu</code> fallback. Source: <code>wasm/apps/llm-chat/</code>.</p>
+          <p><b>Getting the model in.</b> Embed it (<code>include_bytes!</code>) for anything small - it ships inside your published CID, so it's attested with your code. The practical ceilings: the wasm artifact is ≤&nbsp;1&nbsp;GB and <code>load()</code> passes the bytes through your linear memory (≤&nbsp;4&nbsp;GiB). Larger models: fetch them at startup over outbound HTTP into memory, and check the hash yourself before loading - the platform verifies your <i>code</i> by CID, a fetched model is your responsibility.</p>
           <div class="doc-note">
             <span class="nt">Local testing</span>
             <p>Stock <code>wasmtime</code> release binaries don't compile wasi-nn in - and the platform's runtime carries patches you'll want locally too (strict GPU target, the full tensor-dtype set, zero-size tensors; unpatched wasmtime rejects everything but fp32). Build the same runtime the enclave uses: in a wasmtime 45 checkout, <code>git apply wasm/wasmtime-onnx-gpu-strict.patch</code> from the NaN repo, point <code>ORT_LIB_LOCATION</code> at the official Microsoft <code>onnxruntime-linux-x64-gpu</code> distribution, and <code>cargo build --release --features "wasi-nn,wasmtime-wasi-nn/onnx-cuda"</code>; then <code>wasmtime serve -S nn app.wasm</code>. (Avoid the <code>onnx-download</code> feature: it pulls a prebuilt ONNX Runtime with precompiled kernels for consumer GPUs only - it works on a desktop card but JIT-hangs on datacenter parts. The MS build is exactly how the platform's own runtime is built - see <code>wasm/Dockerfile.wasmtime</code> in the repo.) Without CUDA libraries installed, target <code>gpu</code> fails (by design); test with <code>cpu</code> locally and <code>gpu</code> on the enclave.</p>
@@ -1467,7 +1467,7 @@ curl -H "Authorization: Bearer $NAN_TOKEN" \
           <div class="tbl"><table class="params">
             <thead><tr><th>limit</th><th>value</th><th>notes</th></tr></thead>
             <tbody>
-              <tr><td class="pname">wasm artifact</td><td>≤ 256 MB</td><td>enforced at upload and again at fetch</td></tr>
+              <tr><td class="pname">wasm artifact</td><td>≤ 1 GB</td><td>enforced at upload and again at fetch</td></tr>
               <tr><td class="pname">app specs (vramMb/gpuGflops/memMb/cpuGflops)</td><td>exact MB + GFLOPS, per version</td><td>set the MINIMUM deploy shares (spec ÷ server spec, larger of memory/compute, ceil to %)</td></tr>
               <tr><td class="pname">memory cap</td><td>= memMb</td><td>exactly what you ask for, runtime-enforced; the CPU share is derived from it</td></tr>
               <tr><td class="pname">/data cap (storage_mb)</td><td>256 MB default · 0 = no /data</td><td>audit sweep kills on breach</td></tr>
@@ -5445,7 +5445,7 @@ const APP_CATALOG_RPC     = "https://base-rpc.publicnode.com";  // preferred rea
 const APP_CATALOG_RPCS    = [APP_CATALOG_RPC, "https://base.drpc.org", "https://1rpc.io/base", "https://mainnet.base.org"];
 const IPFS_UPLOAD_URL      = "https://ipfs.nan.host/add-wasm"; // validating upload gateway (server validates + pins); empty => paste-a-CID only
 const IPFS_GATEWAY        = "https://ipfs.io/ipfs/";      // where the "fetch .wasm" links resolve
-const MAX_WASM_MB         = 256;                          // upload ceiling (also enforced server-side by Caddy request_body max_size)
+const MAX_WASM_MB         = 1024;                         // upload ceiling (also enforced server-side by Caddy request_body max_size and the add-wasm gateway)
 const MAX_WASM_BYTES      = MAX_WASM_MB * 1024 * 1024;
 
 const CAT_SEL = {

@@ -91,8 +91,12 @@ LOG_DIR      = pathlib.Path(os.environ.get("WASM_LOG_DIR", "/tmp/nan-wasm-logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 # run-by-CID: fetch an app's bytes from IPFS and verify they hash to the CID.
 IPFS_GATEWAY   = os.environ.get("IPFS_GATEWAY", "https://ipfs.nan.host").rstrip("/")
-WASM_MAX_BYTES = int(os.environ.get("WASM_MAX_BYTES", str(256 * 1024 * 1024)))  # cap on a fetched app
-IPFS_TIMEOUT   = float(os.environ.get("IPFS_FETCH_TIMEOUT", "120"))
+# cap on a fetched app: models ride inside the wasm (llm-chat 0.2 embeds a
+# 460MB q4f16 LLM), so the ceiling is set by fetch/compile budgets, not code
+WASM_MAX_BYTES = int(os.environ.get("WASM_MAX_BYTES", str(1024 * 1024 * 1024)))
+# a 500MB CAR at gateway speeds (~3.5MB/s) needs ~150s; match the supervisor's
+# 300s prefetch budget so the fetch is never the thing that times out first
+IPFS_TIMEOUT   = float(os.environ.get("IPFS_FETCH_TIMEOUT", "300"))
 # firewall: per-version ports config from the catalog. Logical ports are LABELS
 # (each deployment binds a remapped actual), so classic low numbers are allowed —
 # a DNS app may advertise udp:53. The ceiling keeps labels out of the manager-
@@ -899,8 +903,14 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     fs_args = ["--dir", f"{fsdir}::{FS_GUEST_PATH}"] if fsdir else []
     # nn tenants also carry whatever wasmtime flags the boot probe adopted
     # (e.g. -O pooling-allocator=n: serve's default pooling allocator reserves
-    # ~6TB of virtual address space, which CUDA init chokes on under TDX)
-    nn_args = ["-Snn", *(_NN_PROBE.get("args") or [])] if nn else []
+    # ~6TB of virtual address space, which CUDA init chokes on under TDX).
+    # hostcall-fuel: wasmtime caps guest<->host copies per request at 128MiB
+    # by default (a DoS guard); an embedded LLM blows through it twice - the
+    # model bytes at load() (traps with a bare wasm backtrace, no message at
+    # default log levels) and the per-step logits reads on a big vocab
+    # (151936 x 4B x 400 tokens = 240MB). 4GiB keeps the guard while clearing
+    # any model that passes WASM_MAX_BYTES.
+    nn_args = ["-Snn", "-S", "hostcall-fuel=4294967296", *(_NN_PROBE.get("args") or [])] if nn else []
     if pspec["serve"]:
         return ([WASMTIME, "serve", "-Scli", "-Shttp", *P3_FLAGS, *nn_args, *fs_args,
                  "-W", f"max-memory-size={mem_bytes}",

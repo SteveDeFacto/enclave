@@ -1,4 +1,4 @@
-//! llm-chat: a small LLM (SmolLM2-135M-Instruct, ONNX q4f16) compiled into a
+//! llm-chat: a small LLM (Qwen2.5-0.5B-Instruct, ONNX q4f16) compiled into a
 //! wasm component, with a built-in web chat UI, running on NaN's wasi-nn GPU
 //! interface.
 //!
@@ -36,15 +36,15 @@ static MODEL: &[u8] = include_bytes!("../assets/model_q4f16.onnx");
 static TOKENIZER_JSON: &[u8] = include_bytes!("../assets/tokenizer.json");
 static CHAT_HTML: &str = include_str!("chat.html");
 
-// SmolLM2-135M geometry (config.json of the pinned export)
-const N_LAYERS: u32 = 30;
-const N_KV_HEADS: u32 = 3;
+// Qwen2.5-0.5B geometry (config.json of the pinned export)
+const N_LAYERS: u32 = 24;
+const N_KV_HEADS: u32 = 2;
 const HEAD_DIM: u32 = 64;
-const VOCAB: usize = 49152;
-const EOS: u32 = 2; // <|im_end|>
+const VOCAB: usize = 151936;
+const EOS: [u32; 2] = [151645, 151643]; // <|im_end|>, <|endoftext|>
 
 const SYSTEM_PROMPT: &str =
-    "You are a helpful AI assistant named SmolLM, trained by Hugging Face";
+    "You are Qwen, a helpful AI assistant. Answer concisely and accurately.";
 // Prompt budget: KV traffic and prefill cost grow with context; a chat demo
 // does not need more. Oldest turns are dropped (system prompt kept).
 const MAX_PROMPT_TOKENS: usize = 768;
@@ -52,7 +52,9 @@ const PREFILL_CHUNK: usize = 128;
 const DEFAULT_MAX_NEW: usize = 200;
 const MAX_NEW_CAP: usize = 400;
 const MAX_BODY_BYTES: usize = 64 * 1024;
-const REP_PENALTY: f32 = 1.3;
+// Mild: Qwen2.5 does not loop the way a 135M model does; a heavy penalty
+// (1.3 was tuned for SmolLM2) visibly degrades its output.
+const REP_PENALTY: f32 = 1.1;
 const REP_WINDOW: usize = 64;
 
 fn now_ms() -> u128 {
@@ -245,7 +247,7 @@ fn generate(
             generated[generated.len().saturating_sub(REP_WINDOW)..].to_vec()
         };
         let next = pick_token(&mut logits, &recent);
-        if next == EOS || generated.len() >= max_new {
+        if EOS.contains(&next) || generated.len() >= max_new {
             break;
         }
         generated.push(next);
