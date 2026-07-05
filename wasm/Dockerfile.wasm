@@ -15,7 +15,7 @@
 # The wasmtime binary comes from the nan-wasmtime toolchain image (built from
 # source with wasi-nn + onnx-cuda; see Dockerfile.wasmtime). Bump = rebuild that
 # image via the "Wasmtime Toolchain" workflow, then repin WASMTIME_IMAGE here.
-ARG WASMTIME_IMAGE=ghcr.io/stevedefacto/nan-wasmtime:v45.0.0@sha256:23a86b45cad2df23c8645b0271035789b9518346a9f7af099a5ea5acff45789d
+ARG WASMTIME_IMAGE=ghcr.io/stevedefacto/nan-wasmtime:v45.0.0@sha256:c1b3876d63dc953a4d045e1872e822e7fa347b95f413b7bd7764da95f5a7cb3a
 FROM ${WASMTIME_IMAGE} AS wasmtime
 
 FROM nvidia/cuda:12.6.2-cudnn-runtime-ubuntu24.04
