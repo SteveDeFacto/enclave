@@ -286,6 +286,14 @@ def _nn_tenant_env(gpu_share: float, pinned: bool) -> dict:
     # MPS-partitioned SM budget. Revisit if/when upstream ORT fixes the
     # Hopper attention heuristics for small CUDA_MPS_ACTIVE_THREAD_PERCENTAGE.
     env.setdefault("ORT_DISABLE_MEMORY_EFFICIENT_ATTENTION", "1")
+    # ... and NEITHER knob is sufficient: these exports carry DECOMPOSED
+    # attention, and ORT's Level3 optimizer re-fuses it at session load into
+    # the same sm_90 kernel family (observed live 2026-07-05: Qwen2.5 decode
+    # hangs at step 2 on a 4% H200 slice with both knobs set, fine on sm_86
+    # under an identical MPS partition). ORT_GRAPH_OPT_LEVEL is OUR knob
+    # (nan-wasmtime patch): "basic" skips contrib-op fusion entirely - a q4
+    # model's heavy lifting is MatMulNBits either way (~7% slower locally).
+    env.setdefault("ORT_GRAPH_OPT_LEVEL", "basic")
     # whatever the probe's GPU bisect adopted (e.g. CUDA_MODULE_LOADING=EAGER
     # when lazy loading deadlocks under MPS) applies to every tenant
     env.update(_NN_PROBE.get("env") or {})
