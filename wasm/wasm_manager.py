@@ -137,6 +137,21 @@ MPS_PIPE_DIR = os.environ.get("CUDA_MPS_PIPE_DIRECTORY", "/tmp/nvidia-mps")
 # never-validated CUDA_MPS_PINNED_DEVICE_MEM_LIMIT; VRAM stays accounted by
 # the supervisor's allocator), anything else = GPU launches are refused with
 # the probe's diagnosis instead of hanging apps.
+# --- attached model volumes (Tinfoil Modelwrap) --------------------------- #
+# The enclave can carry read-only, ATTESTED model volumes: tinfoil-config.yml
+# declares `models:` whose weights become dm-verity+EROFS images mounted at
+# MODEL_VOLUME_ROOT/mpk-<root_hash> (the dm-verity root is on the kernel
+# cmdline, so the enclave measurement commits to the exact bytes). A deployment
+# attaches one or more by name; launch() preopens each into the guest as a
+# read-only /models/<name> dir. This is how big models reach a tenant without
+# riding the app wasm (no include_bytes, no IPFS fetch, no 4GiB linear-memory
+# or hostcall-fuel ceiling on the weights). MODEL_VOLUME_ROOT is scanned for
+# mpk-* mounts; MODEL_VOLUMES adds/overrides explicit name:path pairs (for
+# local dev without a real Modelwrap mount). Names must be [a-z0-9-]+.
+MODEL_VOLUME_ROOT = pathlib.Path(os.environ.get("MODEL_VOLUME_ROOT", "/tinfoil/mpk"))
+_MODEL_VOLUMES_ENV = os.environ.get("MODEL_VOLUMES", "").strip()
+_VOL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
 NN_PROBE_TIMEOUT = float(os.environ.get("WASM_NN_PROBE_TIMEOUT", "75"))   # worker.py validated ~60s CC init; match its patience
 # Long-patience budget for the "is it hung or just glacial?" e2e variant:
 # under CC, first-time cuBLAS/cuDNN kernel loading can legitimately take
@@ -280,6 +295,71 @@ def _resolve_config(cid: str) -> str:
     except Exception as e:
         raise ValueError(f"config {cid} is not valid UTF-8 JSON: {e}")
     return text
+
+
+# --- attached model volumes ------------------------------------------------ #
+_VOL_SIZE_CACHE = {}   # path -> (mtime_ns, bytes): du is expensive on a big model dir
+
+
+def _dir_bytes(path: pathlib.Path) -> int:
+    try:
+        st = path.stat()
+        cached = _VOL_SIZE_CACHE.get(str(path))
+        if cached and cached[0] == st.st_mtime_ns:
+            return cached[1]
+        total = 0
+        for root, _dirs, files in os.walk(path):
+            for f in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+        _VOL_SIZE_CACHE[str(path)] = (st.st_mtime_ns, total)
+        return total
+    except OSError:
+        return 0
+
+
+def _model_volumes() -> dict:
+    """Discover attached model volumes. Two sources, env wins (friendly names):
+      1. scan MODEL_VOLUME_ROOT for `mpk-*` mounts (Tinfoil Modelwrap); the
+         mount's dir name IS the volume name (e.g. mpk-0900ca6b...).
+      2. MODEL_VOLUMES="name:/path,name2:/path2" - explicit name->path, for
+         friendly aliases of the mpk mounts and for local dev.
+    Returns {name: {"name", "path", "bytes", "onnx": bool, "files": [top-level]}}.
+    Only existing directories with a servable name are returned."""
+    out = {}
+    def add(name, path):
+        name = str(name).strip()
+        p = pathlib.Path(path)
+        if not _VOL_NAME_RE.match(name) or not p.is_dir():
+            return
+        try:
+            top = sorted(x.name for x in p.iterdir())[:32]
+        except OSError:
+            top = []
+        onnx = any(x.endswith(".onnx") for x in top) or (p / "model.onnx").exists()
+        out[name] = {"name": name, "path": str(p), "bytes": _dir_bytes(p),
+                     "onnx": onnx, "files": top}
+    if MODEL_VOLUME_ROOT.is_dir():
+        try:
+            for child in MODEL_VOLUME_ROOT.iterdir():
+                if child.is_dir() and child.name.startswith("mpk-"):
+                    add(child.name, child)
+        except OSError:
+            pass
+    for pair in _MODEL_VOLUMES_ENV.split(","):
+        pair = pair.strip()
+        if not pair or ":" not in pair:
+            continue
+        name, _, path = pair.partition(":")
+        add(name, path)
+    return out
+
+
+# guest mount point for an attached volume: /models/<name> (read-only; the
+# underlying dm-verity/EROFS mount is physically read-only anyway)
+VOL_GUEST_ROOT = os.environ.get("VOL_GUEST_ROOT", "/models")
 
 
 def _nn_tenant_env(gpu_share: float, pinned: bool) -> dict:
@@ -828,6 +908,12 @@ def _used_cpu_share() -> float:
     return round(sum(r["cpuShare"] for r in _apps.values() if r["status"] in ("starting", "running")), 4)
 
 
+def _volumes_public() -> list:
+    """Attached model volumes for advertisement (no host paths leaked)."""
+    return [{"name": v["name"], "bytes": v["bytes"], "onnx": v["onnx"], "files": v["files"]}
+            for v in sorted(_model_volumes().values(), key=lambda x: x["name"])]
+
+
 def _capacity() -> dict:
     used = _used_cpu_share()
     free = round(max(0.0, 1.0 - used), 4)
@@ -929,7 +1015,7 @@ def _alloc_ports(pspec) -> dict:
 
 
 def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdir=None,
-               nn=False, nan_config=None):
+               nn=False, nan_config=None, vol_mounts=None):
     """The wasmtime invocation for a ports spec. Returns (cmd, host_port, wait_ports).
 
     serve mode: `wasmtime serve` owns the one HTTP listener; no sockets granted.
@@ -963,15 +1049,25 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     # the GUEST, never to the wasmtime process env (that carries the CUDA/ORT
     # knobs). Kept out of the log line: a config may hold an API key.
     cfg_args = ["--env", "NAN_CONFIG=" + nan_config] if nan_config else []
+    # attached model volumes: preopen each mount as a guest /models/<name> dir.
+    # Read-only in practice (dm-verity/EROFS mounts are physically read-only);
+    # NAN_MODELS lists the mounted names so the app can discover them without
+    # probing the filesystem.
+    vol_mounts = vol_mounts or {}
+    vol_args = []
+    for name, host_path in vol_mounts.items():
+        vol_args += ["--dir", f"{host_path}::{VOL_GUEST_ROOT}/{name}"]
+    if vol_mounts:
+        vol_args += ["--env", "NAN_MODELS=" + ",".join(vol_mounts.keys())]
     if pspec["serve"]:
-        return ([WASMTIME, "serve", "-Scli", "-Shttp", *P3_FLAGS, *nn_args, *fs_args, *cfg_args,
+        return ([WASMTIME, "serve", "-Scli", "-Shttp", *P3_FLAGS, *nn_args, *fs_args, *cfg_args, *vol_args,
                  "-W", f"max-memory-size={mem_bytes}",
                  "--addr", f"{HOST_IP}:{serve_port}", str(wasm)],
                 serve_port, [serve_port])
     port_map = port_map or {}
     nan_ports = ",".join(f"{e}={port_map[e]}" for e in pspec["norm"])
     cmd = [WASMTIME, "run", "-Scli", *P3_FLAGS, *nn_args, "-Stcp", "-Sudp",
-           "-Sinherit-network", "-Sallow-ip-name-lookup", *fs_args, *cfg_args,
+           "-Sinherit-network", "-Sallow-ip-name-lookup", *fs_args, *cfg_args, *vol_args,
            "-W", f"max-memory-size={mem_bytes}",
            "--env", "NAN_PORTS=" + nan_ports, str(wasm)]
     http_entry = f"http:{pspec['http']}" if pspec["http"] else None
@@ -985,7 +1081,7 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
 
 
 def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
-           mem_mb: int = 0, pspec=None, storage_mb=None, config_cid="") -> dict:
+           mem_mb: int = 0, pspec=None, storage_mb=None, config_cid="", volumes=None) -> dict:
     pspec = pspec or _parse_ports([])
     if storage_mb is None:
         storage_mb = DEF_STORAGE_MB
@@ -1060,6 +1156,25 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
             rec["status"], rec["error"] = "failed", str(e)
             return rec
 
+    # attached model volumes: resolve requested names to their mounts. A
+    # deployment asking for a volume this enclave doesn't carry fails the launch
+    # with a clear reason (the supervisor backs off + the claim gate should keep
+    # it from landing here in the first place).
+    vol_mounts = {}
+    if volumes:
+        have = _model_volumes()
+        for name in volumes:
+            name = str(name).strip()
+            if not name:
+                continue
+            if name not in have:
+                rec["status"], rec["error"] = "failed", (
+                    f"volume '{name}' not attached to this enclave "
+                    f"(available: {', '.join(sorted(have)) or 'none'})")
+                return rec
+            vol_mounts[name] = have[name]["path"]
+    rec["volumes"] = list(vol_mounts.keys())
+
     # Grants are minimal: a private /data preopen only (no host paths), no --env
     # beyond NAN_PORTS, and sockets only when the version's firewall config asks
     # for them. `-W max-memory-size` caps the guest's linear memory (the only RAM
@@ -1067,7 +1182,7 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
     # the runtime rather than by RLIMIT_AS (see _preexec for why RLIMIT_AS is
     # wrong); the /data ramdisk usage is capped separately by the audit sweep.
     mem_bytes = max(mem_mb, 1) * 1024 * 1024
-    cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir, nn, nan_config)
+    cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir, nn, nan_config, vol_mounts)
     rec["hostPort"] = host_port
     rec["endpoint"] = f"http://{HOST_IP}:{host_port}" if host_port else None
     # GPU tenants: the wasmtime process itself is the CUDA process (ORT holds
@@ -1316,9 +1431,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                     "version": _wasmtime_version(), "mock": MOCK,
                                     "nn": NN_ENABLED and NODE_HAS_GPU and (MOCK or _NN_PROBE["state"] == "ok"),
                                     "nnProbe": dict(_NN_PROBE),
+                                    "volumes": _volumes_public(),
                                     "capacity": _capacity()})
         if self.path == "/capacity":
             return self._json(200, _capacity())
+        if self.path == "/volumes":
+            return self._json(200, {"volumes": _volumes_public()})
         if self.path == "/catalog":
             cat = _load_catalog()
             return self._json(200, {"apps": [
@@ -1457,7 +1575,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(422, {"error": f"app '{app_ref}' declares a minimum of {min_ggf / 1000} GPU TFLOPS; the request asks for less"})
         storage_mb = int(meta.get("storage_mb", DEF_STORAGE_MB))   # per-app /data cap; 0 opts out
         config_cid = str(b.get("configCid") or "").strip()         # per-deployment NAN_CONFIG (verified in launch)
-        rec = launch(app_ref, b.get("name", ""), cpu_share, gpu_share, mem_mb, pspec, storage_mb, config_cid)
+        req_vols = b.get("volumes") or []                          # attached model volumes by name
+        if not isinstance(req_vols, list):
+            return self._json(400, {"error": "volumes must be a list of volume names"})
+        rec = launch(app_ref, b.get("name", ""), cpu_share, gpu_share, mem_mb, pspec, storage_mb, config_cid, req_vols)
         code = 201 if rec["status"] in ("starting", "running") else 500
         return self._json(code, _public(rec))
 
