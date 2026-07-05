@@ -1279,7 +1279,10 @@ app.get("/availability", async (_req, res) => {
     // deployments can launch; `nnProbe` carries the boot probe's diagnosis,
     // making a broken GPU path visible from outside without operator access.
     const nn = PROVISION_BACKEND === "vm" && h.nn !== undefined ? { nn: h.nn, nnProbe: h.nnProbe } : {};
-    return res.json({ ...shape(cpuFree, gpuFree, PROVISION_BACKEND === "vm" ? "vmmanager" : "worker"), ...nn });
+    // attached model volumes this enclave carries (Modelwrap): the console and
+    // clients read this to know which volumes a deployment here can mount.
+    const vols = PROVISION_BACKEND === "vm" && Array.isArray(h.volumes) ? { volumes: h.volumes } : {};
+    return res.json({ ...shape(cpuFree, gpuFree, PROVISION_BACKEND === "vm" ? "vmmanager" : "worker"), ...nn, ...vols });
   } catch (e) {
     return res.json(shape(maxFreeCpu(), maxFreeGpuShare(), "fallback",
       `${PROVISION_BACKEND === "vm" ? "wasm" : "worker"} manager unreachable`));

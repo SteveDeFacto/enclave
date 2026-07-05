@@ -1156,16 +1156,27 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
             rec["status"], rec["error"] = "failed", str(e)
             return rec
 
-    # attached model volumes: resolve requested names to their mounts. A
-    # deployment asking for a volume this enclave doesn't carry fails the launch
-    # with a clear reason (the supervisor backs off + the claim gate should keep
-    # it from landing here in the first place).
+    # attached model volumes: the request may name them two ways - an explicit
+    # /vms `volumes` list (direct callers) and/or a `volumes` array in the
+    # verified config JSON (the deployment's configCid; how the console/API
+    # attach them without a contract change). Union both. A deployment asking
+    # for a volume this enclave doesn't carry fails the launch with a clear
+    # reason (the supervisor backs off; the claim gate keeps it from landing
+    # here when enclaves advertise their volumes).
+    want = list(volumes or [])
+    if nan_config:
+        try:
+            cfg_vols = json.loads(nan_config).get("volumes")
+            if isinstance(cfg_vols, list):
+                want += cfg_vols
+        except Exception:
+            pass
     vol_mounts = {}
-    if volumes:
+    if want:
         have = _model_volumes()
-        for name in volumes:
+        for name in want:
             name = str(name).strip()
-            if not name:
+            if not name or name in vol_mounts:
                 continue
             if name not in have:
                 rec["status"], rec["error"] = "failed", (

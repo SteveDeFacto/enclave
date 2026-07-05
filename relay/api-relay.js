@@ -291,8 +291,29 @@ function aggregateAvailability() {
     cardVramGb: g ? g.cardVramGb ?? 0 : 0, cardTflops: g ? g.cardTflops ?? 0 : 0, cards: g ? g.cards ?? 0 : 0,
     vcpusFree: c ? c.vcpusFree ?? 0 : 0, ramGbFree: c ? c.ramGbFree ?? 0 : 0, cpuGflopsFree: c ? c.cpuGflopsFree ?? 0 : 0,
     nodeVcpus: c ? c.nodeVcpus ?? 0 : 0, nodeRamGb: c ? c.nodeRamGb ?? 0 : 0, nodeGflops: c ? c.nodeGflops ?? 0 : 0,
+    // attached model volumes across the fleet (Modelwrap), deduped by name -
+    // each carries `enclaves`: which endpoints can mount it (placement matters,
+    // a volume only lives where its enclave declares it)
+    volumes: fleetVolumes(),
     source: "api-relay", updatedAt,
   };
+}
+
+// Union of every live enclave's advertised model volumes, keyed by name, each
+// annotated with the endpoints that carry it.
+function fleetVolumes() {
+  const byName = new Map();
+  for (const e of live) {
+    for (const v of (e.availability?.volumes || [])) {
+      if (!v || !v.name) continue;
+      const cur = byName.get(v.name) || { name: v.name, bytes: v.bytes || 0, onnx: !!v.onnx, endpoints: [] };
+      cur.bytes = Math.max(cur.bytes, v.bytes || 0);
+      cur.onnx = cur.onnx || !!v.onnx;
+      if (!cur.endpoints.includes(e.endpoint)) cur.endpoints.push(e.endpoint);
+      byName.set(v.name, cur);
+    }
+  }
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 const DEP_PATH_RE = /^\/v1\/deployments\/([A-Za-z0-9_-]+)(?:\/|$)/;
