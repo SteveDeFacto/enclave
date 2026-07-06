@@ -24,13 +24,11 @@ const CLIENT_ID = "client-WY6b9c219SjvhdjLGYDriJ9xjSrbV7c4joihKRQPRm3QN";
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const msg = (html) => { document.getElementById("msg").innerHTML = html; };
 try {
-  const [React, ReactDOMClient, RA] = await Promise.all([
-    import("https://esm.sh/react@18.3.1"),
-    import("https://esm.sh/react-dom@18.3.1/client"),
-    import("https://esm.sh/@privy-io/react-auth@3.33.1?deps=react@18.3.1,react-dom@18.3.1")
-  ]);
+  // self-hosted bundle (site/privy/, built by esbuild from @privy-io/react-auth
+  // + react) - no CDN at runtime; lazy screens load as local chunks
+  const mod = await import("/privy/entry.js");
+  const { React, createRoot, PrivyProvider, usePrivy, useFiatOnramp } = mod;
   const h = React.createElement;
-  const { PrivyProvider, usePrivy, useFiatOnramp } = RA;
 
   function embeddedAddressOf(user){
     const accs = (user && (user.linkedAccounts || user.linked_accounts)) || [];
@@ -68,7 +66,7 @@ try {
     return null;
   }
 
-  ReactDOMClient.createRoot(document.getElementById("root")).render(
+  createRoot(document.getElementById("root")).render(
     h(PrivyProvider, {
       appId: APP_ID,
       clientId: CLIENT_ID,
