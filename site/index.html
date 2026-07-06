@@ -6487,8 +6487,9 @@ function appCard(app){
     : (!STORE.owner || isOfficial) ? ''   // owner not fetched yet: community status is unknown, show nothing
     : '<span class="app-badge comm" title="Community-published; not owner-verified">community</span>';
   // approval is the deploy gate: the enclave refuses this CID until the catalog owner approves it
+  // (official apps skip the ✓ approved badge - owner-published implies it - but pending/rejected still show)
   const apBadge = v.approval === APPROVAL.approved
-    ? '<span class="app-badge" title="Approved by the catalog owner; deployable">✓ approved</span>'
+    ? (isOfficial ? '' : '<span class="app-badge" title="Approved by the catalog owner; deployable">✓ approved</span>')
     : v.approval === APPROVAL.rejected
     ? '<span class="app-badge rej" title="Rejected by the catalog owner; deploys are refused">✕ rejected</span>'
     : '<span class="app-badge unv" title="Awaiting catalog-owner approval; deploys are refused until then">pending</span>';
