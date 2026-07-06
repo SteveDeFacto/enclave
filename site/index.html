@@ -4484,7 +4484,7 @@ async function openBuyModal(){
     '<div class="wp-amts">' + [10, 25, 50, 100].map(a => '<button class="wp-amt' + (a === 25 ? ' on' : '') + '" data-a="' + a + '" type="button">$' + a + '</button>').join("") + '</div>' +
     '<div class="wp-err" id="buyErr" hidden></div>' +
     '<button class="wp-item wp-go" id="buyGo" type="button">Continue to checkout</button>' +
-    '<div class="wp-foot">Checkout by Coinbase or MoonPay · brokered by Privy</div>' +
+    '<div class="wp-foot">Checkout by MoonPay · brokered by Privy</div>' +
     '<button class="wp-cancel" type="button">Cancel</button>');
   if (!m) return;
   let amt = 25;
@@ -4512,28 +4512,11 @@ async function openBuyModal(){
   });
 }
 
-// Privy brokers both onramps with its own provider keys - no accounts on our side.
-// Coinbase first (guest card checkout, no exchange account needed), MoonPay fallback.
+// Privy brokers the onramp with its own provider keys - no accounts on our side.
+// MoonPay only for now (enabled in the Privy dashboard; Coinbase deliberately not).
 async function buildOnrampUrl(usd){
   await PrivyWallet.load();
   const fund = PrivyWallet.privy.funding;
-  const errs = [];
-  try {
-    const r = await fund.coinbase.initOnRampSession({
-      addresses: [{ address: Nan.address, blockchains: ["base"] }],
-      assets: ["USDC"],
-      defaultNetwork: "base",
-      presetFiatAmount: usd,
-      fiatCurrency: "USD"
-    });
-    const tok = r && (r.sessionToken || r.token);
-    const url = r && (r.url || r.onrampUrl || (tok
-      ? "https://pay.coinbase.com/buy/select-asset?sessionToken=" + encodeURIComponent(tok) +
-        "&defaultAsset=USDC&defaultNetwork=base&presetFiatAmount=" + usd + "&fiatCurrency=USD"
-      : null));
-    if (url) return url;
-    errs.push("Coinbase: unexpected response " + JSON.stringify(r).slice(0, 120));
-  } catch(e){ errs.push("Coinbase: " + (e && (e.message || e))); }
   try {
     const base = "https://buy.moonpay.com?currencyCode=usdc_base&walletAddress=" + encodeURIComponent(Nan.address) +
                  "&baseCurrencyCode=usd&baseCurrencyAmount=" + usd;
@@ -4543,9 +4526,10 @@ async function buildOnrampUrl(usd){
     const url = (typeof r === "string" && /^https:/.test(r)) ? r
       : r && (r.signedUrl || r.url || (r.signature ? base + "&signature=" + encodeURIComponent(r.signature) : null));
     if (url) return url;
-    errs.push("MoonPay: unexpected response " + JSON.stringify(r).slice(0, 120));
-  } catch(e){ errs.push("MoonPay: " + (e && (e.message || e))); }
-  throw new NanError("Card checkout is unavailable right now. " + errs.join(" · "), 0);
+    throw new NanError("MoonPay returned an unexpected response: " + JSON.stringify(r).slice(0, 120), 0);
+  } catch(e){
+    throw (e instanceof NanError) ? e : new NanError("Card checkout is unavailable right now. MoonPay: " + (e && (e.message || e)), 0);
+  }
 }
 
 async function pickWallet(){
