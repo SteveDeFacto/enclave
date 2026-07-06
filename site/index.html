@@ -686,7 +686,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     </div>
     <div class="enclaves" id="enclaves">
       <div class="enc-head">
-        <h4>My enclaves</h4>
+        <h4>My Apps</h4>
         <div class="enc-tools">
           <span class="enc-count" id="encCount"></span>
           <button class="btn btn-sm" id="encRefresh" type="button">↻ refresh</button>
@@ -1006,7 +1006,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
 @media(max-width:960px){.docs-layout{grid-template-columns:1fr;}.docs-side{position:static;max-height:none;}.docs-nav{max-height:260px;}}
 </style>
 <!-- ===================== DEVELOP · sub-tab bar ===================== -->
-<section id="develop-home" data-view="develop" aria-label="Developer documentation" hidden style="padding:44px 0 0;">
+<section id="develop-home" data-view="develop" aria-label="Developer documentation" hidden style="padding:84px 0 0;">
   <a id="develop"></a>
   <div class="wrap">
     <span class="eyebrow">Develop</span>
@@ -5403,6 +5403,25 @@ function encTier(d){
   return c ? (Math.round(c * 100) + "% CPU") : "CPU";
 }
 
+// deployment rows show the human app name (slug:version) when the catalog can
+// resolve the CID - from the live STORE or the localStorage catalog cache -
+// falling back to the truncated ipfs:// reference.
+function slugOfRef(ref){
+  const cid = String(ref || "").replace(/^ipfs:\/\//, "").trim();
+  if (!cid) return null;
+  const lists = [];
+  if (typeof STORE === "object" && STORE && Array.isArray(STORE.apps) && STORE.apps.length) lists.push(STORE.apps);
+  try {
+    const raw = lsGet("nan_catalog_" + APP_CATALOG_ADDRESS);
+    if (raw){ const j = JSON.parse(raw); if (j && Array.isArray(j.apps)) lists.push(j.apps); }
+  } catch(e){}
+  for (const apps of lists) for (const a of apps){
+    const vs = (a && a.versions) || [];
+    for (const v of vs) if (v && v.cid === cid) return a.slug + (v.version != null ? ":" + v.version : "");
+  }
+  return null;
+}
+
 async function refreshEnclaves(opts){
   opts = opts || {};
   const body = $("#encBody"), count = $("#encCount"); if (!body) return;
@@ -5474,7 +5493,7 @@ function renderEnclaveRows(list, highlight){
         '<span class="ap-badge ' + statusCls(st) + '">' + esc(st) + '</span>' +
         '<span class="ap-badge ' + (d.public ? 'ep-public' : 'ep-private') + '" title="' + (d.public ? 'anyone can reach the app endpoint' : 'only your wallet token can reach the app') + '">' + (d.public ? 'public' : 'private') + '</span>' +
         '<button class="enc-id" data-copy="' + esc(d.id) + '">' + esc(d.id) + ' \u29c9</button>' +
-        '<span class="enc-meta">' + esc(encTier(d)) + ((d.image && d.image.reference) ? ' \u00b7 <span class="dim">' + esc(shortImg(d.image.reference)) + '</span>' : '') + '</span>' +
+        '<span class="enc-meta">' + esc(encTier(d)) + ((d.image && d.image.reference) ? ' \u00b7 <span class="dim">' + esc(slugOfRef(d.image.reference) || shortImg(d.image.reference)) + '</span>' : '') + '</span>' +
         '<span class="enc-spend">' + bud + '</span>' +
         '<span class="enc-acts">' +
           '<button class="btn btn-sm enc-verify" data-id="' + esc(d.id) + '">Verify</button>' +
