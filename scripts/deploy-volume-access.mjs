@@ -24,6 +24,11 @@
 // Flags:
 //   --yes                 skip the interactive confirmation (CI)
 //   --dry-run             compile + show the plan, do NOT broadcast
+//   --no-write-config     do NOT write the address back into the repo (default
+//                         wires enclaves/{gpu,cpu}/tinfoil-config.yml
+//                         VOLUME_ACCESS_ADDRESS and the vault app's
+//                         config.json default in wasm/apps/vault/src/lib.rs -
+//                         same pattern as deploy-deployments.mjs)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -44,6 +49,41 @@ const ABI_OUT = path.join(REPO, "contracts", "NanVolumeAccess.abi.json");
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has("--dry-run");
 const ASSUME_YES = args.has("--yes");
+const NO_WRITE = args.has("--no-write-config");
+
+const CONFIG     = path.join(REPO, "enclaves", "gpu", "tinfoil-config.yml");
+const CONFIG_CPU = path.join(REPO, "enclaves", "cpu", "tinfoil-config.yml");
+const VAULT_APP  = path.join(REPO, "wasm", "apps", "vault", "src", "lib.rs");
+
+// Wire the deployed address into everything that ships it (the sync script
+// can then keep the flavors from drifting, but it cannot SEED an empty
+// placeholder - this is the primary write).
+function writeVolumeAccessAddress(addr) {
+  const re = /(-\s*VOLUME_ACCESS_ADDRESS:\s*)"[^"]*"/;
+  for (const file of [CONFIG, CONFIG_CPU]) {
+    if (!fs.existsSync(file)) continue;
+    let cfg = fs.readFileSync(file, "utf8");
+    if (!re.test(cfg)) {
+      console.log(`No VOLUME_ACCESS_ADDRESS line in ${path.relative(REPO, file)} yet; add under the supervisor env:`);
+      console.log(`      - VOLUME_ACCESS_ADDRESS: "${addr}"   # set by scripts/deploy-volume-access.mjs`);
+      continue;
+    }
+    fs.writeFileSync(file, cfg.replace(re, `$1"${addr}"`));
+    console.log(`Wrote VOLUME_ACCESS_ADDRESS="${addr}" into ${path.relative(REPO, file)}`);
+  }
+  // the vault app ships the address as its config.json default (still
+  // overridable per deployment via NAN_CONFIG or ?contract=)
+  if (fs.existsSync(VAULT_APP)) {
+    const are = /("volumeAccess":\s*)"[^"]*"/;
+    const src = fs.readFileSync(VAULT_APP, "utf8");
+    if (are.test(src)) {
+      fs.writeFileSync(VAULT_APP, src.replace(are, `$1"${addr}"`));
+      console.log(`Wrote volumeAccess="${addr}" into ${path.relative(REPO, VAULT_APP)} (rebuild the component to ship it)`);
+    } else {
+      console.log(`No volumeAccess default in ${path.relative(REPO, VAULT_APP)}; update it by hand: ${addr}`);
+    }
+  }
+}
 
 const NETWORKS = {
   "base-sepolia": { chain: baseSepolia, rpc: "https://sepolia.base.org", explorer: "https://sepolia.basescan.org" },
@@ -162,8 +202,11 @@ async function main() {
   console.log(`  explorer          ${net.explorer}/address/${addr}`);
   console.log("===============================================================\n");
 
-  console.log("Next:");
-  console.log(`  1. Set VOLUME_ACCESS_ADDRESS="${addr}" for the supervisor/manager (Phase 3 reads the ACL here).`);
+  if (NO_WRITE) console.log(`(--no-write-config: set VOLUME_ACCESS_ADDRESS="${addr}" in the configs by hand)`);
+  else writeVolumeAccessAddress(addr);
+
+  console.log("\nNext:");
+  console.log(`  1. Commit the wired configs + release both flavors (the supervisor reads the ACL at VOLUME_ACCESS_ADDRESS).`);
   console.log(`  2. Ensure the operator EOA ${operator} is funded with a little Base ETH (it signs auto-grant txs).`);
   console.log(`  3. A deployer creates a volume:  createVolume(name)  (owner = their wallet; volId = keccak(owner,name)).`);
   console.log(`  4. Members self-register their X25519 pubkey via the vault app; owner/enclave grant() seals the VEK to them.`);
