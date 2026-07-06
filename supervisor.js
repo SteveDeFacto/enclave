@@ -697,8 +697,10 @@ async function spawnContainer({ deploymentId, gpuShare, cpuShare, image, appPort
     console.log(`[spawn-vm] ${deploymentId} image=${ref} cpuShare=${c} gpuShare=${g} `
               + `vm=${r.body.id} hostPort=${r.body.hostPort} status=${r.body.status}`);
     // The VM boots asynchronously; the data path 502s until its server is up.
+    // status carries the manager's state - "awaiting_unlock" means the tenant is
+    // provisioned but held for its encrypted-volume key (not yet spawned).
     return { internalPort: r.body.hostPort || 0, sshPort: 0, vmId: r.body.id, hostPort: r.body.hostPort,
-             portMap: r.body.portMap || {} };   // logical "tcp:5432" -> actual loopback bind
+             portMap: r.body.portMap || {}, status: r.body.status };   // logical "tcp:5432" -> actual loopback bind
   }
 
   // worker backend (GPU)
@@ -1133,6 +1135,10 @@ app.use("/x/:id", async (req, res) => {
     if (!addr) return fail(res, 401, "unauthorized", "Missing or invalid token.");
     if (rec.owner !== addr) return fail(res, 403, "forbidden", "Not your deployment.");
   }
+  if (rec.status === "awaiting_unlock")
+    return fail(res, 425, "awaiting_unlock", "This deployment has an encrypted volume that isn't unlocked on this enclave yet. "
+      + "Verify the enclave attestation, then POST the passphrase to /v1/deployments/" + rec.id + "/unlock. "
+      + "(After a failover the key must be re-delivered - it was never stored.)");
   if (rec.status !== "running") return fail(res, 409, "not_running", `Deployment is ${rec.status}.`);
 
   // vm backend: proxy to the app's loopback port on the app manager, on shared
@@ -1775,6 +1781,16 @@ async function provisionTenant(rec) {
     rec._port = sp.internalPort; rec._sshPort = sp.sshPort;
     if (sp.vmId) { rec._vmId = sp.vmId; rec._vmHostPort = sp.hostPort; }
     if (sp.portMap) rec.portMap = sp.portMap;   // logical -> actual (public: clients see their mapping)
+    // Provisioned-but-locked: the tenant carries encrypted volumes whose key the
+    // deployer hasn't delivered to THIS enclave yet (a fresh claim, or a failover
+    // - the key lived only in the previous runner's RAM and is gone). Hold in
+    // awaiting_unlock: keep the lease, wait for POST /v1/deployments/:id/unlock.
+    // The app is NOT running, but this is a success (don't release the lease).
+    if (sp.status === "awaiting_unlock") {
+      rec.status = "awaiting_unlock"; rec.paused = false; rec.pauseReason = null; rec._lastTickAt = Date.now();
+      console.log(`[provision] ${rec.id} awaiting encrypted-volume unlock (key not yet delivered to this enclave)`);
+      return true;
+    }
     if (!rec.startedAt) rec.startedAt = Date.now();
     rec.status = "running"; rec.paused = false; rec.pauseReason = null; rec._lastTickAt = Date.now();
     return true;
@@ -2096,8 +2112,17 @@ app.post("/v1/deployments/:id/unlock", authed, async (req, res) => {
   try {
     const r = await vmReq("POST", `/vms/${encodeURIComponent(rec._vmId)}/unlock`, { name, passphrase }, SPAWN_TIMEOUT_MS);
     if (r.status >= 400) return fail(res, r.status, "unlock_failed", (r.body && r.body.error) || `HTTP ${r.status}`);
-    // reflect the manager's post-unlock status onto the record
-    if (r.body && r.body.status) rec.status = r.body.status === "running" ? "running" : rec.status;
+    // The last volume's unlock spawns the app -> the manager reports "running".
+    // Transition the deployment and start its clock from THIS moment (the app
+    // wasn't running while locked, so no back-charge for the awaiting window).
+    if (r.body && r.body.status === "running" && rec.status !== "running") {
+      rec.status = "running"; rec.paused = false; rec.pauseReason = null;
+      if (!rec.startedAt) rec.startedAt = Date.now();
+      rec._lastTickAt = Date.now();
+      // the app was just spawned on unlock: pick up its forwarded port + mapping
+      if (r.body.hostPort) { rec._vmHostPort = r.body.hostPort; rec._port = r.body.hostPort; }
+      if (r.body.portMap) rec.portMap = r.body.portMap;
+    }
     saveStateSoon();
     res.json({ id: rec.id, volume: name, encVolumes: (r.body && r.body.encVolumes) || null,
                status: (r.body && r.body.status) || rec.status });
@@ -2593,7 +2618,11 @@ async function renewLeases() {
 async function auditClaims(ledgerById) {
   const me = claimSigner().account.address.toLowerCase();
   for (const rec of [...deployments.values()]) {
-    if (!rec._onchain || !["running", "claimed"].includes(rec.status)) continue;
+    // awaiting_unlock is audited too: if its lease lapses (unrenewed - a locked
+    // deployment doesn't renew) and another enclave claims it, this one must
+    // tear down and free the slice it reserved, not hold capacity for an app
+    // that will never run here without the (now-gone) key.
+    if (!rec._onchain || !["running", "claimed", "awaiting_unlock"].includes(rec.status)) continue;
     // the tick already paged the whole ledger once - one read serves the audit
     // AND the sweep (per-record re-reads were what blew the RPC rate budget)
     const d = ledgerById.get(rec.id.toLowerCase());

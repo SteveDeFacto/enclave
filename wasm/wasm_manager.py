@@ -1781,7 +1781,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not isinstance(req_vols, list):
             return self._json(400, {"error": "volumes must be a list of volume names"})
         rec = launch(app_ref, b.get("name", ""), cpu_share, gpu_share, mem_mb, pspec, storage_mb, config_cid, req_vols)
-        code = 201 if rec["status"] in ("starting", "running") else 500
+        # awaiting_unlock is a SUCCESSFUL provision that's waiting for the
+        # deployer's encrypted-volume key (POST /vms/:id/unlock) - NOT a failure.
+        # The supervisor must keep the tenant + lease and surface the state, not
+        # release it (which would loop the deployment through enclaves unrun).
+        code = 201 if rec["status"] in ("starting", "running", "awaiting_unlock") else 500
         return self._json(code, _public(rec))
 
     def do_DELETE(self):
