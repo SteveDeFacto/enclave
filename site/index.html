@@ -200,7 +200,7 @@ section{padding:84px 0;position:relative;}
 .iso-cards .tag{position:static;display:inline-block;margin:0 0 12px;padding:.35em .75em;border:1px solid var(--line);border-radius:6px;background:var(--bg-1);}
 .iso-cards .tag:first-child + h3{margin-top:0;}
 .iso-cards .card.jade .tag{color:var(--jade);border-color:rgba(47,230,168,.35);}
-.iso-cards .card.amber .tag{color:var(--amber);border-color:rgba(255,184,90,.35);}
+.iso-cards .card.iris .tag{color:var(--iris);border-color:rgba(143,162,255,.4);}
 .iso-cards h3{font-size:1.08rem;}
 .iso-cards .card p{font-size:.9rem;line-height:1.62;}
 .iso-mech h4 .sub{color:var(--text-dim);font-weight:400;}
@@ -280,6 +280,10 @@ section{padding:84px 0;position:relative;}
 
 /* terminal sim */
 .term{font-family:var(--font-mono);font-size:.8rem;padding:16px;line-height:1.7;color:#B9C6D6;min-height:300px;max-height:min(480px,60vh);overflow-y:auto;}
+.term-bar{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line-soft);background:var(--bg-1);}
+.term-bar .tb-k{font-family:var(--font-mono);font-size:.64rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);}
+.term-bar select{background:var(--surface);border:1px solid var(--line);color:var(--text);font-family:var(--font-mono);font-size:.74rem;padding:4px 8px;border-radius:7px;max-width:340px;}
+.term-bar select:focus{outline:none;border-color:var(--jade-dim);}
 .term .ln{display:block;white-space:pre-wrap;}
 .term .p{color:var(--jade);}
 .term .ok{color:var(--jade);}
@@ -593,7 +597,8 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
       <p>Pick a Wasm app, connect your wallet, and provision a real confidential enclave. This console calls the same public REST API documented below. The request body and browser <span class="mono">fetch()</span> shown here are exactly what gets sent. Use <span class="mono">Dry run</span> to inspect the call before spending anything. Want to deploy your own code? The <a href="#docs" data-view="develop">developer guide</a> walks you through building it.</p>
       <div class="endpoint-row">
         <label for="apiBase">API endpoint</label>
-        <input type="text" id="apiBase" spellcheck="false" autocapitalize="off" autocomplete="off" />
+        <input type="text" id="apiBase" spellcheck="false" autocapitalize="off" autocomplete="off" readonly />
+        <span class="dim" aria-hidden="true">—</span>
         <span class="ep-state" id="epState"></span>
       </div>
       <p class="dim" style="font-family:var(--font-mono);font-size:.7rem;margin:.2em 0 0;">Connect your wallet from the header. It's used only to sign in &amp; pay, with no account or KYC.</p>
@@ -663,13 +668,13 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
           <button class="on" data-pane="req" type="button" role="tab">Request body</button>
           <button data-pane="fetch" type="button" role="tab">fetch()</button>
           <button data-pane="curl" type="button" role="tab">cURL</button>
-          <button data-pane="run" type="button" role="tab">Enclave</button>
+          <button data-pane="run" type="button" role="tab">Output</button>
         </div>
         <div class="console-body">
           <div class="pane on" data-pane="req"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">POST /v1/deployments</span><button class="copybtn" data-copy="req">⧉ copy</button></div><pre><code id="outReq"></code></pre></div></div>
           <div class="pane" data-pane="fetch"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">deploy.js</span><button class="copybtn" data-copy="fetch">⧉ copy</button></div><pre><code id="outFetch"></code></pre></div></div>
           <div class="pane" data-pane="curl"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" data-copy="curl">⧉ copy</button></div><pre><code id="outCurl"></code></pre></div></div>
-          <div class="pane" data-pane="run"><div class="term" id="termOut"><span class="ln dimln">// press “Deploy” to provision a confidential enclave…</span></div></div>
+          <div class="pane" data-pane="run"><div class="term-bar"><span class="tb-k">deployment</span><select id="termSel" aria-label="Select deployment output"><option>no deployments yet</option></select></div><div class="term" id="termOut"><span class="ln dimln">// press “Deploy” to provision a confidential enclave…</span></div></div>
         </div>
         <div class="run-row">
           <button class="btn btn-primary btn-sm" id="deployBtn" type="button">▸ Deploy App</button>
@@ -882,7 +887,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         <h3>You vs. the operator</h3>
         <p>Your enclave runs in a CPU TEE (Intel TDX) with the H200 in NVIDIA confidential-computing mode. The CPU↔GPU link is encrypted and the GPU is walled off from the host. Enclave, the operator, cannot read your VRAM, RAM, keys, or traffic. This is enforced by hardware and proven by an attestation you verify in your browser <b>before</b> sending data. This is the strong guarantee, and it's the one you can check cryptographically.</p>
       </div>
-      <div class="card amber">
+      <div class="card iris">
         <span class="tag">software · Wasm sandbox + process</span>
         <h3>You vs. other tenants</h3>
         <p>CC seals the <i>whole</i> GPU as a single trust domain and disables MIG, so there's no hardware partition between tenants on one card. We isolate tenants with two software layers at once: each tenant's app runs inside a <b>WebAssembly sandbox</b> (memory-safe, no ambient authority, no host filesystem or environment) and in its own dedicated OS worker <b>process</b>, never sharing either with another tenant. Those boundaries, not a hardware slice, are what keep tenants apart, and we don't pretend otherwise.</p>
@@ -1616,13 +1621,9 @@ curl -H "Authorization: Bearer $NAN_TOKEN" \
     <div class="docs-main" style="max-width:920px;">
         <article class="doc" id="docs-cli">
           <h3>The <code>enclave</code> CLI</h3>
-          <div class="doc-note">
-            <span class="nt">Shipped</span>
-            <p>The CLI ships with the platform repo as <code>cli/enclave.mjs</code>; the installers (<code>install.sh</code> for Linux/macOS, <code>install.ps1</code> for Windows) bundle it, dependencies inlined, into a single ~1&nbsp;MB executable on your PATH. Every command maps 1:1 onto the <a href="#api">public API</a> and the on-chain contracts, so anything it does can be replayed with <code>curl</code> and your wallet — run any command with <code>-x</code> to watch. The <code>get.enclave.host</code> installer goes live with the domain cutover.</p>
-          </div>
           <p>One executable file, wallet-native, no accounts. Point it at a key and every operation on this page becomes a one-liner; state lives in <code>~/.config/enclave/</code> and nothing else touches your machine.</p>
 
-          <h4>Install &amp; identity</h4>
+          <h4>Install &amp; authenticate</h4>
           <div class="code"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code># install — one ~1 MB executable on your PATH (needs node ≥ 20)
 git clone https://github.com/SteveDeFacto/nan &amp;&amp; nan/cli/install.sh   # Linux/macOS
 git clone https://github.com/SteveDeFacto/nan; .\nan\cli\install.ps1  # Windows PowerShell
@@ -1633,6 +1634,10 @@ curl -fsSL https://get.enclave.host | sh    # after the domain cutover
 enclave key new                    # prints the address; fund it with USDC on Base
 enclave key import                 # reads a private key from stdin; or ENCLAVE_KEY env
 enclave whoami                     # address, USDC balance, running deployments</code></pre></div>
+          <div class="doc-note">
+            <span class="nt">Shipped</span>
+            <p>The install above clones the platform repo and bundles <code>cli/enclave.mjs</code> (dependencies inlined) into a single ~1&nbsp;MB executable on your PATH — <code>install.sh</code> on Linux/macOS, <code>install.ps1</code> on Windows. Every command maps 1:1 onto the <a href="#api">public API</a> and the on-chain contracts, so anything it does can be replayed with <code>curl</code> and your wallet — run any command with <code>-x</code> to watch. The <code>get.enclave.host</code> one-liner goes live with the domain cutover.</p>
+          </div>
           <p>Auth is SIWE under the hood: commands that need the API sign a one-time challenge (<code>GET /auth/nonce</code> → <code>POST /auth/login</code>) and cache the bearer token until it expires. On-chain commands (create, fund, publish) sign Base transactions with the same key - the CLI never sends your key anywhere.</p>
 
           <h4>Command reference</h4>
@@ -4526,7 +4531,7 @@ async function updateUsdcBalance(){
 // via localStorage, so it opens straight into checkout.
 function openBuyModal(){
   if (!Nan.address) return;
-  const w = window.open("/buy.html?v=4", "enclaveBuy", "popup,width=480,height=780");
+  const w = window.open("/buy.html?v=5", "enclaveBuy", "popup,width=480,height=780");
   if (!w){ showToast("Popup blocked - allow popups for this site and try again."); return; }
   showToast("Complete your purchase in the checkout window.");
 }
@@ -4945,7 +4950,48 @@ function switchPane(name){
 }
 
 /* ---- terminal helpers ---- */
+/* ---- persistent deploy output: one buffer per run, selectable, survives reload ---- */
+const TERM_STORE_KEY = "nan_term_logs";
+let termRuns = [], termCur = null, termView = null, termReplay = false, _termSaveT = 0;
+function termLoadRuns(){
+  try { termRuns = JSON.parse(lsGet(TERM_STORE_KEY) || "[]") || []; } catch(e){ termRuns = []; }
+  termView = termRuns.length ? termRuns[termRuns.length - 1] : null;
+}
+function termSaveRuns(){
+  clearTimeout(_termSaveT);
+  _termSaveT = setTimeout(() => { try {
+    lsSet(TERM_STORE_KEY, JSON.stringify(termRuns.slice(-10).map(r => ({ id: r.id, label: r.label, at: r.at, lines: r.lines.slice(-400) }))));
+  } catch(e){} }, 300);
+}
+function termRunStart(){
+  const d = new Date();
+  termCur = { id: null, label: "run " + d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), at: Date.now(), lines: [] };
+  termRuns.push(termCur); if (termRuns.length > 10) termRuns.splice(0, termRuns.length - 10);
+  termView = termCur; termSelRender(); termSaveRuns();
+}
+function termSelRender(){
+  const sel = $("#termSel"); if (!sel) return;
+  if (!termRuns.length){ sel.innerHTML = '<option>no deployments yet</option>'; sel.disabled = true; return; }
+  sel.disabled = false;
+  sel.innerHTML = termRuns.map((r, i) => '<option value="' + i + '">' +
+    esc(r.id ? (r.id.length > 18 ? r.id.slice(0, 12) + "…" + r.id.slice(-4) : r.id) : r.label) + '</option>').join("");
+  sel.value = String(termRuns.indexOf(termView));
+}
+function termRender(run){
+  const term = $("#termOut"); if (!term) return;
+  termView = run; term.innerHTML = "";
+  if (!run || !run.lines.length){ term.innerHTML = '<span class="ln dimln">// no output recorded for this run</span>'; return; }
+  termReplay = true;
+  try { run.lines.forEach(l => termLine(term, l[0], l[1])); } finally { termReplay = false; }
+  termSelRender();
+}
 function termLine(term, cls, txt){
+  if (!termReplay && termCur && term && term.id === "termOut"){
+    termCur.lines.push([cls, txt]);   // record the live run even while another run is displayed
+    if (!termCur.id){ const m = /\b(dep_[a-z0-9]+|0x[0-9a-f]{64})\b/i.exec(txt); if (m){ termCur.id = m[1]; termSelRender(); } }
+    termSaveRuns();
+    if (termView !== termCur) return; // user is reading an older run; don't paint over it
+  }
   // follow the tail only if the user is already at (or near) the bottom -
   // don't yank the view away from someone reading scrollback
   const follow = term.scrollHeight - term.scrollTop - term.clientHeight < 48;
@@ -5095,7 +5141,7 @@ async function payForRuntime(term, pay, fundUsdc){
 /* ---- real deploy: create -> pay -> provisioned, all from the browser ---- */
 async function runDeploy(){
   const btn = $("#deployBtn"); if (btn.disabled) return;
-  const term = $("#termOut"); term.innerHTML = ""; switchPane("run");
+  const term = $("#termOut"); term.innerHTML = ""; switchPane("run"); termRunStart();
   // resolve a friendly slug:version -> ipfs://<cid> (may need to read the catalog first)
   const raw = $("#cfgImage").value.trim();
   if (looksFriendly(raw) && !REF_CACHE[raw] && !STORE.loaded){
@@ -5562,6 +5608,9 @@ function initDeploy(){
   ["#cfgImage", "#cfgBudget", "#cfgPorts", "#cfgConfig"].forEach(s => { const el = $(s); if (el) el.addEventListener("input", renderDeploy); });
   $$(".console-tabs button").forEach(b => b.addEventListener("click", () => switchPane(b.dataset.pane)));
   $("#deployBtn").addEventListener("click", runDeploy);
+  termLoadRuns(); termSelRender();
+  if (termView) termRender(termView);                       // restore last run's output across reloads
+  const tsel = $("#termSel"); if (tsel) tsel.addEventListener("change", e => { const r = termRuns[+e.target.value]; if (r) termRender(r); });
   $("#resetBtn").addEventListener("click", () => {
     $("#cfgImage").value = "";
     const fp0 = $("#cfgPorts"); if (fp0) fp0.value = "";

@@ -48,6 +48,16 @@ function humanApiError(status, body){
     return String(typeof m === "string" ? m : JSON.stringify(m)).slice(0, 180);
   } catch(_){ return String(body).slice(0, 180); }
 }
+/* Clicking the dark backdrop must NOT dismiss checkout - people click the
+   window just to focus it. Swallow pointer events that land outside Privy's
+   dialog panel; its own ✕ button (inside the dialog) still closes normally. */
+["pointerdown", "mousedown", "mouseup", "click"].forEach(t =>
+  document.addEventListener(t, (e) => {
+    if (e.target.closest("#toasts")) return;                 // keep toasts dismissible
+    const dlg = document.querySelector('[role="dialog"]');
+    if (dlg && !dlg.contains(e.target)){ e.stopPropagation(); e.preventDefault(); }
+  }, true));
+
 const _fetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url = String((input && input.url) || input || "");
