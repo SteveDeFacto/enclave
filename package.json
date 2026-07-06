@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "NAN supervisor — the whole service, running inside the Tinfoil enclave behind the shim. Control + data + per-use container launch. Nothing external touches a prompt.",
+  "description": "NAN supervisor \u2014 the whole service, running inside the Tinfoil enclave behind the shim. Control + data + per-use container launch. Nothing external touches a prompt.",
   "main": "supervisor.js",
   "scripts": {
     "start": "node supervisor.js",
@@ -13,6 +13,9 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@noble/ciphers": "^1.3.0",
+    "@noble/curves": "^1.9.1",
+    "@noble/hashes": "^1.8.0",
     "@tinfoilsh/verifier": "^1.1.7",
     "cors": "^2.8.5",
     "express": "^4.21.2",
