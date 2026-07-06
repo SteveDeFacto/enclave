@@ -41,7 +41,7 @@ static VAULT_JS: &str = include_str!("vault.js");
 const CONFIG_DEFAULTS: &str = r#"{
   "chainId": 8453,
   "rpc": "https://mainnet.base.org",
-  "volumeAccess": "",
+  "volumeAccess": "0x4e3Dc12FF865e259F6bBD97689Df6Ccc7103e7dD",
   "deployments": "0x81037A2081bc000F12B8aA771bede0d36742ec4b",
   "registry": "0x13deE63b80353a15C6E03D54240EE463B420353F",
   "repo": "SteveDeFacto/nan"

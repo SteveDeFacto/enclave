@@ -70,7 +70,7 @@ containers:
       - DEPLOYMENTS_ADDRESS: "0x81037A2081bc000F12B8aA771bede0d36742ec4b"
       # wallet-gated encrypted volumes: NanVolumeAccess ACL (empty = disabled;
       # same address as the GPU flavor - sync-contract-addresses.sh mirrors it)
-      - VOLUME_ACCESS_ADDRESS: ""
+      - VOLUME_ACCESS_ADDRESS: "0x4e3Dc12FF865e259F6bBD97689Df6Ccc7103e7dD"
       # dedicated per-deployment IPv6 (tcp + udp): set to a relay box's routed /64
       # if one is attached; empty keeps ports in-enclave-only. DEP_ADDR_PREFIX is
       # the current name (UDP_ADDR_PREFIX still accepted). See relay/README.md.
