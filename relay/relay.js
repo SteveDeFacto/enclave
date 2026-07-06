@@ -27,6 +27,18 @@
 //                                       RELAY_PORTS=1-19999            all apps
 //                                       RELAY_PORTS=6667,6697:6667     just IRC
 //   RELAY_EXCLUDE           optional  ports never bound (default "22"; sshd)
+//   RELAY_BIND              optional  comma list of LOCAL addresses to listen on
+//                                     (default: wildcard/dual-stack — all
+//                                     interfaces). Set SPECIFIC addresses when
+//                                     this box ALSO runs the dedicated-IP relay
+//                                     (tcp6-relay), which binds
+//                                     [<per-deployment IPv6>]:port out of a
+//                                     routed /64: a wildcard listener here would
+//                                     grab [::]:port across that whole /64 and
+//                                     block those binds. `RELAY_BIND=0.0.0.0`
+//                                     serves all IPv4 (this relay's v4-fallback
+//                                     role) without touching the v6 /64; add the
+//                                     box's own main v6 to also serve v6 SNI.
 //   RELAY_MAX_CONNS         optional  concurrent client connection cap (1024)
 //   RELAY_HELLO_TIMEOUT_MS  optional  ms to wait for a full ClientHello (10000)
 
@@ -48,6 +60,12 @@ const ENCLAVE   = need("ENCLAVE_URL").replace(/\/+$/, "").replace(/^http/, "ws")
 const MAX_CONNS = parseInt(process.env.RELAY_MAX_CONNS || "1024", 10);
 const HELLO_MS  = parseInt(process.env.RELAY_HELLO_TIMEOUT_MS || "10000", 10);
 const EXCLUDE = new Set((process.env.RELAY_EXCLUDE || "22").split(",").map((s) => +s.trim()).filter(Boolean));
+// Local addresses to listen on. Empty (default) -> one wildcard/dual-stack
+// listener per port (all interfaces). A list -> one listener per (address,
+// port), so this relay can share a box with the dedicated-IP relay without its
+// wildcard v6 bind swallowing the routed /64 (see RELAY_BIND above).
+const BIND_ADDRS = (process.env.RELAY_BIND || "").split(",").map((s) => s.trim()).filter(Boolean);
+const LISTEN_ON = BIND_ADDRS.length ? BIND_ADDRS : [null];   // null = wildcard
 const PORTS = [];
 for (const s of need("RELAY_PORTS").split(",")) {
   const range = /^\s*(\d{1,5})\s*-\s*(\d{1,5})\s*$/.exec(s);
@@ -147,17 +165,22 @@ function splice(client, dep, port, hello) {
 // Range entries skip ports that are busy or privileged-and-denied (a box that
 // also runs sshd etc. keeps working); explicitly listed ports stay fatal so a
 // typo'd config can't silently serve nothing.
-let bound = 0, skipped = 0, pending = PORTS.length;
+let bound = 0, skipped = 0, pending = PORTS.length * LISTEN_ON.length;
+const on = BIND_ADDRS.length ? ` on ${BIND_ADDRS.join(", ")}` : "";
 const summary = () => console.log(
-  `[relay] listening on ${bound} port(s) (${skipped} skipped) -> ${ENCLAVE}/x/<sni>.${DOMAIN}/tls/<port>`);
+  `[relay] listening on ${bound} socket(s)${on} (${skipped} skipped) -> ${ENCLAVE}/x/<sni>.${DOMAIN}/tls/<port>`);
 for (const p of PORTS) {
-  const srv = net.createServer((c) => handle(c, p.logical));
-  srv.on("error", (e) => {
-    if (!p.quiet) { console.error(`fatal: listen :${p.public}: ${e.message}`); process.exit(1); }
-    skipped++; if (--pending === 0) summary();
-  });
-  srv.listen(p.public, () => {
-    if (!p.quiet) console.log(`[relay] :${p.public} -> ${ENCLAVE}/x/<sni>.${DOMAIN}/tls/${p.logical}`);
-    bound++; if (--pending === 0) summary();
-  });
+  for (const addr of LISTEN_ON) {
+    const at = addr ? `[${addr}]:${p.public}` : `:${p.public}`;
+    const srv = net.createServer((c) => handle(c, p.logical));
+    srv.on("error", (e) => {
+      if (!p.quiet) { console.error(`fatal: listen ${at}: ${e.message}`); process.exit(1); }
+      skipped++; if (--pending === 0) summary();
+    });
+    const cb = () => {
+      if (!p.quiet) console.log(`[relay] ${at} -> ${ENCLAVE}/x/<sni>.${DOMAIN}/tls/${p.logical}`);
+      bound++; if (--pending === 0) summary();
+    };
+    if (addr) srv.listen(p.public, addr, cb); else srv.listen(p.public, cb);
+  }
 }
