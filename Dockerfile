@@ -10,6 +10,9 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 COPY supervisor.js ./
+# nan-vault: the wallet-gated volume protocol the supervisor imports (unseal
+# delivered VEKs + seal auto-grants); single source of truth with the client.
+COPY scripts/nan-vault.mjs ./scripts/nan-vault.mjs
 # If you add the spawn implementation in its own files, COPY them here too.
 ENV PORT=8080
 EXPOSE 8080

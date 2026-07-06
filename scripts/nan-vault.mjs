@@ -51,6 +51,14 @@ export function deriveKeypair(signatureBytes) {
   return { secretKey: seed, publicKey };
 }
 
+// A fresh X25519 identity (the enclave's per-boot vault identity: generated
+// inside the CVM, held only in RAM, gone on restart - which is exactly the
+// failover story: nothing sealed to a dead enclave is ever usable again).
+export function newIdentity() {
+  const secretKey = x25519.utils.randomSecretKey ? x25519.utils.randomSecretKey() : x25519.utils.randomPrivateKey();
+  return { secretKey, publicKey: x25519.getPublicKey(secretKey) };
+}
+
 // --- volume encryption (symmetric, VEK) ------------------------------------- //
 export function newVEK() { return randomBytes(32); }
 
@@ -114,9 +122,9 @@ async function main() {
     if (!rest[0]) throw new Error("usage: key <sigHex>");
     console.log("0x" + hex(deriveKeypair(unhex(rest[0])).publicKey));
   } else if (cmd === "enclave-id") {
-    const sk = x25519.utils.randomSecretKey ? x25519.utils.randomSecretKey() : x25519.utils.randomPrivateKey();
-    console.log("secret 0x" + hex(sk));
-    console.log("public 0x" + hex(x25519.getPublicKey(sk)));
+    const id = newIdentity();
+    console.log("secret 0x" + hex(id.secretKey));
+    console.log("public 0x" + hex(id.publicKey));
   } else if (cmd === "pack") {
     const [dir, out] = rest;
     if (!dir || !out) throw new Error("usage: pack <dir> <out> [--vek <hex>]");

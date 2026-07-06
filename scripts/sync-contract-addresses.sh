@@ -19,6 +19,7 @@ from_cfg() { grep -oE "$1: \"$ADDR\"" "$GPU" | head -1 | grep -oE "$ADDR" || tru
 REGISTRY="$(from_cfg REGISTRY_ADDRESS)"
 DEPLOYMENTS="$(from_cfg DEPLOYMENTS_ADDRESS)"
 FORWARDER="$(from_cfg FORWARDER_ADDRESS)"
+VOLACCESS="$(from_cfg VOLUME_ACCESS_ADDRESS)"
 CATALOG="$(grep -oE "APP_CATALOG_ADDRESS = \"$ADDR\"" "$SITE" | grep -oE "$ADDR" || true)"
 
 set_key() { # $1=file $2=env key $3=address — only where the file already carries the key
@@ -28,9 +29,10 @@ set_key() { # $1=file $2=env key $3=address — only where the file already carr
 }
 for f in "$GPU" "$CPU"; do
   [ -f "$f" ] || continue
-  set_key "$f" REGISTRY_ADDRESS    "$REGISTRY"
-  set_key "$f" DEPLOYMENTS_ADDRESS "$DEPLOYMENTS"
-  set_key "$f" FORWARDER_ADDRESS   "$FORWARDER"
-  set_key "$f" APP_CATALOG_ADDRESS "$CATALOG"
+  set_key "$f" REGISTRY_ADDRESS      "$REGISTRY"
+  set_key "$f" DEPLOYMENTS_ADDRESS   "$DEPLOYMENTS"
+  set_key "$f" FORWARDER_ADDRESS     "$FORWARDER"
+  set_key "$f" VOLUME_ACCESS_ADDRESS "$VOLACCESS"
+  set_key "$f" APP_CATALOG_ADDRESS   "$CATALOG"
 done
-echo "[sync] registry=${REGISTRY:-?} deployments=${DEPLOYMENTS:-?} nanpay=${FORWARDER:-?} catalog=${CATALOG:-?}"
+echo "[sync] registry=${REGISTRY:-?} deployments=${DEPLOYMENTS:-?} nanpay=${FORWARDER:-?} volume-access=${VOLACCESS:-?} catalog=${CATALOG:-?}"

@@ -373,6 +373,11 @@ ENC_CIPHER_DIR = pathlib.Path(os.environ.get("ENC_CIPHER_DIR", "/tmp/nan-enc-cip
 ENC_PLAIN_ROOT = pathlib.Path(os.environ.get("ENC_PLAIN_ROOT", "/tmp/nan-enc-plain"))
 ENC_MAX_BYTES  = int(os.environ.get("ENC_MAX_BYTES", str(8 * 1024 * 1024 * 1024)))  # ciphertext cap
 _ENC_CIPHERS   = {"aes-256-ctr", "aes-256-cbc"}   # allowlist (must match nan-volume.sh)
+# nan-vault (wallet-gated) volume format: NANVOL1 || nonce(24) || XChaCha20-
+# Poly1305(tar). Must match scripts/nan-vault.mjs — the protocol's source of
+# truth. The key is a 32-byte VEK delivered sealed-to-this-enclave via the
+# supervisor's /unlock-sealed (never a passphrase, never plaintext off-enclave).
+_VAULT_MAGIC   = b"NANVOL1"
 
 
 def _prepare_enc_volumes(vid: str, specs: list) -> list:
@@ -400,7 +405,24 @@ def _prepare_enc_volumes(vid: str, specs: list) -> list:
         seen.add(name)
         if not re.fullmatch(r"[0-9a-f]{64}", sha):
             raise ValueError(f"encVolume '{name}': sha256 must be the 64-hex plaintext hash")
-        if cipher not in _ENC_CIPHERS:
+        # A `vault` object marks a WALLET-GATED volume (nan-vault format): the key
+        # is a VEK unsealed by the supervisor after an on-chain NanVolumeAccess
+        # check, not a deployer passphrase. vault.owner + vault.volume identify
+        # the on-chain ACL entry (volId = keccak256(abi.encode(owner, volume)));
+        # owner may be empty — the supervisor defaults it to the deployment owner.
+        vault = s.get("vault")
+        if vault is not None:
+            if not isinstance(vault, dict):
+                raise ValueError(f"encVolume '{name}': vault must be an object")
+            v_owner = str(vault.get("owner") or "").strip()
+            if v_owner and not re.fullmatch(r"0x[0-9a-fA-F]{40}", v_owner):
+                raise ValueError(f"encVolume '{name}': vault.owner must be a 0x address")
+            v_vol = str(vault.get("volume") or name).strip()
+            if not v_vol or len(v_vol) > 128:
+                raise ValueError(f"encVolume '{name}': vault.volume must be 1-128 chars")
+            vault = {"owner": v_owner, "volume": v_vol,
+                     "autoGrant": bool(vault.get("autoGrant", True))}
+        elif cipher not in _ENC_CIPHERS:
             raise ValueError(f"encVolume '{name}': unsupported cipher '{cipher}'")
         cpath = ENC_CIPHER_DIR / f"{vid}-{name}.enc"
         if src.startswith("ipfs://"):
@@ -418,7 +440,8 @@ def _prepare_enc_volumes(vid: str, specs: list) -> list:
             raise ValueError(f"encVolume '{name}': source must be ipfs:// or http(s)://")
         cpath.write_bytes(data)
         out.append({"name": name, "cipher_path": str(cpath), "sha256": sha,
-                    "cipher": cipher, "iter": iters, "unlocked": False, "plain_dir": None})
+                    "cipher": cipher, "iter": iters, "vault": vault,
+                    "unlocked": False, "plain_dir": None})
     return out
 
 
@@ -454,6 +477,77 @@ def _decrypt_enc_volume(spec: dict, passphrase: str) -> str:
     finally:
         try: os.remove(plain_tar)   # the decrypted tar is transient; the extracted tree is what mounts
         except OSError: pass
+
+
+def _decrypt_vault_volume(spec: dict, vek_hex: str, verify_only: bool = False) -> str:
+    """Decrypt one staged nan-vault volume (NANVOL1 / XChaCha20-Poly1305) with a
+    32-byte VEK, streaming ciphertext -> plaintext so peak RAM is one chunk, not
+    2x the volume. The AEAD tag AND the plaintext sha256 are both verified
+    BEFORE anything is extracted (decrypt-then-verify; the plaintext file is
+    discarded on any mismatch). verify_only skips extraction and writes nothing
+    — used to re-verify a VEK against the staged ciphertext (auto-grant re-arm)
+    without touching the running tenant. Returns the plaintext dir ("" when
+    verify_only). Raises ValueError on wrong key / tamper / bad format."""
+    try:
+        from Crypto.Cipher import ChaCha20_Poly1305   # python3-pycryptodome (in the manager image)
+    except ImportError:
+        raise ValueError("vault volumes need pycryptodome in the manager image (python3-pycryptodome)")
+    import hashlib as _hl, tempfile as _tf, subprocess as _sp
+    try:
+        key = bytes.fromhex(vek_hex.lower().removeprefix("0x"))
+    except ValueError:
+        raise ValueError("vek must be hex")
+    if len(key) != 32:
+        raise ValueError("vek must be 32 bytes")
+    hdr = len(_VAULT_MAGIC) + 24                     # magic || nonce(24); trailing 16 = Poly1305 tag
+    size = os.path.getsize(spec["cipher_path"])
+    if size < hdr + 16:
+        raise ValueError("not a nan-vault volume (too short)")
+    plain_tar = None
+    try:
+        with open(spec["cipher_path"], "rb") as f:
+            if f.read(len(_VAULT_MAGIC)) != _VAULT_MAGIC:
+                raise ValueError("not a nan-vault volume (bad header)")
+            cipher = ChaCha20_Poly1305.new(key=key, nonce=f.read(24))  # 24B nonce = XChaCha20
+            h = _hl.sha256()
+            out = None
+            if not verify_only:
+                ENC_PLAIN_ROOT.mkdir(parents=True, exist_ok=True)
+                with _tf.NamedTemporaryFile(dir=str(ENC_PLAIN_ROOT), suffix=".tar", delete=False) as tf:
+                    plain_tar = tf.name
+                out = open(plain_tar, "wb")
+            try:
+                left = size - hdr - 16
+                while left > 0:
+                    buf = f.read(min(1 << 20, left))
+                    if not buf:
+                        raise ValueError("truncated ciphertext")
+                    left -= len(buf)
+                    chunk = cipher.decrypt(buf)
+                    h.update(chunk)
+                    if out:
+                        out.write(chunk)
+            finally:
+                if out:
+                    out.close()
+            try:
+                cipher.verify(f.read(16))
+            except ValueError:
+                raise ValueError("decrypt failed (wrong key or corrupt ciphertext)")
+        if h.hexdigest() != spec["sha256"]:
+            raise ValueError("plaintext hash mismatch (wrong key or tampered volume)")
+        if verify_only:
+            return ""
+        dest = ENC_PLAIN_ROOT / (pathlib.Path(spec["cipher_path"]).stem)
+        dest.mkdir(parents=True, exist_ok=True)
+        rc = _sp.run(["tar", "-xf", plain_tar, "-C", str(dest)], capture_output=True)
+        if rc.returncode != 0:
+            raise ValueError("extract failed: " + rc.stderr.decode(errors="replace")[:200])
+        return str(dest)
+    finally:
+        if plain_tar:
+            try: os.remove(plain_tar)
+            except OSError: pass
 
 
 def _nn_tenant_env(gpu_share: float, pinned: bool) -> dict:
@@ -1309,8 +1403,13 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
             rec["status"], rec["error"] = "failed", f"encVolume fetch failed: {e}"
             return rec
         rec["_spawn_ctx"] = ctx
-        rec["encVolumes"] = [{"name": s["name"], "locked": True} for s in rec["_encVolumes"]]
-        rec["status"] = "awaiting_unlock"   # POST /vms/:id/unlock {name, passphrase} to proceed
+        # public entries carry the vault metadata (owner/volume/autoGrant) so the
+        # supervisor can compute the on-chain volId and gate unlock-sealed —
+        # config parsing stays HERE, in one place.
+        rec["encVolumes"] = [{"name": s["name"], "locked": True,
+                              **({"vault": s["vault"]} if s.get("vault") is not None else {})}
+                             for s in rec["_encVolumes"]]
+        rec["status"] = "awaiting_unlock"   # POST /vms/:id/unlock {name, passphrase|vek} to proceed
         return rec
     return _spawn_and_wait(rec, ctx)
 
@@ -1372,23 +1471,47 @@ def _spawn_and_wait(rec, ctx):
     return rec
 
 
-def unlock_enc_volume(vid: str, name: str, passphrase: str) -> dict:
-    """Deliver a user-held key for ONE encrypted volume: decrypt it in-enclave,
-    and once every volume is unlocked, spawn the held tenant. Returns the public
-    record. The passphrase is used and dropped here - never stored on rec/disk."""
+def unlock_enc_volume(vid: str, name: str, passphrase: str = None, vek: str = None) -> dict:
+    """Deliver the key for ONE encrypted volume: decrypt it in-enclave, and once
+    every volume is unlocked, spawn the held tenant. Returns the public record.
+    Passphrase volumes take {passphrase}; wallet-gated vault volumes take {vek}
+    (the supervisor unseals it after the on-chain NanVolumeAccess check). The
+    key is used and dropped here - never stored on rec/disk."""
     with _lock:
         rec = _apps.get(vid)
     if not rec:
         return {"error": "unknown deployment", "code": 404}
-    if rec.get("status") != "awaiting_unlock":
-        return {"error": f"deployment is not awaiting unlock (status {rec.get('status')})", "code": 409}
     specs = rec.get("_encVolumes") or []
     spec = next((s for s in specs if s["name"] == name), None)
     if not spec:
         return {"error": f"no encrypted volume named '{name}'", "code": 404}
+    is_vault = spec.get("vault") is not None
+    if is_vault and not vek:
+        return {"error": f"volume '{name}' is wallet-gated: deliver the VEK sealed to this "
+                         "enclave via unlock-sealed, not a passphrase", "code": 400}
+    if not is_vault and not passphrase:
+        return {"error": f"volume '{name}' takes a passphrase, not a VEK", "code": 400}
+    if spec.get("unlocked") and is_vault:
+        # Already serving: re-VERIFY the delivered VEK against the staged
+        # ciphertext (AEAD tag + plaintext hash; nothing written, nothing
+        # respawned). The supervisor uses this to re-arm auto-grant after a
+        # restart dropped its in-RAM VEK - it must never seal an unverified
+        # key to members.
+        try:
+            _decrypt_vault_volume(spec, vek, verify_only=True)
+        except ValueError as e:
+            return {"error": str(e), "code": 400}
+        except Exception as e:
+            return {"error": f"verify error: {e}", "code": 500}
+        out = _public(rec)
+        out["vekVerified"] = True
+        return out
+    if rec.get("status") != "awaiting_unlock":
+        return {"error": f"deployment is not awaiting unlock (status {rec.get('status')})", "code": 409}
     if not spec.get("unlocked"):
         try:
-            spec["plain_dir"] = _decrypt_enc_volume(spec, passphrase)
+            spec["plain_dir"] = (_decrypt_vault_volume(spec, vek) if is_vault
+                                 else _decrypt_enc_volume(spec, passphrase))
         except ValueError as e:
             return {"error": str(e), "code": 400}
         except Exception as e:
@@ -1400,7 +1523,10 @@ def unlock_enc_volume(vid: str, name: str, passphrase: str) -> dict:
     remaining = [s["name"] for s in specs if not s.get("unlocked")]
     if not remaining:
         _spawn_and_wait(rec, rec["_spawn_ctx"])   # every volume decrypted -> start the app
-    return _public(rec)
+    out = _public(rec)
+    if is_vault:
+        out["vekVerified"] = True   # a successful decrypt IS the verification (tag + hash)
+    return out
 
 
 # --- firewall enforcement: audit what each app actually bound ---------------- #
@@ -1691,20 +1817,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(422, {"error": str(e)})
             except Exception as e:
                 return self._json(502, {"error": f"prefetch failed: {e}"})
-        # Encrypted-volume key delivery: POST /vms/<vid>/unlock {name, passphrase}.
-        # The supervisor forwards the deployer's passphrase here (owner-auth'd,
-        # over the attested in-enclave TLS). We decrypt IN MEMORY and, once every
-        # volume is unlocked, spawn the held tenant. The passphrase is never
-        # logged, stored on the record, or written to disk.
+        # Encrypted-volume key delivery: POST /vms/<vid>/unlock with {name,
+        # passphrase} (deployer-held key) or {name, vek} (wallet-gated vault:
+        # the supervisor unsealed the VEK after the on-chain ACL check). Either
+        # way the key arrives owner/member-auth'd over the attested in-enclave
+        # TLS; we decrypt IN MEMORY and, once every volume is unlocked, spawn
+        # the held tenant. Keys are never logged, stored on the record, or
+        # written to disk.
         mu = re.match(r"^/vms/([^/?]+)/unlock$", self.path)
         if mu:
             b = self._body()
             name = str(b.get("name") or "").strip()
             passphrase = b.get("passphrase")
-            if not name or not isinstance(passphrase, str) or passphrase == "":
-                return self._json(400, {"error": "unlock needs {name, passphrase}"})
-            r = unlock_enc_volume(mu.group(1), name, passphrase)
-            del passphrase
+            vek = b.get("vek")
+            if not isinstance(passphrase, str) or passphrase == "":
+                passphrase = None
+            if not isinstance(vek, str) or vek == "":
+                vek = None
+            if not name or (passphrase is None and vek is None):
+                return self._json(400, {"error": "unlock needs {name, passphrase} or {name, vek}"})
+            r = unlock_enc_volume(mu.group(1), name, passphrase, vek)
+            del passphrase, vek
             code = r.pop("code", 200) if isinstance(r, dict) else 200
             return self._json(code if code != 200 else 200, r)
         if self.path != "/vms":
