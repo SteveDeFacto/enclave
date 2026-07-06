@@ -1,0 +1,427 @@
+diff --git a/crates/cli-flags/src/lib.rs b/crates/cli-flags/src/lib.rs
+index 45ed76d..14ba726 100644
+--- a/crates/cli-flags/src/lib.rs
++++ b/crates/cli-flags/src/lib.rs
+@@ -524,6 +524,20 @@ wasmtime_option_group! {
+         /// WASI implementation (not `-S preview2=n`).
+         #[serde(default)]
+         pub vault: Vec<String>,
++        /// Route ALL guest outbound (wasi:sockets TCP connect + wasi:http)
++        /// through nan's dedicated-IP egress front: `egress=<host>:<port>`, the
++        /// loopback SOCKS5 endpoint the enclave supervisor listens on.
++        ///
++        /// The per-deployment SOCKS credential is read from the environment
++        /// variable `NAN_EGRESS_CRED` (`<id>:<token>`; host process env only,
++        /// never visible to the guest — like the nan-vault VEKs). With this set,
++        /// a socket-address check permitting TCP bind/connect + UDP bind (but not
++        /// raw UDP egress) is installed and `-Sinherit-network` should be omitted:
++        /// the guest can no longer reach the raw network, so its outbound leaves
++        /// from the deployment's dedicated IPv6 with SSRF enforced at the front
++        /// and the relay. Requires TCP granted (`-Stcp`).
++        #[serde(default)]
++        pub egress: Option<String>,
+         /// Flag for WASI preview2 to inherit the host's network within the
+         /// guest so it has full access to all addresses/ports/etc.
+         pub inherit_network: Option<bool>,
+diff --git a/crates/wasi-http/src/p2/mod.rs b/crates/wasi-http/src/p2/mod.rs
+index 0e6a4f2..2df8bcd 100644
+--- a/crates/wasi-http/src/p2/mod.rs
++++ b/crates/wasi-http/src/p2/mod.rs
+@@ -600,7 +600,21 @@ pub async fn default_send_request_handler(
+     } else {
+         return Err(ErrorCode::HttpRequestUriInvalid);
+     };
+-    let tcp_stream = timeout(connect_timeout, TcpStream::connect(&authority))
++    // nan transparent egress: when on, route the outgoing request's TCP dial
++    // through the enclave's loopback SOCKS front (dedicated source at the relay)
++    // so a `serve`-mode app's wasi:http leaves from the deployment's own IPv6.
++    // The host name is sent to the front as a SOCKS DOMAIN (socks5h — remote
++    // resolution, so SSRF is enforced post-DNS at the relay). TLS, when used,
++    // rides on top of the returned tunnel exactly as over a direct socket.
++    let connect_fut = async {
++        if wasmtime_wasi::egress::enabled() {
++            let (host, port) = wasmtime_wasi::egress::split_authority(&authority);
++            wasmtime_wasi::egress::connect_authority(host, port).await
++        } else {
++            TcpStream::connect(&authority).await
++        }
++    };
++    let tcp_stream = timeout(connect_timeout, connect_fut)
+         .await
+         .map_err(|_| ErrorCode::ConnectionTimeout)?
+         .map_err(|e| match e.kind() {
+diff --git a/crates/wasi-http/src/p3/request.rs b/crates/wasi-http/src/p3/request.rs
+index aa3ed70..720ff7f 100644
+--- a/crates/wasi-http/src/p3/request.rs
++++ b/crates/wasi-http/src/p3/request.rs
+@@ -327,7 +327,18 @@ pub async fn default_send_request(
+         )
+         .unwrap_or(Duration::from_secs(600));
+ 
+-    let stream = match tokio::time::timeout(connect_timeout, TcpStream::connect(&authority)).await {
++    // nan transparent egress: when on, dial through the enclave's loopback SOCKS
++    // front (dedicated source at the relay), sending the host name as a SOCKS
++    // DOMAIN (socks5h — SSRF enforced post-DNS at the relay). See egress.rs.
++    let connect_fut = async {
++        if wasmtime_wasi::egress::enabled() {
++            let (host, port) = wasmtime_wasi::egress::split_authority(&authority);
++            wasmtime_wasi::egress::connect_authority(host, port).await
++        } else {
++            TcpStream::connect(&authority).await
++        }
++    };
++    let stream = match tokio::time::timeout(connect_timeout, connect_fut).await {
+         Ok(Ok(stream)) => stream,
+         Ok(Err(err)) if err.kind() == std::io::ErrorKind::AddrNotAvailable => {
+             return Err(dns_error("address not available".to_string(), 0));
+diff --git a/crates/wasi/src/egress.rs b/crates/wasi/src/egress.rs
+new file mode 100644
+index 0000000..f9cb9eb
+--- /dev/null
++++ b/crates/wasi/src/egress.rs
+@@ -0,0 +1,246 @@
++//! nan transparent egress: route ALL guest outbound through the enclave's
++//! loopback SOCKS5 front so an UNMODIFIED app leaves from the deployment's own
++//! IPv6 — the same dedicated-source identity `NAN_EGRESS` gives an app that
++//! opts in explicitly, but automatic and un-bypassable.
++//!
++//! Enabled by `-S egress=<socks-host>:<socks-port>` on the wasmtime CLI (see
++//! `RunCommon::configure_wasip2`). The per-deployment SOCKS CREDENTIAL is read
++//! from the environment variable `NAN_EGRESS_CRED` (`<id>:<token>`, the same
++//! HMAC the supervisor mints for `NAN_EGRESS`) — HOST process env only, never
++//! visible to the guest, exactly like the nan-vault VEKs. One wasmtime process
++//! serves one deployment, so the config is a process global.
++//!
++//! With egress on, the CLI grants a socket-address check that permits TCP
++//! bind/connect + UDP bind but DENIES raw UDP outbound (there is no UDP egress
++//! yet — phase 1 SOCKS is TCP CONNECT only), and drops `-Sinherit-network`.
++//! Every `wasi:sockets` TCP connect and every `wasi:http` outgoing request then
++//! funnels through `connect_addr` / `connect_authority` here, which SOCKS5s into
++//! the loopback front. The front derives the source address from the
++//! AUTHENTICATED id and re-checks the destination for SSRF (literal IPs here,
++//! post-DNS at the relay), so all three phase-1 guardrails apply unchanged — the
++//! guest simply can no longer reach the raw network to bypass them.
++//!
++//! socks5h semantics: a `wasi:http` host name is sent to the front as a DOMAIN
++//! (remote resolution → SSRF checked where the dial happens); a `wasi:sockets`
++//! connect already carries a literal IP (the guest resolved it via
++//! ip-name-lookup), sent as an IP literal and SSRF-checked at the front.
++
++use std::io;
++use std::net::{IpAddr, SocketAddr};
++use std::sync::OnceLock;
++use std::time::Duration;
++use tokio::io::{AsyncReadExt, AsyncWriteExt};
++use tokio::net::TcpStream;
++
++/// How long the whole SOCKS handshake (front connect + negotiation + the
++/// relay's dial back through it) may take before we give up.
++const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
++
++/// Process-wide egress configuration, set once at first `configure_wasip2`.
++/// `None` (the default) means transparent egress is off and every connect path
++/// behaves exactly as upstream wasmtime.
++#[derive(Clone)]
++pub struct EgressCfg {
++    front: SocketAddr,
++    user: Vec<u8>,
++    pass: Vec<u8>,
++}
++
++static EGRESS: OnceLock<Option<EgressCfg>> = OnceLock::new();
++
++/// Install the egress configuration. Idempotent: the first call wins (serve
++/// mode rebuilds the WASI ctx per request, but the process serves one
++/// deployment, so the config never changes). Returns an error only if the
++/// spec/credential is malformed.
++///
++/// `spec` is the `-S egress=` value (`<host>:<port>`); `cred` is the
++/// `NAN_EGRESS_CRED` env value (`<id>:<token>`).
++pub fn init(spec: &str, cred: &str) -> Result<(), String> {
++    let front = parse_endpoint(spec)
++        .ok_or_else(|| format!("-S egress expects <host>:<port>, got `{spec}`"))?;
++    // Split the credential on the FIRST colon: the id (username) has no colon;
++    // the token is base64url (no colon), but split-once is the safe rule.
++    let (id, token) = cred
++        .split_once(':')
++        .ok_or_else(|| "$NAN_EGRESS_CRED must be `<id>:<token>`".to_string())?;
++    if id.is_empty() || token.is_empty() {
++        return Err("$NAN_EGRESS_CRED must be `<id>:<token>`".to_string());
++    }
++    // SOCKS5 user/pass fields are single-byte-length-prefixed (RFC 1929).
++    if id.len() > 255 || token.len() > 255 {
++        return Err("$NAN_EGRESS_CRED id/token too long for SOCKS auth".to_string());
++    }
++    let cfg = EgressCfg {
++        front,
++        user: id.as_bytes().to_vec(),
++        pass: token.as_bytes().to_vec(),
++    };
++    // OnceLock::set fails if already set — that's fine, first init wins.
++    let _ = EGRESS.set(Some(cfg));
++    Ok(())
++}
++
++/// The active egress config, if transparent egress is on.
++pub fn get() -> Option<&'static EgressCfg> {
++    EGRESS.get().and_then(|o| o.as_ref())
++}
++
++/// True when transparent egress is configured for this process.
++pub fn enabled() -> bool {
++    get().is_some()
++}
++
++/// `<host>:<port>` → SocketAddr (loopback only ever in practice, but we accept
++/// any literal). Brackets around a v6 host are tolerated.
++fn parse_endpoint(s: &str) -> Option<SocketAddr> {
++    // Fast path: it already parses as a SocketAddr (handles [v6]:port).
++    if let Ok(a) = s.parse::<SocketAddr>() {
++        return Some(a);
++    }
++    let (host, port) = s.rsplit_once(':')?;
++    let host = host.trim_start_matches('[').trim_end_matches(']');
++    let ip: IpAddr = host.parse().ok()?;
++    let port: u16 = port.parse().ok()?;
++    Some(SocketAddr::new(ip, port))
++}
++
++/// Split a `wasi:http` authority (`host:port`, guaranteed to carry a port by
++/// the caller) into its host and port. Tolerates a bracketed v6 host
++/// (`[2606:4700::1111]:443`). Falls back to port 0 only if the authority is
++/// malformed, which the SOCKS front will then reject.
++pub fn split_authority(authority: &str) -> (&str, u16) {
++    if let Some(rest) = authority.strip_prefix('[') {
++        // [v6]:port
++        if let Some((host, port)) = rest.split_once("]:") {
++            return (host, port.parse().unwrap_or(0));
++        }
++        return (rest.trim_end_matches(']'), 0);
++    }
++    match authority.rsplit_once(':') {
++        Some((host, port)) => (host, port.parse().unwrap_or(0)),
++        None => (authority, 0),
++    }
++}
++
++/// A SOCKS5 destination: an IP literal (from `wasi:sockets`, already resolved)
++/// or a domain name (from `wasi:http`, resolved remotely at the relay).
++enum Dest<'a> {
++    Ip(IpAddr),
++    Domain(&'a str),
++}
++
++/// Connect a `wasi:sockets` TCP socket to `addr` through the egress front.
++/// The literal IP is sent to the front, which SSRF-checks it before the relay
++/// dials it source-bound to the deployment's address.
++pub async fn connect_addr(addr: SocketAddr) -> io::Result<TcpStream> {
++    let cfg = get().expect("connect_addr called with egress disabled");
++    socks_connect(cfg, Dest::Ip(addr.ip()), addr.port()).await
++}
++
++/// Connect a `wasi:http` outgoing request to `host:port` through the egress
++/// front. `host` may be a name (sent as a SOCKS DOMAIN so the relay resolves it
++/// remotely and applies SSRF post-DNS) or a literal IP.
++pub async fn connect_authority(host: &str, port: u16) -> io::Result<TcpStream> {
++    let cfg = get().expect("connect_authority called with egress disabled");
++    let dest = match host.parse::<IpAddr>() {
++        Ok(ip) => Dest::Ip(ip),
++        Err(_) => Dest::Domain(host),
++    };
++    socks_connect(cfg, dest, port).await
++}
++
++async fn socks_connect(cfg: &EgressCfg, dest: Dest<'_>, port: u16) -> io::Result<TcpStream> {
++    tokio::time::timeout(HANDSHAKE_TIMEOUT, socks_handshake(cfg, dest, port))
++        .await
++        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "egress SOCKS handshake timed out"))?
++}
++
++/// RFC 1928 (SOCKS5) + RFC 1929 (user/pass), CONNECT only — the exact protocol
++/// the enclave front (`egress.js`) speaks.
++async fn socks_handshake(cfg: &EgressCfg, dest: Dest<'_>, port: u16) -> io::Result<TcpStream> {
++    let mut s = TcpStream::connect(cfg.front).await?;
++    s.set_nodelay(true).ok();
++
++    // greeting: version 5, one method, 0x02 (user/pass)
++    s.write_all(&[0x05, 0x01, 0x02]).await?;
++    let mut m = [0u8; 2];
++    s.read_exact(&mut m).await?;
++    if m[0] != 0x05 || m[1] != 0x02 {
++        return Err(refused("egress front rejected SOCKS user/pass auth"));
++    }
++
++    // auth: version 1, ulen, user, plen, pass
++    let mut auth = Vec::with_capacity(3 + cfg.user.len() + cfg.pass.len());
++    auth.push(0x01);
++    auth.push(cfg.user.len() as u8);
++    auth.extend_from_slice(&cfg.user);
++    auth.push(cfg.pass.len() as u8);
++    auth.extend_from_slice(&cfg.pass);
++    s.write_all(&auth).await?;
++    let mut a = [0u8; 2];
++    s.read_exact(&mut a).await?;
++    if a[1] != 0x00 {
++        return Err(io::Error::new(
++            io::ErrorKind::PermissionDenied,
++            "egress credential rejected by the front",
++        ));
++    }
++
++    // request: version 5, CONNECT, rsv, atyp, addr, port
++    let mut req = vec![0x05, 0x01, 0x00];
++    match dest {
++        Dest::Ip(IpAddr::V4(v4)) => {
++            req.push(0x01);
++            req.extend_from_slice(&v4.octets());
++        }
++        Dest::Ip(IpAddr::V6(v6)) => {
++            req.push(0x04);
++            req.extend_from_slice(&v6.octets());
++        }
++        Dest::Domain(name) => {
++            let bytes = name.as_bytes();
++            if bytes.is_empty() || bytes.len() > 255 {
++                return Err(io::Error::new(
++                    io::ErrorKind::InvalidInput,
++                    "egress destination host name out of range",
++                ));
++            }
++            req.push(0x03);
++            req.push(bytes.len() as u8);
++            req.extend_from_slice(bytes);
++        }
++    }
++    req.extend_from_slice(&port.to_be_bytes());
++    s.write_all(&req).await?;
++
++    // reply: version, rep, rsv, atyp, bnd.addr, bnd.port
++    let mut head = [0u8; 4];
++    s.read_exact(&mut head).await?;
++    if head[1] != 0x00 {
++        // 0x02 = connection not allowed (SSRF/denied); anything else = dial fail
++        return Err(match head[1] {
++            0x02 => io::Error::new(io::ErrorKind::PermissionDenied, "egress destination denied"),
++            _ => refused("egress dial failed"),
++        });
++    }
++    // drain BND.ADDR + BND.PORT (its length depends on the REPLY's atyp)
++    let bnd = match head[3] {
++        0x01 => 4 + 2,
++        0x04 => 16 + 2,
++        0x03 => {
++            let mut l = [0u8; 1];
++            s.read_exact(&mut l).await?;
++            l[0] as usize + 2
++        }
++        _ => return Err(refused("egress front returned an unknown reply address type")),
++    };
++    let mut scratch = vec![0u8; bnd];
++    s.read_exact(&mut scratch).await?;
++
++    // `s` is now a raw byte tunnel to the destination, source-bound at the relay.
++    Ok(s)
++}
++
++fn refused(msg: &'static str) -> io::Error {
++    io::Error::new(io::ErrorKind::ConnectionRefused, msg)
++}
+diff --git a/crates/wasi/src/lib.rs b/crates/wasi/src/lib.rs
+index 00f725f..a5c9789 100644
+--- a/crates/wasi/src/lib.rs
++++ b/crates/wasi/src/lib.rs
+@@ -48,6 +48,10 @@ pub mod p3;
+ pub mod random;
+ pub mod runtime;
+ pub mod sockets;
++// nan transparent egress: route ALL guest outbound (wasi:sockets + wasi:http)
++// through the enclave's loopback SOCKS front so an UNMODIFIED app leaves from
++// the deployment's dedicated IPv6 (see egress.rs; enabled via -S egress).
++pub mod egress;
+ // nan-vault: transparent read-only decryption for NANVOL2 encrypted preopens
+ // (see vault.rs; applied via WasiCtxBuilder::preopened_vault_dir / -S vault).
+ mod vault;
+diff --git a/crates/wasi/src/p2/host/tcp.rs b/crates/wasi/src/p2/host/tcp.rs
+index 47d638d..81beeea 100644
+--- a/crates/wasi/src/p2/host/tcp.rs
++++ b/crates/wasi/src/p2/host/tcp.rs
+@@ -56,9 +56,18 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
+ 
+         // Start connection
+         let socket = self.table.get_mut(&this)?;
+-        let future = socket
+-            .start_connect(&remote_address)?
+-            .connect(remote_address);
++        let tokio_socket = socket.start_connect(&remote_address)?;
++        // nan transparent egress: when on, route the connect through the
++        // enclave's loopback SOCKS front (dedicated source at the relay) instead
++        // of dialing the destination directly. The freshly-created `tokio_socket`
++        // is dropped — we return a stream connected via the front. See egress.rs.
++        let future = async move {
++            if crate::egress::enabled() {
++                crate::egress::connect_addr(remote_address).await
++            } else {
++                tokio_socket.connect(remote_address).await
++            }
++        };
+         socket.set_pending_connect(future)?;
+ 
+         Ok(())
+diff --git a/crates/wasi/src/p3/sockets/host/types/tcp.rs b/crates/wasi/src/p3/sockets/host/types/tcp.rs
+index 6a08715..5443d13 100644
+--- a/crates/wasi/src/p3/sockets/host/types/tcp.rs
++++ b/crates/wasi/src/p3/sockets/host/types/tcp.rs
+@@ -260,7 +260,14 @@ impl HostTcpSocketWithStore for WasiSockets {
+ 
+         // FIXME: handle possible cancellation of the outer `connect`
+         // https://github.com/bytecodealliance/wasmtime/pull/11291#discussion_r2223917986
+-        let res = sock.connect(remote_address).await;
++        // nan transparent egress: when on, dial through the enclave's loopback
++        // SOCKS front (dedicated source at the relay); `sock` is dropped. See
++        // egress.rs.
++        let res = if crate::egress::enabled() {
++            crate::egress::connect_addr(remote_address).await
++        } else {
++            sock.connect(remote_address).await
++        };
+         store.with(|mut store| {
+             let socket = get_socket_mut(store.get().table, &socket)?;
+             socket.finish_connect(res)?;
+diff --git a/src/common.rs b/src/common.rs
+index 86bd620..5b31bfb 100644
+--- a/src/common.rs
++++ b/src/common.rs
+@@ -394,6 +394,33 @@ impl RunCommon {
+         if let Some(enable) = self.common.wasi.udp {
+             builder.allow_udp(enable);
+         }
++
++        // nan transparent egress: `-S egress=<host>:<port>` routes ALL guest
++        // outbound (wasi:sockets TCP connect + wasi:http) through the loopback
++        // SOCKS front so an UNMODIFIED app leaves from the deployment's own IPv6.
++        // The credential rides $NAN_EGRESS_CRED (host process env only, never in
++        // the guest env or on the cmdline — same delivery as the vault VEKs).
++        // We install a socket-address check that permits TCP bind/connect and
++        // UDP bind but DENIES raw UDP egress (phase-1 SOCKS is TCP CONNECT only);
++        // combined with `-Sinherit-network` omitted, the guest can reach nothing
++        // raw, so its outbound is source-tagged and SSRF-checked at the front.
++        // (Placed after inherit-network handling so egress's stricter check wins
++        // if both are somehow set.)
++        if let Some(spec) = &self.common.wasi.egress {
++            use wasmtime_wasi::sockets::SocketAddrUse;
++            let cred = std::env::var("NAN_EGRESS_CRED").map_err(|_| {
++                format_err!("-S egress: $NAN_EGRESS_CRED must hold the `<id>:<token>` credential")
++            })?;
++            wasmtime_wasi::egress::init(spec, &cred).map_err(|e| format_err!("{e}"))?;
++            builder.socket_addr_check(|_addr, use_| {
++                let allow = matches!(
++                    use_,
++                    SocketAddrUse::TcpBind | SocketAddrUse::TcpConnect | SocketAddrUse::UdpBind
++                );
++                Box::pin(async move { allow })
++            });
++        }
++
+         if let Some(max_size) = self.common.wasi.max_random_size {
+             builder.max_random_size(max_size);
+         }

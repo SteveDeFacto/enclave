@@ -142,6 +142,11 @@ containers:
       # DEP_ADDR_PREFIX is the current name; UDP_ADDR_PREFIX is the accepted
       # legacy alias. See relay/README.md.
       - DEP_ADDR_PREFIX: "2a01:4f9:c013:9b52::/64"       # nan-relay's routed /64 (46.62.128.36); MUST match the relay boxes
+      # dedicated-IP EGRESS (outbound half): app outbound leaves FROM its own
+      # IPv6 via NAN_EGRESS. Set EGRESS_RELAY_TOKEN to a shared secret matching
+      # the egress-relay box's env; empty = egress off. See relay/README.md.
+      - EGRESS_RELAY_TOKEN: ""
+      - EGRESS_SOCKS_PORT: "1080"
       # manual-billing / pilot: boot deployments without an on-chain payment.
       # AUTO_PROVISION="1" provisions EVERY deploy for free (use only for a closed
       # pilot). Leave "" and use the ADMIN_TOKEN-gated provision endpoint instead to

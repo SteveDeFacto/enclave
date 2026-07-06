@@ -75,6 +75,13 @@ containers:
       # if one is attached; empty keeps ports in-enclave-only. DEP_ADDR_PREFIX is
       # the current name (UDP_ADDR_PREFIX still accepted). See relay/README.md.
       - DEP_ADDR_PREFIX: ""
+      # dedicated-IP EGRESS (the outbound half): with DEP_ADDR_PREFIX set, this
+      # enables the app's outbound connections to leave FROM its own IPv6 via
+      # NAN_EGRESS. Value is a shared secret matching the egress-relay box's
+      # EGRESS_RELAY_TOKEN (proves the control/data channels are the real relay);
+      # empty = egress off. Optional EGRESS_SOCKS_PORT (default 1080).
+      - EGRESS_RELAY_TOKEN: ""
+      - EGRESS_SOCKS_PORT: "1080"
       # manual-billing / pilot controls, same semantics as the GPU flavor.
       - AUTO_PROVISION: ""
       - AUTO_PROVISION_HOURS: "0"

@@ -1,6 +1,6 @@
 # NAN public relays
 
-Two small, **untrusted**, stateless daemons that live outside the enclave —
+Small, **untrusted**, stateless daemons that live outside the enclave —
 on any box with a public IP — and give the fleet a friendly front door
 without ever entering the trust boundary:
 
@@ -10,16 +10,22 @@ without ever entering the trust boundary:
 - [`tcp6-relay.js`](tcp6-relay.js) — **dedicated-IP TCP relay**: each deployment's
   `tcp:N` ports served on its OWN IPv6 at the real port, routed by destination
   address (no SNI, no TLS required — any protocol). Details below.
+- [`udp-relay.js`](udp-relay.js) — **UDP relay**: public reach for apps'
+  declared `udp:N` ports, one IPv6 per deployment. Details below.
+- [`egress-relay.js`](egress-relay.js) — **dedicated-IP egress relay**: the
+  OUTBOUND half — the app connects out FROM its own IPv6 (via `NAN_EGRESS`),
+  source-bound at the relay. Details below.
 - [`api-relay.js`](api-relay.js) — **API relay**: fleet discovery + placement.
   Reads NanRegistry on Base for live enclaves, polls their `/availability`,
   and steers new work to the most available one.
-- [`udp-relay.js`](udp-relay.js) — **UDP relay**: public reach for apps'
-  declared `udp:N` ports, one IPv6 per deployment. Details below.
+- [`net-guard.mjs`](net-guard.mjs) — shared SSRF classifier (symlink to the
+  repo-root canonical file; also imported by the enclave's `egress.js`).
 
 Every deployment gets a **dedicated IPv6** out of the box's routed /64,
-deterministic from its id. The `tcp6-relay` serves its `tcp:N` ports there and
-the `udp-relay` serves its `udp:N` ports there — one stable address per
-deployment, its declared ports at their real numbers (`[addr]:5432`,
+deterministic from its id. The `tcp6-relay` serves its `tcp:N` ports there, the
+`udp-relay` serves its `udp:N` ports there, and the `egress-relay` makes its
+OUTBOUND connections leave from it — one stable address per deployment, in both
+directions, its declared ports at their real numbers (`[addr]:5432`,
 `[addr]:443`). The SNI `relay.js` remains as a shared-port fallback (works
 without a routed /64, and gives in-enclave TLS termination on the platform
 cert).
@@ -163,11 +169,91 @@ deploy response's `network.tcp` / `network.address`). Public deployments only.
   (4096), `TCP6_HANDSHAKE_MS` (10000). `TCP6_PREFIX` is only read by the
   systemd unit's AnyIP step, not the daemon.
 
+## Egress relay (dedicated-IP outbound) — `egress-relay.js`
+
+The outbound half of the dedicated address: a deployment's app **connects out
+from its own IPv6**, so it has one stable identity in both directions (what a
+VM with a public IP gives you). The inbound relays above bind the address for
+listening; this one source-binds it for dialing.
+
+```
+guest ──SOCKS5(NAN_EGRESS)──> supervisor ──OPEN{cid,dst,source}──> egress-relay
+egress-relay ──connect(localAddress = <deployment IPv6>)──> destination
+egress-relay ──data WS /x/egress/<cid>──> supervisor ──> guest's SOCKS tunnel
+```
+
+The enclave (see `egress.js`) is the SOCKS front; this daemon holds ONE
+relay-initiated control WS to the enclave (so the shim stays the only ingress),
+dials each requested destination with the deployment's address as the source,
+and splices raw bytes back over a per-connection data WS. It never chooses the
+source — the enclave derives it from the authenticated deployment — so a
+tenant can only ever egress as its own address.
+
+### How apps use it
+
+Guests opt in by honouring **`NAN_EGRESS`** (injected into the tenant env when
+egress is enabled): a `socks5h://<id>:<token>@127.0.0.1:<port>` URL. Point an
+HTTP client's proxy or a SOCKS-aware dialer at it and outbound traffic leaves
+from the deployment's IPv6. `socks5h` = the relay resolves DNS (remote side),
+so names resolve and are SSRF-checked where the dial happens.
+
+### Setup
+
+1. **Enclave**: set `DEP_ADDR_PREFIX` (as for the inbound relays) **and**
+   `EGRESS_RELAY_TOKEN` (a shared secret proving the control/data channels are
+   the real relay). Optional `EGRESS_SOCKS_PORT` (default 1080).
+2. **Box, AnyIP**: the same `ip -6 route add local <prefix>/64 dev lo` +
+   `ip_nonlocal_bind=1` the inbound relays use — the systemd unit shares it. No
+   `CAP_NET_BIND_SERVICE` here: source-binding for `connect()` needs neither a
+   privileged port nor a configured address, only `ip_nonlocal_bind`.
+3. **Relay** — `/etc/nan-relay/egress-relay.env`:
+
+```bash
+ENCLAVE_URL=https://enclave1...
+EGRESS_RELAY_TOKEN=<same as the enclave>
+EGRESS_PREFIX=<same /64>            # systemd AnyIP step only
+# EGRESS_ALLOW_V4=1                 # optional; see caveats
+node egress-relay.js
+```
+
+`deploy.sh` ships the unit but only `enable --now`s it once this env file
+exists.
+
+### Caveats
+
+- **Dedicated source is IPv6-only.** Only a v6 destination can carry the
+  deployment's v6 source. v4 destinations are refused unless `EGRESS_ALLOW_V4=1`,
+  and even then they leave from the box's **shared** v4 (no per-deployment
+  identity) — documented, off by default.
+- **Transparent (phase 2).** The platform's wasmtime carries an `-S egress`
+  shim (`wasm/wasmtime-egress.patch`) that routes a guest's raw `wasi:sockets`
+  connects *and* its `wasi:http` outgoing requests through this same front —
+  automatically, for unmodified apps — and the wasm-manager drops the ambient
+  `-Sinherit-network` when egress is on, so the guest has no raw network to
+  bypass with. The per-deployment SOCKS credential is delivered host-side
+  (`NAN_EGRESS_CRED`, guest-invisible), reusing all three guardrails below;
+  `NAN_EGRESS` stays exported for apps that still want to steer outbound
+  explicitly. On a toolchain without the shim this degrades to phase-1
+  (proxy-aware) behavior. UDP egress is not mediated yet, so raw outbound UDP is
+  denied under the lockdown (inbound `udp:N` still works). Guaranteed in every
+  mode: **no deployment can egress as another's address.**
+- **The relay sees whatever the app sends** — same passthrough trust as the
+  inbound relays. TLS out → the relay sees ciphertext; plaintext → visible to
+  it (drop, not forge). Apps wanting confidentiality against the relay speak
+  their own TLS.
+- **SSRF (guardrail):** destinations in loopback/link-local/ULA/private/
+  multicast ranges are refused — once in the enclave for literal IPs, and again
+  here after DNS resolution (`net-guard.mjs`, shared with the enclave). This
+  protects both the enclave's and this box's own localhost/private services.
+- Config: `ENCLAVE_URL`, `EGRESS_RELAY_TOKEN` (required), `EGRESS_ALLOW_V4`
+  (off), `EGRESS_MAX_CONNS` (4096), `EGRESS_DIAL_MS` (10000). `EGRESS_PREFIX` is
+  the systemd AnyIP step only, not the daemon.
+
 ## TCP relay (SNI, shared-port)
 
 Gives service apps (declared `tcp:N` firewall ports) a **normal public TCP
-endpoint** — `irssi -c dep_abc123.tcp.nan.host -p 6667 --tls`, `psql
-"host=dep_xyz.tcp.nan.host sslmode=require"` — with the enclave's guarantees
+endpoint** — `irssi -c dep_abc123.tcp.enclave.host -p 6667 --tls`, `psql
+"host=dep_xyz.tcp.enclave.host sslmode=require"` — with the enclave's guarantees
 fully intact. No per-user websocat, no app-side TLS code. Multiplexes every
 deployment onto shared public ports, demuxed by the TLS SNI, and terminates
 TLS in-enclave on the platform cert. The dedicated-IP relay above is the newer,
@@ -199,22 +285,22 @@ against your enclaves.
 ## Setup
 
 1. **Domain** (once, platform-wide): set the supervisor's `TLS_BRIDGE_DOMAIN`
-   env to the SNI suffix (e.g. `tcp.nan.host`, plain config in
+   env to the SNI suffix (e.g. `tcp.enclave.host`, plain config in
    `tinfoil-config.yml`). At boot the enclave mints its own key + self-signed
-   cert for `*.tcp.nan.host` — no ACME, no secrets, no renewals; the key never
+   cert for `*.tcp.enclave.host` — no ACME, no secrets, no renewals; the key never
    exists outside the CVM, let alone on the relay box.
-2. **DNS**: `*.tcp.nan.host  A  <relay ip>` (repeat per relay for round-robin).
+2. **DNS**: `*.tcp.enclave.host  A  <relay ip>` (repeat per relay for round-robin).
 3. **Relay**:
 
 ```bash
 cd relay && npm install
-RELAY_DOMAIN=tcp.nan.host \
+RELAY_DOMAIN=tcp.enclave.host \
 ENCLAVE_URL=https://enclave1.nan.containers.tinfoil.dev \
 RELAY_PORTS=6667,5432 \
 node relay.js
 ```
 
-Clients then reach a deployment at `<deploymentId>.tcp.nan.host:<port>` with
+Clients then reach a deployment at `<deploymentId>.tcp.enclave.host:<port>` with
 plain TLS. The deployment must be `public: true` (the bridge enforces the same
 auth as `/x/:id/tcp/:port`; a relay has no owner token, so private deployments
 stay unreachable through it — by design).
@@ -223,7 +309,7 @@ stay unreachable through it — by design).
 
 The bridge cert is self-signed — CA validation was never the trust anchor
 here (a CA cert would only prove you reached *someone* holding a
-`*.tcp.nan.host` cert, not that the key lives inside an attested enclave —
+`*.tcp.enclave.host` cert, not that the key lives inside an attested enclave —
 and its key would have to exist outside the enclave to be issued at all).
 Instead the supervisor publishes the cert **over the attested origin** at
 `GET /v1/tls-bridge` (`fingerprint256`, `spkiPinSha256`, the PEM). A
@@ -236,8 +322,8 @@ verifying client:
 
 ```bash
 curl -s https://<enclave>/v1/tls-bridge | jq -r .fingerprint256
-openssl s_client -connect dep-abc123.tcp.nan.host:6667 \
-  -servername dep-abc123.tcp.nan.host </dev/null 2>/dev/null \
+openssl s_client -connect dep-abc123.tcp.enclave.host:6667 \
+  -servername dep-abc123.tcp.enclave.host </dev/null 2>/dev/null \
   | openssl x509 -noout -fingerprint -sha256      # must match
 ```
 
@@ -245,7 +331,7 @@ With the pin, a MITM relay fails outright — the private key it would need
 never left the CVM — so the session is transitively bound to the measured
 enclave. Strict clients can also use the published PEM as their sole trust
 root (`psql sslmode=verify-full sslrootcert=bridge.pem`; the SAN covers
-`*.tcp.nan.host`). Casual clients that don't validate certs (`sslmode=require`,
+`*.tcp.enclave.host`). Casual clients that don't validate certs (`sslmode=require`,
 `irssi --tls`) connect unchanged, with the same what-any-router-sees exposure
 they always had.
 
@@ -265,7 +351,7 @@ TLS on 6697 while the app declares `tcp:6667`) and for colocated testing.
 ## Notes
 
 - **Hostnames spell the deployment id with a hyphen**: deployment `dep_abc123`
-  is reached at `dep-abc123.tcp.nan.host`. Underscores aren't valid hostname
+  is reached at `dep-abc123.tcp.enclave.host`. Underscores aren't valid hostname
   label characters, and OpenSSL refuses to wildcard-match them — strict
   clients (psql, python) would reject the cert. The relay maps a leading
   `dep-` back to the canonical `dep_` id.

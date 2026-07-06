@@ -751,6 +751,49 @@ def _vault_fs_supported() -> bool:
     return _VAULT_FS
 
 
+_EGRESS_FS = None   # does this wasmtime carry the transparent-egress shim (-S egress)?
+
+def _egress_supported() -> bool:
+    """Probe (once) whether the wasmtime toolchain has the nan transparent-egress
+    shim: `-S egress=<host>:<port>` routes ALL guest outbound (wasi:sockets TCP
+    connect AND the wasi:http outgoing handler) through the enclave's loopback
+    SOCKS front, so an UNMODIFIED app leaves from the deployment's dedicated IPv6
+    (wasmtime-egress.patch, phase 2). When present the manager makes egress
+    transparent and drops the raw -Sinherit-network in run mode; on older
+    toolchains it falls back to phase-1 (guest-visible NAN_EGRESS only)."""
+    global _EGRESS_FS
+    if _EGRESS_FS is None:
+        try:
+            r = subprocess.run([WASMTIME, "run", "-S", "help"],
+                               capture_output=True, text=True, timeout=10)
+            _EGRESS_FS = "egress=" in (r.stdout or "") + (r.stderr or "")
+        except Exception:
+            _EGRESS_FS = False
+        print(f"[egress] wasmtime -S egress (transparent) support: {_EGRESS_FS}", flush=True)
+    return _EGRESS_FS
+
+
+def _parse_egress_url(url: str):
+    """The supervisor hands us the per-deployment NAN_EGRESS verbatim: a
+    `socks5h://<id>:<token>@<host>:<port>` URL. For TRANSPARENT egress we reuse
+    its parts host-side — the endpoint on the `-S egress` flag and `<id>:<token>`
+    in $NAN_EGRESS_CRED (guest-invisible). Returns {endpoint, cred} or None if it
+    isn't a usable socks URL (then we leave egress as the guest-visible env only).
+    Parsing the existing field means no supervisor<->manager protocol change."""
+    try:
+        u = urllib.parse.urlparse(url)
+        if not u.scheme.startswith("socks5") or not u.username or not u.password or not u.hostname or not u.port:
+            return None
+        # username/password are percent-encoded in the URL; decode for SOCKS auth.
+        uid = urllib.parse.unquote(u.username)
+        tok = urllib.parse.unquote(u.password)
+        if not uid or not tok:
+            return None
+        return {"endpoint": f"{u.hostname}:{u.port}", "cred": f"{uid}:{tok}"}
+    except Exception:
+        return None
+
+
 def _build_vault_skeleton(vid: str, spec: dict) -> None:
     """Materialize the SKELETON tree for a nanvol2 volume: the manifest's
     directory structure with each file a SPARSE placeholder truncated to its
@@ -1419,7 +1462,7 @@ def _alloc_ports(pspec) -> dict:
 
 def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdir=None,
                nn=False, nan_config=None, vol_mounts=None, enc_mounts=None, enc_http=None,
-               vault_flags=None, vault_names=None):
+               vault_flags=None, vault_names=None, egress=None, egress_transparent=None):
     """The wasmtime invocation for a ports spec. Returns (cmd, host_port, wait_ports).
 
     serve mode: `wasmtime serve` owns the one HTTP listener; no sockets granted.
@@ -1453,6 +1496,12 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     # the GUEST, never to the wasmtime process env (that carries the CUDA/ORT
     # knobs). Kept out of the log line: a config may hold an API key.
     cfg_args = ["--env", "NAN_CONFIG=" + nan_config] if nan_config else []
+    # dedicated-IP egress: a per-deployment SOCKS URL minted by the supervisor
+    # (see egress.js). Forwarded verbatim to the GUEST only; it carries a bearer
+    # token, so — like NAN_CONFIG — it never reaches the wasmtime process env or
+    # a log line. Set in both modes: a `serve` app makes outbound calls too.
+    if egress:
+        cfg_args += ["--env", "NAN_EGRESS=" + egress]
     # attached model volumes: preopen each mount as a guest /models/<name> dir.
     # Read-only in practice (dm-verity/EROFS mounts are physically read-only);
     # NAN_MODELS lists the mounted names so the app can discover them without
@@ -1482,15 +1531,28 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     # already hold outbound HTTP (`serve` grants -Shttp; `run` grants sockets).
     if enc_http:
         vol_args += ["--env", "NAN_ENC_HTTP=" + json.dumps(enc_http)]
+    # nan transparent egress (phase 2): `-S egress=<host>:<port>` makes the
+    # patched wasmtime funnel ALL guest outbound through the loopback SOCKS front
+    # (credential in $NAN_EGRESS_CRED, set host-side by _spawn_and_wait), so an
+    # UNMODIFIED app leaves from the deployment's dedicated IPv6. Added in BOTH
+    # modes: `serve` intercepts the wasi:http outgoing handler, `run` the
+    # wasi:sockets connect. In run mode it ALSO closes the raw bypass — we drop
+    # `-Sinherit-network` so the guest can no longer reach the network directly.
+    egress_args = ["-S", f"egress={egress_transparent}"] if egress_transparent else []
     if pspec["serve"]:
         return ([WASMTIME, "serve", "-Scli", "-Shttp", *P3_FLAGS, *nn_args, *fs_args, *cfg_args, *vol_args,
-                 "-W", f"max-memory-size={mem_bytes}",
+                 *egress_args, "-W", f"max-memory-size={mem_bytes}",
                  "--addr", f"{HOST_IP}:{serve_port}", str(wasm)],
                 serve_port, [serve_port])
     port_map = port_map or {}
     nan_ports = ",".join(f"{e}={port_map[e]}" for e in pspec["norm"])
+    # inbound binds (declared tcp:N/udp:N) still need the socket-address check to
+    # permit them: `-Sinherit-network` allows all, while `-S egress` installs a
+    # check that permits TCP bind/connect + UDP bind but DENIES raw UDP egress.
+    # So we grant EXACTLY ONE of them — inherit-network (no egress) OR egress.
+    net_args = egress_args if egress_transparent else ["-Sinherit-network"]
     cmd = [WASMTIME, "run", "-Scli", *P3_FLAGS, *nn_args, "-Stcp", "-Sudp",
-           "-Sinherit-network", "-Sallow-ip-name-lookup", *fs_args, *cfg_args, *vol_args,
+           *net_args, "-Sallow-ip-name-lookup", *fs_args, *cfg_args, *vol_args,
            "-W", f"max-memory-size={mem_bytes}",
            "--env", "NAN_PORTS=" + nan_ports, str(wasm)]
     http_entry = f"http:{pspec['http']}" if pspec["http"] else None
@@ -1504,7 +1566,8 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
 
 
 def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
-           mem_mb: int = 0, pspec=None, storage_mb=None, config_cid="", volumes=None) -> dict:
+           mem_mb: int = 0, pspec=None, storage_mb=None, config_cid="", volumes=None,
+           egress="") -> dict:
     pspec = pspec or _parse_ports([])
     if storage_mb is None:
         storage_mb = DEF_STORAGE_MB
@@ -1624,7 +1687,7 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
             pass
     ctx = {"pspec": pspec, "wasm": wasm, "port": port, "port_map": port_map, "fsdir": fsdir,
            "nn": nn, "nan_config": nan_config, "vol_mounts": vol_mounts, "gpu_share": gpu_share,
-           "log_path": log_path}
+           "log_path": log_path, "egress": egress}
     if enc_specs:
         try:
             rec["_encVolumes"] = _prepare_enc_volumes(vid, enc_specs)
@@ -1660,6 +1723,20 @@ def _spawn_and_wait(rec, ctx):
     pspec, wasm, port, port_map, fsdir, nn, nan_config, vol_mounts, gpu_share, log_path = (
         ctx["pspec"], ctx["wasm"], ctx["port"], ctx["port_map"], ctx["fsdir"], ctx["nn"],
         ctx["nan_config"], ctx["vol_mounts"], ctx["gpu_share"], ctx["log_path"])
+    egress = ctx.get("egress", "")
+    # nan transparent egress (phase 2): if the supervisor enabled egress (the
+    # per-deployment socks5h URL rides `egress`) AND this toolchain carries the
+    # -S egress shim, make it TRANSPARENT — the endpoint goes on the wasmtime
+    # cmdline and the SOCKS credential into the process env (guest-invisible,
+    # same delivery as the vault VEKs). On older toolchains _egress_supported()
+    # is False and we fall back to phase-1: the guest-visible NAN_EGRESS only,
+    # with raw -Sinherit-network still granted in run mode.
+    egress_transparent, egress_env = None, {}
+    if egress and _egress_supported():
+        parsed = _parse_egress_url(egress)
+        if parsed:
+            egress_transparent = parsed["endpoint"]
+            egress_env["NAN_EGRESS_CRED"] = parsed["cred"]
     enc_mounts = {s["name"]: s["plain_dir"] for s in rec.get("_encVolumes", []) if s.get("plain_dir")}
     # Large-tier (nanvol2) volumes, two delivery modes: with the nan-vault
     # WASI-fs shim in the toolchain, each mounts TRANSPARENTLY at /enc/<name>
@@ -1682,7 +1759,7 @@ def _spawn_and_wait(rec, ctx):
     mem_bytes = max(rec["mem_mb"], 1) * 1024 * 1024
     cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir, nn,
                                             nan_config, vol_mounts, enc_mounts, enc_http,
-                                            vault_flags, vault_names)
+                                            vault_flags, vault_names, egress, egress_transparent)
     rec["hostPort"] = host_port
     rec["endpoint"] = f"http://{HOST_IP}:{host_port}" if host_port else None
     # GPU tenants: the wasmtime process itself is the CUDA process (ORT holds the
@@ -1696,6 +1773,12 @@ def _spawn_and_wait(rec, ctx):
         # see host env (no -Sinherit-env), and the cmdline carries no keys.
         env = env if env is not None else dict(os.environ)
         env.update(vault_env)
+    if egress_env:
+        # SOCKS credential for transparent egress: wasmtime PROCESS env only
+        # (guest-invisible, same rationale as the vault VEKs — no -Sinherit-env,
+        # and the token never touches the cmdline or a log line).
+        env = env if env is not None else dict(os.environ)
+        env.update(egress_env)
     logf = open(log_path, "wb")
     try:
         proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=logf,
@@ -2273,10 +2356,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(422, {"error": f"app '{app_ref}' declares a minimum of {min_ggf / 1000} GPU TFLOPS; the request asks for less"})
         storage_mb = int(meta.get("storage_mb", DEF_STORAGE_MB))   # per-app /data cap; 0 opts out
         config_cid = str(b.get("configCid") or "").strip()         # per-deployment NAN_CONFIG (verified in launch)
+        egress = str(b.get("egress") or "").strip()                # per-deployment NAN_EGRESS (opaque SOCKS URL, forwarded verbatim)
         req_vols = b.get("volumes") or []                          # attached model volumes by name
         if not isinstance(req_vols, list):
             return self._json(400, {"error": "volumes must be a list of volume names"})
-        rec = launch(app_ref, b.get("name", ""), cpu_share, gpu_share, mem_mb, pspec, storage_mb, config_cid, req_vols)
+        rec = launch(app_ref, b.get("name", ""), cpu_share, gpu_share, mem_mb, pspec, storage_mb, config_cid, req_vols, egress)
         # awaiting_unlock is a SUCCESSFUL provision that's waiting for the
         # deployer's encrypted-volume key (POST /vms/:id/unlock) - NOT a failure.
         # The supervisor must keep the tenant + lease and surface the state, not

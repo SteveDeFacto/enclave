@@ -73,6 +73,19 @@ COPY wasmtime-vault-fs.patch /tmp/
 RUN git apply --check /tmp/wasmtime-vault-fs.patch \
  && git apply /tmp/wasmtime-vault-fs.patch
 
+# nan transparent egress (phase 2 of dedicated-IP egress): `-S egress=<host>:<port>`
+# routes ALL guest outbound — wasi:sockets TCP connect AND the wasi:http outgoing
+# handler — through the enclave's loopback SOCKS5 front (egress.js), so an
+# UNMODIFIED app leaves from the deployment's dedicated IPv6 with no way to reach
+# the raw network. The per-deployment SOCKS credential rides $NAN_EGRESS_CRED
+# (host process env only, guest-invisible — same delivery as the vault VEKs); the
+# wasm-manager also drops -Sinherit-network in run mode when egress is on. Pure
+# userspace: no new crates (std + the tokio already in wasmtime-wasi), so no
+# Cargo.lock delta. See wasm/wasmtime-egress.patch and the enclave-side egress.js.
+COPY wasmtime-egress.patch /tmp/
+RUN git apply --check /tmp/wasmtime-egress.patch \
+ && git apply /tmp/wasmtime-egress.patch
+
 # System-linked ORT: the binary NEEDS libonnxruntime.so.1 at runtime; ship it
 # plus the two provider dylibs the CUDA EP dlopens (providers_shared is the
 # dispatcher). providers_tensorrt is deliberately not shipped (never

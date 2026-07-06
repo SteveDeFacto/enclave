@@ -34,9 +34,14 @@ socket.
 
 **Service apps (firewall ports).** A catalog version published with a firewall
 config (`http:N` / `tcp:N` / `udp:N`) runs differently: the manager launches it
-with `wasmtime run` and grants **wasi:sockets** (`-Stcp -Sudp -Sinherit-network
--Sallow-ip-name-lookup`), and the app is a long-running *command* component that
-binds its ports itself (Rust `std::net` on `wasm32-wasip2` maps to wasi:sockets).
+with `wasmtime run` and grants **wasi:sockets** (`-Stcp -Sudp
+-Sallow-ip-name-lookup` plus, for the network address policy, either
+`-Sinherit-network` **or** — when dedicated-IP egress is enabled and the
+toolchain carries the transparent shim — `-S egress=<host>:<port>` in its place).
+The app is a long-running *command* component that binds its ports itself (Rust
+`std::net` on `wasm32-wasip2` maps to wasi:sockets). Under `-S egress` the guest
+keeps its inbound binds (`tcp:N`/`udp:N`) but its outbound is transparently
+source-tagged and it has no raw network — see *Dedicated-IP egress* below.
 
 **WASIp3 (component-model async).** Both modes are also launched with `-S p3`
 (wasmtime 45+), so apps may target the WASIp3 API surface — native async
@@ -106,6 +111,31 @@ The app just binds its assigned actual UDP port as normal. Two limits worth
 knowing: it's **IPv6-only** (a box has one v4), and the relay sees **cleartext**
 (it's not a confidentiality boundary — encrypt at the app, e.g. DTLS, if you
 need privacy). See `relay/README.md`.
+
+**Dedicated-IP egress (transparent + `NAN_EGRESS`).** The other direction: when
+the operator enables egress, **all** of a deployment's outbound — a `run`-mode
+app's raw `wasi:sockets` connects *and* a `serve`-mode app's `wasi:http` calls —
+**leaves from the deployment's own IPv6**, the same address its inbound
+`tcp:N`/`udp:N` ports are served on. So a deployment has one stable identity in
+both directions, like a VM with a public IP, and **you write nothing** — an
+unmodified app is already source-tagged. It is transparent because the
+platform's wasmtime intercepts the guest's connect / outgoing-HTTP path and
+routes it through the enclave's egress front; with it on the guest has **no raw
+network at all** (no ambient `-Sinherit-network`), so nothing can egress
+off-identity.
+
+The tenant env still carries **`NAN_EGRESS`** (a
+`socks5h://<id>:<token>@127.0.0.1:<port>` URL) for apps that want to steer
+outbound explicitly — point an HTTP client's proxy or a SOCKS dialer at it — but
+you no longer *need* to: routing is automatic. Notes: dedicated source is
+**IPv6-only** (v4 destinations, if allowed at all, share the box's v4); the relay
+resolves DNS and enforces SSRF (no loopback/private targets — so an app also
+can't reach the enclave's own `127.0.0.1` control ports); **raw UDP egress is
+denied** (not mediated yet; inbound `udp:N` binds still work); and, as with the
+inbound relays, the relay sees whatever you send — speak your own TLS for
+confidentiality. The credential is per-deployment: you can only egress as
+yourself. On older toolchains without the transparent shim this degrades to the
+explicit-`NAN_EGRESS`-only (proxy-aware) behavior. See `relay/README.md`.
 
 Sandbox defaults (nothing to configure): a private writable `/data` (see below),
 no host environment, no network beyond the served HTTP socket, memory capped per

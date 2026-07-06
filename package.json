@@ -7,7 +7,8 @@
   "main": "supervisor.js",
   "scripts": {
     "start": "node supervisor.js",
-    "dev": "node --watch supervisor.js"
+    "dev": "node --watch supervisor.js",
+    "test": "node --test --test-timeout=15000 test/*.test.mjs"
   },
   "engines": {
     "node": ">=20"

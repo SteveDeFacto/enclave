@@ -1,0 +1,28 @@
+[Unit]
+Description=NAN dedicated-IP EGRESS relay (per-deployment IPv6 source; app outbound tunneled from the enclave)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/nan-relay/egress-relay.env
+WorkingDirectory=/opt/nan-relay
+# AnyIP: source-binding a deployment's dedicated address on an OUTBOUND connect
+# needs ip_nonlocal_bind (the address isn't configured on an interface) and the
+# local route for the /64. Same two steps the tcp6/udp relays run; on a shared
+# box whichever unit starts first wins and the others no-op (- ignores failure).
+# NOTE: unlike the inbound relays this needs NO CAP_NET_BIND_SERVICE — it binds
+# a SOURCE address for connect(), never a privileged listen port.
+ExecStartPre=+-/usr/bin/env sysctl -w net.ipv6.ip_nonlocal_bind=1
+ExecStartPre=+-/usr/bin/env ip -6 route add local ${EGRESS_PREFIX} dev lo
+ExecStart=/usr/bin/node /opt/nan-relay/egress-relay.js
+Restart=always
+RestartSec=2
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

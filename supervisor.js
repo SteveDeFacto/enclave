@@ -38,6 +38,8 @@ import { Verifier } from "@tinfoilsh/verifier";
 // nan-vault: the wallet-gated encrypted-volume protocol (single source of truth
 // shared with the client CLI and the browser app; see scripts/nan-vault.mjs)
 import { seal as vaultSeal, unseal as vaultUnseal, newIdentity as vaultNewIdentity } from "./scripts/nan-vault.mjs";
+// dedicated-IP egress: the outbound half of the per-deployment address (see egress.js)
+import { createEgress } from "./egress.js";
 
 // ----------------------------------------------------------------------------
 // config
@@ -700,7 +702,12 @@ async function spawnContainer({ deploymentId, gpuShare, cpuShare, image, appPort
         appPort: appPort || 8080, name: deploymentId, ports: ports || [],
         // per-deployment config CID: the manager fetches + verifies it and
         // passes the JSON to the tenant as NAN_CONFIG (empty = app defaults)
-        configCid: configCid || "" }, SPAWN_TIMEOUT_MS);
+        configCid: configCid || "",
+        // dedicated-IP egress: a per-deployment SOCKS URL the manager forwards
+        // verbatim as the guest's NAN_EGRESS (empty when egress is off). The
+        // token in it is minted from the enclave SECRET, so the manager never
+        // needs the secret and the value never touches a log line.
+        egress: egress ? egress.envFor(deploymentId) : "" }, SPAWN_TIMEOUT_MS);
     if (r.status !== 201)
       throw new Error(`vmmanager: ${r.body.error || r.body.message || r.status}`);
     console.log(`[spawn-vm] ${deploymentId} image=${ref} cpuShare=${c} gpuShare=${g} `
@@ -1119,6 +1126,24 @@ const udpMap = () => [...deployments.values()]
 const netMap = () => [...deployments.values()]
   .filter((r) => r.public && r.status === "running" && (fwTcpPorts(r).length || fwUdpPorts(r).length))
   .map((r) => ({ id: r.id, address: depAddrFor(r.id), tcp: fwTcpPorts(r), udp: fwUdpPorts(r) }));
+
+// --- dedicated-IP EGRESS (the outbound half of depAddrFor) ------------------
+// A deployment's OUTBOUND connections leave from its own IPv6, mirroring the
+// inbound tcp6/udp relays. Guests opt in via NAN_EGRESS (a per-deployment SOCKS
+// URL); the enclave front is here (egress.js), the source-binding dialer is
+// relay/egress-relay.js. Enabled only when dedicated addressing is on AND a
+// shared relay token is configured (EGRESS_RELAY_TOKEN — proves the control/
+// data channels are the real relay, not a random client hitting the shim).
+const EGRESS_RELAY_TOKEN = (process.env.EGRESS_RELAY_TOKEN || "").trim();
+const EGRESS_SOCKS_PORT  = parseInt(process.env.EGRESS_SOCKS_PORT || "1080", 10);
+const egress = (DEP_ADDR_PREFIX && EGRESS_RELAY_TOKEN)
+  ? createEgress({
+      secret: SECRET, socksPort: EGRESS_SOCKS_PORT, relayToken: EGRESS_RELAY_TOKEN,
+      sourceAddrFor: depAddrFor,
+      isKnown: (id) => { const r = deployments.get(id); return !!r && r.status === "running"; },
+      log: (m) => console.log(m),
+    })
+  : null;
 
 app.use("/x/:id", async (req, res) => {
   let rec = deployments.get(req.params.id);
@@ -2598,6 +2623,11 @@ function wsUdpBridge(req, socket, head, port) {
 server.on("upgrade", async (req, socket, head) => {
   const deny = (line) => { socket.write(`HTTP/1.1 ${line}\r\n\r\n`); socket.destroy(); };
 
+  // dedicated-IP egress: the relay's control channel (/v1/egress-control) and
+  // per-connection data streams (/x/egress/<cid>). Both are relay-token gated
+  // inside handleUpgrade; it returns true once it owns the path.
+  if (egress && egress.handleUpgrade(req, socket, head)) return;
+
   // ---- app TCP ports: /x/:id/(tcp|tls)/:port — the declared-firewall data path ----
   // Auth follows the deployment's `public` flag (like the HTTP path). Two gates
   // before bridging: the port must be DECLARED in the firewall config, and the
@@ -3220,6 +3250,7 @@ function onchainPaymentInstructions(rec) {
 server.listen(PORT, () => console.log(`nan supervisor on :${PORT} · ${IS_GPU
   ? `${GPU_COUNT}×GPU @ ${CARD_VRAM_GB}GB (arbitrary split)`
   : `CPU-only enclave (${NODE_VCPUS} vCPU / ${NODE_RAM_GB}GB, node-share split)`} · ssh host key ${SSH_HOST_KEY_FP}`));
+if (egress) { egress.start(); console.log(`[egress] dedicated-IP egress on (SOCKS 127.0.0.1:${EGRESS_SOCKS_PORT}); awaiting relay control channel`); }
 
 // advertise this enclave on-chain (opt-in, non-blocking, never fatal)
 // If the origin is pinned (PUBLIC_URL), advertise eagerly at boot; otherwise we
