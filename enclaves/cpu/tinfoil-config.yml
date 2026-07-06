@@ -93,7 +93,7 @@ containers:
   # Identical to the GPU flavor's wasm-manager except NODE_HAS_GPU=0: catalog
   # apps marked `gpu: true` are refused at launch (a CPU node cannot serve them).
   - name: "wasm-manager"
-    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:2bfd719dbafb206701da0bf2b508fb4192c7f9b9c1c4dec49b1deefe11955e67"
+    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:3bbe99f161c9462eab172d09b03487c5d76c2eddc4d1d36112cb9dec0e408584"
     restart: always
     env:
       - WASM_MANAGER_PORT: "8091"
