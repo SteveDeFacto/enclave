@@ -76,10 +76,10 @@ index aa3ed70..720ff7f 100644
              return Err(dns_error("address not available".to_string(), 0));
 diff --git a/crates/wasi/src/egress.rs b/crates/wasi/src/egress.rs
 new file mode 100644
-index 0000000..f9cb9eb
+index 0000000..3137a39
 --- /dev/null
 +++ b/crates/wasi/src/egress.rs
-@@ -0,0 +1,246 @@
+@@ -0,0 +1,260 @@
 +//! nan transparent egress: route ALL guest outbound through the enclave's
 +//! loopback SOCKS5 front so an UNMODIFIED app leaves from the deployment's own
 +//! IPv6 — the same dedicated-source identity `NAN_EGRESS` gives an app that
@@ -216,6 +216,14 @@ index 0000000..f9cb9eb
 +/// dials it source-bound to the deployment's address.
 +pub async fn connect_addr(addr: SocketAddr) -> io::Result<TcpStream> {
 +    let cfg = get().expect("connect_addr called with egress disabled");
++    // A dial TO the front itself passes through directly: that is a guest
++    // speaking phase-1 SOCKS (NAN_EGRESS) explicitly, which must keep working
++    // under the phase-2 lockdown ("two ways in, one front"). Nothing else is
++    // exposed — the front authenticates every CONNECT with per-deployment
++    // credentials, and every destination it accepts is SSRF-checked as usual.
++    if addr == cfg.front {
++        return TcpStream::connect(cfg.front).await;
++    }
 +    socks_connect(cfg, Dest::Ip(addr.ip()), addr.port()).await
 +}
 +
@@ -225,7 +233,13 @@ index 0000000..f9cb9eb
 +pub async fn connect_authority(host: &str, port: u16) -> io::Result<TcpStream> {
 +    let cfg = get().expect("connect_authority called with egress disabled");
 +    let dest = match host.parse::<IpAddr>() {
-+        Ok(ip) => Dest::Ip(ip),
++        Ok(ip) => {
++            // Same front pass-through as connect_addr (see there).
++            if SocketAddr::new(ip, port) == cfg.front {
++                return TcpStream::connect(cfg.front).await;
++            }
++            Dest::Ip(ip)
++        }
 +        Err(_) => Dest::Domain(host),
 +    };
 +    socks_connect(cfg, dest, port).await

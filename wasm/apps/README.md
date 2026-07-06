@@ -133,7 +133,10 @@ resolves DNS and enforces SSRF (no loopback/private targets — so an app also
 can't reach the enclave's own `127.0.0.1` control ports); **raw UDP egress is
 denied** (not mediated yet; inbound `udp:N` binds still work); and, as with the
 inbound relays, the relay sees whatever you send — speak your own TLS for
-confidentiality. The credential is per-deployment: you can only egress as
+confidentiality. One quirk worth knowing: under the lockdown a non-blocking
+`connect_timeout` can report success for a DENIED dial — the socket then fails
+on its first read/write (`NotConnected`); a plain blocking `connect` reports
+the denial directly. No bytes ever flow either way. The credential is per-deployment: you can only egress as
 yourself. On older toolchains without the transparent shim this degrades to the
 explicit-`NAN_EGRESS`-only (proxy-aware) behavior. See `relay/README.md`.
 

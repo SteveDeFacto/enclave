@@ -12,6 +12,12 @@ to prove transparent egress works for **unmodified** apps:
   `http://$TARGET/` on each request. Proves the `wasi:http` outgoing handler is
   intercepted too (socks5h domain path). Source:
   [`egress-guest-http.rs`](egress-guest-http.rs).
+- `egress-guest-socks.wasm` (`run` mode) — dials the `NAN_EGRESS` front
+  directly and speaks SOCKS5 explicitly (the PHASE-1 path) while running under
+  the phase-2 lockdown. Proves the shim's front pass-through: a dial to the
+  front itself connects directly (everything else stays mediated), so explicit
+  proxy users keep working — and BND.ADDR still reports the derived source.
+  Source: [`egress-guest-socks.rs`](egress-guest-socks.rs).
 
 These tests **skip** unless a patched wasmtime is provided, so `npm test` stays
 green on machines without the toolchain:
@@ -32,6 +38,9 @@ cargo build --release --target wasm32-wasip2      # -> egress-guest-tcp.wasm
 # http guest (a cdylib crate with egress-guest-http.rs as src/lib.rs,
 # dependency: wasi = "0.14")
 cargo build --release --target wasm32-wasip2      # -> egress-guest-http.wasm
+
+# socks guest (a [[bin]] crate with egress-guest-socks.rs as src/main.rs)
+cargo build --release --target wasm32-wasip2      # -> egress-guest-socks.wasm
 ```
 
 The patched wasmtime is built by [`../../wasm/Dockerfile.wasmtime`](../../wasm/Dockerfile.wasmtime)

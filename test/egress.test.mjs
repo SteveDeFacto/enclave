@@ -213,8 +213,9 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const WASMTIME = process.env.NAN_EGRESS_WASMTIME;
 const GUEST_TCP = process.env.NAN_EGRESS_GUEST_TCP || `${HERE}fixtures/egress-guest-tcp.wasm`;
 const GUEST_HTTP = process.env.NAN_EGRESS_GUEST_HTTP || `${HERE}fixtures/egress-guest-http.wasm`;
+const GUEST_SOCKS = process.env.NAN_EGRESS_GUEST_SOCKS || `${HERE}fixtures/egress-guest-socks.wasm`;
 const phase2Skip = !WASMTIME ? "set $NAN_EGRESS_WASMTIME to a patched wasmtime to run phase-2 e2e"
-  : !fs.existsSync(GUEST_TCP) || !fs.existsSync(GUEST_HTTP) ? "guest fixtures missing (test/fixtures/*.wasm)"
+  : ![GUEST_TCP, GUEST_HTTP, GUEST_SOCKS].every((g) => fs.existsSync(g)) ? "guest fixtures missing (test/fixtures/*.wasm)"
   : false;
 
 // A harness whose mock relay dials `dialTarget` for every ALLOWED open (it
@@ -254,14 +255,17 @@ async function phase2Harness(dialTarget) {
     teardown: () => { for (const h of handles) { try { h.terminate ? h.terminate() : h.destroy(); } catch {} } enclave.close(); egress.stop(); } };
 }
 
-// Spawn `wasmtime run` on the TCP guest with the given TARGET; capture stdout.
+// Spawn `wasmtime run` on a command guest with the given TARGET; capture stdout.
 // egressOn injects `-S egress` + the host-side NAN_EGRESS_CRED (guest-invisible);
-// inheritNetwork adds -Sinherit-network (the phase-1 raw path, for the negative).
-function runTcpGuest({ socksPort, id, target, egressOn = true, inheritNetwork = false }) {
+// inheritNetwork adds -Sinherit-network (the phase-1 raw path, for the negative);
+// nanEgress exports the guest-visible NAN_EGRESS url (the phase-1 explicit path).
+function runTcpGuest({ socksPort, id, target, egressOn = true, inheritNetwork = false,
+                       guest = GUEST_TCP, nanEgress = false }) {
   const args = ["run", "-Scli", "-Sp3", "-Stcp", "-Sudp", "-Sallow-ip-name-lookup"];
   if (inheritNetwork) args.push("-Sinherit-network");
   if (egressOn) args.push("-S", `egress=127.0.0.1:${socksPort}`);
-  args.push("--env", `TARGET=${target}`, GUEST_TCP);
+  if (nanEgress) args.push("--env", `NAN_EGRESS=socks5h://${id}:${egressToken(SECRET, id)}@127.0.0.1:${socksPort}`);
+  args.push("--env", `TARGET=${target}`, guest);
   const env = { ...process.env };
   if (egressOn) env.NAN_EGRESS_CRED = `${id}:${egressToken(SECRET, id)}`;
   return new Promise((resolve) => {
@@ -296,6 +300,28 @@ test("phase2: a locked-down guest dialing a loopback literal is refused (SSRF; r
   assert.match(r.out, /^CONNERR/, `expected a connect error, got ${JSON.stringify(r.out)}`);
   assert.equal(h.opens.filter((o) => o.host === "127.0.0.1").length, 0, "a denied loopback dial must never reach the relay");
   h.teardown();
+});
+
+test("phase2: phase-1 explicit SOCKS (NAN_EGRESS) still works under the lockdown (front pass-through)",
+  { skip: phase2Skip }, async () => {
+  const echo = net.createServer((s) => s.on("data", (d) => s.write(d)));
+  echo.listen(0, "127.0.0.1"); await once(echo, "listening");
+  const h = await phase2Harness({ host: "127.0.0.1", port: echo.address().port });
+  // The guest dials the loopback FRONT itself and speaks SOCKS5 explicitly —
+  // the shim must pass that one destination through (everything else stays
+  // mediated), or NAN_EGRESS would be dead on phase-2 toolchains.
+  const r = await runTcpGuest({ socksPort: h.socksPort, id: "depS",
+                                target: "egress-fixture.test:80", guest: GUEST_SOCKS, nanEgress: true });
+  const m = r.out.match(/^OK (\S+) (.*)$/);
+  assert.ok(m, `expected OK <bnd> <reply>, got out=${JSON.stringify(r.out)} err=${r.err.slice(0, 300)}`);
+  // BND.ADDR carries the deployment's derived source (guardrail 1, phase-1 semantics)
+  assert.equal(m[1], sourceAddrFor("depS"));
+  assert.equal(m[2], "ping-egress");
+  // and the CONNECT reached the relay as a DOMAIN (socks5h — resolved there)
+  const open = h.opens.at(-1);
+  assert.equal(open.host, "egress-fixture.test");
+  assert.equal(open.source, sourceAddrFor("depS"));
+  echo.close(); h.teardown();
 });
 
 test("phase2: with egress lockdown and no inherit-network, a raw connect reaches nothing",
