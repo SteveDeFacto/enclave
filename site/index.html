@@ -5504,7 +5504,7 @@ const APP_DOMAIN = "app.enclave.host";
 function appEndpoint(d){
   if (!d || !d.id) return (d && d.network && d.network.endpoint) || "";
   const root = Nan.base.replace(/\/v1\/?$/, "");
-  if (/(^|\/\/)api\.nan\.host/i.test(root))
+  if (/(^|\/\/)api\.(enclave|nan)\.host/i.test(root))
     return "https://" + appLabel(d.id) + "." + APP_DOMAIN;
   return root + "/x/" + d.id;                              // direct-to-enclave override
 }
@@ -6443,7 +6443,11 @@ function selIdx(app){
   const s = STORE.sel[app.appId];
   return (s != null && s >= 0 && s < app.versions.length) ? s : defaultIdx(app);
 }
-const appVerified = (app) => { const i = defaultIdx(app); return i >= 0 && app.versions[i].verified; };
+// platform-published apps: publisher wallet == the catalog contract deployer
+const appOfficial = (app) => !!(STORE.owner && app.publisher.toLowerCase() === STORE.owner);
+// the Verified filter means "owner-endorsed": an explicit setVerified flag, or official
+// (owner-published is implicit endorsement - none of the platform apps carry the flag)
+const appVerified = (app) => { const i = defaultIdx(app); return i >= 0 && (app.versions[i].verified || appOfficial(app)); };
 
 /* ---- render ---- */
 function renderApps(){
@@ -6477,8 +6481,7 @@ function appCard(app){
   const isPub = me && app.publisher.toLowerCase() === me;
   const isOwner = me && STORE.owner && me === STORE.owner;
   const gw = IPFS_GATEWAY.replace(/\/+$/, "") + "/" + encodeURIComponent(v.cid);
-  // platform-published apps: publisher wallet == the catalog contract deployer
-  const isOfficial = !!(STORE.owner && app.publisher.toLowerCase() === STORE.owner);
+  const isOfficial = appOfficial(app);
   const badge = v.verified
     ? '<span class="app-badge" title="This version is marked verified by the catalog owner">✓ verified</span>'
     : (!STORE.owner || isOfficial) ? ''   // owner not fetched yet: community status is unknown, show nothing
