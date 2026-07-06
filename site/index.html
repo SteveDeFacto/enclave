@@ -3893,17 +3893,19 @@ function initEnclave() {
   const ctx = cv.getContext("2d");
   const reduce = (typeof matchMedia === "function") && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const PAD = 14;
-  let W = 0, H = 0, DPR = 1, parts = [], sweep = -1;
+  let W = 0, H = 0, DPR = 1, parts = [], sweep = -1, seedW = -1, seedH = -1;
 
   function size() {
-    DPR = Math.min(window.devicePixelRatio || 1, 2);
     const r = cv.getBoundingClientRect();
+    if (r.width < 40) return false;   // section hidden / not laid out - keep the last good bitmap
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
     W = r.width; H = r.height || 280;
     cv.width = W * DPR; cv.height = H * DPR;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    return true;
   }
   function seed() {
-    parts = [];
+    seedW = W; seedH = H; parts = [];
     const n = Math.max(10, Math.min(26, Math.floor(W / 16)));
     for (let i = 0; i < n; i++)
       parts.push({ x: PAD + Math.random() * (W - 2 * PAD), y: PAD + Math.random() * (H - 2 * PAD),
@@ -3945,10 +3947,20 @@ function initEnclave() {
     sweep = 0; const st = $("#enclaveState"); if (st) st.textContent = "measuring";
     setTimeout(tick, 3800 + Math.random() * 2800);
   }
+  function revive() {                 // re-sync after anything that can invalidate the bitmap, the
+    if (!size()) return;              // DPR transform, or a seed made while the section was hidden
+    if (seedW !== W || seedH !== H) seed();
+    if (reduce) frame();
+  }
   size(); seed(); $("#measureHash").textContent = fmtHash();
   if (reduce) { frame(); }
   else { requestAnimationFrame(frame); setTimeout(tick, 1600); }
-  let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { size(); seed(); if (reduce) frame(); }, 150); });
+  let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(revive, 150); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) revive(); });
+  cv.addEventListener("contextrestored", revive);   // browser reclaimed the canvas backing store
+  const sec = cv.closest("section");
+  if (sec && typeof MutationObserver === "function")
+    new MutationObserver(() => { if (!sec.hidden) revive(); }).observe(sec, { attributes: true, attributeFilter: ["hidden"] });
 }
 
 function initTicker() {
