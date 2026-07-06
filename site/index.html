@@ -4482,7 +4482,7 @@ function openDepositModal(){
 // via localStorage, so it opens straight into checkout.
 function openBuyModal(){
   if (!Nan.address) return;
-  const w = window.open("/buy.html?v=2", "enclaveBuy", "popup,width=480,height=780");
+  const w = window.open("/buy.html?v=3", "enclaveBuy", "popup,width=480,height=780");
   if (!w){ showToast("Popup blocked - allow popups for this site and try again."); return; }
   showToast("Complete your purchase in the checkout window.");
 }

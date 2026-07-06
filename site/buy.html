@@ -46,9 +46,37 @@ const msg = (html) => { document.getElementById("msg").innerHTML = html; };
 try {
   // self-hosted bundle (site/privy/, built by esbuild from @privy-io/react-auth
   // + react) - no CDN at runtime; lazy screens load as local chunks
-  const mod = await import("/privy/entry.js?v=2");   // ?v busts browser/CDN caches on bundle updates
+  const mod = await import("/privy/entry.js?v=3");   // ?v busts browser/CDN caches on bundle updates
   const { React, createRoot, PrivyProvider, usePrivy, useFiatOnramp } = mod;
   const h = React.createElement;
+
+  /* Privy's amount screen doesn't enforce a minimum (a $0 continues to the
+     provider, which only rejects a screen later). The modal renders in OUR
+     document, so watch its amount input and hold the primary button below the
+     floor. Degrades safely: if Privy's DOM changes, worst case is no guard. */
+  const MIN_USD = 5;
+  function startMinimumGuard(){
+    setInterval(() => {
+      const amt = [...document.querySelectorAll("input")].find(i =>
+        i.inputMode === "decimal" || i.type === "number" ||
+        /amount/i.test((i.name || "") + (i.id || "") + (i.placeholder || "") + (i.getAttribute("aria-label") || "")));
+      let hint = document.getElementById("minHint");
+      if (!amt){ if (hint) hint.remove(); return; }
+      const val = parseFloat(String(amt.value).replace(/[^\d.,]/g, "").replace(",", ".")) || 0;
+      const ok = val >= MIN_USD;
+      [...document.querySelectorAll("button")]
+        .filter(b => /^(continue|review|next|buy)\b/i.test((b.textContent || "").trim()))
+        .forEach(b => { b.disabled = !ok; b.style.opacity = ok ? "" : ".45"; b.style.pointerEvents = ok ? "" : "none"; });
+      if (!ok){
+        if (!hint){
+          hint = document.createElement("div"); hint.id = "minHint";
+          hint.style.cssText = "position:fixed;bottom:8px;left:0;right:0;text-align:center;color:#ffb86b;font:12px/1.4 monospace;z-index:2147483647;pointer-events:none;";
+          document.body.appendChild(hint);
+        }
+        hint.textContent = "Minimum purchase: $" + MIN_USD;
+      } else if (hint) hint.remove();
+    }, 350);
+  }
 
   function embeddedAddressOf(user){
     const accs = (user && (user.linkedAccounts || user.linked_accounts)) || [];
@@ -75,6 +103,7 @@ try {
       }
       if (started.current) return; started.current = true;
       msg("");
+      startMinimumGuard();
       fund({
         source: { assets: ["usd", "eur"] },
         destination: { asset: USDC_BASE, chain: "eip155:8453", address },
