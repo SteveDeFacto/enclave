@@ -526,6 +526,26 @@ def _decrypt_enc_volume(spec: dict, passphrase: str) -> str:
         except OSError: pass
 
 
+def _pycrypto():
+    """pycryptodome, from either packaging of it: pip wheels ship the `Crypto`
+    namespace, while Debian/Ubuntu's python3-pycryptodome ships `Cryptodome`
+    (the live smoke caught every manager image failing on `Crypto` despite a
+    clean apt install). Returns (ChaCha20_Poly1305, HKDF, SHA256); raises the
+    caller-facing ValueError when neither namespace is present."""
+    try:
+        try:
+            from Crypto.Cipher import ChaCha20_Poly1305
+            from Crypto.Protocol.KDF import HKDF
+            from Crypto.Hash import SHA256
+        except ImportError:
+            from Cryptodome.Cipher import ChaCha20_Poly1305
+            from Cryptodome.Protocol.KDF import HKDF
+            from Cryptodome.Hash import SHA256
+    except ImportError:
+        raise ValueError("vault volumes need pycryptodome in the manager image (python3-pycryptodome)")
+    return ChaCha20_Poly1305, HKDF, SHA256
+
+
 def _decrypt_vault_volume(spec: dict, vek_hex: str, verify_only: bool = False) -> str:
     """Decrypt one staged nan-vault volume (NANVOL1 / XChaCha20-Poly1305) with a
     32-byte VEK, streaming ciphertext -> plaintext so peak RAM is one chunk, not
@@ -535,10 +555,7 @@ def _decrypt_vault_volume(spec: dict, vek_hex: str, verify_only: bool = False) -
     — used to re-verify a VEK against the staged ciphertext (auto-grant re-arm)
     without touching the running tenant. Returns the plaintext dir ("" when
     verify_only). Raises ValueError on wrong key / tamper / bad format."""
-    try:
-        from Crypto.Cipher import ChaCha20_Poly1305   # python3-pycryptodome (in the manager image)
-    except ImportError:
-        raise ValueError("vault volumes need pycryptodome in the manager image (python3-pycryptodome)")
+    ChaCha20_Poly1305, _, _ = _pycrypto()
     import hashlib as _hl, tempfile as _tf, subprocess as _sp
     try:
         key = bytes.fromhex(vek_hex.lower().removeprefix("0x"))
@@ -603,10 +620,7 @@ def _open_nanvol2(spec: dict, vek_hex: str) -> None:
     and arm the on-demand block reader (spec['_reader'], RAM only - _public
     strips underscore keys). Idempotent; ~KBs of work regardless of volume
     size. Raises ValueError on wrong key / tamper / pin mismatch."""
-    try:
-        from Crypto.Cipher import ChaCha20_Poly1305
-    except ImportError:
-        raise ValueError("vault volumes need pycryptodome in the manager image (python3-pycryptodome)")
+    ChaCha20_Poly1305, _, _ = _pycrypto()
     import hashlib as _hl
     try:
         key = bytes.fromhex(vek_hex.lower().removeprefix("0x"))
@@ -641,8 +655,7 @@ def _nanvol2_file_key(reader: dict, blob: str) -> bytes:
     Must match nan-vault.mjs blockFileKey (@noble hkdf; interop-tested)."""
     k = reader["keys"].get(blob)
     if k is None:
-        from Crypto.Protocol.KDF import HKDF
-        from Crypto.Hash import SHA256
+        _, HKDF, SHA256 = _pycrypto()
         k = HKDF(reader["vek"], 32, reader["pack_id"], SHA256,
                  context=("nan-vault/file/v1:" + blob).encode())
         reader["keys"][blob] = k
@@ -686,7 +699,7 @@ def _nanvol2_read(vid: str, spec: dict, path: str, start: int, end: int):
     NANVOL2 volume, decrypting (and LRU-caching) only the touched blocks. Each
     block's AEAD tag is verified before any of its bytes are served. Raises
     KeyError (no such file) / ValueError (tamper)."""
-    from Crypto.Cipher import ChaCha20_Poly1305
+    ChaCha20_Poly1305, _, _ = _pycrypto()
     reader = spec["_reader"]
     f = reader["files"][path]
     bs = reader["block_size"]

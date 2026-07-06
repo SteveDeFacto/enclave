@@ -28,12 +28,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-pycryptodome ca-certificates curl gdb \
     && rm -rf /var/lib/apt/lists/*
 
-# The nvidia/cuda base ships its own python3 that shadows apt's on PATH, so
-# the manager MUST run under /usr/bin/python3 (the interpreter apt provisions
-# dist-packages for) - the live smoke caught bare `python3` resolving to a
-# Crypto-less interpreter inside the enclave. The RUN is the build-time proof:
-# an image whose manager python cannot import the vault AEAD must never ship.
-RUN /usr/bin/python3 -c "from Crypto.Cipher import ChaCha20_Poly1305; from Crypto.Protocol.KDF import HKDF; print('pycryptodome OK for', __import__('sys').executable)"
+# Build-time proof the manager's interpreter can import the vault AEAD - an
+# image that cannot must never ship (the live smoke caught this inside the
+# enclave). Debian/Ubuntu's python3-pycryptodome ships the `Cryptodome`
+# namespace while pip wheels ship `Crypto`; wasm_manager._pycrypto() accepts
+# either, and this check asserts at least one resolves.
+RUN /usr/bin/python3 <<'PY'
+try:
+    from Crypto.Cipher import ChaCha20_Poly1305
+    from Crypto.Protocol.KDF import HKDF
+    ns = "Crypto"
+except ImportError:
+    from Cryptodome.Cipher import ChaCha20_Poly1305
+    from Cryptodome.Protocol.KDF import HKDF
+    ns = "Cryptodome"
+import sys
+print("pycryptodome OK via", ns, "on", sys.executable)
+PY
 
 # wasmtime CLI with wasi-nn (ONNX Runtime backend, CUDA EP) + the ORT dylibs it
 # links. ldconfig registers /usr/local/lib so the dynamic linker finds them; the
