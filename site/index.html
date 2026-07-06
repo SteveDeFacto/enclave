@@ -672,7 +672,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         </div>
         <div class="console-body">
           <div class="pane on" data-pane="req"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">POST /v1/deployments</span><button class="copybtn" data-copy="req">⧉ copy</button></div><pre><code id="outReq"></code></pre></div></div>
-          <div class="pane" data-pane="fetch"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">deploy.js</span><button class="copybtn" data-copy="fetch">⧉ copy</button></div><pre><code id="outFetch"></code></pre></div></div>
+          <div class="pane" data-pane="fetch"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">deploy.js</span><button class="runbtn" id="fetchRunBtn" type="button" title="Run this deployment (same as the Deploy button; respects Dry run)">▶ run</button><button class="copybtn" data-copy="fetch">⧉ copy</button></div><pre><code id="outFetch"></code></pre></div></div>
           <div class="pane" data-pane="curl"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" data-copy="curl">⧉ copy</button></div><pre><code id="outCurl"></code></pre></div></div>
           <div class="pane" data-pane="run"><div class="term-bar"><span class="tb-k">deployment</span><select id="termSel" aria-label="Select deployment output"><option>no deployments yet</option></select></div><div class="term" id="termOut"><span class="ln dimln">// press “Deploy” to provision a confidential enclave…</span></div></div>
         </div>
@@ -4256,7 +4256,15 @@ const Nan = {
   topup(id){ return this._req("POST", "/deployments/" + encodeURIComponent(id) + "/topup", { auth: true }); },
   /* Pricing (public) */
   getPricing(){ return this._req("GET", "/pricing"); },
-  getAvailability(){ return this._req("GET", "/availability"); },
+  getAvailability(){
+    // served at the ROOT origin, not under /v1 (the spec's own servers note) -
+    // calling BASE/v1/availability 404s and spams the console
+    const url = (this.base || "").replace(/\/v1\/?$/, "") + "/availability";
+    return fetch(url, { headers: { "Accept": "application/json" } }).then(r => {
+      if (!r.ok) throw new NanError("availability: HTTP " + r.status, r.status);
+      return r.json();
+    });
+  },
   /* Deployments */
   createDeployment(body){ return this._req("POST", "/deployments", { auth: true, body }); },
   listDeployments(query){ return this._req("GET", "/deployments", { auth: true, query }); },
@@ -4554,15 +4562,31 @@ async function usdcBalanceOf(addr){
   return (hex && hex !== "0x") ? parseInt(hex, 16) / 1e6 : 0;
 }
 let _balSeq = 0;
+async function ethBalanceOf(addr){
+  const params = [addr, "latest"];
+  try {
+    const hex = await Nan.provider.request({ method: "eth_getBalance", params });
+    if (hex && hex !== "0x") return Number(BigInt(hex)) / 1e18;
+  } catch(_){}
+  const r = await fetch("https://mainnet.base.org", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params }) });
+  const j = await r.json(); const hex = j && j.result;
+  return (hex && hex !== "0x") ? Number(BigInt(hex)) / 1e18 : 0;
+}
 async function updateUsdcBalance(){
   const el = $("#payBal"); if (!el) return;
   if (!Nan.address || !Nan.provider){ el.hidden = true; return; }
   const seq = ++_balSeq;
   try {
-    const bal = await usdcBalanceOf(Nan.address);
+    // the card follows the selected pay asset: USDC by default, ETH when an
+    // extension user flips the toggle
+    const wantEth = (typeof dep === "object" && dep && dep.asset === "ETH" && Nan.walletRdns !== PRIVY_RDNS);
+    const label = wantEth ? "ETH balance" : "USDC balance";
+    const val = wantEth ? (await ethBalanceOf(Nan.address)).toFixed(4) + " ETH"
+                        : (await usdcBalanceOf(Nan.address)).toFixed(2) + " USDC";
     if (seq !== _balSeq) return;
     const privy = Nan.walletRdns === PRIVY_RDNS;
-    el.innerHTML = '<div><span class="pb-k">USDC balance</span><span class="pb-v">' + esc(bal.toFixed(2)) + ' USDC</span></div>' +
+    el.innerHTML = '<div><span class="pb-k">' + label + '</span><span class="pb-v">' + esc(val) + '</span></div>' +
       (privy ? '<button class="pb-buy" id="payBuyMore" type="button">Buy more →</button>' : "");
     el.hidden = false;
     const bm = $("#payBuyMore"); if (bm) bm.onclick = () => openBuyModal();
@@ -4720,6 +4744,16 @@ async function restoreSession(){
   let s; try { s = JSON.parse(raw); } catch(e){ clearSession(); return; }
   if (!s || !s.address) return;
   if (s.token){ const exp = jwtExp(s.token); if (exp && exp * 1000 <= Date.now()) s.token = null; }  // drop an expired token
+  // paint the header button IMMEDIATELY from the cached session (email for Privy
+  // users) - the real restore below can take seconds and the button said
+  // "Sign in" the whole time. If restore fails, the finally-refresh resets it.
+  const early = $("#walletBtn");
+  if (early && s.address){
+    const who = s.email ? (s.email.length > 24 ? s.email.slice(0, 21) + "…" : s.email) : short(s.address);
+    early.classList.add("connected");
+    early.innerHTML = '<span class="wdot"></span>' + esc(who) + ' <span class="lock">restoring…</span>';
+  }
+  try {
   let chosen = null;
   if (s.rdns === PRIVY_RDNS){                                     // prior session was a Privy embedded wallet
     if (!PrivyWallet.enabled()) return;
@@ -4742,9 +4776,9 @@ async function restoreSession(){
   Nan.token = s.token || null;
   wireProviderEvents(provider);
   saveSession();                                                  // re-persist (drops any expired token, refreshes rdns)
-  refreshWallet();
   if (typeof renderApps === "function" && STORE.loaded) renderApps();
   if (Nan.token && typeof refreshEnclaves === "function") refreshEnclaves({ spinner: true });
+  } finally { refreshWallet(); }   // settles the early paint whether restore connected or not
 }
 
 /* ---- wallet button + popover ---- */
@@ -5642,7 +5676,7 @@ function initDeploy(){
   $("#cfgAsset").addEventListener("click", e => {
     const b = e.target.closest("button[data-asset]"); if (!b) return;
     dep.asset = b.dataset.asset; $$("#cfgAsset button").forEach(x => x.classList.toggle("on", x === b));
-    $("#assetLabel").textContent = dep.asset; renderDeploy();
+    $("#assetLabel").textContent = dep.asset; renderDeploy(); updateUsdcBalance();
   });
   $("#cfgAccess").addEventListener("click", e => {
     const b = e.target.closest("button[data-public]"); if (!b) return;
@@ -5653,6 +5687,7 @@ function initDeploy(){
   ["#cfgImage", "#cfgBudget", "#cfgPorts", "#cfgConfig"].forEach(s => { const el = $(s); if (el) el.addEventListener("input", renderDeploy); });
   $$(".console-tabs button").forEach(b => b.addEventListener("click", () => switchPane(b.dataset.pane)));
   $("#deployBtn").addEventListener("click", runDeploy);
+  const frb = $("#fetchRunBtn"); if (frb) frb.addEventListener("click", runDeploy);   // the snippet IS the deploy flow
   termLoadRuns(); termSelRender();
   if (termView) termRender(termView);                       // restore last run's output across reloads
   const tsel = $("#termSel"); if (tsel) tsel.addEventListener("change", e => { const r = termRuns[+e.target.value]; if (r) termRender(r); });
