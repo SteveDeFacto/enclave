@@ -360,6 +360,100 @@ def _model_volumes() -> dict:
 # guest mount point for an attached volume: /models/<name> (read-only; the
 # underlying dm-verity/EROFS mount is physically read-only anyway)
 VOL_GUEST_ROOT = os.environ.get("VOL_GUEST_ROOT", "/models")
+# guest mount point for a decrypted USER-HELD-KEY volume: /enc/<name>
+ENC_GUEST_ROOT = os.environ.get("ENC_GUEST_ROOT", "/enc")
+# ciphertext staging + decrypted-plaintext root. Both default under the
+# enclave's /tmp, which IS the CVM's already-encrypted, ephemeral, host-invisible
+# ramdisk (same backing as the /data scratch above - "the enclave blocks mounts",
+# so there is no separate host disk to leak to). So the decrypted plaintext lives
+# ONLY in the CVM's encrypted RAM: never persisted, never host-visible, gone on
+# teardown. (Ciphertext staging is on the same store but would be safe anywhere -
+# it's encrypted.)
+ENC_CIPHER_DIR = pathlib.Path(os.environ.get("ENC_CIPHER_DIR", "/tmp/nan-enc-cipher"))
+ENC_PLAIN_ROOT = pathlib.Path(os.environ.get("ENC_PLAIN_ROOT", "/tmp/nan-enc-plain"))
+ENC_MAX_BYTES  = int(os.environ.get("ENC_MAX_BYTES", str(8 * 1024 * 1024 * 1024)))  # ciphertext cap
+_ENC_CIPHERS   = {"aes-256-ctr", "aes-256-cbc"}   # allowlist (must match nan-volume.sh)
+
+
+def _prepare_enc_volumes(vid: str, specs: list) -> list:
+    """Fetch + stage each encrypted volume's CIPHERTEXT (we can't decrypt yet -
+    the key arrives post-attestation via /unlock). Returns normalized specs with
+    the local ciphertext path. Raises ValueError on a bad spec / fetch."""
+    out = []
+    seen = set()
+    ENC_CIPHER_DIR.mkdir(parents=True, exist_ok=True)
+    for s in specs:
+        if not isinstance(s, dict):
+            raise ValueError("encVolumes entries must be objects")
+        name = str(s.get("name") or "").strip()
+        src  = str(s.get("source") or "").strip()
+        sha  = str(s.get("sha256") or "").strip().lower()
+        cipher = str(s.get("cipher") or "aes-256-ctr").strip().lower()
+        try:
+            iters = int(s.get("iter") or 600000)
+        except (TypeError, ValueError):
+            raise ValueError(f"encVolume '{name}': iter must be an integer")
+        if not _VOL_NAME_RE.match(name):
+            raise ValueError(f"encVolume name '{name}' invalid ([a-z0-9._-])")
+        if name in seen:
+            raise ValueError(f"duplicate encVolume name '{name}'")
+        seen.add(name)
+        if not re.fullmatch(r"[0-9a-f]{64}", sha):
+            raise ValueError(f"encVolume '{name}': sha256 must be the 64-hex plaintext hash")
+        if cipher not in _ENC_CIPHERS:
+            raise ValueError(f"encVolume '{name}': unsupported cipher '{cipher}'")
+        cpath = ENC_CIPHER_DIR / f"{vid}-{name}.enc"
+        if src.startswith("ipfs://"):
+            cid = src[len("ipfs://"):].split("/", 1)[0].split("?", 1)[0].strip()
+            if ipfs_fetch is None:
+                raise ValueError("encVolume source is ipfs:// but ipfs_fetch is unavailable")
+            data = ipfs_fetch.fetch_verified(cid, IPFS_GATEWAY, ENC_MAX_BYTES, IPFS_TIMEOUT)
+        elif src.startswith(("http://", "https://")):
+            import urllib.request
+            with urllib.request.urlopen(src, timeout=IPFS_TIMEOUT) as r:
+                data = r.read(ENC_MAX_BYTES + 1)
+            if len(data) > ENC_MAX_BYTES:
+                raise ValueError(f"encVolume '{name}': ciphertext exceeds {ENC_MAX_BYTES} bytes")
+        else:
+            raise ValueError(f"encVolume '{name}': source must be ipfs:// or http(s)://")
+        cpath.write_bytes(data)
+        out.append({"name": name, "cipher_path": str(cpath), "sha256": sha,
+                    "cipher": cipher, "iter": iters, "unlocked": False, "plain_dir": None})
+    return out
+
+
+def _decrypt_enc_volume(spec: dict, passphrase: str) -> str:
+    """Decrypt one staged encrypted volume IN MEMORY with the deployer's
+    passphrase, verify the plaintext hash, and extract the tar into a per-volume
+    tmpfs dir. Returns the plaintext dir. Raises ValueError on wrong key / tamper.
+    The passphrase is passed to openssl via stdin (never argv/env/disk)."""
+    import subprocess as _sp, hashlib as _hl, tempfile as _tf
+    ENC_PLAIN_ROOT.mkdir(parents=True, exist_ok=True)
+    # decrypt to a temp file on the (tmpfs) plaintext root, hash it, then extract
+    with _tf.NamedTemporaryFile(dir=str(ENC_PLAIN_ROOT), suffix=".tar", delete=False) as tf:
+        plain_tar = tf.name
+    try:
+        p = _sp.run(["openssl", "enc", "-d", "-" + spec["cipher"], "-pbkdf2",
+                     "-iter", str(spec["iter"]), "-pass", "stdin",
+                     "-in", spec["cipher_path"], "-out", plain_tar],
+                    input=(passphrase + "\n").encode(), capture_output=True)
+        if p.returncode != 0:
+            raise ValueError("decrypt failed (wrong passphrase or corrupt ciphertext)")
+        h = _hl.sha256()
+        with open(plain_tar, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        if h.hexdigest() != spec["sha256"]:
+            raise ValueError("plaintext hash mismatch (wrong passphrase or tampered volume)")
+        dest = ENC_PLAIN_ROOT / (pathlib.Path(spec["cipher_path"]).stem)
+        dest.mkdir(parents=True, exist_ok=True)
+        rc = _sp.run(["tar", "-xf", plain_tar, "-C", str(dest)], capture_output=True)
+        if rc.returncode != 0:
+            raise ValueError("extract failed: " + rc.stderr.decode(errors="replace")[:200])
+        return str(dest)
+    finally:
+        try: os.remove(plain_tar)   # the decrypted tar is transient; the extracted tree is what mounts
+        except OSError: pass
 
 
 def _nn_tenant_env(gpu_share: float, pinned: bool) -> dict:
@@ -1010,7 +1104,7 @@ def _alloc_ports(pspec) -> dict:
 
 
 def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdir=None,
-               nn=False, nan_config=None, vol_mounts=None):
+               nn=False, nan_config=None, vol_mounts=None, enc_mounts=None):
     """The wasmtime invocation for a ports spec. Returns (cmd, host_port, wait_ports).
 
     serve mode: `wasmtime serve` owns the one HTTP listener; no sockets granted.
@@ -1054,6 +1148,14 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
         vol_args += ["--dir", f"{host_path}::{VOL_GUEST_ROOT}/{name}"]
     if vol_mounts:
         vol_args += ["--env", "NAN_MODELS=" + ",".join(vol_mounts.keys())]
+    # decrypted user-held-key volumes: preopen each at /enc/<name>. The plaintext
+    # lives only on the enclave's tmpfs (encrypted RAM); the guest reads it like
+    # any dir. NAN_ENC lists them so the app can find them without probing.
+    enc_mounts = enc_mounts or {}
+    for name, host_path in enc_mounts.items():
+        vol_args += ["--dir", f"{host_path}::{ENC_GUEST_ROOT}/{name}"]
+    if enc_mounts:
+        vol_args += ["--env", "NAN_ENC=" + ",".join(enc_mounts.keys())]
     if pspec["serve"]:
         return ([WASMTIME, "serve", "-Scli", "-Shttp", *P3_FLAGS, *nn_args, *fs_args, *cfg_args, *vol_args,
                  "-W", f"max-memory-size={mem_bytes}",
@@ -1181,24 +1283,55 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
             vol_mounts[name] = have[name]["path"]
     rec["volumes"] = list(vol_mounts.keys())
 
-    # Grants are minimal: a private /data preopen only (no host paths), no --env
-    # beyond NAN_PORTS, and sockets only when the version's firewall config asks
-    # for them. `-W max-memory-size` caps the guest's linear memory (the only RAM
-    # a tenant can grow) -- this is the real per-app memory ceiling, enforced by
-    # the runtime rather than by RLIMIT_AS (see _preexec for why RLIMIT_AS is
-    # wrong); the /data ramdisk usage is capped separately by the audit sweep.
-    mem_bytes = max(mem_mb, 1) * 1024 * 1024
-    cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir, nn, nan_config, vol_mounts)
+    # encrypted volumes (user-held key): the config may name ciphertext blobs the
+    # enclave must decrypt IN MEMORY with a passphrase the DEPLOYER sends AFTER
+    # verifying attestation (POST /vms/:id/unlock). Fetch the ciphertext now; hold
+    # the tenant in awaiting_unlock and defer the spawn until every volume is
+    # unlocked. The host/operator never see the key or the plaintext.
+    enc_specs = []
+    if nan_config:
+        try:
+            ev = json.loads(nan_config).get("encVolumes")
+            if isinstance(ev, list):
+                enc_specs = ev
+        except Exception:
+            pass
+    ctx = {"pspec": pspec, "wasm": wasm, "port": port, "port_map": port_map, "fsdir": fsdir,
+           "nn": nn, "nan_config": nan_config, "vol_mounts": vol_mounts, "gpu_share": gpu_share,
+           "log_path": log_path}
+    if enc_specs:
+        try:
+            rec["_encVolumes"] = _prepare_enc_volumes(vid, enc_specs)
+        except ValueError as e:
+            rec["status"], rec["error"] = "failed", "encVolume: " + str(e)
+            return rec
+        except Exception as e:
+            rec["status"], rec["error"] = "failed", f"encVolume fetch failed: {e}"
+            return rec
+        rec["_spawn_ctx"] = ctx
+        rec["encVolumes"] = [{"name": s["name"], "locked": True} for s in rec["_encVolumes"]]
+        rec["status"] = "awaiting_unlock"   # POST /vms/:id/unlock {name, passphrase} to proceed
+        return rec
+    return _spawn_and_wait(rec, ctx)
+
+
+def _spawn_and_wait(rec, ctx):
+    """Build the wasmtime command from a prepared context and spawn it, waiting
+    for readiness. Shared by launch() (no encrypted volumes) and unlock() (after
+    every user-held-key volume is decrypted + mounted)."""
+    pspec, wasm, port, port_map, fsdir, nn, nan_config, vol_mounts, gpu_share, log_path = (
+        ctx["pspec"], ctx["wasm"], ctx["port"], ctx["port_map"], ctx["fsdir"], ctx["nn"],
+        ctx["nan_config"], ctx["vol_mounts"], ctx["gpu_share"], ctx["log_path"])
+    enc_mounts = {s["name"]: s["plain_dir"] for s in rec.get("_encVolumes", []) if s.get("plain_dir")}
+    # `-W max-memory-size` caps the guest's linear memory (the only RAM a tenant
+    # can grow) - the real per-app memory ceiling, enforced by the runtime.
+    mem_bytes = max(rec["mem_mb"], 1) * 1024 * 1024
+    cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir, nn,
+                                            nan_config, vol_mounts, enc_mounts)
     rec["hostPort"] = host_port
     rec["endpoint"] = f"http://{HOST_IP}:{host_port}" if host_port else None
-    # GPU tenants: the wasmtime process itself is the CUDA process (ORT holds
-    # the context), so the MPS caps go in ITS environment — SM% from the bought
-    # share, VRAM = share × the card (the same budget the deployment priced).
-    # The pipe dir joins the mps-control daemon's server; without these vars a
-    # CUDA context would run uncapped, so nn tenants never launch without them.
-    # The pinned-VRAM var is dropped when the boot probe found it poisonous
-    # (mode "nopin"); the POST handler refuses GPU launches unless the probe
-    # passed, so `nn` here implies a probe mode exists.
+    # GPU tenants: the wasmtime process itself is the CUDA process (ORT holds the
+    # context), so the MPS caps go in ITS environment (SM% + VRAM from the share).
     env = None
     if nn:
         env = _nn_tenant_env(gpu_share, pinned=_NN_PROBE.get("mode") != "nopin")
@@ -1237,6 +1370,37 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
     else:
         _audit_rec(rec)
     return rec
+
+
+def unlock_enc_volume(vid: str, name: str, passphrase: str) -> dict:
+    """Deliver a user-held key for ONE encrypted volume: decrypt it in-enclave,
+    and once every volume is unlocked, spawn the held tenant. Returns the public
+    record. The passphrase is used and dropped here - never stored on rec/disk."""
+    with _lock:
+        rec = _apps.get(vid)
+    if not rec:
+        return {"error": "unknown deployment", "code": 404}
+    if rec.get("status") != "awaiting_unlock":
+        return {"error": f"deployment is not awaiting unlock (status {rec.get('status')})", "code": 409}
+    specs = rec.get("_encVolumes") or []
+    spec = next((s for s in specs if s["name"] == name), None)
+    if not spec:
+        return {"error": f"no encrypted volume named '{name}'", "code": 404}
+    if not spec.get("unlocked"):
+        try:
+            spec["plain_dir"] = _decrypt_enc_volume(spec, passphrase)
+        except ValueError as e:
+            return {"error": str(e), "code": 400}
+        except Exception as e:
+            return {"error": f"decrypt error: {e}", "code": 500}
+        spec["unlocked"] = True
+    for e in rec.get("encVolumes", []):
+        if e["name"] == name:
+            e["locked"] = False
+    remaining = [s["name"] for s in specs if not s.get("unlocked")]
+    if not remaining:
+        _spawn_and_wait(rec, rec["_spawn_ctx"])   # every volume decrypted -> start the app
+    return _public(rec)
 
 
 # --- firewall enforcement: audit what each app actually bound ---------------- #
@@ -1379,6 +1543,21 @@ def _rm_fsdir(rec):
         shutil.rmtree(d, ignore_errors=True)   # ephemeral scratch: nothing to preserve
 
 
+def _rm_enc(rec):
+    # wipe decrypted plaintext + staged ciphertext for this deployment. The
+    # store is the ephemeral encrypted ramdisk (gone on teardown anyway), but
+    # remove it promptly so a long-lived enclave doesn't accumulate plaintext.
+    for s in rec.get("_encVolumes", []) or []:
+        for k in ("plain_dir", "cipher_path"):
+            p = s.get(k)
+            if not p:
+                continue
+            try:
+                shutil.rmtree(p, ignore_errors=True) if os.path.isdir(p) else os.remove(p)
+            except OSError:
+                pass
+
+
 def teardown(vid: str) -> bool:
     with _lock:
         rec = _apps.pop(vid, None)
@@ -1386,6 +1565,7 @@ def teardown(vid: str) -> bool:
         return False
     _kill(rec)
     _rm_fsdir(rec)
+    _rm_enc(rec)
     return True
 
 
@@ -1511,6 +1691,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(422, {"error": str(e)})
             except Exception as e:
                 return self._json(502, {"error": f"prefetch failed: {e}"})
+        # Encrypted-volume key delivery: POST /vms/<vid>/unlock {name, passphrase}.
+        # The supervisor forwards the deployer's passphrase here (owner-auth'd,
+        # over the attested in-enclave TLS). We decrypt IN MEMORY and, once every
+        # volume is unlocked, spawn the held tenant. The passphrase is never
+        # logged, stored on the record, or written to disk.
+        mu = re.match(r"^/vms/([^/?]+)/unlock$", self.path)
+        if mu:
+            b = self._body()
+            name = str(b.get("name") or "").strip()
+            passphrase = b.get("passphrase")
+            if not name or not isinstance(passphrase, str) or passphrase == "":
+                return self._json(400, {"error": "unlock needs {name, passphrase}"})
+            r = unlock_enc_volume(mu.group(1), name, passphrase)
+            del passphrase
+            code = r.pop("code", 200) if isinstance(r, dict) else 200
+            return self._json(code if code != 200 else 200, r)
         if self.path != "/vms":
             return self._json(404, {"error": "not found"})
         b = self._body()

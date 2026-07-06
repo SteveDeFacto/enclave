@@ -2079,6 +2079,33 @@ app.delete("/v1/deployments/:id", authed, async (req, res) => {
              note: "Pay-per-deploy: no balance is held, so unused funded time is forfeit on early stop." });
 });
 
+// Unlock an encrypted volume (user-held key). The deployer sends the passphrase
+// HERE, after verifying the enclave attestation - the TLS terminates in-enclave
+// (the key is in the CPU-signed attestation), so the host and the operator can
+// forward TCP but cannot read this body. Owner-only. We hand the passphrase to
+// the app manager, which decrypts the volume IN MEMORY and starts the held app;
+// the passphrase is never persisted or logged anywhere in this path.
+app.post("/v1/deployments/:id/unlock", authed, async (req, res) => {
+  const rec = deployments.get(req.params.id);
+  if (!rec || rec.owner !== req.address) return fail(res, 404, "not_found", "No such deployment.");
+  if (PROVISION_BACKEND !== "vm" || !rec._vmId) return fail(res, 409, "no_instance", "No app instance to unlock.");
+  const name = String((req.body && req.body.name) || "").trim();
+  const passphrase = req.body && req.body.passphrase;
+  if (!name || typeof passphrase !== "string" || passphrase === "")
+    return fail(res, 422, "invalid_spec", "Provide { name, passphrase } for the encrypted volume.");
+  try {
+    const r = await vmReq("POST", `/vms/${encodeURIComponent(rec._vmId)}/unlock`, { name, passphrase }, SPAWN_TIMEOUT_MS);
+    if (r.status >= 400) return fail(res, r.status, "unlock_failed", (r.body && r.body.error) || `HTTP ${r.status}`);
+    // reflect the manager's post-unlock status onto the record
+    if (r.body && r.body.status) rec.status = r.body.status === "running" ? "running" : rec.status;
+    saveStateSoon();
+    res.json({ id: rec.id, volume: name, encVolumes: (r.body && r.body.encVolumes) || null,
+               status: (r.body && r.body.status) || rec.status });
+  } catch (e) {
+    fail(res, 502, "unlock_error", "Could not deliver the key: " + (e.shortMessage || e.message));
+  }
+});
+
 // Top-up instructions: just call NanPay.pay(deploymentRef, amount) again to extend.
 app.post("/v1/deployments/:id/topup", authed, (req, res) => {
   const rec = deployments.get(req.params.id);
