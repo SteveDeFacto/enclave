@@ -1,0 +1,31 @@
+[package]
+name = "vault"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { version = "0.39.0", features = ["bitflags"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+opt-level = "s"       # no hot code here - favor a small artifact
+strip = true
+lto = true
+
+[package.metadata.component]
+package = "nan:vault"
+
+[package.metadata.component.target]
+path = "wit"
+world = "vault"
+
+# WIT deps vendored from wasmtime v45 (see wit/world.wit)
+[package.metadata.component.target.dependencies]
+"wasi:http" = { path = "wit/deps/http" }
+"wasi:io" = { path = "wit/deps/io" }
+"wasi:clocks" = { path = "wit/deps/clocks" }

@@ -17,6 +17,11 @@
 //   unlock    member unlock of a deployment's vault volume on an enclave:
 //             unseal your VEK -> verify enclave attestation -> re-seal to the
 //             enclave's per-boot pubkey -> SIWE login -> POST unlock-sealed
+//   watch     always-on unlock agent (the FAILOVER note in NanVolumeAccess.sol):
+//             hold one authorized wallet, poll chain state, and re-deliver the
+//             sealed VEK whenever the deployment lands on a fresh enclave boot.
+//             The VEK stays in THIS process's RAM; grant the agent's wallet
+//             Reader (least privilege) and run it somewhere you trust.
 //
 // Common env/flags:
 //   PK / --pk <hex>                 wallet private key (hidden prompt if omitted)
@@ -24,12 +29,17 @@
 //   NETWORK base|base-sepolia (default base) · RPC_URL / --rpc <url>
 //   --owner <addr>    volume owner (defaults to YOUR address for setup/grant)
 //   --volume <name>   on-chain volume name
-// unlock flags:
-//   --url <enclave>   the enclave origin (attested TLS terminates THERE)
+// unlock/watch flags:
 //   --id <deployment> --name <encVolume name> (--volume defaults to --name)
-//   --repo <gh repo>  attestation config repo (default SteveDeFacto/nan)
+//   --url <enclave>   the enclave origin (attested TLS terminates THERE);
+//                     omitted = resolved from chain state (NanDeployments
+//                     .get(id).runner -> NanRegistry endpoint - no gateway
+//                     trusted for discovery; attestation still gates trust)
+//   --repo <gh repo>  attestation config repo (default: the runner's own
+//                     NanRegistry entry, else SteveDeFacto/nan)
 //   --no-verify       skip attestation verification (DEV ONLY - without it you
 //                     cannot know the sealed key is going into a real enclave)
+//   --interval <sec>  (watch) poll cadence, default 30
 //   --member <addr>   (status/grant/--wait) someone else's entry
 //   --role writer     (grant) grant Writer instead of Reader
 //   --wait            (register) poll until a grant lands, then confirm unseal
@@ -37,13 +47,13 @@
 // Examples:
 //   PK=0x.. node scripts/nan-vault-client.mjs setup --volume user-data --vek 0x<from nan-vault pack>
 //   PK=0x.. node scripts/nan-vault-client.mjs register --owner 0x<owner> --volume user-data --wait
-//   PK=0x.. node scripts/nan-vault-client.mjs unlock --url https://enclave2... --id 0x<dep> \
-//             --owner 0x<owner> --name user-data
+//   PK=0x.. node scripts/nan-vault-client.mjs unlock --id 0x<dep> --owner 0x<owner> --name user-data
+//   PK=0x.. node scripts/nan-vault-client.mjs watch  --id 0x<dep> --owner 0x<owner> --name user-data
 
 import rlSync from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
 import { createPublicClient, createWalletClient, http, getAddress, isAddress,
-         keccak256, encodeAbiParameters } from "viem";
+         keccak256, encodeAbiParameters, stringToBytes } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base, baseSepolia } from "viem/chains";
 import { DERIVE_MESSAGE, deriveKeypair, seal, unseal } from "./nan-vault.mjs";
@@ -71,6 +81,36 @@ const ABI = [
               { name: "updatedAt", type: "uint64" }] },
 ];
 const ROLE = { 0: "None", 1: "Reader", 2: "Writer" };
+
+// chain-state deployment->runner resolution (mirrors the vault app + console;
+// same defaults as scripts/nan-discover.mjs / site/index.html)
+const DEPLOYMENTS_ADDRESS = process.env.DEPLOYMENTS_ADDRESS || "0x81037A2081bc000F12B8aA771bede0d36742ec4b";
+const REGISTRY_ADDRESS    = process.env.REGISTRY_ADDRESS    || "0x13deE63b80353a15C6E03D54240EE463B420353F";
+const DEPLOYMENTS_ABI = [
+  { type: "function", name: "get", stateMutability: "view",
+    inputs: [{ name: "id", type: "bytes32" }],
+    outputs: [{ type: "tuple", components: [
+      { name: "id", type: "bytes32" }, { name: "owner", type: "address" },
+      { name: "appRef", type: "string" }, { name: "ports", type: "string" },
+      { name: "sshPubKey", type: "string" }, { name: "configCid", type: "string" },
+      { name: "gpuMilli", type: "uint16" }, { name: "cpuMilli", type: "uint16" },
+      { name: "appPort", type: "uint32" },
+      { name: "isPublic", type: "bool" }, { name: "active", type: "bool" },
+      { name: "createdAt", type: "uint64" },
+      { name: "rate", type: "uint256" }, { name: "balance6", type: "uint256" }, { name: "spent6", type: "uint256" },
+      { name: "runner", type: "bytes32" }, { name: "runnerOperator", type: "address" },
+      { name: "leaseUntil", type: "uint64" } ] }] },
+];
+const REGISTRY_ABI = [
+  { type: "function", name: "count", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "getPage", stateMutability: "view",
+    inputs: [{ name: "start", type: "uint256" }, { name: "n", type: "uint256" }],
+    outputs: [{ type: "tuple[]", components: [
+      { name: "endpoint", type: "string" }, { name: "repo", type: "string" },
+      { name: "measurement", type: "bytes32" }, { name: "operator", type: "address" },
+      { name: "registeredAt", type: "uint64" }, { name: "lastSeen", type: "uint64" },
+      { name: "active", type: "bool" }] }] },
+];
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -129,9 +169,90 @@ async function deriveVaultKey(account) {
 
 const ZERO32 = "0x" + "0".repeat(64);
 
+// deployment id -> its runner enclave, from chain state alone:
+// NanDeployments.get(id).runner is keccak256 of the endpoint string the
+// enclave registered in NanRegistry. Trust note: this only picks WHERE to
+// connect - attestation at connect time is what gates key release.
+async function resolveRunner(depId) {
+  const dep = await pub.readContract({ address: getAddress(DEPLOYMENTS_ADDRESS),
+    abi: DEPLOYMENTS_ABI, functionName: "get", args: [depId] });
+  if (!dep || dep.owner === "0x0000000000000000000000000000000000000000")
+    throw new Error("no such deployment on NanDeployments");
+  if (dep.runner === ZERO32) throw new Error("deployment has never been claimed - no runner");
+  const leaseLive = Number(dep.leaseUntil) * 1000 > Date.now();
+  const total = Number(await pub.readContract({ address: getAddress(REGISTRY_ADDRESS),
+    abi: REGISTRY_ABI, functionName: "count", args: [] }));
+  for (let start = 0; start < total; start += 50) {
+    const page = await pub.readContract({ address: getAddress(REGISTRY_ADDRESS),
+      abi: REGISTRY_ABI, functionName: "getPage", args: [BigInt(start), 50n] });
+    const hit = page.find((e) => keccak256(stringToBytes(e.endpoint)) === dep.runner);
+    if (hit) return { endpoint: hit.endpoint.replace(/\/+$/, ""), repo: hit.repo, leaseLive, dep };
+  }
+  throw new Error(`runner ${dep.runner} is not in NanRegistry - cannot resolve its endpoint`);
+}
+
+// Deliver a VEK to a deployment's enclave: verify attestation of `url` (the
+// load-bearing step - only then is TLS known to terminate inside the measured
+// CVM), fetch its per-boot vault pubkey, seal, SIWE, POST unlock-sealed.
+// Returns { body, enclavePub }. Shared by `unlock` and `watch`.
+async function deliverSealed(account, { url, depId, name, repo, noVerify, vek }) {
+  if (noVerify) {
+    console.log("WARNING: --no-verify - skipping attestation; do NOT do this against production");
+  } else {
+    const { Verifier } = await import("@tinfoilsh/verifier");
+    try {
+      await new Verifier({ serverURL: url, configRepo: repo }).verify();
+      console.log(`attestation verified ✓ (${url} measures as ${repo})`);
+    } catch (e) {
+      throw new Error(`attestation FAILED for ${url}: ${e.message} - refusing to send key material (override for dev: --no-verify)`);
+    }
+  }
+
+  // the enclave's per-boot pubkey, fetched over the just-verified TLS.
+  // The deployment-scoped path routes correctly through the fleet gateway
+  // (the bare /v1/vault-pubkey could answer from a different enclave).
+  let vp = await fetch(`${url}/v1/deployments/${encodeURIComponent(depId)}/vault-pubkey`).then((r) => r.json()).catch(() => ({}));
+  if (!vp.pubkey) vp = await fetch(`${url}/v1/vault-pubkey`).then((r) => r.json());
+  if (!/^0x[0-9a-f]{64}$/i.test(vp.pubkey || "")) throw new Error(`bad vault-pubkey response: ${JSON.stringify(vp)}`);
+  const sealed = hex(seal(vek, unhex(vp.pubkey)));
+
+  // SIWE login (the ACL check is on-chain; this just names the member)
+  const nonce = await fetch(`${url}/v1/auth/nonce?address=${account.address}`).then((r) => r.json());
+  if (!nonce.message) throw new Error(`auth nonce failed: ${JSON.stringify(nonce)}`);
+  const signature = await account.signMessage({ message: nonce.message });
+  const login = await fetch(`${url}/v1/auth/login`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: nonce.message, signature }),
+  }).then((r) => r.json());
+  if (!login.token) throw new Error(`login failed: ${JSON.stringify(login)}`);
+
+  // the enclave checks isAuthorized(volId, member) on-chain, unseals, and the
+  // manager decrypts in-RAM (or re-verifies on a running deployment = re-arm)
+  const r = await fetch(`${url}/v1/deployments/${encodeURIComponent(depId)}/unlock-sealed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${login.token}` },
+    body: JSON.stringify({ name, sealed }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`unlock-sealed ${r.status}: ${body.message || body.error || JSON.stringify(body)}`);
+  return { body, enclavePub: vp.pubkey.toLowerCase() };
+}
+
+// Unseal the calling wallet's own on-chain sealedVEK (shared by unlock/watch).
+async function unsealOwn(account, addr, volId, { owner, volume }) {
+  const kp = await deriveVaultKey(account);
+  const [role, pubkey, registered, sealedVEK] = await read(addr, "getMember", [volId, account.address]);
+  if (!registered || sealedVEK === "0x")
+    die(`${account.address} holds no sealed VEK for '${volume}' (role ${ROLE[Number(role)]}). Run: register --owner ${owner} --volume ${volume} --wait`);
+  if (pubkey !== hex(kp.publicKey))
+    die("your on-chain pubkey differs from this wallet's derived key (registered from another wallet?) - re-run register to rotate");
+  try { return unseal(unhex(sealedVEK), kp.secretKey); }
+  catch { die("could not unseal your VEK with this wallet's derived key"); }
+}
+
 async function main() {
   if (!cmd || has("--help") || cmd === "help") {
-    console.error("commands: setup | register | grant | status | unlock   (see header comment for flags)");
+    console.error("commands: setup | register | grant | status | unlock | watch   (see header comment for flags)");
     process.exit(cmd ? 0 : 2);
   }
 
@@ -234,77 +355,77 @@ async function main() {
     return;
   }
 
-  if (cmd === "unlock") {
+  if (cmd === "unlock" || cmd === "watch") {
     const account = await loadWallet();
     const addr = contractAddr();
-    let url = (flag("--url") || process.env.NAN_BASE || "").trim().replace(/\/+$/, "") || die("unlock needs --url <enclave origin>");
-    if (!/^https?:\/\//.test(url)) url = "https://" + url;
-    const depId = (flag("--id") || "").trim() || die("unlock needs --id <deployment id>");
-    const name = (flag("--name") || "").trim() || die("unlock needs --name <encVolume name>");
-    const owner = (flag("--owner") || "").trim() || die("unlock needs --owner <volume owner>");
+    const depId = (flag("--id") || "").trim() || die(`${cmd} needs --id <deployment id>`);
+    const name = (flag("--name") || "").trim() || die(`${cmd} needs --name <encVolume name>`);
+    const owner = (flag("--owner") || "").trim() || die(`${cmd} needs --owner <volume owner>`);
     const volume = (flag("--volume") || name).trim();
     const volId = volIdOf(owner, volume);
+    const noVerify = has("--no-verify");
 
-    // 1. your sealed VEK, from the public chain; opened by your wallet-derived key
-    const kp = await deriveVaultKey(account);
-    const [role, pubkey, registered, sealedVEK] = await read(addr, "getMember", [volId, account.address]);
-    if (!registered || sealedVEK === "0x")
-      die(`${account.address} holds no sealed VEK for '${volume}' (role ${ROLE[Number(role)]}). Run: register --owner ${owner} --volume ${volume} --wait`);
-    if (pubkey !== hex(kp.publicKey))
-      die("your on-chain pubkey differs from this wallet's derived key (registered from another wallet?) - re-run register to rotate");
-    let vek;
-    try { vek = unseal(unhex(sealedVEK), kp.secretKey); }
-    catch { die("could not unseal your VEK with this wallet's derived key"); }
+    // your sealed VEK, from the public chain; opened by your wallet-derived key
+    const vek = await unsealOwn(account, addr, volId, { owner, volume });
     console.log("unsealed your VEK ✓");
 
-    // 2. attestation: prove the URL terminates inside a measured enclave BEFORE
-    //    any key material goes near it. This is the load-bearing step.
-    if (has("--no-verify")) {
-      console.log("WARNING: --no-verify - skipping attestation; do NOT do this against production");
-    } else {
-      const repo = (flag("--repo") || "SteveDeFacto/nan").trim();
-      const { Verifier } = await import("@tinfoilsh/verifier");
-      try {
-        await new Verifier({ serverURL: url, configRepo: repo }).verify();
-        console.log(`attestation verified ✓ (${url} measures as ${repo})`);
-      } catch (e) {
-        die(`attestation FAILED for ${url}: ${e.message} - refusing to send key material (override for dev: --no-verify)`);
+    // the enclave origin: given, or resolved from chain state (no gateway
+    // trusted for discovery; attestation still gates trust at connect time)
+    let url = (flag("--url") || process.env.NAN_BASE || "").trim().replace(/\/+$/, "");
+    if (url && !/^https?:\/\//.test(url)) url = "https://" + url;
+
+    if (cmd === "unlock") {
+      let repo = (flag("--repo") || "").trim();
+      if (!url) {
+        const run = await resolveRunner(depId);
+        if (!run.leaseLive) die(`the deployment's lease has expired - it is between runners; retry once re-claimed`);
+        url = run.endpoint;
+        repo = repo || run.repo;
+        console.log(`runner resolved from chain: ${url} (repo ${run.repo})`);
       }
+      const { body } = await deliverSealed(account,
+        { url, depId, name, repo: repo || "SteveDeFacto/nan", noVerify, vek });
+      console.log(`unlocked '${name}' on ${depId}: status=${body.status}` +
+        (body.autoGrant ? " (enclave now auto-grants self-registered members)" : ""));
+      return;
     }
 
-    // 3. the enclave's per-boot pubkey, fetched over the just-verified TLS.
-    //    The deployment-scoped path routes correctly through the fleet gateway
-    //    (the bare /v1/vault-pubkey could answer from a different enclave).
-    let vp = await fetch(`${url}/v1/deployments/${encodeURIComponent(depId)}/vault-pubkey`).then((r) => r.json()).catch(() => ({}));
-    if (!vp.pubkey) vp = await fetch(`${url}/v1/vault-pubkey`).then((r) => r.json());
-    if (!/^0x[0-9a-f]{64}$/i.test(vp.pubkey || "")) die(`bad vault-pubkey response: ${JSON.stringify(vp)}`);
-    const sealed = hex(seal(vek, unhex(vp.pubkey)));
-
-    // 4. SIWE login (the ACL check is on-chain; this just names the member)
-    const nonce = await fetch(`${url}/v1/auth/nonce?address=${account.address}`).then((r) => r.json());
-    if (!nonce.message) die(`auth nonce failed: ${JSON.stringify(nonce)}`);
-    const signature = await account.signMessage({ message: nonce.message });
-    const login = await fetch(`${url}/v1/auth/login`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: nonce.message, signature }),
-    }).then((r) => r.json());
-    if (!login.token) die(`login failed: ${JSON.stringify(login)}`);
-
-    // 5. deliver: the enclave checks isAuthorized(volId, you) on-chain, unseals,
-    //    decrypts in-RAM, and starts the app once every volume is unlocked
-    const r = await fetch(`${url}/v1/deployments/${encodeURIComponent(depId)}/unlock-sealed`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${login.token}` },
-      body: JSON.stringify({ name, sealed }),
-    });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) die(`unlock-sealed ${r.status}: ${body.message || body.error || JSON.stringify(body)}`);
-    console.log(`unlocked '${name}' on ${depId}: status=${body.status}` +
-      (body.autoGrant ? " (enclave now auto-grants self-registered members)" : ""));
-    return;
+    // watch: the always-on unlock agent. A fresh enclave boot has a fresh
+    // per-boot vault pubkey, so "pubkey changed since last delivery" is
+    // exactly the re-deliver trigger: it covers failover (new enclave),
+    // enclave restart (new key, VEK gone from RAM) and supervisor re-arm.
+    // Delivery is idempotent on a running deployment (the manager re-verifies
+    // the VEK against the staged ciphertext).
+    const interval = Math.max(10, parseInt(flag("--interval") || "30", 10)) * 1000;
+    if (url) console.log(`watch: --url pins ${url} - failover to a different enclave will NOT be followed`);
+    console.log(`watch: guarding '${name}' on ${depId} every ${interval / 1000}s (VEK held in this process's RAM; ctrl-c to stop)`);
+    let delivered = null;   // enclave vault pubkey of the last successful delivery
+    for (;;) {
+      try {
+        let target = url, repo = (flag("--repo") || "").trim();
+        if (!target) {
+          const run = await resolveRunner(depId);
+          if (!run.leaseLive) throw new Error("lease expired - deployment is between runners");
+          target = run.endpoint;
+          repo = repo || run.repo;
+        }
+        const vp = await fetch(`${target}/v1/deployments/${encodeURIComponent(depId)}/vault-pubkey`)
+          .then((r) => r.json()).catch(() => ({}));
+        if (/^0x[0-9a-f]{64}$/i.test(vp.pubkey || "") && vp.pubkey.toLowerCase() !== delivered) {
+          console.log(`watch: fresh enclave boot at ${target} - delivering the sealed VEK…`);
+          const { body, enclavePub } = await deliverSealed(account,
+            { url: target, depId, name, repo: repo || "SteveDeFacto/nan", noVerify, vek });
+          delivered = enclavePub;
+          console.log(`watch: delivered ✓ status=${body.status}` + (body.autoGrant ? " · auto-grant armed" : ""));
+        }
+      } catch (e) {
+        console.error(`watch: ${e.shortMessage || e.message}`);
+      }
+      await new Promise((r) => setTimeout(r, interval));
+    }
   }
 
-  die(`unknown command '${cmd}' (setup | register | grant | status | unlock)`);
+  die(`unknown command '${cmd}' (setup | register | grant | status | unlock | watch)`);
 }
 
 main().catch((e) => { console.error("nan-vault-client:", e.shortMessage || e.message); process.exit(1); });
