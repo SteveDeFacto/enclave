@@ -194,6 +194,30 @@ section{padding:84px 0;position:relative;}
 .iso-honest h4{margin:0 0 8px;font-family:var(--font-mono);font-size:.82rem;letter-spacing:.04em;text-transform:uppercase;color:var(--amber);}
 .iso-honest p{margin:0;color:var(--text-muted);font-size:.9rem;line-height:1.62;}
 .iso-honest b{color:var(--text);}
+/* isolation: two wide boundary cards + measured-claims grid */
+.iso-cards{grid-template-columns:1fr 1fr;gap:18px;}
+.iso-cards .card{padding:26px 28px;}
+.iso-cards .tag{position:static;display:inline-block;margin:0 0 12px;padding:.35em .75em;border:1px solid var(--line);border-radius:6px;background:var(--bg-1);}
+.iso-cards .tag:first-child + h3{margin-top:0;}
+.iso-cards .card.jade .tag{color:var(--jade);border-color:rgba(47,230,168,.35);}
+.iso-cards .card.amber .tag{color:var(--amber);border-color:rgba(255,184,90,.35);}
+.iso-cards h3{font-size:1.08rem;}
+.iso-cards .card p{font-size:.9rem;line-height:1.62;}
+.iso-mech h4 .sub{color:var(--text-dim);font-weight:400;}
+.iso-list{grid-template-columns:1fr 1fr;gap:20px 30px;}
+.iso-list li:last-child{grid-column:1 / -1;}
+.iso-list b{display:block;font-family:var(--font-mono);font-size:.84rem;margin-bottom:3px;}
+/* pricing: dial cards + formula strip */
+.price-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:30px;}
+.price-card{border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0C131C);padding:20px 22px;}
+.price-card .pc-t{display:block;font-family:var(--font-mono);font-size:.82rem;color:var(--text);margin-bottom:6px;}
+.price-card .pc-rate{display:block;font-family:var(--font-mono);font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;color:var(--jade);margin-bottom:10px;}
+.price-card p{margin:0;color:var(--text-muted);font-size:.84rem;line-height:1.6;}
+.price-card p b{color:var(--text);}
+.price-formula{display:flex;justify-content:center;margin:0 0 28px;}
+.price-formula code{font-family:var(--font-mono);font-size:.92rem;color:var(--jade-2);background:var(--bg-1);border:1px solid var(--line);border-radius:10px;padding:.7em 1.3em;text-align:center;}
+@media(max-width:1020px){.price-grid{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:640px){.price-grid{grid-template-columns:1fr;}.iso-cards{grid-template-columns:1fr;}.iso-list{grid-template-columns:1fr;}.iso-list li:last-child{grid-column:auto;}}
 .card.iris .ic svg{color:var(--iris);}
 
 /* ---------- how it works stepper ---------- */
@@ -296,8 +320,7 @@ section{padding:84px 0;position:relative;}
 .lv-note{margin:14px 0 0;font-size:.74rem;color:var(--text-dim);font-family:var(--font-mono);}
 .lv-note a{color:var(--jade-2);}
 
-/* ---------- pricing ---------- */
-.price-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+/* ---------- pricing (legacy .plan cards - markup removed; .price-grid now defined above) ---------- */
 .plan{border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0B121A);padding:24px;position:relative;display:flex;flex-direction:column;}
 .plan.feature{border-color:rgba(47,230,168,.4);box-shadow:0 0 50px -24px var(--jade-glow);}
 .plan.soon{opacity:.72;}
@@ -421,7 +444,6 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
   .cfg{border-right:0;border-bottom:1px solid var(--line);}
   .attest-wrap{grid-template-columns:1fr;}
   .attest-side{position:static;}
-  .price-grid{grid-template-columns:1fr;}
   .api-layout{grid-template-columns:1fr;}
   .api-side{position:static;max-height:none;}
   .api-nav{max-height:300px;}
@@ -851,7 +873,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
       <p>Most "confidential GPU" pitches blur these together. Enclave keeps them separate because they're enforced by different things and carry different guarantees. Here is precisely what protects you, and from whom.</p>
     </div>
 
-    <div class="cards">
+    <div class="cards iso-cards">
       <div class="card jade">
         <span class="tag">hardware · attested</span>
         <h3>You vs. the operator</h3>
@@ -865,7 +887,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     </div>
 
     <div class="iso-mech">
-      <h4>What the Wasm sandbox and process boundary actually buy you, with each GPU-level point measured on our own hardware:</h4>
+      <h4>What the Wasm sandbox and process boundary actually buy you <span class="sub">· every GPU-level point below was measured on our own hardware</span></h4>
       <ul class="iso-list">
         <li><b>No host reach.</b> The Wasm app can't open files, read the host environment, spawn processes, or make outbound connections. WASI grants it only the HTTP socket the runtime serves it on. There's no shell and no SSH into it: a Wasm app isn't an OS, so the usual container-escape surface simply isn't there.</li>
         <li><b>No cross-tenant reads.</b> Separate processes get separate GPU address spaces. A kernel in one tenant's process that tries to read another tenant's memory faults. The address simply isn't mapped. (Verified: the cross-process read attempt raised an illegal-access fault.)</li>
@@ -888,8 +910,34 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
     <div class="sec-head">
       <span class="eyebrow">Pricing</span>
       <h2>Metered per second. Paid on-chain.</h2>
-      <p>Deploying is <b>two dials</b>: a <b>GPU/VRAM share</b> (0-100% of one H200 - VRAM and compute move together; 0% = CPU-only app) and a <b>CPU/RAM share</b> (0-100% of the node's vCPU+RAM; your app's memory cap is that slice of the node's RAM). The app's <b>exact specs</b> - the VRAM, compute, and RAM its publisher declared in the catalog - set the <b>minimums</b> the dials allow: each pool's floor is the spec divided by the server's spec (141&nbsp;GB / 989 TFLOPS per card; 64&nbsp;GB / ~1000 GFLOPS per node - CPU compute is measured in GFLOPS because a whole node has roughly a thousandth of a card's FLOPS), taking the larger of the memory and compute axes and rounding up to the whole percent - so a compute-hungry app can't be deployed on a sliver of a card even if it needs little memory. A GPU app's GPU share must be at least its CPU share - its CPU slice rides on the same node as its card - so a tenant buying 100% of the GPU and 10% of the CPU leaves 90% of that node free for CPU-only apps. Shares are software caps, not hardware MIG partitions (CC disables MIG). Billed per second, additively: GPU share × the full-card rate ($6/hr) + CPU share × the whole-node rate ($2/hr). You pay USDC up front and it buys runtime by the second; the instance runs until that time is used up, and you top up to extend it. No balance is held and nothing is custodied.</p>
+      <p>Deploying is <b>two dials</b> - what you rent - and <b>two rates</b> - what you pay. USDC up front buys runtime by the second; the instance runs until that time is used up, and you top up to extend it. No balance is held and nothing is custodied.</p>
     </div>
+
+    <div class="price-grid">
+      <div class="price-card">
+        <span class="pc-t">GPU / VRAM dial</span>
+        <span class="pc-rate">× $6/hr per full card</span>
+        <p>0-100% of one H200. VRAM and compute move together: each percent buys ≈1.4&nbsp;GB VRAM and ≈9.9 TFLOPS (≈1.3 SMs). <b>0% = a CPU-only app.</b></p>
+      </div>
+      <div class="price-card">
+        <span class="pc-t">CPU / RAM dial</span>
+        <span class="pc-rate">× $2/hr per whole node</span>
+        <p>0-100% of the node's vCPU+RAM: each percent buys ≈0.16 vCPU, ≈0.64&nbsp;GB RAM, ≈10 GFLOPS (a whole node is roughly a thousandth of a card's FLOPS). <b>Your app's memory cap is exactly this slice of the node's 64&nbsp;GB.</b></p>
+      </div>
+      <div class="price-card">
+        <span class="pc-t">Floors come from app specs</span>
+        <span class="pc-rate">minimums, not suggestions</span>
+        <p>The VRAM, compute, and RAM an app declares in the catalog set each dial's minimum: spec ÷ server spec (141&nbsp;GB / 989 TFLOPS per card; 64&nbsp;GB / ~1000 GFLOPS per node), larger axis wins, rounded up to a whole percent. An app declaring 494 TFLOPS can't deploy below a 50% GPU share even if it needs 2&nbsp;GB of VRAM - <b>you can't occupy an axis without paying for it.</b></p>
+      </div>
+      <div class="price-card">
+        <span class="pc-t">Rules of the road</span>
+        <span class="pc-rate">software caps · CC disables MIG</span>
+        <p>A GPU app's GPU share must be at least its CPU share (its CPU slice rides on the card's node) - so a 100%-GPU, 10%-CPU tenant leaves 90% of that node for CPU-only apps. <b>Unsold CPU on a GPU node is never stranded.</b> Shares are runtime-enforced software caps, not hardware MIG partitions.</p>
+      </div>
+    </div>
+
+    <div class="price-formula"><code>price = GPU% × $6/hr &nbsp;+&nbsp; CPU% × $2/hr &nbsp;·&nbsp; metered per second</code></div>
+
     <div class="mig-table-wrap">
       <div class="mig-scroll">
       <table class="mig-table">
@@ -905,7 +953,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
         </tbody>
       </table>
       </div>
-      <p class="mig-note">These are example points on a continuous scale, not a fixed menu. Shares are software caps dialed in whole-percent steps (each GPU percent is ≈1.4&nbsp;GB of VRAM and ≈9.9 TFLOPS ≈1.3 SMs together; each CPU percent is ≈0.16 vCPU, ≈0.64&nbsp;GB RAM, and ≈10 GFLOPS). An app's specs set the dial minimums - e.g. an app declaring 494 TFLOPS can't be deployed below a 50% GPU share even though its 2&nbsp;GB of VRAM alone would only need 2% - so a tenant can't occupy an axis without paying for it, and the two-pool split means unsold CPU on a GPU node is never stranded either - CPU-only apps rent it. A <b>Full GPU</b> deployment (100%) is the option to choose when you want no co-tenants on the card at all. It's the only configuration where isolation from other tenants is also hardware-enforced, not just process-level. Tenants on a shared card are isolated from each other at the process level (<a href="#isolation">how →</a>) and always isolated from the operator by confidential computing.</p>
+      <p class="mig-note">Example points on a continuous scale, not a fixed menu - the dials move in whole-percent steps. A <b>Full GPU</b> deployment (100%) is the option when you want no co-tenants on the card at all: it's the only configuration where isolation from other tenants is also hardware-enforced. On a shared card, tenants are isolated from each other at the sandbox-and-process level (<a href="#isolation">how →</a>) and always isolated from the operator by confidential computing.</p>
     </div>
   </div>
 </section>
