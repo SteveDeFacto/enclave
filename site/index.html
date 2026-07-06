@@ -645,6 +645,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
             <button data-asset="USDC" class="on" type="button">USDC</button>
             <button data-asset="ETH" type="button">ETH</button>
           </div>
+          <div class="dim" id="payBal" hidden style="margin-top:7px;font-size:.78rem;"></div>
         </div>
         <div class="field">
           <label for="cfgBudget">Fund now <span class="dim">(USDC · buys runtime)</span></label>
@@ -4476,6 +4477,49 @@ function openDepositModal(){
   const b = $("#depCopy"); if (b) b.addEventListener("click", () => copyText(Nan.address, b));
 }
 
+/* Privy (email) users hold only USDC bought by card - the ETH pay option is
+   noise they can't use, and they can't see how much they can spend. Hide ETH
+   and show a live USDC balance under the Pay-with control. */
+function updatePayAssetUI(){
+  const seg = $("#cfgAsset"); if (!seg) return;
+  const privy = Nan.walletRdns === PRIVY_RDNS;
+  const ethBtn = seg.querySelector('button[data-asset="ETH"]');
+  if (ethBtn) ethBtn.hidden = privy;
+  if (privy && dep.asset === "ETH"){
+    dep.asset = "USDC";
+    $$("#cfgAsset button").forEach(x => x.classList.toggle("on", x.dataset.asset === "USDC"));
+    const al = $("#assetLabel"); if (al) al.textContent = "USDC";
+    if (typeof renderDeploy === "function") renderDeploy();
+  }
+  updateUsdcBalance();
+}
+async function usdcBalanceOf(addr){
+  const call = { to: USDC_BASE, data: "0x70a08231" + addr.toLowerCase().replace(/^0x/, "").padStart(64, "0") };
+  try {
+    const hex = await Nan.provider.request({ method: "eth_call", params: [call, "latest"] });
+    if (hex && hex !== "0x") return parseInt(hex, 16) / 1e6;
+  } catch(_){}
+  const r = await fetch("https://mainnet.base.org", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [call, "latest"] }) });
+  const j = await r.json(); const hex = j && j.result;
+  return (hex && hex !== "0x") ? parseInt(hex, 16) / 1e6 : 0;
+}
+let _balSeq = 0;
+async function updateUsdcBalance(){
+  const el = $("#payBal"); if (!el) return;
+  if (!Nan.address || !Nan.provider){ el.hidden = true; return; }
+  const seq = ++_balSeq;
+  try {
+    const bal = await usdcBalanceOf(Nan.address);
+    if (seq !== _balSeq) return;
+    const privy = Nan.walletRdns === PRIVY_RDNS;
+    el.innerHTML = 'balance: <b>' + esc(bal.toFixed(2)) + ' USDC</b>' +
+      (privy ? ' · <a href="#" id="payBuyMore">buy more</a>' : "");
+    el.hidden = false;
+    const bm = $("#payBuyMore"); if (bm) bm.onclick = (e) => { e.preventDefault(); openBuyModal(); };
+  } catch(e){ if (seq === _balSeq) el.hidden = true; }
+}
+
 // Card purchases run in /buy.html: a same-origin popup that hosts Privy's
 // official React funding modal (Stripe/Link, MoonPay, ... - routed by region
 // and the dashboard's Onramps toggles). It inherits this page's Privy session
@@ -4667,6 +4711,7 @@ function refreshWallet(){
     btn.innerHTML = 'Sign in <span class="arr">\u2192</span>';
     const rh = $("#runHint"); if (rh) rh.textContent = "sign in to deploy";
   }
+  updatePayAssetUI();
 }
 
 function toggleWalletPop(){
@@ -5928,7 +5973,7 @@ function setView(view, anchor){
   if (anchor && !paneAnchor){ const el = document.getElementById(anchor); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" }); }
   else if (window.scrollTo) { window.scrollTo({ top: 0, behavior: "auto" }); }   // pane anchors land at the top, tab bar in view
   try { history.replaceState(null, "", "#" + (anchor || (view === "overview" ? "top" : view === "develop" ? DEV_PANES[devTab] : view))); } catch(e){}
-  if (view === "deploy"){ if (typeof refreshEnclaves === "function") refreshEnclaves(); }
+  if (view === "deploy"){ if (typeof refreshEnclaves === "function") refreshEnclaves(); if (typeof updatePayAssetUI === "function") updatePayAssetUI(); }
   else if (typeof stopEncPoll === "function"){ stopEncPoll(); }
   if (view === "apps"){ if (typeof loadCatalog === "function") loadCatalog(); }
 }
