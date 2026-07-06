@@ -718,6 +718,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
 .app-badge{flex:none;font-family:var(--font-mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;
   padding:3px 8px;border-radius:999px;border:1px solid var(--jade-dim);color:var(--jade);background:var(--jade-deep);white-space:nowrap;}
 .app-badge.unv{border-color:var(--line);color:var(--text-dim);background:transparent;}
+.app-badge.comm{border-color:var(--amber);color:var(--amber);background:transparent;}
 .app-badge.rej{border-color:var(--danger);color:var(--danger);background:transparent;}
 .app-badge.del{border-color:var(--amber-dim);color:var(--amber);background:transparent;}
 .app-card.delisted{opacity:.7;border-style:dashed;}
@@ -6474,9 +6475,12 @@ function appCard(app){
   const isPub = me && app.publisher.toLowerCase() === me;
   const isOwner = me && STORE.owner && me === STORE.owner;
   const gw = IPFS_GATEWAY.replace(/\/+$/, "") + "/" + encodeURIComponent(v.cid);
+  // platform-published apps: publisher wallet == the catalog contract deployer
+  const isOfficial = !!(STORE.owner && app.publisher.toLowerCase() === STORE.owner);
   const badge = v.verified
     ? '<span class="app-badge" title="This version is marked verified by the catalog owner">✓ verified</span>'
-    : '<span class="app-badge unv" title="Community-published; not owner-verified">community</span>';
+    : isOfficial ? ''
+    : '<span class="app-badge comm" title="Community-published; not owner-verified">community</span>';
   // approval is the deploy gate: the enclave refuses this CID until the catalog owner approves it
   const apBadge = v.approval === APPROVAL.approved
     ? '<span class="app-badge" title="Approved by the catalog owner; deployable">✓ approved</span>'
@@ -6484,8 +6488,7 @@ function appCard(app){
     ? '<span class="app-badge rej" title="Rejected by the catalog owner; deploys are refused">✕ rejected</span>'
     : '<span class="app-badge unv" title="Awaiting catalog-owner approval; deploys are refused until then">pending</span>';
   const apLabel = (vv) => vv.approval === APPROVAL.rejected ? ' (rejected)' : vv.approval !== APPROVAL.approved ? ' (pending)' : '';
-  // platform-published apps: publisher wallet == the catalog contract deployer
-  const officialBadge = (STORE.owner && app.publisher.toLowerCase() === STORE.owner)
+  const officialBadge = isOfficial
     ? '<span class="app-badge" title="Published by the platform (the catalog deployer wallet)">★ official</span>' : "";
   const opts = app.versions.map((vv, idx) =>
     '<option value="' + idx + '"' + (idx === i ? ' selected' : '') + '>' + esc(vv.version) + (vv.verified ? ' ✓' : '') + (vv.yanked ? ' (yanked)' : '') + apLabel(vv) + '</option>').join('');
