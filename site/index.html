@@ -645,7 +645,7 @@ footer{border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px
             <button data-asset="USDC" class="on" type="button">USDC</button>
             <button data-asset="ETH" type="button">ETH</button>
           </div>
-          <div class="dim" id="payBal" hidden style="margin-top:7px;font-size:.78rem;"></div>
+          <div class="pay-bal" id="payBal" hidden></div>
         </div>
         <div class="field">
           <label for="cfgBudget">Fund now <span class="dim">(USDC · buys runtime)</span></label>
@@ -4513,10 +4513,10 @@ async function updateUsdcBalance(){
     const bal = await usdcBalanceOf(Nan.address);
     if (seq !== _balSeq) return;
     const privy = Nan.walletRdns === PRIVY_RDNS;
-    el.innerHTML = 'balance: <b>' + esc(bal.toFixed(2)) + ' USDC</b>' +
-      (privy ? ' · <a href="#" id="payBuyMore">buy more</a>' : "");
+    el.innerHTML = '<div><span class="pb-k">USDC balance</span><span class="pb-v">' + esc(bal.toFixed(2)) + ' USDC</span></div>' +
+      (privy ? '<button class="pb-buy" id="payBuyMore" type="button">Buy more →</button>' : "");
     el.hidden = false;
-    const bm = $("#payBuyMore"); if (bm) bm.onclick = (e) => { e.preventDefault(); openBuyModal(); };
+    const bm = $("#payBuyMore"); if (bm) bm.onclick = () => openBuyModal();
   } catch(e){ if (seq === _balSeq) el.hidden = true; }
 }
 
@@ -5681,6 +5681,11 @@ function injectLiveStyles(){
     ".wp-amts{display:flex;gap:6px;margin:10px 0;}",
     ".wp-amt{flex:1;background:#0a0f17;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:.5em 0;cursor:pointer;font-family:inherit;font-size:.82rem;}",
     ".wp-amt.on{border-color:var(--jade);color:var(--jade);}",
+    ".pay-bal{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px;border:1px solid var(--line);border-radius:10px;background:linear-gradient(180deg,var(--surface),#0C131C);padding:10px 12px;}",
+    ".pay-bal .pb-k{font-family:var(--font-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);display:block;margin-bottom:2px;}",
+    ".pay-bal .pb-v{font-family:var(--font-mono);font-size:.95rem;color:var(--jade-2);}",
+    ".pay-bal .pb-buy{font-family:var(--font-mono);font-size:.72rem;color:var(--jade);border:1px solid var(--jade-dim);background:var(--jade-deep);border-radius:8px;padding:.45em .8em;cursor:pointer;transition:.15s;flex:none;}",
+    ".pay-bal .pb-buy:hover{background:rgba(47,230,168,.16);border-color:var(--jade);}",
     ".wp-dot-iris{background:linear-gradient(135deg,var(--iris),var(--jade));}",
     ".endpoint-row{display:flex;align-items:center;gap:10px;margin-top:16px;flex-wrap:wrap;}",
     ".endpoint-row label{font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted);letter-spacing:.02em;}",
