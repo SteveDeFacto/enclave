@@ -15,15 +15,39 @@
 <body>
 <div id="root"></div>
 <div id="msg">Loading checkout…</div>
-<div id="diag" hidden style="position:fixed;bottom:0;left:0;right:0;padding:8px 12px;background:#160f0f;color:#ff9a9a;font:11px/1.5 monospace;word-break:break-all;max-height:130px;overflow:auto;"></div>
+<div id="toasts" style="position:fixed;top:10px;left:10px;right:10px;z-index:2147483647;display:flex;flex-direction:column;gap:8px;pointer-events:none;"></div>
 <script type="module">
 /* Buy USDC · runs Privy's official React funding modal (Stripe/Link, MoonPay, …)
    in a popup. Same origin as the console, so it inherits the Privy session the
    user already has. The main page stays framework-free; React lives only here. */
 
-/* diagnostic tap: Privy's modal swallows provider errors behind a generic
-   screen; capture failing API calls so the real reason is visible on-page. */
-const apiFails = [];
+/* Readable error surfacing: Privy's modal swallows provider errors behind a
+   generic screen. Tap failing API calls, extract the human message from the
+   JSON body, and show it as a red toast ON TOP of the modal. Full raw detail
+   still goes to the console as [buy-diag]. */
+const recentToasts = new Map();
+function errToast(text){
+  const now = Date.now();
+  for (const [k, t] of recentToasts) if (now - t > 12000) recentToasts.delete(k);
+  if (recentToasts.has(text) || recentToasts.size >= 3) return;   // no dupes, no spam
+  recentToasts.set(text, now);
+  const host = document.getElementById("toasts");
+  const el = document.createElement("div");
+  el.style.cssText = "pointer-events:auto;background:#2a1113;border:1px solid #ff6b6b;color:#ffb3b3;" +
+    "border-radius:10px;padding:10px 14px;font:12.5px/1.5 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5);cursor:pointer;";
+  el.textContent = text;
+  el.title = "click to dismiss";
+  el.onclick = () => el.remove();
+  host.appendChild(el);
+  setTimeout(() => el.remove(), 10000);
+}
+function humanApiError(status, body){
+  try {
+    const j = JSON.parse(body);
+    const m = (j.error && (j.error.message || j.error)) || j.message || j.detail || body;
+    return String(typeof m === "string" ? m : JSON.stringify(m)).slice(0, 180);
+  } catch(_){ return String(body).slice(0, 180); }
+}
 const _fetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url = String((input && input.url) || input || "");
@@ -31,10 +55,8 @@ window.fetch = async (input, init) => {
   try {
     if (!res.ok && /privy\.io|moonpay|stripe|meld|coinbase/i.test(url)){
       const body = await res.clone().text();
-      const line = res.status + " " + url.replace(/^https:\/\//, "").slice(0, 90) + " :: " + body.slice(0, 220);
-      apiFails.push(line); console.warn("[buy-diag]", line);
-      const d = document.getElementById("diag");
-      if (d){ d.hidden = false; d.textContent = "diagnostics: " + apiFails.slice(-3).join(" || "); }
+      console.warn("[buy-diag]", res.status, url, body.slice(0, 400));
+      errToast("Payment error (" + res.status + "): " + humanApiError(res.status, body));
     }
   } catch(_){}
   return res;
@@ -109,8 +131,17 @@ try {
         destination: { asset: USDC_BASE, chain: "eip155:8453", address },
         defaultAmount: "25"     // pre-fill; without it Privy's amount screen starts at "0"
       }).then(
-        () => { msg("Purchase flow finished. You can close this window - USDC lands in your account within a few minutes."); },
-        (e) => { msg("Checkout didn’t complete: <b>" + String(e && (e.message || e)).replace(/</g, "&lt;") + "</b><br/>You can close this window and try again."); }
+        () => {   // flow finished (purchase done or modal dismissed at the end): close the window
+          msg("Done - USDC lands in your account within a few minutes.");
+          setTimeout(() => window.close(), 1500);
+        },
+        (e) => {
+          const s = String(e && (e.message || e));
+          if (/clos|cancel|exit|abort|dismiss/i.test(s)){ window.close(); return; }   // user closed Privy's modal
+          errToast("Checkout didn’t complete: " + s);
+          msg("Checkout didn’t complete. This window closes in a moment - you can try again from the console.");
+          setTimeout(() => window.close(), 8000);
+        }
       );
     }, [ready, authenticated]);
     return null;
