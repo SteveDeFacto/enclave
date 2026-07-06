@@ -1,0 +1,985 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index ca4b4b1..6ffaac1 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -26,6 +26,16 @@ version = "2.0.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "512761e0bb2578dd7380c6baaa0f4ce03e84f95e960231d1dec8bf4d7d6e2627"
+ 
++[[package]]
++name = "aead"
++version = "0.5.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d122413f284cf2d62fb1b7db97e02edb8cda96d769b16e443a4f6195e35662b0"
++dependencies = [
++ "crypto-common",
++ "generic-array",
++]
++
+ [[package]]
+ name = "aes"
+ version = "0.8.4"
+@@ -499,6 +509,17 @@ version = "1.0.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+ 
++[[package]]
++name = "chacha20"
++version = "0.9.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c3613f74bd2eac03dad61bd53dbe620703d4371614fe0bc3b9f04dd36fe4e818"
++dependencies = [
++ "cfg-if",
++ "cipher",
++ "cpufeatures 0.2.7",
++]
++
+ [[package]]
+ name = "chacha20"
+ version = "0.10.0"
+@@ -510,6 +531,19 @@ dependencies = [
+  "rand_core 0.10.0",
+ ]
+ 
++[[package]]
++name = "chacha20poly1305"
++version = "0.10.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "10cd79432192d1c0f4e1a0fef9527696cc039165d729fb41b3f4f4f354c2dc35"
++dependencies = [
++ "aead",
++ "chacha20 0.9.1",
++ "cipher",
++ "poly1305",
++ "zeroize",
++]
++
+ [[package]]
+ name = "ciborium"
+ version = "0.2.0"
+@@ -545,6 +579,7 @@ checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
+ dependencies = [
+  "crypto-common",
+  "inout",
++ "zeroize",
+ ]
+ 
+ [[package]]
+@@ -1109,6 +1144,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "1bfb12502f3fc46cca1bb51ac28df9d618d813cdc3d2f25b9fe775a34af26bb3"
+ dependencies = [
+  "generic-array",
++ "rand_core 0.6.3",
+  "typenum",
+ ]
+ 
+@@ -1830,6 +1866,15 @@ version = "0.5.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
+ 
++[[package]]
++name = "hkdf"
++version = "0.12.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
++dependencies = [
++ "hmac",
++]
++
+ [[package]]
+ name = "hmac"
+ version = "0.12.1"
+@@ -2686,6 +2731,12 @@ version = "11.1.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "0ab1bc2a289d34bd04a330323ac98a1b4bc82c9d9fcb1e66b63caa84da26b575"
+ 
++[[package]]
++name = "opaque-debug"
++version = "0.3.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
++
+ [[package]]
+ name = "openssl"
+ version = "0.10.78"
+@@ -2879,6 +2930,17 @@ version = "0.3.32"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
+ 
++[[package]]
++name = "poly1305"
++version = "0.8.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8159bd90725d2df49889a078b54f4f79e87f1f8a8444194cdca81d38f5393abf"
++dependencies = [
++ "cpufeatures 0.2.7",
++ "opaque-debug",
++ "universal-hash",
++]
++
+ [[package]]
+ name = "postcard"
+ version = "1.1.3"
+@@ -3022,7 +3084,7 @@ version = "0.10.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
+ dependencies = [
+- "chacha20",
++ "chacha20 0.10.0",
+  "getrandom 0.4.2",
+  "rand_core 0.10.0",
+ ]
+@@ -4147,6 +4209,16 @@ version = "0.2.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "957e51f3646910546462e67d5f7599b9e4fb8acdd304b087a6494730f9eebf04"
+ 
++[[package]]
++name = "universal-hash"
++version = "0.5.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
++dependencies = [
++ "crypto-common",
++ "subtle",
++]
++
+ [[package]]
+ name = "unsafe-libyaml"
+ version = "0.2.11"
+@@ -5284,13 +5356,17 @@ dependencies = [
+  "cap-std",
+  "cap-time-ext",
+  "cfg-if",
++ "chacha20poly1305",
+  "env_logger 0.11.5",
+  "fs-set-times",
+  "futures",
++ "hkdf",
+  "io-extras",
+  "io-lifetimes",
+  "rand 0.10.1",
+  "rustix 1.1.4",
++ "serde_json",
++ "sha2",
+  "tempfile",
+  "test-log",
+  "test-programs-artifacts",
+diff --git a/crates/cli-flags/src/lib.rs b/crates/cli-flags/src/lib.rs
+index 37e98b9..45ed76d 100644
+--- a/crates/cli-flags/src/lib.rs
++++ b/crates/cli-flags/src/lib.rs
+@@ -513,6 +513,17 @@ wasmtime_option_group! {
+         /// `wasmtime_wasi_nn` crate.
+         #[serde(skip)]
+         pub nn_graph: Vec<WasiNnGraph>,
++        /// Preopen a nan-vault NANVOL2 block-encrypted directory, read-only,
++        /// decrypted on demand: `vault=<guest-path>::<skeleton-dir>::<cipher-dir>`.
++        ///
++        /// The skeleton is a real tree of sparse placeholder files (correct
++        /// sizes) serving all metadata; content reads decrypt 4MiB blocks from
++        /// the cipherdir. The 32-byte hex VEK for the i-th vault flag is read
++        /// from the environment variable `NAN_VAULT_KEY_<i>` (host process env;
++        /// never visible to the guest). Requires the default preview2-backed
++        /// WASI implementation (not `-S preview2=n`).
++        #[serde(default)]
++        pub vault: Vec<String>,
+         /// Flag for WASI preview2 to inherit the host's network within the
+         /// guest so it has full access to all addresses/ports/etc.
+         pub inherit_network: Option<bool>,
+diff --git a/crates/wasi/Cargo.toml b/crates/wasi/Cargo.toml
+index 829a330..0c4f497 100644
+--- a/crates/wasi/Cargo.toml
++++ b/crates/wasi/Cargo.toml
+@@ -38,6 +38,13 @@ futures = { workspace = true }
+ url = { workspace = true }
+ rand = { workspace = true, features = ['std_rng', 'thread_rng'] }
+ cfg-if = { workspace = true }
++# nan-vault (NANVOL2) transparent encrypted preopens: XChaCha20-Poly1305 blocks
++# + HKDF-SHA256 file keys + a JSON manifest (see src/vault.rs). Pinned exactly:
++# this binary is measured into the enclave image.
++chacha20poly1305 = { version = "=0.10.1", default-features = false, features = ["alloc", "getrandom"] }
++hkdf = { version = "=0.12.4", default-features = false }
++sha2 = { workspace = true }
++serde_json = { workspace = true }
+ 
+ [dev-dependencies]
+ tokio = { workspace = true, features = ["time", "sync", "io-std", "io-util", "rt", "rt-multi-thread", "net", "macros", "fs"] }
+diff --git a/crates/wasi/src/ctx.rs b/crates/wasi/src/ctx.rs
+index 0b84bc2..5c77220 100644
+--- a/crates/wasi/src/ctx.rs
++++ b/crates/wasi/src/ctx.rs
+@@ -316,6 +316,40 @@ impl WasiCtxBuilder {
+         Ok(self)
+     }
+ 
++    /// Preopen a nan-vault NANVOL2 encrypted directory (read-only, decrypted
++    /// on demand; see `crate::vault`).
++    ///
++    /// `host_path` is the SKELETON: a real directory tree whose files are
++    /// sparse placeholders truncated to the plaintext sizes — it serves every
++    /// metadata operation (stat, readdir, open, inode identity). `cipher_dir`
++    /// is the NANVOL2 cipherdir holding the encrypted blobs + manifest, and
++    /// `vek` is the 32-byte volume encryption key that unseals the manifest
++    /// and derives the per-file block keys. Content reads decrypt only the
++    /// touched blocks, through a small bounded cache; the preopen is forced
++    /// read-only, so guests can never write through the skeleton.
++    pub fn preopened_vault_dir(
++        &mut self,
++        host_path: impl AsRef<Path>,
++        guest_path: impl AsRef<str>,
++        cipher_dir: impl AsRef<Path>,
++        vek: [u8; 32],
++    ) -> Result<&mut Self> {
++        let vol = crate::vault::VaultVol::open(cipher_dir.as_ref(), &vek)?;
++        let dir = cap_std::fs::Dir::open_ambient_dir(host_path.as_ref(), ambient_authority())?;
++        let mut dir = Dir::new(
++            dir,
++            DirPerms::READ,
++            FilePerms::READ,
++            OpenMode::READ,
++            self.filesystem.allow_blocking_current_thread,
++        );
++        dir.vault = Some(crate::vault::VaultDirCtx::new(vol));
++        self.filesystem
++            .preopens
++            .push((dir, guest_path.as_ref().to_owned()));
++        Ok(self)
++    }
++
+     /// Set the generator for the `wasi:random/random` number generator to the
+     /// custom generator specified.
+     ///
+diff --git a/crates/wasi/src/filesystem.rs b/crates/wasi/src/filesystem.rs
+index 1782098..91519d8 100644
+--- a/crates/wasi/src/filesystem.rs
++++ b/crates/wasi/src/filesystem.rs
+@@ -676,6 +676,12 @@ pub struct File {
+     /// oflags back out using fcntl.
+     pub open_mode: OpenMode,
+ 
++    /// nan-vault: when this file was opened inside an encrypted (NANVOL2)
++    /// preopen, content reads route through on-demand block decryption
++    /// instead of the (sparse skeleton) file on disk. Everything else —
++    /// stat, size, inode identity — is served by the real skeleton file.
++    pub(crate) vault: Option<Arc<crate::vault::VaultFile>>,
++
+     allow_blocking_current_thread: bool,
+ }
+ 
+@@ -690,6 +696,7 @@ impl File {
+             file: Arc::new(file),
+             perms,
+             open_mode,
++            vault: None,
+             allow_blocking_current_thread,
+         }
+     }
+@@ -787,6 +794,12 @@ pub struct Dir {
+     /// oflags back out using fcntl.
+     pub open_mode: OpenMode,
+ 
++    /// nan-vault: set on the preopen of an encrypted (NANVOL2) skeleton and
++    /// propagated to every descriptor opened beneath it, carrying the volume
++    /// handle plus this directory's logical path prefix. `open_at` uses it to
++    /// attach the matching decrypting reader to opened files.
++    pub(crate) vault: Option<crate::vault::VaultDirCtx>,
++
+     pub(crate) allow_blocking_current_thread: bool,
+ }
+ 
+@@ -803,6 +816,7 @@ impl Dir {
+             perms,
+             file_perms,
+             open_mode,
++            vault: None,
+             allow_blocking_current_thread,
+         }
+     }
+@@ -1022,6 +1036,10 @@ impl Dir {
+             NotDir,
+         }
+ 
++        // nan-vault: remember the (relative) path so descriptors opened inside
++        // an encrypted preopen can be mapped back to their manifest entries.
++        let vault_path = path.clone();
++
+         let opened = self
+             .run_blocking::<_, std::io::Result<OpenResult>>(move |d| {
+                 let opened = d.open_with(&path, &opts)?;
+@@ -1046,20 +1064,32 @@ impl Dir {
+                 Err(ErrorCode::IsDirectory)
+             }
+ 
+-            OpenResult::Dir(dir) => Ok(Descriptor::Dir(Dir::new(
+-                dir,
+-                self.perms,
+-                self.file_perms,
+-                open_mode,
+-                allow_blocking_current_thread,
+-            ))),
+-
+-            OpenResult::File(file) => Ok(Descriptor::File(File::new(
+-                file,
+-                self.file_perms,
+-                open_mode,
+-                allow_blocking_current_thread,
+-            ))),
++            OpenResult::Dir(dir) => {
++                let mut dir = Dir::new(
++                    dir,
++                    self.perms,
++                    self.file_perms,
++                    open_mode,
++                    allow_blocking_current_thread,
++                );
++                if let Some(ctx) = &self.vault {
++                    dir.vault = Some(ctx.child(&vault_path));
++                }
++                Ok(Descriptor::Dir(dir))
++            }
++
++            OpenResult::File(file) => {
++                let mut file = File::new(
++                    file,
++                    self.file_perms,
++                    open_mode,
++                    allow_blocking_current_thread,
++                );
++                if let Some(ctx) = &self.vault {
++                    file.vault = ctx.file(&vault_path).map(Arc::new);
++                }
++                Ok(Descriptor::File(file))
++            }
+ 
+             OpenResult::NotDir => Err(ErrorCode::NotDirectory),
+         }
+diff --git a/crates/wasi/src/lib.rs b/crates/wasi/src/lib.rs
+index 506fcc3..00f725f 100644
+--- a/crates/wasi/src/lib.rs
++++ b/crates/wasi/src/lib.rs
+@@ -48,6 +48,9 @@ pub mod p3;
+ pub mod random;
+ pub mod runtime;
+ pub mod sockets;
++// nan-vault: transparent read-only decryption for NANVOL2 encrypted preopens
++// (see vault.rs; applied via WasiCtxBuilder::preopened_vault_dir / -S vault).
++mod vault;
+ mod view;
+ 
+ pub use self::clocks::{HostMonotonicClock, HostWallClock};
+diff --git a/crates/wasi/src/p1.rs b/crates/wasi/src/p1.rs
+index 95c688e..66a9654 100644
+--- a/crates/wasi/src/p1.rs
++++ b/crates/wasi/src/p1.rs
+@@ -1686,14 +1686,20 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiP1Ctx {
+                 drop(t);
+                 let pos = position.load(Ordering::Relaxed);
+                 let file = self.table.get(&fd)?.file()?;
++                // nan-vault files decrypt content on demand (the descriptor's
++                // real file is only the sparse metadata skeleton)
++                let vault = file.vault.clone();
+                 let bytes_read = match (file.as_blocking_file(), memory.as_slice_mut(iov)?) {
+                     // Try to read directly into wasm memory where possible
+                     // when the current thread can block and additionally wasm
+                     // memory isn't shared.
+-                    (Some(file), Some(mut buf)) => {
+-                        sys::read_at_cursor_unspecified(file, &mut buf, pos)
+-                            .map_err(|e| StreamError::LastOperationFailed(e.into()))?
+-                    }
++                    (Some(file), Some(mut buf)) => match &vault {
++                        Some(v) => v
++                            .read_at(&mut buf, pos)
++                            .map_err(|e| StreamError::LastOperationFailed(e.into()))?,
++                        None => sys::read_at_cursor_unspecified(file, &mut buf, pos)
++                            .map_err(|e| StreamError::LastOperationFailed(e.into()))?,
++                    },
+                     // ... otherwise fall back to performing the read on a
+                     // blocking thread and which copies the data back into wasm
+                     // memory.
+@@ -1702,9 +1708,12 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiP1Ctx {
+                         let mut buf = vec![0; iov.len() as usize];
+                         let buf = file
+                             .run_blocking(move |file| -> Result<_, types::Error> {
++                                let r = match &vault {
++                                    Some(v) => v.read_at(&mut buf, pos),
++                                    None => sys::read_at_cursor_unspecified(file, &mut buf, pos),
++                                };
+                                 let bytes_read =
+-                                    sys::read_at_cursor_unspecified(file, &mut buf, pos)
+-                                        .map_err(|e| StreamError::LastOperationFailed(e.into()))?;
++                                    r.map_err(|e| StreamError::LastOperationFailed(e.into()))?;
+                                 buf.truncate(bytes_read);
+                                 Ok(buf)
+                             })
+diff --git a/crates/wasi/src/p2/filesystem.rs b/crates/wasi/src/p2/filesystem.rs
+index 39e10e3..1520723 100644
+--- a/crates/wasi/src/p2/filesystem.rs
++++ b/crates/wasi/src/p2/filesystem.rs
+@@ -84,10 +84,21 @@ impl FileInputStream {
+         }
+     }
+ 
+-    fn blocking_read(file: &cap_std::fs::File, offset: u64, size: usize) -> ReadState {
++    fn blocking_read(
++        file: &cap_std::fs::File,
++        vault: Option<&crate::vault::VaultFile>,
++        offset: u64,
++        size: usize,
++    ) -> ReadState {
+         let mut buf = BytesMut::zeroed(size.min(crate::MAX_READ_SIZE_ALLOC));
+         loop {
+-            match sys::read_at_cursor_unspecified(file, &mut buf, offset) {
++            // nan-vault files decrypt their content on demand; the real
++            // (sparse skeleton) file only backs metadata.
++            let r = match vault {
++                Some(v) => v.read_at(&mut buf, offset),
++                None => sys::read_at_cursor_unspecified(file, &mut buf, offset),
++            };
++            match r {
+                 Ok(0) => return ReadState::Closed,
+                 Ok(n) => {
+                     buf.truncate(n);
+@@ -121,9 +132,10 @@ impl InputStream for FileInputStream {
+                 }
+ 
+                 let p = self.position;
++                let vault = self.file.vault.clone();
+                 self.state = ReadState::Waiting(
+                     self.file
+-                        .spawn_blocking(move |f| Self::blocking_read(f, p, size)),
++                        .spawn_blocking(move |f| Self::blocking_read(f, vault.as_deref(), p, size)),
+                 );
+                 Ok(Bytes::new())
+             }
+@@ -152,9 +164,10 @@ impl InputStream for FileInputStream {
+         // Before we defer to the regular `read`, make sure it has data ready to go:
+         if let ReadState::Idle = self.state {
+             let p = self.position;
++            let vault = self.file.vault.clone();
+             self.state = self
+                 .file
+-                .run_blocking(move |f| Self::blocking_read(f, p, size))
++                .run_blocking(move |f| Self::blocking_read(f, vault.as_deref(), p, size))
+                 .await;
+         }
+ 
+@@ -188,9 +201,10 @@ impl Pollable for FileInputStream {
+ 
+             const DEFAULT_READ_SIZE: usize = 4096;
+             let p = self.position;
++            let vault = self.file.vault.clone();
+             self.state = ReadState::Waiting(
+                 self.file
+-                    .spawn_blocking(move |f| Self::blocking_read(f, p, DEFAULT_READ_SIZE)),
++                    .spawn_blocking(move |f| Self::blocking_read(f, vault.as_deref(), p, DEFAULT_READ_SIZE)),
+             );
+         }
+ 
+diff --git a/crates/wasi/src/p2/host/filesystem.rs b/crates/wasi/src/p2/host/filesystem.rs
+index 6ac2082..745dce3 100644
+--- a/crates/wasi/src/p2/host/filesystem.rs
++++ b/crates/wasi/src/p2/host/filesystem.rs
+@@ -111,6 +111,7 @@ impl HostDescriptor for WasiFilesystemCtxView<'_> {
+             return Err(ErrorCode::NotPermitted.into());
+         }
+ 
++        let vault = f.vault.clone();
+         let (mut buffer, r) = f
+             .run_blocking(move |f| {
+                 let mut buffer = vec![
+@@ -119,7 +120,12 @@ impl HostDescriptor for WasiFilesystemCtxView<'_> {
+                         .unwrap_or(usize::MAX)
+                         .min(crate::MAX_READ_SIZE_ALLOC)
+                 ];
+-                let r = sys::read_at_cursor_unspecified(f, &mut buffer, offset);
++                // nan-vault files decrypt content on demand (the descriptor's
++                // real file is only the sparse metadata skeleton)
++                let r = match &vault {
++                    Some(v) => v.read_at(&mut buffer, offset),
++                    None => sys::read_at_cursor_unspecified(f, &mut buffer, offset),
++                };
+                 (buffer, r)
+             })
+             .await;
+diff --git a/crates/wasi/src/p3/filesystem/host.rs b/crates/wasi/src/p3/filesystem/host.rs
+index d59d1a6..2dbc407 100644
+--- a/crates/wasi/src/p3/filesystem/host.rs
++++ b/crates/wasi/src/p3/filesystem/host.rs
+@@ -169,6 +169,9 @@ impl<D> StreamProducer<D> for ReadStreamProducer {
+         mut dst: Destination<'a, Self::Item, Self::Buffer>,
+         finish: bool,
+     ) -> Poll<wasmtime::Result<StreamResult>> {
++        // nan-vault files decrypt content on demand (the descriptor's real
++        // file is only the sparse metadata skeleton)
++        let vault = self.file.vault.clone();
+         if let Some(file) = self.file.as_blocking_file() {
+             // Once a blocking file, always a blocking file, so assert as such.
+             assert!(self.task.is_none());
+@@ -177,7 +180,11 @@ impl<D> StreamProducer<D> for ReadStreamProducer {
+             if buf.is_empty() {
+                 return Poll::Ready(Ok(StreamResult::Completed));
+             }
+-            return match sys::read_at_cursor_unspecified(file, buf, self.offset) {
++            let r = match &vault {
++                Some(v) => v.read_at(buf, self.offset),
++                None => sys::read_at_cursor_unspecified(file, buf, self.offset),
++            };
++            return match r {
+                 Ok(0) => {
+                     self.close(Ok(()));
+                     Poll::Ready(Ok(StreamResult::Dropped))
+@@ -201,7 +208,11 @@ impl<D> StreamProducer<D> for ReadStreamProducer {
+             let file = Arc::clone(me.file.as_file());
+             let offset = me.offset;
+             spawn_blocking(move || {
+-                sys::read_at_cursor_unspecified(file, &mut buf, offset).map(|n| {
++                let r = match &vault {
++                    Some(v) => v.read_at(&mut buf, offset),
++                    None => sys::read_at_cursor_unspecified(file, &mut buf, offset),
++                };
++                r.map(|n| {
+                     buf.truncate(n);
+                     buf
+                 })
+diff --git a/crates/wasi/src/vault.rs b/crates/wasi/src/vault.rs
+new file mode 100644
+index 0000000..cbc0aa6
+--- /dev/null
++++ b/crates/wasi/src/vault.rs
+@@ -0,0 +1,388 @@
++//! nan-vault NANVOL2: transparent, read-only, on-demand decryption for
++//! preopened directories — gocryptfs semantics with ZERO privileges.
++//!
++//! A NANVOL2 "cipherdir" (produced by nan's `nan-vault pack-blocks`) holds one
++//! encrypted blob per plaintext file, split into fixed-size XChaCha20-Poly1305
++//! blocks, plus a VEK-sealed JSON manifest mapping logical paths to blobs and
++//! sizes. The host preopens a SKELETON directory (a real tree of sparse files
++//! truncated to the plaintext sizes, so every metadata operation — stat,
++//! readdir, open, inode identity — is served by the kernel on real objects)
++//! and this module intercepts only CONTENT READS: each `read_at` decrypts the
++//! touched 4MiB blocks from the cipherdir, verifies their AEAD tags, and
++//! serves the requested byte range through a small bounded LRU. Plaintext
++//! never exists outside that cache; writes are impossible (the preopen is
++//! forced read-only and blobs live on a read-only volume).
++//!
++//! Crypto (must match nan's scripts/nan-vault.mjs, the protocol's source of
++//! truth): fileKey = HKDF-SHA256(VEK, salt=packId, info="nan-vault/file/v1:"
++//! + blobName); block nonce = LE64(blockIndex) || 16 zero bytes; each stored
++//! block is ciphertext||tag at offset blockIndex * (blockSize + 16). The
++//! manifest file is a NANVOL1 blob: "NANVOL1" || nonce(24) || XChaCha20-
++//! Poly1305(json). Keys are unique per (pack, blob), so blocks cannot be
++//! swapped across files, reordered within a file, or transplanted from
++//! another pack; truncation/extension is caught against the manifest size.
++
++use bytes::Bytes;
++use chacha20poly1305::aead::{Aead, KeyInit};
++use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
++use hkdf::Hkdf;
++use sha2::Sha256;
++use std::collections::HashMap;
++use std::io::{Error, ErrorKind, Result};
++use std::path::Path;
++use std::sync::{Arc, Mutex};
++
++const NANVOL1_MAGIC: &[u8] = b"NANVOL1";
++const TAG_LEN: u64 = 16;
++const DEFAULT_CACHE_MB: usize = 64;
++
++/// One unlocked NANVOL2 volume: the (sandboxed) cipherdir handle, the
++/// decrypted manifest, per-file keys, and the plaintext block cache.
++pub struct VaultVol {
++    cipher: cap_std::fs::Dir,
++    block_size: u64,
++    files: HashMap<String, VaultEntry>,
++    cache: Mutex<BlockCache>,
++}
++
++#[derive(Clone)]
++struct VaultEntry {
++    blob: String,
++    size: u64,
++    key: [u8; 32],
++}
++
++/// A vault-backed open file: routes `read_at` through block decryption.
++pub struct VaultFile {
++    vol: Arc<VaultVol>,
++    entry: VaultEntry,
++}
++
++/// Attached to a `Dir` descriptor inside a vault preopen: remembers the
++/// volume and this directory's logical path prefix so `open_at` can map
++/// opened files back to manifest entries.
++#[derive(Clone)]
++pub struct VaultDirCtx {
++    vol: Arc<VaultVol>,
++    prefix: String,
++}
++
++struct BlockCache {
++    budget: usize,
++    used: usize,
++    seq: u64,
++    map: HashMap<(String, u64), (Bytes, u64)>,
++}
++
++fn bad(msg: impl Into<String>) -> Error {
++    Error::new(ErrorKind::InvalidData, format!("nan-vault: {}", msg.into()))
++}
++
++fn unhex(s: &str) -> Option<Vec<u8>> {
++    let s = s.trim().trim_start_matches("0x");
++    if s.len() % 2 != 0 {
++        return None;
++    }
++    (0..s.len() / 2)
++        .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok())
++        .collect()
++}
++
++/// Lexically join + normalize a logical path under a prefix ("." and ".."
++/// resolved; the skeleton contains no symlinks, so lexical is exact).
++pub(crate) fn join_logical(prefix: &str, path: &str) -> String {
++    let mut parts: Vec<&str> = if prefix.is_empty() {
++        Vec::new()
++    } else {
++        prefix.split('/').collect()
++    };
++    for c in path.split('/') {
++        match c {
++            "" | "." => {}
++            ".." => {
++                parts.pop();
++            }
++            c => parts.push(c),
++        }
++    }
++    parts.join("/")
++}
++
++/// Open a NANVOL1 blob (magic || nonce24 || xchacha20poly1305(ct||tag)).
++fn open_nanvol1(blob: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
++    let hdr = NANVOL1_MAGIC.len() + 24;
++    if blob.len() < hdr + TAG_LEN as usize || &blob[..NANVOL1_MAGIC.len()] != NANVOL1_MAGIC {
++        return Err(bad("not a nan-vault blob (bad header)"));
++    }
++    let nonce = XNonce::from_slice(&blob[NANVOL1_MAGIC.len()..hdr]);
++    XChaCha20Poly1305::new(Key::from_slice(key))
++        .decrypt(nonce, &blob[hdr..])
++        .map_err(|_| bad("manifest decrypt failed (wrong key or corrupt cipherdir)"))
++}
++
++impl VaultVol {
++    /// Open a cipherdir with the volume's VEK: decrypt + parse the manifest
++    /// and derive the per-file keys. ~KBs of work regardless of volume size.
++    pub fn open(cipher_dir: &Path, vek: &[u8; 32]) -> Result<Arc<Self>> {
++        let cipher =
++            cap_std::fs::Dir::open_ambient_dir(cipher_dir, cap_std::ambient_authority())?;
++        let sealed = cipher.read("manifest.nvm")?;
++        let plain = open_nanvol1(&sealed, vek)?;
++        let man: serde_json::Value =
++            serde_json::from_slice(&plain).map_err(|e| bad(format!("manifest json: {e}")))?;
++        if man.get("version").and_then(|v| v.as_u64()) != Some(1) {
++            return Err(bad("unsupported manifest version"));
++        }
++        let block_size = man
++            .get("blockSize")
++            .and_then(|v| v.as_u64())
++            .filter(|&b| b > 0)
++            .ok_or_else(|| bad("manifest blockSize"))?;
++        let pack_id = man
++            .get("packId")
++            .and_then(|v| v.as_str())
++            .and_then(unhex)
++            .ok_or_else(|| bad("manifest packId"))?;
++        let mut files = HashMap::new();
++        for f in man
++            .get("files")
++            .and_then(|v| v.as_array())
++            .ok_or_else(|| bad("manifest files"))?
++        {
++            let p = f.get("p").and_then(|v| v.as_str()).ok_or_else(|| bad("file path"))?;
++            let s = f.get("s").and_then(|v| v.as_u64()).ok_or_else(|| bad("file size"))?;
++            let b = f.get("b").and_then(|v| v.as_str()).ok_or_else(|| bad("file blob"))?;
++            let mut key = [0u8; 32];
++            Hkdf::<Sha256>::new(Some(&pack_id), vek)
++                .expand(format!("nan-vault/file/v1:{b}").as_bytes(), &mut key)
++                .map_err(|_| bad("hkdf"))?;
++            files.insert(
++                join_logical("", p),
++                VaultEntry { blob: b.to_string(), size: s, key },
++            );
++        }
++        let budget = std::env::var("NAN_VAULT_CACHE_MB")
++            .ok()
++            .and_then(|v| v.parse::<usize>().ok())
++            .unwrap_or(DEFAULT_CACHE_MB)
++            .saturating_mul(1024 * 1024);
++        Ok(Arc::new(Self {
++            cipher,
++            block_size,
++            files,
++            cache: Mutex::new(BlockCache { budget, used: 0, seq: 0, map: HashMap::new() }),
++        }))
++    }
++
++    /// The vault file at a logical path, if the manifest has one.
++    pub fn file(self: &Arc<Self>, logical: &str) -> Option<VaultFile> {
++        self.files
++            .get(logical)
++            .map(|entry| VaultFile { vol: self.clone(), entry: entry.clone() })
++    }
++
++    /// Fetch (cache or decrypt) one plaintext block of a file. The AEAD tag
++    /// is verified before any byte is returned.
++    fn block(&self, entry: &VaultEntry, idx: u64) -> Result<Bytes> {
++        let cache_key = (entry.blob.clone(), idx);
++        {
++            let mut c = self.cache.lock().unwrap();
++            c.seq += 1;
++            let seq = c.seq;
++            if let Some((b, last)) = c.map.get_mut(&cache_key) {
++                *last = seq;
++                return Ok(b.clone());
++            }
++        }
++        let plain_len = entry.size.saturating_sub(idx * self.block_size).min(self.block_size);
++        if plain_len == 0 {
++            return Err(bad("read past end of file"));
++        }
++        let want = (plain_len + TAG_LEN) as usize;
++        let mut sealed = vec![0u8; want];
++        let f = self.cipher.open(&entry.blob)?;
++        let mut got = 0;
++        while got < want {
++            let n = crate::filesystem::sys::read_at_cursor_unspecified(
++                &f,
++                &mut sealed[got..],
++                idx * (self.block_size + TAG_LEN) + got as u64,
++            )?;
++            if n == 0 {
++                return Err(bad(format!("blob {} truncated at block {idx}", entry.blob)));
++            }
++            got += n;
++        }
++        let mut nonce = [0u8; 24];
++        nonce[..8].copy_from_slice(&idx.to_le_bytes());
++        let plain = XChaCha20Poly1305::new(Key::from_slice(&entry.key))
++            .decrypt(XNonce::from_slice(&nonce), &sealed[..])
++            .map_err(|_| bad(format!("block {idx} of {} failed authentication", entry.blob)))?;
++        let plain = Bytes::from(plain);
++        let mut c = self.cache.lock().unwrap();
++        c.seq += 1;
++        let seq = c.seq;
++        if c.map.insert(cache_key, (plain.clone(), seq)).is_none() {
++            c.used += plain.len();
++        }
++        while c.used > c.budget && c.map.len() > 1 {
++            // tiny map (budget/blockSize entries): linear LRU scan is fine
++            let oldest = c
++                .map
++                .iter()
++                .min_by_key(|(_, (_, last))| *last)
++                .map(|(k, _)| k.clone());
++            match oldest {
++                Some(k) => {
++                    if let Some((b, _)) = c.map.remove(&k) {
++                        c.used -= b.len();
++                    }
++                }
++                None => break,
++            }
++        }
++        Ok(plain)
++    }
++}
++
++impl VaultFile {
++    /// Positional read, `pread(2)` semantics: fills `buf` from `offset`,
++    /// returns bytes read (0 at EOF). Decrypts only the touched blocks.
++    pub fn read_at(&self, buf: &mut [u8], offset: u64) -> Result<usize> {
++        let size = self.entry.size;
++        if offset >= size || buf.is_empty() {
++            return Ok(0);
++        }
++        let end = (offset + buf.len() as u64).min(size);
++        let bs = self.vol.block_size;
++        let mut written = 0usize;
++        for idx in offset / bs..=(end - 1) / bs {
++            let block = self.vol.block(&self.entry, idx)?;
++            let blk_start = idx * bs;
++            let lo = offset.max(blk_start) - blk_start;
++            let hi = end.min(blk_start + block.len() as u64).saturating_sub(blk_start);
++            if hi > block.len() as u64 || lo >= hi {
++                return Err(bad(format!("block {idx} shorter than manifest size")));
++            }
++            buf[written..written + (hi - lo) as usize]
++                .copy_from_slice(&block[lo as usize..hi as usize]);
++            written += (hi - lo) as usize;
++        }
++        Ok(written)
++    }
++}
++
++impl VaultDirCtx {
++    pub(crate) fn new(vol: Arc<VaultVol>) -> Self {
++        Self { vol, prefix: String::new() }
++    }
++
++    /// The context for a subdirectory opened at `path` under this one.
++    pub(crate) fn child(&self, path: &str) -> Self {
++        Self { vol: self.vol.clone(), prefix: join_logical(&self.prefix, path) }
++    }
++
++    /// The vault file for `path` opened under this directory, if any.
++    pub(crate) fn file(&self, path: &str) -> Option<VaultFile> {
++        self.vol.file(&join_logical(&self.prefix, path))
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    // A self-contained mini cipherdir: two files (one spanning blocks, one
++    // empty-tailed), sealed exactly like nan-vault.mjs packBlocks does.
++    fn make_cipherdir(dir: &Path, vek: &[u8; 32], block_size: u64) -> Vec<(String, Vec<u8>)> {
++        let pack_id: Vec<u8> = (0..16u8).collect();
++        let mut files = Vec::new();
++        let mut manifest_files = Vec::new();
++        std::fs::create_dir_all(dir.join("b")).unwrap();
++        for (i, (p, len)) in [("a.bin", block_size as usize * 2 + 7), ("sub/b.bin", 5)]
++            .iter()
++            .enumerate()
++        {
++            let blob = format!("b/{:06}.nvb", i + 1);
++            let data: Vec<u8> = (0..*len).map(|j| (j % 251) as u8).collect();
++            let mut key = [0u8; 32];
++            Hkdf::<Sha256>::new(Some(&pack_id), vek)
++                .expand(format!("nan-vault/file/v1:{blob}").as_bytes(), &mut key)
++                .unwrap();
++            let mut out = Vec::new();
++            for (idx, chunk) in data.chunks(block_size as usize).enumerate() {
++                let mut nonce = [0u8; 24];
++                nonce[..8].copy_from_slice(&(idx as u64).to_le_bytes());
++                out.extend(
++                    XChaCha20Poly1305::new(Key::from_slice(&key))
++                        .encrypt(XNonce::from_slice(&nonce), chunk)
++                        .unwrap(),
++                );
++            }
++            std::fs::write(dir.join(&blob), out).unwrap();
++            manifest_files.push(serde_json::json!({"p": p, "s": len, "b": blob}));
++            files.push((p.to_string(), data));
++        }
++        let manifest = serde_json::json!({
++            "version": 1, "blockSize": block_size,
++            "packId": pack_id.iter().map(|b| format!("{b:02x}")).collect::<String>(),
++            "files": manifest_files,
++        })
++        .to_string();
++        let mut nonce = [0u8; 24];
++        nonce[..8].copy_from_slice(b"manifest");
++        let mut sealed = NANVOL1_MAGIC.to_vec();
++        sealed.extend(&nonce);
++        sealed.extend(
++            XChaCha20Poly1305::new(Key::from_slice(vek))
++                .encrypt(XNonce::from_slice(&nonce), manifest.as_bytes())
++                .unwrap(),
++        );
++        std::fs::write(dir.join("manifest.nvm"), sealed).unwrap();
++        files
++    }
++
++    #[test]
++    fn reads_match_plaintext() {
++        let tmp = tempfile::tempdir().unwrap();
++        let vek = [7u8; 32];
++        let bs = 1024u64;
++        let files = make_cipherdir(tmp.path(), &vek, bs);
++        let vol = VaultVol::open(tmp.path(), &vek).unwrap();
++        for (p, data) in &files {
++            let vf = vol.file(p).expect("manifest entry");
++            // whole file
++            let mut buf = vec![0u8; data.len() + 3];
++            let n = vf.read_at(&mut buf, 0).unwrap();
++            assert_eq!(&buf[..n], &data[..]);
++            // cross-block ranges + EOF behavior
++            for (off, len) in [(0usize, 1usize), (1023, 2), (1024, 1024), (data.len() - 1, 5)] {
++                if *p != "a.bin" && off + len > data.len() {
++                    continue;
++                }
++                let mut buf = vec![0u8; len];
++                let n = vf.read_at(&mut buf, *&(off as u64)).unwrap();
++                assert_eq!(&buf[..n], &data[off..(off + len).min(data.len())]);
++            }
++            assert_eq!(vf.read_at(&mut [0u8; 8], data.len() as u64).unwrap(), 0);
++        }
++        // wrong VEK: manifest refuses
++        assert!(VaultVol::open(tmp.path(), &[8u8; 32]).is_err());
++        // tampered block: read refuses
++        let blob = tmp.path().join("b/000001.nvb");
++        let mut raw = std::fs::read(&blob).unwrap();
++        raw[10] ^= 0xff;
++        std::fs::write(&blob, raw).unwrap();
++        let vol = VaultVol::open(tmp.path(), &vek).unwrap();
++        let vf = vol.file("a.bin").unwrap();
++        assert!(vf.read_at(&mut [0u8; 16], 0).is_err());
++    }
++
++    #[test]
++    fn logical_paths() {
++        assert_eq!(join_logical("", "a/b"), "a/b");
++        assert_eq!(join_logical("a", "./b"), "a/b");
++        assert_eq!(join_logical("a/b", "../c"), "a/c");
++        assert_eq!(join_logical("", "../../x"), "x");
++    }
++}
+diff --git a/src/common.rs b/src/common.rs
+index 167d838..86bd620 100644
+--- a/src/common.rs
++++ b/src/common.rs
+@@ -355,6 +355,26 @@ impl RunCommon {
+             )?;
+         }
+ 
++        // nan-vault encrypted preopens: -S vault=<guest>::<skeleton>::<cipherdir>,
++        // VEK (32-byte hex) in $NAN_VAULT_KEY_<i>. The env var stays in the HOST
++        // process only — guest env is always explicit (--env / inherit-env).
++        for (i, spec) in self.common.wasi.vault.iter().enumerate() {
++            let mut it = spec.splitn(3, "::");
++            let (guest, skel, cipher) = match (it.next(), it.next(), it.next()) {
++                (Some(g), Some(s), Some(c)) if !g.is_empty() && !s.is_empty() && !c.is_empty() => {
++                    (g, s, c)
++                }
++                _ => bail!("-S vault expects <guest-path>::<skeleton-dir>::<cipher-dir>, got `{spec}`"),
++            };
++            let var = format!("NAN_VAULT_KEY_{i}");
++            let hex = std::env::var(&var)
++                .map_err(|_| format_err!("-S vault: ${var} must hold the 32-byte hex VEK"))?;
++            let vek = parse_vek(&hex).ok_or_else(|| format_err!("-S vault: ${var} is not 32 bytes of hex"))?;
++            builder
++                .preopened_vault_dir(skel, guest, cipher, vek)
++                .with_context(|| format!("-S vault={spec}"))?;
++        }
++
+         if self.common.wasi.listenfd == Some(true) {
+             bail!("components do not support --listenfd");
+         }
+@@ -558,3 +578,16 @@ impl wasmtime_wasi_http::p2::WasiHttpHooks for HttpHooks {
+ 
+ #[cfg(feature = "wasi-http")]
+ impl wasmtime_wasi_http::p3::WasiHttpHooks for HttpHooks {}
++
++/// 32-byte hex (optionally 0x-prefixed) -> VEK bytes, for `-S vault`.
++fn parse_vek(s: &str) -> Option<[u8; 32]> {
++    let s = s.trim().trim_start_matches("0x");
++    if s.len() != 64 {
++        return None;
++    }
++    let mut out = [0u8; 32];
++    for i in 0..32 {
++        out[i] = u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()?;
++    }
++    Some(out)
++}

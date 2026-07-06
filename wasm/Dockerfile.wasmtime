@@ -58,6 +58,21 @@ COPY wasmtime-onnx-gpu-strict.patch /tmp/
 RUN git apply --check /tmp/wasmtime-onnx-gpu-strict.patch \
  && git apply /tmp/wasmtime-onnx-gpu-strict.patch
 
+# nan-vault WASI-fs shim: `-S vault=<guest>::<skeleton>::<cipherdir>` mounts a
+# NANVOL2 block-encrypted volume as a normal read-only guest directory - the
+# wasmtime HOST decrypts 4MiB blocks on demand (XChaCha20-Poly1305 + HKDF, VEK
+# via $NAN_VAULT_KEY_<i>, host process env only). Pure userspace: no FUSE, no
+# device-mapper, nothing privileged. Metadata is served by a sparse skeleton
+# tree the wasm-manager materializes at unlock; only content reads route
+# through decryption. This is how tenants read LARGE confidential volumes
+# transparently at /enc/<name> (the manager probes for the flag and falls back
+# to its loopback HTTP data plane on toolchains without it). Adds pinned
+# pure-Rust crypto deps (chacha20poly1305, hkdf) to the wasmtime-wasi crate;
+# the Cargo.lock delta is part of the patch.
+COPY wasmtime-vault-fs.patch /tmp/
+RUN git apply --check /tmp/wasmtime-vault-fs.patch \
+ && git apply /tmp/wasmtime-vault-fs.patch
+
 # System-linked ORT: the binary NEEDS libonnxruntime.so.1 at runtime; ship it
 # plus the two provider dylibs the CUDA EP dlopens (providers_shared is the
 # dispatcher). providers_tensorrt is deliberately not shipped (never

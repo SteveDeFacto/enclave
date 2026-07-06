@@ -717,6 +717,46 @@ def _nanvol2_read(vid: str, spec: dict, path: str, start: int, end: int):
             yield plain[lo:hi]
 
 
+_VAULT_FS = None   # does this wasmtime carry the nan-vault WASI-fs shim (-S vault)?
+
+def _vault_fs_supported() -> bool:
+    """Probe (once) whether the wasmtime toolchain has the nan-vault WASI-fs
+    shim: `-S vault=<guest>::<skeleton>::<cipherdir>` mounts a NANVOL2 volume
+    as a normal read-only guest directory, the wasmtime HOST decrypting blocks
+    on demand (wasmtime-vault-fs.patch). When present, large-tier volumes are
+    served transparently at /enc/<name> like small-tier ones; the loopback
+    data plane remains as the fallback for older toolchains."""
+    global _VAULT_FS
+    if _VAULT_FS is None:
+        try:
+            r = subprocess.run([WASMTIME, "run", "-S", "help"],
+                               capture_output=True, text=True, timeout=10)
+            _VAULT_FS = "vault=" in (r.stdout or "") + (r.stderr or "")
+        except Exception:
+            _VAULT_FS = False
+        print(f"[vault-fs] wasmtime -S vault support: {_VAULT_FS}", flush=True)
+    return _VAULT_FS
+
+
+def _build_vault_skeleton(vid: str, spec: dict) -> None:
+    """Materialize the SKELETON tree for a nanvol2 volume: the manifest's
+    directory structure with each file a SPARSE placeholder truncated to its
+    plaintext size (tmpfs; zero pages until written, and nothing ever writes).
+    wasmtime preopens this tree, so every metadata operation (stat, readdir,
+    open, inode identity) is real - only content reads route to decryption."""
+    reader = spec["_reader"]
+    skel = ENC_PLAIN_ROOT / f"{vid}-{spec['name']}-skel"
+    for path, f in reader["files"].items():
+        parts = path.split("/")
+        if not path or path.startswith("/") or ".." in parts or "." in parts:
+            raise ValueError(f"vault manifest path unsafe: {path!r}")
+        p = skel.joinpath(*parts)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "wb") as fh:
+            fh.truncate(f["s"])
+    spec["skel_dir"] = str(skel)
+
+
 def _nn_tenant_env(gpu_share: float, pinned: bool) -> dict:
     """The MPS cap env a GPU tenant's wasmtime process runs with. `pinned`
     adds the per-client VRAM limit; dropped when the probe found it poisonous
@@ -1365,7 +1405,8 @@ def _alloc_ports(pspec) -> dict:
 
 
 def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdir=None,
-               nn=False, nan_config=None, vol_mounts=None, enc_mounts=None, enc_http=None):
+               nn=False, nan_config=None, vol_mounts=None, enc_mounts=None, enc_http=None,
+               vault_flags=None, vault_names=None):
     """The wasmtime invocation for a ports spec. Returns (cmd, host_port, wait_ports).
 
     serve mode: `wasmtime serve` owns the one HTTP listener; no sockets granted.
@@ -1415,9 +1456,14 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     enc_mounts = enc_mounts or {}
     for name, host_path in enc_mounts.items():
         vol_args += ["--dir", f"{host_path}::{ENC_GUEST_ROOT}/{name}"]
-    if enc_mounts:
-        vol_args += ["--env", "NAN_ENC=" + ",".join(enc_mounts.keys())]
-    # LARGE-tier (nanvol2) volumes have no plaintext dir to preopen - the guest
+    # nan-vault WASI-fs shim mounts (large tier, transparent): `-S vault=...`
+    # preopens the sparse skeleton at /enc/<name>; the wasmtime host decrypts
+    # blocks on demand. These count as /enc mounts for NAN_ENC discovery.
+    vol_args += list(vault_flags or [])
+    enc_names = list(enc_mounts.keys()) + list(vault_names or [])
+    if enc_names:
+        vol_args += ["--env", "NAN_ENC=" + ",".join(enc_names)]
+    # LARGE-tier volumes WITHOUT the shim have no dir to preopen - the guest
     # reads them over the manager's loopback data plane (Range honored). The
     # env maps each volume to its URL + this deployment's bearer token; guests
     # already hold outbound HTTP (`serve` grants -Shttp; `run` grants sockets).
@@ -1602,15 +1648,28 @@ def _spawn_and_wait(rec, ctx):
         ctx["pspec"], ctx["wasm"], ctx["port"], ctx["port_map"], ctx["fsdir"], ctx["nn"],
         ctx["nan_config"], ctx["vol_mounts"], ctx["gpu_share"], ctx["log_path"])
     enc_mounts = {s["name"]: s["plain_dir"] for s in rec.get("_encVolumes", []) if s.get("plain_dir")}
-    enc_http = {s["name"]: {"url": f"http://{HOST_IP}:{PORT}/enc/{rec['id']}/{s['name']}",
-                            "token": rec.get("_encToken", "")}
-                for s in rec.get("_encVolumes", [])
-                if s.get("format") == "nanvol2" and s.get("unlocked")}
+    # Large-tier (nanvol2) volumes, two delivery modes: with the nan-vault
+    # WASI-fs shim in the toolchain, each mounts TRANSPARENTLY at /enc/<name>
+    # (wasmtime preopens the sparse skeleton and decrypts blocks on demand;
+    # the VEK rides the process env, host-side only). Otherwise the tenant
+    # reads it over the loopback data plane (NAN_ENC_HTTP).
+    vault_flags, vault_env, vault_names, enc_http = [], {}, [], {}
+    for s in rec.get("_encVolumes", []):
+        if s.get("format") != "nanvol2" or not s.get("unlocked"):
+            continue
+        if s.get("skel_dir") and _vault_fs_supported():
+            vault_env[f"NAN_VAULT_KEY_{len(vault_names)}"] = s["_reader"]["vek"].hex()
+            vault_flags += ["-S", f"vault={ENC_GUEST_ROOT}/{s['name']}::{s['skel_dir']}::{s['cipher_dir']}"]
+            vault_names.append(s["name"])
+        else:
+            enc_http[s["name"]] = {"url": f"http://{HOST_IP}:{PORT}/enc/{rec['id']}/{s['name']}",
+                                   "token": rec.get("_encToken", "")}
     # `-W max-memory-size` caps the guest's linear memory (the only RAM a tenant
     # can grow) - the real per-app memory ceiling, enforced by the runtime.
     mem_bytes = max(rec["mem_mb"], 1) * 1024 * 1024
     cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir, nn,
-                                            nan_config, vol_mounts, enc_mounts, enc_http)
+                                            nan_config, vol_mounts, enc_mounts, enc_http,
+                                            vault_flags, vault_names)
     rec["hostPort"] = host_port
     rec["endpoint"] = f"http://{HOST_IP}:{host_port}" if host_port else None
     # GPU tenants: the wasmtime process itself is the CUDA process (ORT holds the
@@ -1619,6 +1678,11 @@ def _spawn_and_wait(rec, ctx):
     if nn:
         env = _nn_tenant_env(gpu_share, pinned=_NN_PROBE.get("mode") != "nopin")
         rec["mpsPct"] = max(1, round(gpu_share * 100))
+    if vault_env:
+        # VEKs for the WASI-fs shim: wasmtime PROCESS env only - guests never
+        # see host env (no -Sinherit-env), and the cmdline carries no keys.
+        env = env if env is not None else dict(os.environ)
+        env.update(vault_env)
     logf = open(log_path, "wb")
     try:
         proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=logf,
@@ -1700,6 +1764,8 @@ def unlock_enc_volume(vid: str, name: str, passphrase: str = None, vek: str = No
         try:
             if is_blocks:
                 _open_nanvol2(spec, vek)   # manifest only; blocks decrypt on demand
+                if _vault_fs_supported():
+                    _build_vault_skeleton(vid, spec)   # sparse tree the shim preopens
             else:
                 spec["plain_dir"] = (_decrypt_vault_volume(spec, vek) if is_vault
                                      else _decrypt_enc_volume(spec, passphrase))
@@ -1865,7 +1931,7 @@ def _rm_enc(rec):
     # store is the ephemeral encrypted ramdisk (gone on teardown anyway), but
     # remove it promptly so a long-lived enclave doesn't accumulate plaintext.
     for s in rec.get("_encVolumes", []) or []:
-        for k in ("plain_dir", "cipher_path"):
+        for k in ("plain_dir", "cipher_path", "skel_dir"):
             p = s.get(k)
             if not p:
                 continue
