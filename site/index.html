@@ -4445,6 +4445,104 @@ function noWalletReason(){
   return "No Ethereum wallet detected. Install MetaMask, Rabby, Coinbase, or any EIP-6963 wallet, unlock it, and reload.";
 }
 
+/* ---- funding: card purchases (Privy-brokered onramps) + plain deposits ---- */
+const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+// small modal reusing the #walletPick overlay; backdrop / .wp-cancel close it
+function fundModal(inner){
+  const host = $("#walletPick"); if (!host) return null;
+  host.innerHTML = '<div class="wp-card">' + inner + '</div>';
+  host.hidden = false;
+  const close = () => { host.hidden = true; host.innerHTML = ""; host.onclick = null; };
+  host.onclick = (e) => { if (e.target === host || e.target.closest(".wp-cancel")) close(); };
+  return { host, close };
+}
+
+function openDepositModal(){
+  if (!Nan.address) return;
+  const m = fundModal(
+    '<div class="wp-h">Deposit</div>' +
+    '<div class="wp-note">Send <b>USDC on the Base network</b> to your address below - from Coinbase, Kraken, Binance, or any wallet. It shows up here once the transfer confirms, usually under a minute.</div>' +
+    '<div class="wp-addr-full">' + esc(Nan.address) + '</div>' +
+    '<button class="wp-item wp-go" id="depCopy" type="button">Copy address</button>' +
+    '<div class="wp-err">Base network only - transfers sent on other networks are lost.</div>' +
+    '<button class="wp-cancel" type="button">Close</button>');
+  if (!m) return;
+  const b = $("#depCopy"); if (b) b.addEventListener("click", () => copyText(Nan.address, b));
+}
+
+async function openBuyModal(){
+  if (!Nan.address) return;
+  const m = fundModal(
+    '<div class="wp-h">Buy USDC</div>' +
+    '<div class="wp-note">Pay by card in a secure checkout popup. USDC lands in your account on Base, usually within a few minutes.</div>' +
+    '<div class="wp-amts">' + [10, 25, 50, 100].map(a => '<button class="wp-amt' + (a === 25 ? ' on' : '') + '" data-a="' + a + '" type="button">$' + a + '</button>').join("") + '</div>' +
+    '<div class="wp-err" id="buyErr" hidden></div>' +
+    '<button class="wp-item wp-go" id="buyGo" type="button">Continue to checkout</button>' +
+    '<div class="wp-foot">Checkout by Coinbase or MoonPay · brokered by Privy</div>' +
+    '<button class="wp-cancel" type="button">Cancel</button>');
+  if (!m) return;
+  let amt = 25;
+  m.host.querySelectorAll(".wp-amt").forEach(b => b.addEventListener("click", () => {
+    m.host.querySelectorAll(".wp-amt").forEach(x => x.classList.remove("on"));
+    b.classList.add("on"); amt = +b.dataset.a;
+  }));
+  const go = $("#buyGo");
+  go.addEventListener("click", async () => {
+    if (go.disabled) return;
+    go.disabled = true; go.textContent = "Preparing checkout…";
+    const fail = (msg) => { const e = $("#buyErr"); if (e){ e.textContent = msg; e.hidden = false; } go.disabled = false; go.textContent = "Continue to checkout"; };
+    // open the popup synchronously (before any await) so popup blockers allow it
+    const w = window.open("about:blank", "enclaveBuy", "popup,width=470,height=760");
+    try {
+      const url = await buildOnrampUrl(amt);
+      if (!w || w.closed){ fail("Popup blocked - allow popups for this site and try again."); return; }
+      w.location = url;
+      m.close();
+      showToast("Complete your purchase in the checkout window.");
+    } catch(e){
+      if (w && !w.closed) w.close();
+      fail(String(e && (e.message || e)));
+    }
+  });
+}
+
+// Privy brokers both onramps with its own provider keys - no accounts on our side.
+// Coinbase first (guest card checkout, no exchange account needed), MoonPay fallback.
+async function buildOnrampUrl(usd){
+  await PrivyWallet.load();
+  const fund = PrivyWallet.privy.funding;
+  const errs = [];
+  try {
+    const r = await fund.coinbase.initOnRampSession({
+      addresses: [{ address: Nan.address, blockchains: ["base"] }],
+      assets: ["USDC"],
+      defaultNetwork: "base",
+      presetFiatAmount: usd,
+      fiatCurrency: "USD"
+    });
+    const tok = r && (r.sessionToken || r.token);
+    const url = r && (r.url || r.onrampUrl || (tok
+      ? "https://pay.coinbase.com/buy/select-asset?sessionToken=" + encodeURIComponent(tok) +
+        "&defaultAsset=USDC&defaultNetwork=base&presetFiatAmount=" + usd + "&fiatCurrency=USD"
+      : null));
+    if (url) return url;
+    errs.push("Coinbase: unexpected response " + JSON.stringify(r).slice(0, 120));
+  } catch(e){ errs.push("Coinbase: " + (e && (e.message || e))); }
+  try {
+    const base = "https://buy.moonpay.com?currencyCode=usdc_base&walletAddress=" + encodeURIComponent(Nan.address) +
+                 "&baseCurrencyCode=usd&baseCurrencyAmount=" + usd;
+    let r;
+    try { r = await fund.moonpay.sign({ url: base }); }
+    catch(e1){ r = await fund.moonpay.sign(base); }
+    const url = (typeof r === "string" && /^https:/.test(r)) ? r
+      : r && (r.signedUrl || r.url || (r.signature ? base + "&signature=" + encodeURIComponent(r.signature) : null));
+    if (url) return url;
+    errs.push("MoonPay: unexpected response " + JSON.stringify(r).slice(0, 120));
+  } catch(e){ errs.push("MoonPay: " + (e && (e.message || e))); }
+  throw new NanError("Card checkout is unavailable right now. " + errs.join(" · "), 0);
+}
+
 async function pickWallet(){
   let wallets = Wallet.list();
   if (!wallets.length) wallets = await Wallet.discover();
@@ -4638,10 +4736,16 @@ async function renderWalletPop(){
     '<div class="wp-row"><span class="wp-k">Network</span><span class="wp-v">' + (Nan.chainId === BASE_CHAIN ? "Base" : ("chain " + (Nan.chainId || "\u2013"))) + (offBase ? ' <button class="wp-mini" id="wpSwitch">switch to Base</button>' : "") + '</span></div>' +
     '<div class="wp-row"><span class="wp-k">Session</span><span class="wp-v">' + (Nan.authed() ? '<span class="ok">signed in</span>' : '<button class="wp-mini" id="wpAuth">sign in</button>') + '</span></div>' +
     '<div class="wp-bal" id="wpBal">' + (Nan.authed() ? "loading balance\u2026" : "sign in to load balance") + '</div>' +
+    '<div class="wp-fund">' +
+      ((Nan.walletRdns === PRIVY_RDNS && PrivyWallet.enabled()) ? '<button class="wp-mini wp-buy" id="wpBuy">Buy USDC \u00b7 card</button>' : "") +
+      '<button class="wp-mini" id="wpDep">Deposit</button>' +
+    '</div>' +
     '<button class="wp-disc" id="wpDisc">Disconnect</button>';
   pop.hidden = false;
   const c = $("#wpCopy"); if (c) c.addEventListener("click", () => copyText(Nan.address));
   const d = $("#wpDisc"); if (d) d.addEventListener("click", disconnectWallet);
+  const bb = $("#wpBuy"); if (bb) bb.addEventListener("click", () => { pop.hidden = true; openBuyModal(); });
+  const dep = $("#wpDep"); if (dep) dep.addEventListener("click", () => { pop.hidden = true; openDepositModal(); });
   const s = $("#wpSwitch"); if (s) s.addEventListener("click", () => Nan.provider && ensureBaseChainOnConnect(Nan.provider).then(renderWalletPop));
   const a = $("#wpAuth"); if (a) a.addEventListener("click", async () => { try { await authenticate(); renderWalletPop(); } catch(e){ showToast(e.message); } });
   if (Nan.authed()){
@@ -5578,6 +5682,12 @@ function injectLiveStyles(){
     ".wp-go{justify-content:center;color:var(--jade);border-color:var(--jade-dim);}",
     ".wp-err{font-size:.72rem;color:#ff8a8a;margin:-2px 0 8px;}",
     ".wp-foot{font-size:.64rem;color:var(--text-dim);text-align:center;margin-top:10px;letter-spacing:.04em;}",
+    ".wp-fund{display:flex;gap:8px;margin:2px 0 10px;}",
+    ".wp-buy{color:var(--jade);border-color:var(--jade-dim);}",
+    ".wp-addr-full{font-family:var(--font-mono);font-size:.72rem;word-break:break-all;background:#080C12;border:1px solid var(--line);border-radius:8px;padding:.6em .7em;margin:8px 0;color:var(--jade-2);user-select:all;}",
+    ".wp-amts{display:flex;gap:6px;margin:10px 0;}",
+    ".wp-amt{flex:1;background:#0a0f17;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:.5em 0;cursor:pointer;font-family:inherit;font-size:.82rem;}",
+    ".wp-amt.on{border-color:var(--jade);color:var(--jade);}",
     ".wp-dot-iris{background:linear-gradient(135deg,var(--iris),var(--jade));}",
     ".endpoint-row{display:flex;align-items:center;gap:10px;margin-top:16px;flex-wrap:wrap;}",
     ".endpoint-row label{font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted);letter-spacing:.02em;}",
