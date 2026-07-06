@@ -1,0 +1,22 @@
+{
+  "name": "enclave-cli",
+  "version": "0.1.0",
+  "description": "The `enclave` CLI — wallet-native terminal client for the Enclave platform (enclave.host). Every command maps 1:1 onto the public API and the on-chain contracts.",
+  "type": "module",
+  "bin": {
+    "enclave": "./enclave.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@tinfoilsh/verifier": "^1.1.7",
+    "viem": "^2.53.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}

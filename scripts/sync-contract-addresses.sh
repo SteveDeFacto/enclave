@@ -27,7 +27,9 @@ set_key() { # $1=file $2=env key $3=address — only where the file already carr
   grep -qE "$2: \"$ADDR\"" "$1" || return 0
   sed -i -E "s/($2: \")$ADDR(\")/\1$3\2/" "$1"
 }
-for f in "$GPU" "$CPU"; do
+# cli/enclave.mjs pins the same addresses in its DEFAULTS block, in the same
+# KEY: "0x…" shape the yaml uses — one regex serves both.
+for f in "$GPU" "$CPU" "$REPO/cli/enclave.mjs"; do
   [ -f "$f" ] || continue
   set_key "$f" REGISTRY_ADDRESS      "$REGISTRY"
   set_key "$f" DEPLOYMENTS_ADDRESS   "$DEPLOYMENTS"

@@ -14,3 +14,5 @@ wasm/apps/*/src/bindings.rs
 wasm/apps/*/assets/
 # but keep the small embedded config (source, not a fetched artifact)
 !wasm/apps/*/assets/app-config.json
+# enclave CLI: bundled single-file build (cli/install.sh or npm run build)
+cli/dist/
