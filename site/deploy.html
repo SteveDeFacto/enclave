@@ -6,126 +6,13 @@
 <meta name="color-scheme" content="dark" />
 <meta name="theme-color" content="#070A0F" />
 <title>Deploy · Enclave</title>
-<meta name="description" content="Build a deployment: pick a Wasm app, connect your wallet, and provision a real confidential enclave on Base — the same public REST API, driven from your browser." />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 9v14L16 30 4 23V9z' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 7.333 24 12v8L16 24.667 8 20v-8z' fill='none' stroke='%232FE6A8' stroke-width='1.4' opacity='.55'/%3E%3Ccircle cx='16' cy='12.55' r='2.45' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 15v6.6M16 21.6h2M16 19.4h1.5' fill='none' stroke='%232FE6A8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
-<script>
-/* Cross-document view transitions are skipped by Chromium when extensions
-   inject content scripts (MetaMask et al): the old page sees pageswap with
-   no viewTransition. Flag it, and the NEXT page (this script runs pre-paint)
-   plays the same settle-in itself (html.soft-enter, see base.css) — content
-   only, the static header stays put. */
-(function(){
-  try { if (sessionStorage.getItem("nan_novt")) { sessionStorage.removeItem("nan_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}
-  addEventListener("pageswap", function(e){
-    try { if (!e.viewTransition && e.activation) sessionStorage.setItem("nan_novt", "1"); } catch(e){}
-  });
-})();
-</script>
-<link rel="stylesheet" href="css/site.css" />
-<script type="module" blocking="render" src="js/boot.js"></script>
+<meta name="robots" content="noindex" />
+<!-- The deploy console moved: it's a sub-page of Apps now (apps.html#deploy).
+     This stub keeps old links and bookmarks working, ?app= included. -->
+<script>location.replace("apps.html" + location.search + "#deploy");</script>
+<meta http-equiv="refresh" content="0;url=apps.html#deploy" />
 </head>
-<body>
-<c-header current="deploy"></c-header>
-<main>
-<!-- ===================== DEPLOY CONSOLE ===================== -->
-<section id="deploy" data-view="deploy" aria-label="Deploy console">
-  <div class="wrap">
-    <c-section-head eyebrow="Deploy · live on Base" heading="Build a deployment.">
-      <p>Pick a Wasm app, connect your wallet, and provision a real confidential enclave. This console calls the same public REST API documented below. The request body and browser <span class="mono">fetch()</span> shown here are exactly what gets sent. Use <span class="mono">Dry run</span> to inspect the call before spending anything. Want to deploy your own code? The <a href="develop.html#docs">developer guide</a> walks you through building it.</p>
-      <div class="endpoint-row">
-        <label for="apiBase">API endpoint</label>
-        <input type="text" id="apiBase" spellcheck="false" autocapitalize="off" autocomplete="off" readonly />
-        <span class="dim" aria-hidden="true">—</span>
-        <span class="ep-state" id="epState"></span>
-      </div>
-      <p class="dim" style="font-family:var(--font-mono);font-size:.7rem;margin:.2em 0 0;">Connect your wallet from the header. It's used only to sign in &amp; pay, with no account or KYC.</p>
-    </c-section-head>
-    <div class="console">
-      <!-- config -->
-      <div class="cfg">
-        <h4>App</h4>
-        <div class="field">
-          <label for="cfgImage">Wasm app <span class="dim">(<b>slug:version</b> from the <a href="apps.html">Apps</a> catalog, or <b>ipfs://&lt;cid&gt;</b>)</span></label>
-          <input type="text" id="cfgImage" value="" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="my-app:1.0.0  ·  ipfs://bafy…" />
-        </div>
-        <div class="field">
-          <label for="cfgPorts">Firewall <span class="dim">(ports the app may bind · defaulted from the catalog by “Use in Deploy” · empty = standard web app)</span></label>
-          <input type="text" id="cfgPorts" value="" placeholder="empty · or http:8088, tcp:5432, udp:9053" spellcheck="false" autocapitalize="off" autocomplete="off" />
-        </div>
-        <div class="field" id="volField" hidden>
-          <label>Model volumes <span class="dim">(attested read-only weights the enclave carries · mounted at /models/&lt;name&gt; · picking any builds &amp; pins the app config for you)</span></label>
-          <c-volume-picker></c-volume-picker>
-        </div>
-        <div class="field">
-          <label for="cfgConfig">App config CID <span class="dim">(optional · IPFS CID of a JSON config the enclave verifies and hands the app as NAN_CONFIG · e.g. pick a model or set an API key for llm-chat · leave empty when using the volume picker above)</span></label>
-          <input type="text" id="cfgConfig" value="" placeholder="empty · or bafybei… (ipfs add your config.json)" spellcheck="false" autocapitalize="off" autocomplete="off" />
-        </div>
-        <div class="field">
-          <label>Access <span class="dim">(who can reach the app)</span></label>
-          <div class="seg" id="cfgAccess" role="group" aria-label="Endpoint access">
-            <button data-public="1" class="on" type="button">Public</button>
-            <button data-public="0" type="button">Private</button>
-          </div>
-          <div class="dim" id="accessNote" style="margin-top:7px;font-family:var(--font-mono);font-size:.68rem;line-height:1.5;"></div>
-        </div>
-        <div class="field">
-          <label for="cfgGpuShare">GPU/VRAM share <span class="dim" id="gpuShareUnit">(% of one card · 0 = CPU-only app)</span> <span class="dim" id="gpuShareCap">· checking live capacity…</span></label>
-          <input type="number" id="cfgGpuShare" value="25" min="0" max="100" step="1" />
-        </div>
-        <div class="field">
-          <label for="cfgCpuShare">CPU/RAM share <span class="dim" id="cpuShareUnit">(% of the node · ≤ GPU share for GPU apps)</span> <span class="dim" id="cpuShareCap"></span></label>
-          <input type="number" id="cfgCpuShare" value="5" min="1" max="100" step="1" />
-          <div class="tier-readout" id="tierOut"></div>
-        </div>
-        <div class="field" id="fleetField" hidden>
-          <label>Live enclaves <span class="dim">(free capacity per enclave · the shares you pick decide the placement: GPU work needs a GPU enclave, CPU-only work fills CPU enclaves first)</span></label>
-          <c-fleet-list></c-fleet-list>
-        </div>
-        <div class="field">
-          <label>Pay with</label>
-          <div class="seg" id="cfgAsset" role="group" aria-label="Payment asset">
-            <button data-asset="USDC" class="on" type="button">USDC</button>
-            <button data-asset="ETH" type="button">ETH</button>
-          </div>
-          <div class="pay-bal" id="payBal" hidden></div>
-        </div>
-        <div class="field">
-          <label for="cfgBudget">Fund now <span class="dim">(USDC · buys runtime)</span></label>
-          <input type="number" id="cfgBudget" value="10" min="0.01" step="any" inputmode="decimal" />
-        </div>
-        <div class="est">
-          <span>≈ runtime this buys</span>
-          <span><b id="estRuntime">n/a</b></span>
-        </div>
-      </div>
-
-      <!-- main -->
-      <div class="console-main">
-        <div class="console-tabs" role="tablist">
-          <button class="on" data-pane="req" type="button" role="tab">Request body</button>
-          <button data-pane="fetch" type="button" role="tab">fetch()</button>
-          <button data-pane="curl" type="button" role="tab">cURL</button>
-          <button data-pane="run" type="button" role="tab">Output</button>
-        </div>
-        <div class="console-body">
-          <div class="pane on" data-pane="req"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">POST /v1/deployments</span><button class="copybtn" data-copy="req">⧉ copy</button></div><pre><code id="outReq"></code></pre></div></div>
-          <div class="pane" data-pane="fetch"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">deploy.js</span><button class="runbtn" id="fetchRunBtn" type="button" title="Run this deployment (same as the Deploy button; respects Dry run)">▶ run</button><button class="copybtn" data-copy="fetch">⧉ copy</button></div><pre><code id="outFetch"></code></pre></div></div>
-          <div class="pane" data-pane="curl"><div class="code" style="border:0;border-radius:0;height:100%"><div class="codebar"><span class="fn">terminal</span><button class="copybtn" data-copy="curl">⧉ copy</button></div><pre><code id="outCurl"></code></pre></div></div>
-          <div class="pane" data-pane="run"><c-terminal></c-terminal></div>
-        </div>
-        <div class="run-row">
-          <button class="btn btn-primary btn-sm" id="deployBtn" type="button">▸ Deploy App</button>
-          <button class="btn btn-sm" id="resetBtn" type="button">reset</button>
-          <label class="dry"><input type="checkbox" id="dryRun" /> <span>Dry run</span></label>
-          <span class="hint" id="runHint">sign in to deploy</span>
-        </div>
-      </div>
-    </div>
-    <c-deployments></c-deployments>
-  </div>
-</section>
-</main>
-<c-footer></c-footer>
-<c-toast></c-toast>
+<body style="background:#070A0F;color:#8b98a9;font-family:monospace;padding:2em">
+Moved — <a style="color:#2FE6A8" href="apps.html#deploy">continue to the deploy console</a>.
 </body>
 </html>

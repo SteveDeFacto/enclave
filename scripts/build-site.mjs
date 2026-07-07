@@ -151,7 +151,7 @@ const chunksOf = (outFile, seen = new Set()) => {
   return seen;
 };
 const bootOut = Object.keys(outs).find(f => outs[f].entryPoint && outs[f].entryPoint.endsWith("js/boot.js"));
-const PAGE_HTML = { overview: "index.html", deploy: "deploy.html", apps: "apps.html", develop: "develop.html" };
+const PAGE_HTML = { overview: "index.html", apps: "apps.html", develop: "develop.html" };   // deploy.html is a redirect stub now
 const preloads = {};
 for (const [outFile, o] of Object.entries(outs)) {
   const page = o.entryPoint && /js[\\/]pages[\\/](\w+)\.js$/.exec(o.entryPoint)?.[1];

@@ -48,9 +48,9 @@ function renderApps(){
   }));
 }
 
-// Hand the picked version to the Deploy page: stash everything it needs
+// Hand the picked version to the deploy view: stash everything it needs
 // (sessionStorage survives the navigation; the ?app= param makes the link
-// shareable - a fresh visitor's deploy page re-resolves it from the catalog).
+// shareable - a fresh visitor's deploy console re-resolves it from the catalog).
 function useInDeploy(app, v){
   const friendly = app.slug + ":" + v.version;      // human-friendly; resolves to the CID at deploy
   REF_CACHE[friendly] = "ipfs://" + v.cid;
@@ -60,7 +60,9 @@ function useInDeploy(app, v){
     sessionStorage.setItem("nan_use_in_deploy", JSON.stringify({
       friendly, cid: v.cid, ports: v.ports || "", mins: MINS_CACHE[friendly] }));
   } catch(e){}
-  navigate("deploy.html?app=" + encodeURIComponent(friendly), { push: true });
+  // same page, new search: the router re-fetches + swaps <main>, and boot()'s
+  // applyView lands on the deploy view with ?app= in place
+  navigate("apps.html?app=" + encodeURIComponent(friendly) + "#deploy", { push: true });
 }
 
 /* ---- write side: IPFS upload + publish/verify/yank/delist txs ---- */
@@ -297,18 +299,38 @@ function prefillPublish(app){
           + (app.active ? "" : " · publishing relists the app"));
 }
 /* ============================================================
-   The publish page: apps.html#publish — a hash-routed view that
-   replaces the store content (deliberately not a header tab).
+   Hash-routed sub-pages that replace the store content
+   (deliberately not header tabs):
+     apps.html#publish — the publish form
+     apps.html#deploy  — the deploy console (usually arriving as
+                         ?app=slug:ver from a card's Use in deploy)
    Plain hash navigation gives us history, back/forward, and
    shareable links for free; the soft-nav router ignores '#'
    hrefs, so there's no double handling.
    ============================================================ */
 function applyView(){
-  const store = $("#storeView"), pub = $("#publishView"); if (!store || !pub) return;
-  const publish = location.hash === "#publish";
-  store.hidden = publish; pub.hidden = !publish;
-  document.title = publish ? "Publish · Enclave" : "Apps · Enclave";
+  const store = $("#storeView"), pub = $("#publishView"), dep = document.getElementById("deploy");
+  if (!store || !pub || !dep) return;
+  const view = location.hash === "#publish" ? "publish" : location.hash === "#deploy" ? "deploy" : "store";
+  store.closest("section").hidden = view === "deploy";
+  dep.hidden = view !== "deploy";
+  store.hidden = view !== "store";
+  pub.hidden = view !== "publish";
+  document.title = view === "publish" ? "Publish · Enclave" : view === "deploy" ? "Deploy · Enclave" : "Apps · Enclave";
+  if (view === "deploy") ensureDeployBooted();
   scrollTo(0, 0);
+}
+/* the console's logic lives in the code-split deploy module; boot it the
+   first time the view opens on each <main> mount (fresh DOM per swap) */
+let deployMount = null;
+function ensureDeployBooted(){
+  const el = document.getElementById("deploy");
+  if (!el || deployMount === el) return;
+  deployMount = el;
+  import("./deploy.js").then(m => {
+    if (document.getElementById("deploy") === el) m.boot();
+    else deployMount = null;                      // mount swapped mid-import; boot on next entry
+  }).catch(e => console.warn("[apps] deploy console failed to boot:", e));
 }
 function openPublish(){
   if (location.hash === "#publish") applyView();

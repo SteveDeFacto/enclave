@@ -19,8 +19,7 @@
 
 const PAGES = {
   overview: () => import("./pages/overview.js"),
-  deploy:   () => import("./pages/deploy.js"),
-  apps:     () => import("./pages/apps.js"),
+  apps:     () => import("./pages/apps.js"),      // also hosts #publish and #deploy (deploy.js is its lazy chunk)
   develop:  () => import("./pages/develop.js"),
 };
 const pageOf = (pathname) => {

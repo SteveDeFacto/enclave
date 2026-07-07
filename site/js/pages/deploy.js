@@ -522,7 +522,9 @@ async function refreshFleet(){
 function startAvailPoll(){
   refreshAvailability(); refreshFleet();
   if (availPoll) return;
-  availPoll = setInterval(() => { if ($("#deploy")) { refreshAvailability(); refreshFleet(); } }, 20000);
+  // #deploy always exists on the apps page now — only poll while the deploy
+  // view is actually visible (a reopened view is at most one tick stale)
+  availPoll = setInterval(() => { const d = $("#deploy"); if (d && !d.hidden) { refreshAvailability(); refreshFleet(); } }, 20000);
 }
 
 /* ============================================================
@@ -690,7 +692,8 @@ on("nan:wallet", ({ authed }) => {
   updatePayAssetUI();
 });
 
-/* called by the router every time this page's <main> is swapped in */
+/* called by apps.js the first time the #deploy view opens on each <main>
+   mount (the console is a hash-routed sub-page of Apps, not a router page) */
 export function boot() {
   initDeploy();
 }

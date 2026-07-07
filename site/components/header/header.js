@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-header current="overview|deploy|apps|develop">
+   <c-header current="overview|apps|develop">
    The site's top bar: brand, primary nav, and a composed
    <c-wallet-button> (which owns the wallet lifecycle).
    ============================================================ */

@@ -41,7 +41,7 @@
 <section id="docs" data-view="develop" aria-label="App development guide">
   <div class="wrap">
     <c-section-head eyebrow="Developer guide · build → publish → deploy" heading="Build your first Wasm app.">
-      <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code. That covers HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, and attestation your users can check themselves. Everything here runs against the same <a href="#api">public API</a> the <a href="deploy.html">Deploy console</a> uses.</p>
+      <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code. That covers HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, and attestation your users can check themselves. Everything here runs against the same <a href="#api">public API</a> the <a href="apps.html#deploy">Deploy console</a> uses.</p>
     </c-section-head>
 
     <div class="docs-layout">
@@ -211,7 +211,7 @@ wasmtime serve -Scli -Shttp -Sp3 \
               <tr><td class="pname">ipfs://&lt;cid&gt;</td><td>An exact wasm by CID. The enclave fetches it, verifies every block hashes to the CID (a tampering gateway fails the check), confirms it's a component, and runs it. The verified CID is folded into the attestation.</td></tr>
             </tbody>
           </table></div>
-          <p>The easy path is the <a href="deploy.html">Deploy console</a>: your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and firewall. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
+          <p>The easy path is the <a href="apps.html#deploy">Deploy console</a>: your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and firewall. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
 
           <h4>Sign in: an Ethereum signature, no account</h4>
           <c-code fn="deploy.js · SIWE handshake"><pre><code>const API = "https://api.enclave.host/v1";
@@ -623,7 +623,7 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
             <li><code>wasmtime serve</code> (or <code>run</code>, for service apps) runs it locally, including with the enclave-parity flags.</li>
             <li>No hardcoded ports anywhere; everything comes from <code>NAN_PORTS</code>.</li>
             <li>All writes go under <code>/data</code>, stay under the cap, and survive being wiped.</li>
-            <li>Publish on the <a href="apps.html">Apps</a> tab → wait for the version's <b>Approved</b> badge → <a href="deploy.html">deploy</a> with <b>Use in Deploy</b>.</li>
+            <li>Publish on the <a href="apps.html">Apps</a> tab → wait for the version's <b>Approved</b> badge → <a href="apps.html">deploy</a> with <b>Use in Deploy</b>.</li>
             <li>Verify your own deployment's <a href="#docs-attest">attestation</a>, then hand the same check to your users.</li>
           </ol>
         </article>
