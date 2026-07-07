@@ -13,8 +13,8 @@
 # flavor at the default path IN THE TAG COMMIT. Point the dashboard at a
 # vX.Y.Z tag and it sees the GPU flavor; at a vX.Y.Z-cpu tag, the CPU flavor.
 #
-# NOTE: the ghcr path is hardcoded LOWERCASE (ghcr.io/stevedefacto/nan). The repo
-# is SteveDeFacto/Nan; ${{ github.repository }} would emit mixed-case refs and
+# NOTE: the ghcr path is hardcoded LOWERCASE (ghcr.io/stevedefacto/enclave-supervisor). The repo
+# could gain mixed casing someday; ${{ github.repository }} would emit that verbatim and
 # ghcr / the measurement step want lowercase. Keep this in sync with the
 # `image:` line in enclaves/gpu/tinfoil-config.yml.
 
@@ -71,7 +71,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
-          images: ghcr.io/stevedefacto/nan
+          images: ghcr.io/stevedefacto/enclave-supervisor
           tags: |
             type=semver,pattern={{version}},value=${{ inputs.version }}
             type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }}
@@ -110,11 +110,11 @@ jobs:
           set -euo pipefail
           # materialize the GPU flavor at the default path the Tinfoil dashboard reads
           cp enclaves/gpu/tinfoil-config.yml tinfoil-config.yml
-          # `nan[:@]` cannot match nan-wasm-manager / nan-worker / nan-mps (next
+          # `enclave-supervisor[:@]` cannot match enclave-wasm-manager / enclave-worker / enclave-mps (next
           # char is '-'), so only the supervisor line is repinned; the sidecar
           # pins stay as committed by scripts/release.sh.
-          sed -i -E "s#(image: \"ghcr\.io/stevedefacto/nan)[:@][^\"]*\"#\1@${DIGEST}\"#" tinfoil-config.yml
-          grep -q "ghcr.io/stevedefacto/nan@${DIGEST}" tinfoil-config.yml \
+          sed -i -E "s#(image: \"ghcr\.io/stevedefacto/enclave-supervisor)[:@][^\"]*\"#\1@${DIGEST}\"#" tinfoil-config.yml
+          grep -q "ghcr.io/stevedefacto/enclave-supervisor@${DIGEST}" tinfoil-config.yml \
             || { echo "::error::failed to pin supervisor digest into tinfoil-config.yml"; exit 1; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

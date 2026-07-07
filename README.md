@@ -7,13 +7,13 @@
 - **REST API:** https://api.enclave.host/v1 — CORS-enabled, drive it from a browser
 - **Deployed apps:** `https://<id>.app.enclave.host`, TLS terminated in-enclave
 
-There are no accounts and no KYC: an Ethereum wallet is the identity (email sign-in gets an embedded wallet). The project was renamed from **NaN** to **Enclave** — contract and code identifiers (`NanRegistry`, `nan-*`) keep the old name.
+There are no accounts and no KYC: an Ethereum wallet is the identity (email sign-in gets an embedded wallet). The project was formerly named **NaN**; the rename to **Enclave** is complete across code and contracts, with only wire/disk format constants (`NANVOL2`, the vault key-derivation strings) and a few live infrastructure names (the `nan.host` legacy domain, the Tinfoil org hostname) keeping the old token.
 
 ## How it works
 
-1. **Apps are Wasm components** (`wasi:http`). Anyone publishes to the on-chain app store (`NanAppCatalog` on Base): the bytes go to IPFS addressed by CID, the listing, versions, and resource specs live on-chain. The enclave image ships no deployable apps — everything it runs is fetched by CID and hash-verified inside the enclave.
-2. **Deployments are on-chain work items** (`NanDeployments`: create → fund → claim → lease). Funding is USDC (EIP-3009) or ETH, metered per second; top up to extend, stop anytime.
-3. **Enclaves claim the work.** Each enclave self-registers in `NanRegistry`, polls for funded work it can serve, claims it, and runs the app in a wasmtime sandbox: per-tenant process isolation, a private RAM-backed `/data`, no network beyond the served HTTP socket unless the app declares firewall ports.
+1. **Apps are Wasm components** (`wasi:http`). Anyone publishes to the on-chain app store (`EnclaveAppCatalog` on Base): the bytes go to IPFS addressed by CID, the listing, versions, and resource specs live on-chain. The enclave image ships no deployable apps — everything it runs is fetched by CID and hash-verified inside the enclave.
+2. **Deployments are on-chain work items** (`EnclaveDeployments`: create → fund → claim → lease). Funding is USDC (EIP-3009) or ETH, metered per second; top up to extend, stop anytime.
+3. **Enclaves claim the work.** Each enclave self-registers in `EnclaveRegistry`, polls for funded work it can serve, claims it, and runs the app in a wasmtime sandbox: per-tenant process isolation, a private RAM-backed `/data`, no network beyond the served HTTP socket unless the app declares firewall ports.
 4. **Every layer attests.** Tinfoil measures the container image (with a Sigstore transparency-log record tying it to this repo's release), the enclave proves the measurement in its attestation quote, and TLS keys never leave it. The site and CLI verify the full chain client-side before connecting.
 
 Beyond plain web apps: GPU inference via `wasi-nn` (ONNX on an MPS-capped slice of an H200), attested read-only **model volumes** mounted at `/models`, **encrypted volumes** whose key only the deployer holds (decrypted in-RAM after attestation), raw TCP/UDP services behind an SNI relay, per-deployment dedicated IPv6 (inbound and outbound), and a **platform model tier** — an 8×GPU vLLM flavor serving large models over an attested OpenAI-compatible API.
@@ -27,7 +27,7 @@ Beyond plain web apps: GPU inference via `wasi-nn` (ONNX on an MPS-capped slice 
 | `worker/` | GPU worker — `wasi-nn` ONNX inference on MPS-capped GPU slices |
 | `mps-daemon/` | NVIDIA MPS control daemon (fractional GPU shares) |
 | `vllm/` | the 8×GPU platform-model image (vLLM) |
-| `contracts/` | Solidity on Base: `NanRegistry`, `NanAppCatalog`, `NanDeployments` |
+| `contracts/` | Solidity on Base: `EnclaveRegistry`, `EnclaveAppCatalog`, `EnclaveDeployments` |
 | `relay/` | SNI relay + dedicated-IP relay (TLS passthrough to enclaves, IPv6 ingress/egress) |
 | `egress.js` / `net-guard.mjs` | outbound egress shim and network guard |
 | `site/` | enclave.host — static site published to IPFS (LWC-style web components, soft-nav router; `npm run build:site`) |
@@ -38,7 +38,7 @@ Beyond plain web apps: GPU inference via `wasi-nn` (ONNX on an MPS-capped slice 
 
 ## Resources: apps declare specs, deployments buy shares
 
-**Apps** declare their exact resource specs in the on-chain catalog (NanAppCatalog) — `vramMb` + `gpuGflops` of one GPU card (both 0 = CPU-only app) and `memMb` + `cpuGflops` of the node (compute in GFLOPS = 1/1000 TFLOPS). Every app deploys from that catalog by IPFS CID; the enclave image ships no deployable apps.
+**Apps** declare their exact resource specs in the on-chain catalog (EnclaveAppCatalog) — `vramMb` + `gpuGflops` of one GPU card (both 0 = CPU-only app) and `memMb` + `cpuGflops` of the node (compute in GFLOPS = 1/1000 TFLOPS). Every app deploys from that catalog by IPFS CID; the enclave image ships no deployable apps.
 
 **Deployments** buy exactly TWO shares — the only two settings on the deploy page, 0–100% each:
 
@@ -63,13 +63,13 @@ To spin up a CPU enclave:
 
 1. Release the CPU flavor (CPU versions must end in `-cpu`; the workflow copies `enclaves/cpu/tinfoil-config.yml` to the root, pins the supervisor digest, and measures that copy). `scripts/release.sh` repins image digests into **both** flavor configs.
 2. In the Tinfoil dashboard, deploy the `-cpu` release tag with the same secrets (`SECRET`, `ADMIN_TOKEN`, `REGISTRY_PRIVATE_KEY` — use a distinct registry EOA per enclave). No config selection needed — the `-cpu` tag's default config IS the CPU flavor.
-3. The enclave self-registers in NanRegistry like any other; callers read both pools from `/availability` (`gpuShareFree` / `cpuShareFree`; `gpu: false` marks the CPU flavor).
+3. The enclave self-registers in EnclaveRegistry like any other; callers read both pools from `/availability` (`gpuShareFree` / `cpuShareFree`; `gpu: false` marks the CPU flavor).
 
 How the routing is enforced:
 
 - **Deploys**: the supervisor floors `resources.{gpuShare, cpuShare}` at the app's spec-derived minimums, enforces `gpuShare >= cpuShare` for GPU apps, and refuses `gpuShare > 0` on a CPU enclave. CPU-only requests are served on either flavor from the node's CPU pool.
-- **On-chain**: `NanDeployments.create(appRef, gpuMilli, cpuMilli, ...)` takes the two shares in 1/1000ths (the contract enforces the invariant and prices both). GPU enclaves only adopt `gpuMilli > 0` work; CPU-only work goes to CPU enclaves first, with GPU enclaves as a delayed fallback (`CPU_CLAIM_GRACE_SEC`). Each runner re-derives the app's minimum shares from its catalog specs (via `cidStatus`) and skips under-provisioned deployments.
-- **Apps**: catalog apps declare exact specs on four axes — `vramMb`/`gpuGflops`/`memMb`/`cpuGflops` on-chain (NanAppCatalog, returned by `cidStatus`). Those specs only set minimum shares; GPU-needing apps are refused on nodes with `NODE_HAS_GPU=0`.
+- **On-chain**: `EnclaveDeployments.create(appRef, gpuMilli, cpuMilli, ...)` takes the two shares in 1/1000ths (the contract enforces the invariant and prices both). GPU enclaves only adopt `gpuMilli > 0` work; CPU-only work goes to CPU enclaves first, with GPU enclaves as a delayed fallback (`CPU_CLAIM_GRACE_SEC`). Each runner re-derives the app's minimum shares from its catalog specs (via `cidStatus`) and skips under-provisioned deployments.
+- **Apps**: catalog apps declare exact specs on four axes — `vramMb`/`gpuGflops`/`memMb`/`cpuGflops` on-chain (EnclaveAppCatalog, returned by `cidStatus`). Those specs only set minimum shares; GPU-needing apps are refused on nodes with `NODE_HAS_GPU=0`.
 
 Verification caveat: verifiers that check against this repo's *latest* release (the `tinfoil-cli` default) will see the GPU flavor's measurement — verify CPU enclaves against their matching `-cpu` release explicitly.
 

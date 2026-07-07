@@ -4,11 +4,11 @@
    and popover, deposits / card purchases.
 
    Page-facing signals (see util.js): every state change emits
-   `nan:wallet`; sign-in/out edges also emit `nan:auth`. Pages
+   `enclave:wallet`; sign-in/out edges also emit `enclave:auth`. Pages
    never get called into directly - they subscribe.
    ============================================================ */
 import { BASE_CHAIN, BASE_CHAIN_HEX, USDC_BASE, PRIVY_APP_ID, PRIVY_CLIENT_ID, PRIVY_RDNS } from "./config.js";
-import { Nan, NanError } from "./api.js";
+import { Enclave, EnclaveError } from "./api.js";
 import { $, $$, esc, short, lsGet, lsSet, fmtDur, copyText, showToast, emit } from "./util.js";
 
 /* ---- wallet discovery: EIP-6963 multi-wallet, EIP-1193 fallback ---- */
@@ -63,12 +63,12 @@ export const PrivyWallet = {
   entry(provider){ return { info: { uuid: "privy-embedded", name: "Email (Privy)", rdns: PRIVY_RDNS, icon: null, email: this.emailOf(this.user) }, provider }; },
   async load(){
     if (this.privy) return this.privy;
-    if (!this.enabled()) throw new NanError("Privy is not configured on this deployment.", 0);
+    if (!this.enabled()) throw new EnclaveError("Privy is not configured on this deployment.", 0);
     let mod;
     try { mod = await import("https://esm.sh/@privy-io/js-sdk-core?bundle"); }
-    catch(e){ throw new NanError("Could not load the Privy SDK (network or CDN issue): " + (e.message || e), 0); }
+    catch(e){ throw new EnclaveError("Could not load the Privy SDK (network or CDN issue): " + (e.message || e), 0); }
     const Privy = mod.default || mod.Privy;
-    if (!Privy) throw new NanError("Unexpected Privy SDK shape (no default export).", 0);
+    if (!Privy) throw new EnclaveError("Unexpected Privy SDK shape (no default export).", 0);
     // js-sdk-core requires an explicit storage adapter (the React SDK bundles one)
     const store = mod.LocalStorage ? new mod.LocalStorage() : {
       get(k){ try { const v = localStorage.getItem(k); if (v == null) return undefined; try { return JSON.parse(v); } catch(_){ return v; } } catch(e){ return undefined; } },
@@ -112,19 +112,19 @@ export const PrivyWallet = {
     let wallet = this.embeddedOf(user);
     if (!wallet){
       const create = ew.create || ew.createEthereumWallet || ew.createWallet;
-      if (!create) throw new NanError("This Privy SDK build exposes no wallet-create call.", 0);
+      if (!create) throw new EnclaveError("This Privy SDK build exposes no wallet-create call.", 0);
       const res = await create.call(ew, {});
       const u2 = (res && (res.user || res)) || user;
       this.user = u2;
       wallet = this.embeddedOf(u2) || (res && res.wallet) || null;
     }
-    if (!wallet) throw new NanError("Privy login succeeded but no embedded wallet came back.", 0);
+    if (!wallet) throw new EnclaveError("Privy login succeeded but no embedded wallet came back.", 0);
     const getProv = ew.getEthereumProvider || ew.getProvider;
-    if (!getProv) throw new NanError("This Privy SDK build exposes no EIP-1193 provider.", 0);
+    if (!getProv) throw new EnclaveError("This Privy SDK build exposes no EIP-1193 provider.", 0);
     let provider;
     try { provider = await getProv.call(ew, { wallet, chainId: BASE_CHAIN }); }
     catch(e){ provider = await getProv.call(ew, wallet); }
-    if (!provider || !provider.request) throw new NanError("Privy returned an unusable provider.", 0);
+    if (!provider || !provider.request) throw new EnclaveError("Privy returned an unusable provider.", 0);
     try { await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] }); } catch(_){}
     this.provider = provider;
     return provider;
@@ -171,7 +171,7 @@ async function privyPickFlow(host){
     };
     $("#pvSend").onclick = go;
     inp.onkeydown = (e) => { if (e.key === "Enter") go(); };
-    host.querySelector(".wp-cancel").onclick = () => rej(new NanError("Wallet selection cancelled.", 0));
+    host.querySelector(".wp-cancel").onclick = () => rej(new EnclaveError("Wallet selection cancelled.", 0));
   });
   privyCard(host, '<div class="wp-h">Sign in with email</div><div class="wp-note">Sending a login code to <b>' + esc(email) + '</b>…</div>');
   await PrivyWallet.privy.auth.email.sendCode(email);
@@ -200,12 +200,12 @@ async function privyPickFlow(host){
         res(PrivyWallet.entry(await PrivyWallet.ensureProvider(user)));
       } catch(e){
         if (host.querySelector("#pvErr")) fail("Sign-in failed: " + (e && (e.message || e)));
-        else rej(new NanError("Privy sign-in failed: " + (e && (e.message || e)), 0));
+        else rej(new EnclaveError("Privy sign-in failed: " + (e && (e.message || e)), 0));
       }
     };
     $("#pvGo").onclick = submit;
     inp.onkeydown = (e) => { if (e.key === "Enter") submit(); };
-    host.querySelector(".wp-cancel").onclick = () => rej(new NanError("Wallet selection cancelled.", 0));
+    host.querySelector(".wp-cancel").onclick = () => rej(new EnclaveError("Wallet selection cancelled.", 0));
   });
 }
 
@@ -247,22 +247,22 @@ function fundModal(inner){
 }
 
 export function openDepositModal(){
-  if (!Nan.address) return;
+  if (!Enclave.address) return;
   const m = fundModal(
     '<div class="wp-h">Deposit</div>' +
     '<div class="wp-note">Send <b>USDC on the Base network</b> to your address below - from Coinbase, Kraken, Binance, or any wallet. It shows up here once the transfer confirms, usually under a minute.</div>' +
-    '<div class="wp-addr-full">' + esc(Nan.address) + '</div>' +
+    '<div class="wp-addr-full">' + esc(Enclave.address) + '</div>' +
     '<button class="wp-item wp-go" id="depCopy" type="button">Copy address</button>' +
     '<div class="wp-err">Base network only - transfers sent on other networks are lost.</div>' +
     '<button class="wp-cancel" type="button">Close</button>');
   if (!m) return;
-  const b = $("#depCopy"); if (b) b.addEventListener("click", () => copyText(Nan.address, b));
+  const b = $("#depCopy"); if (b) b.addEventListener("click", () => copyText(Enclave.address, b));
 }
 
 export async function usdcBalanceOf(addr){
   const call = { to: USDC_BASE, data: "0x70a08231" + addr.toLowerCase().replace(/^0x/, "").padStart(64, "0") };
   try {
-    const hex = await Nan.provider.request({ method: "eth_call", params: [call, "latest"] });
+    const hex = await Enclave.provider.request({ method: "eth_call", params: [call, "latest"] });
     if (hex && hex !== "0x") return parseInt(hex, 16) / 1e6;
   } catch(_){}
   const r = await fetch("https://mainnet.base.org", { method: "POST", headers: { "content-type": "application/json" },
@@ -273,7 +273,7 @@ export async function usdcBalanceOf(addr){
 export async function ethBalanceOf(addr){
   const params = [addr, "latest"];
   try {
-    const hex = await Nan.provider.request({ method: "eth_getBalance", params });
+    const hex = await Enclave.provider.request({ method: "eth_getBalance", params });
     if (hex && hex !== "0x") return Number(BigInt(hex)) / 1e18;
   } catch(_){}
   const r = await fetch("https://mainnet.base.org", { method: "POST", headers: { "content-type": "application/json" },
@@ -287,7 +287,7 @@ export async function ethBalanceOf(addr){
 // and the dashboard's Onramps toggles). It inherits this page's Privy session
 // via localStorage, so it opens straight into checkout.
 export function openBuyModal(){
-  if (!Nan.address) return;
+  if (!Enclave.address) return;
   const w = window.open("/buy.html?v=5", "enclaveBuy", "popup,width=480,height=780");
   if (!w){ showToast("Popup blocked - allow popups for this site and try again."); return; }
   showToast("Complete your purchase in the checkout window.");
@@ -297,16 +297,16 @@ async function pickWallet(){
   let wallets = Wallet.list();
   if (!wallets.length) wallets = await Wallet.discover();
   const privyOk = PrivyWallet.enabled();
-  if (!wallets.length && !privyOk) throw new NanError(noWalletReason(), 0);
+  if (!wallets.length && !privyOk) throw new EnclaveError(noWalletReason(), 0);
   if (wallets.length === 1) return wallets[0];   // an extension wallet wins outright; Privy is the fallback
   if (!wallets.length){
     // no extension wallet: a plain email sign-in form, no wallet vocabulary -
     // the embedded wallet is created behind the scenes
-    const host = $("#walletPick"); if (!host) throw new NanError(noWalletReason(), 0);
+    const host = $("#walletPick"); if (!host) throw new EnclaveError(noWalletReason(), 0);
     host.hidden = false;
     const close = () => { host.hidden = true; host.innerHTML = ""; };
     try { const entry = await privyPickFlow(host); close(); return entry; }
-    catch(err){ close(); throw (err instanceof NanError ? err : new NanError("Sign-in failed: " + (err && (err.message || err)), 0)); }
+    catch(err){ close(); throw (err instanceof EnclaveError ? err : new EnclaveError("Sign-in failed: " + (err && (err.message || err)), 0)); }
   }
   return await new Promise((resolve, reject) => {
     const host = $("#walletPick"); if (!host){ resolve(wallets[0]); return; }
@@ -323,13 +323,13 @@ async function pickWallet(){
       if (e.target.closest(".wp-privy")){
         if (privyBusy) return; privyBusy = true;
         privyPickFlow(host).then((entry) => { close(); resolve(entry); },
-                               (err) => { close(); reject(err instanceof NanError ? err : new NanError("Privy sign-in failed: " + (err && (err.message || err)), 0)); });
+                               (err) => { close(); reject(err instanceof EnclaveError ? err : new EnclaveError("Privy sign-in failed: " + (err && (err.message || err)), 0)); });
         return;
       }
       const it = e.target.closest(".wp-item");
       if (it && it.dataset.i != null){ const w = wallets[+it.dataset.i]; close(); resolve(w); return; }
       if (privyBusy) return;   // during the email flow, only its own Cancel button closes
-      if (e.target.closest(".wp-cancel") || e.target === host){ close(); reject(new NanError("Wallet selection cancelled.", 0)); }
+      if (e.target.closest(".wp-cancel") || e.target === host){ close(); reject(new EnclaveError("Wallet selection cancelled.", 0)); }
     };
   });
 }
@@ -355,25 +355,25 @@ async function ensureBaseChainOnConnect(provider){
 
 // wire provider events once per provider (survives silent reconnect on refresh)
 function wireProviderEvents(provider){
-  if (!provider || !provider.on || provider._nanWired) return;
-  provider._nanWired = true;
+  if (!provider || !provider.on || provider._enclaveWired) return;
+  provider._enclaveWired = true;
   provider.on("accountsChanged", (acc) => {
     if (!acc || !acc.length){ disconnectWallet(); }
-    else { Nan.address = acc[0]; Nan.token = null; saveSession(); refreshWallet(); }
+    else { Enclave.address = acc[0]; Enclave.token = null; saveSession(); refreshWallet(); }
   });
-  provider.on("chainChanged", (c) => { Nan.chainId = parseInt(c, 16); refreshWallet(); });
+  provider.on("chainChanged", (c) => { Enclave.chainId = parseInt(c, 16); refreshWallet(); });
 }
 
 export async function connectWallet(){
   const chosen = await pickWallet();
   const provider = chosen.provider;
   const accounts = await provider.request({ method: "eth_requestAccounts" });
-  if (!accounts || !accounts.length) throw new NanError("Wallet returned no accounts.", 0);
+  if (!accounts || !accounts.length) throw new EnclaveError("Wallet returned no accounts.", 0);
   await ensureBaseChainOnConnect(provider);
   let cid; try { cid = await provider.request({ method: "eth_chainId" }); } catch(e){}
-  Nan.provider = provider; Nan.address = accounts[0]; Nan.chainId = cid ? parseInt(cid, 16) : null;
-  Nan.walletRdns = (chosen.info && chosen.info.rdns) || null;
-  Nan.walletEmail = (chosen.info && chosen.info.email) || null;
+  Enclave.provider = provider; Enclave.address = accounts[0]; Enclave.chainId = cid ? parseInt(cid, 16) : null;
+  Enclave.walletRdns = (chosen.info && chosen.info.rdns) || null;
+  Enclave.walletEmail = (chosen.info && chosen.info.email) || null;
   wireProviderEvents(provider);
   saveSession();
   refreshWallet();
@@ -381,39 +381,39 @@ export async function connectWallet(){
 }
 
 export async function authenticate(){
-  if (!Nan.provider) await connectWallet();
-  const ch = await Nan.getNonce(Nan.address);
+  if (!Enclave.provider) await connectWallet();
+  const ch = await Enclave.getNonce(Enclave.address);
   const message = (ch && ch.message) ? ch.message : buildSiwe(ch);
   let signature;
   try {
-    signature = await Nan.provider.request({ method: "personal_sign", params: [message, Nan.address] });
+    signature = await Enclave.provider.request({ method: "personal_sign", params: [message, Enclave.address] });
   } catch(e){
-    throw new NanError((e && e.code === 4001) ? "Signature rejected." : ("Could not sign in: " + (e.message || e)), 0);
+    throw new EnclaveError((e && e.code === 4001) ? "Signature rejected." : ("Could not sign in: " + (e.message || e)), 0);
   }
-  const sess = await Nan.login(message, signature);
-  Nan.token = sess && sess.token;
-  if (!Nan.token) throw new NanError("Login did not return a token.", 0);
+  const sess = await Enclave.login(message, signature);
+  Enclave.token = sess && sess.token;
+  if (!Enclave.token) throw new EnclaveError("Login did not return a token.", 0);
   saveSession();
   refreshWallet();
-  emit("nan:auth", { authed: true, spinner: true });
+  emit("enclave:auth", { authed: true, spinner: true });
   return sess;
 }
 
 export function disconnectWallet(){
-  if (Nan.walletRdns === PRIVY_RDNS) PrivyWallet.logout();   // fire-and-forget; clears the Privy auth session too
-  Nan.token = null; Nan.address = null; Nan.provider = null; Nan.chainId = null; Nan.walletRdns = null; Nan.walletEmail = null;
+  if (Enclave.walletRdns === PRIVY_RDNS) PrivyWallet.logout();   // fire-and-forget; clears the Privy auth session too
+  Enclave.token = null; Enclave.address = null; Enclave.provider = null; Enclave.chainId = null; Enclave.walletRdns = null; Enclave.walletEmail = null;
   clearSession();
   const pop = $("#walletPop"); if (pop){ pop.hidden = true; pop.innerHTML = ""; }
   refreshWallet();
-  emit("nan:auth", { authed: false });
+  emit("enclave:auth", { authed: false });
 }
 
 /* ---- session persistence: survive a page refresh (localStorage bearer token) ---- */
 export function saveSession(){
-  if (!Nan.address){ lsSet("nan_session", ""); return; }
-  try { lsSet("nan_session", JSON.stringify({ address: Nan.address, rdns: Nan.walletRdns || null, email: Nan.walletEmail || null, token: Nan.token || null })); } catch(e){}
+  if (!Enclave.address){ lsSet("enclave_session", ""); return; }
+  try { lsSet("enclave_session", JSON.stringify({ address: Enclave.address, rdns: Enclave.walletRdns || null, email: Enclave.walletEmail || null, token: Enclave.token || null })); } catch(e){}
 }
-export function clearSession(){ lsSet("nan_session", ""); }
+export function clearSession(){ lsSet("enclave_session", ""); }
 // pull the exp (seconds) out of a JWT; null if not a JWT / no exp
 function jwtExp(token){
   try {
@@ -425,7 +425,9 @@ function jwtExp(token){
 }
 // on load: silently reconnect the prior wallet (no popup) and restore a still-valid token
 export async function restoreSession(){
-  let raw; try { raw = lsGet("nan_session"); } catch(e){ return; }
+  // one-time migration from the pre-rename key so signed-in users stay signed in
+  try { const old = lsGet("nan_session"); if (old && !lsGet("enclave_session")) { lsSet("enclave_session", old); lsSet("nan_session", ""); } } catch(e){}
+  let raw; try { raw = lsGet("enclave_session"); } catch(e){ return; }
   if (!raw) return;
   let s; try { s = JSON.parse(raw); } catch(e){ clearSession(); return; }
   if (!s || !s.address) return;
@@ -460,13 +462,13 @@ export async function restoreSession(){
   const addr = accounts && accounts[0];
   if (!addr || addr.toLowerCase() !== String(s.address).toLowerCase()) return;   // permission revoked / different account
   let cid; try { cid = await provider.request({ method: "eth_chainId" }); } catch(e){}
-  Nan.provider = provider; Nan.address = addr; Nan.chainId = cid ? parseInt(cid, 16) : null;
-  Nan.walletRdns = (chosen.info && chosen.info.rdns) || null;
-  Nan.walletEmail = (chosen.info && chosen.info.email) || s.email || null;
-  Nan.token = s.token || null;
+  Enclave.provider = provider; Enclave.address = addr; Enclave.chainId = cid ? parseInt(cid, 16) : null;
+  Enclave.walletRdns = (chosen.info && chosen.info.rdns) || null;
+  Enclave.walletEmail = (chosen.info && chosen.info.email) || s.email || null;
+  Enclave.token = s.token || null;
   wireProviderEvents(provider);
   saveSession();                                                  // re-persist (drops any expired token, refreshes rdns)
-  if (Nan.token) emit("nan:auth", { authed: true, spinner: true });
+  if (Enclave.token) emit("enclave:auth", { authed: true, spinner: true });
   } finally { refreshWallet(); }   // settles the early paint whether restore connected or not
 }
 
@@ -474,16 +476,16 @@ export async function restoreSession(){
 export function refreshWallet(){
   const btn = $("#walletBtn");
   if (btn){
-    if (Nan.address){
-      const who = Nan.walletEmail ? (Nan.walletEmail.length > 24 ? Nan.walletEmail.slice(0, 21) + "…" : Nan.walletEmail) : short(Nan.address);
+    if (Enclave.address){
+      const who = Enclave.walletEmail ? (Enclave.walletEmail.length > 24 ? Enclave.walletEmail.slice(0, 21) + "…" : Enclave.walletEmail) : short(Enclave.address);
       btn.classList.add("connected");
-      btn.innerHTML = '<span class="wdot"></span>' + esc(who) + (Nan.authed() ? "" : ' <span class="lock">unlocked</span>');
+      btn.innerHTML = '<span class="wdot"></span>' + esc(who) + (Enclave.authed() ? "" : ' <span class="lock">unlocked</span>');
     } else {
       btn.classList.remove("connected");
       btn.innerHTML = 'Sign in <span class="arr">→</span>';
     }
   }
-  emit("nan:wallet", { address: Nan.address, authed: Nan.authed() });
+  emit("enclave:wallet", { address: Enclave.address, authed: Enclave.authed() });
 }
 
 export function toggleWalletPop(){
@@ -493,33 +495,33 @@ export function toggleWalletPop(){
 }
 
 export async function renderWalletPop(){
-  const pop = $("#walletPop"); if (!pop || !Nan.address) return;
-  const offBase = Nan.chainId && Nan.chainId !== BASE_CHAIN;
+  const pop = $("#walletPop"); if (!pop || !Enclave.address) return;
+  const offBase = Enclave.chainId && Enclave.chainId !== BASE_CHAIN;
   pop.innerHTML =
-    (Nan.walletEmail ? '<div class="wp-row"><span class="wp-k">Account</span><span class="wp-v">' + esc(Nan.walletEmail) + '</span></div>' : "") +
-    '<div class="wp-row"><span class="wp-k">' + (Nan.walletEmail ? "Address" : "Wallet") + '</span><button class="wp-addr" id="wpCopy">' + esc(short(Nan.address)) + ' ⧉</button></div>' +
-    '<div class="wp-row"><span class="wp-k">Network</span><span class="wp-v">' + (Nan.chainId === BASE_CHAIN ? "Base" : ("chain " + (Nan.chainId || "–"))) + (offBase ? ' <button class="wp-mini" id="wpSwitch">switch to Base</button>' : "") + '</span></div>' +
-    '<div class="wp-row"><span class="wp-k">Session</span><span class="wp-v">' + (Nan.authed() ? '<span class="ok">signed in</span>' : '<button class="wp-mini" id="wpAuth">sign in</button>') + '</span></div>' +
+    (Enclave.walletEmail ? '<div class="wp-row"><span class="wp-k">Account</span><span class="wp-v">' + esc(Enclave.walletEmail) + '</span></div>' : "") +
+    '<div class="wp-row"><span class="wp-k">' + (Enclave.walletEmail ? "Address" : "Wallet") + '</span><button class="wp-addr" id="wpCopy">' + esc(short(Enclave.address)) + ' ⧉</button></div>' +
+    '<div class="wp-row"><span class="wp-k">Network</span><span class="wp-v">' + (Enclave.chainId === BASE_CHAIN ? "Base" : ("chain " + (Enclave.chainId || "–"))) + (offBase ? ' <button class="wp-mini" id="wpSwitch">switch to Base</button>' : "") + '</span></div>' +
+    '<div class="wp-row"><span class="wp-k">Session</span><span class="wp-v">' + (Enclave.authed() ? '<span class="ok">signed in</span>' : '<button class="wp-mini" id="wpAuth">sign in</button>') + '</span></div>' +
     '<div class="wp-bal"><div class="bl"><span>USDC balance</span><span id="wpBalUsdc">…</span></div></div>' +
-    '<div class="wp-bal" id="wpBal">' + (Nan.authed() ? "loading deployments…" : "sign in to load deployments") + '</div>' +
+    '<div class="wp-bal" id="wpBal">' + (Enclave.authed() ? "loading deployments…" : "sign in to load deployments") + '</div>' +
     '<div class="wp-fund">' +
-      ((Nan.walletRdns === PRIVY_RDNS && PrivyWallet.enabled()) ? '<button class="wp-mini wp-buy" id="wpBuy">Buy USDC · card</button>' : "") +
+      ((Enclave.walletRdns === PRIVY_RDNS && PrivyWallet.enabled()) ? '<button class="wp-mini wp-buy" id="wpBuy">Buy USDC · card</button>' : "") +
       '<button class="wp-mini" id="wpDep">Deposit</button>' +
     '</div>' +
     '<button class="wp-disc" id="wpDisc">Sign out</button>';
   pop.hidden = false;
-  const c = $("#wpCopy"); if (c) c.addEventListener("click", () => copyText(Nan.address));
+  const c = $("#wpCopy"); if (c) c.addEventListener("click", () => copyText(Enclave.address));
   const d = $("#wpDisc"); if (d) d.addEventListener("click", disconnectWallet);
   const bb = $("#wpBuy"); if (bb) bb.addEventListener("click", () => { pop.hidden = true; openBuyModal(); });
   const dep = $("#wpDep"); if (dep) dep.addEventListener("click", () => { pop.hidden = true; openDepositModal(); });
-  usdcBalanceOf(Nan.address).then(
+  usdcBalanceOf(Enclave.address).then(
     (b) => { const u = $("#wpBalUsdc"); if (u) u.textContent = b.toFixed(2) + " USDC"; },
     ()  => { const u = $("#wpBalUsdc"); if (u) u.textContent = "unavailable"; });
-  const s = $("#wpSwitch"); if (s) s.addEventListener("click", () => Nan.provider && ensureBaseChainOnConnect(Nan.provider).then(renderWalletPop));
+  const s = $("#wpSwitch"); if (s) s.addEventListener("click", () => Enclave.provider && ensureBaseChainOnConnect(Enclave.provider).then(renderWalletPop));
   const a = $("#wpAuth"); if (a) a.addEventListener("click", async () => { try { await authenticate(); renderWalletPop(); } catch(e){ showToast(e.message); } });
-  if (Nan.authed()){
+  if (Enclave.authed()){
     try {
-      const acc = await Nan.getAccount();
+      const acc = await Enclave.getAccount();
       const dp = acc.deployments || {};
       const rows = '<div class="bl"><span>running</span><span>' + esc(String(dp.running != null ? dp.running : 0)) + '</span></div>'
                  + '<div class="bl"><span>awaiting payment</span><span>' + esc(String(dp.awaitingPayment != null ? dp.awaitingPayment : 0)) + '</span></div>'
@@ -532,11 +534,11 @@ export async function renderWalletPop(){
 /* ---- on-chain tx helpers used by both the deploy console and the store ---- */
 export async function ensureBaseChain(){
   let cur;
-  try { cur = await Nan.provider.request({ method: "eth_chainId" }); } catch { cur = null; }
+  try { cur = await Enclave.provider.request({ method: "eth_chainId" }); } catch { cur = null; }
   if (cur && String(cur).toLowerCase() === BASE_CHAIN_HEX) return;
-  try { await Nan.provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] }); }
-  catch(e){ throw new NanError("Switch your wallet to Base to pay.", 0); }
+  try { await Enclave.provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] }); }
+  catch(e){ throw new EnclaveError("Switch your wallet to Base to pay.", 0); }
 }
 export async function sendTx(to, data, value){
-  return Nan.provider.request({ method: "eth_sendTransaction", params: [{ from: Nan.address, to, data, value: value || "0x0" }] });
+  return Enclave.provider.request({ method: "eth_sendTransaction", params: [{ from: Enclave.address, to, data, value: value || "0x0" }] });
 }

@@ -1,4 +1,4 @@
-// NAN public TCP relay — the UNTRUSTED half of the platform's direct-TCP path.
+// Enclave public TCP relay — the UNTRUSTED half of the platform's direct-TCP path.
 //
 //   client ──TLS──> relay (this, any box) ──wss──> enclave shim ──> supervisor ──> app
 //            └────────── the TLS key lives only in the enclave ──────────┘
@@ -16,7 +16,7 @@
 // Config (env):
 //   RELAY_DOMAIN            required  SNI suffix, e.g. "tcp.enclave.host"
 //                                     (point *.tcp.enclave.host at this box)
-//   REGISTRY_ADDRESS        required* NanRegistry on Base: FLEET discovery — the
+//   REGISTRY_ADDRESS        required* EnclaveRegistry on Base: FLEET discovery — the
 //                                     relay routes each SNI'd deployment to the
 //                                     enclave that OWNS it (learned from every
 //                                     enclave's /v1/net-map), so it follows an

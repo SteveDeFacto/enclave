@@ -3,12 +3,12 @@
    wallet's deployments, each with status, spend, its app origin,
    its dedicated IPv6 (when the deployment declares tcp/udp
    ports), in-browser attestation verification, and terminate.
-   Polls while authed; repaints on `nan:auth` sign-in/out edges.
+   Polls while authed; repaints on `enclave:auth` sign-in/out edges.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { $$, esc, hlJson, fmtDur, statusCls, copyText, showToast } from "../../js/core/util.js";
 import { APP_DOMAIN, DEPLOYMENTS_ADDRESS } from "../../js/core/config.js";
-import { Nan } from "../../js/core/api.js";
+import { Enclave } from "../../js/core/api.js";
 import { pad32, encUint, DEP_SEL, waitReceipt } from "../../js/core/chain.js";
 import { authenticate, refreshWallet, saveSession, ensureBaseChain, sendTx } from "../../js/core/wallet.js";
 import { slugOfRef } from "../../js/core/catalog.js";
@@ -23,7 +23,7 @@ import { vspecOf, verifyEnclaveInBrowser } from "../../js/core/verify.js";
 // right value for attestation/registry, not for how the user reaches the app.
 export function appEndpoint(d){
   if (!d || !d.id) return (d && d.network && d.network.endpoint) || "";
-  const root = Nan.base.replace(/\/v1\/?$/, "");
+  const root = Enclave.base.replace(/\/v1\/?$/, "");
   if (/(^|\/\/)api\.(enclave|nan)\.host/i.test(root))
     return "https://" + appLabel(d.id) + "." + APP_DOMAIN;
   return root + "/x/" + d.id;                              // direct-to-enclave override
@@ -57,7 +57,7 @@ function depIp6Row(d){
     + 'ip6 [' + esc(net.address) + ']' + esc(ports) + ' ⧉</button>';
 }
 
-class Deployments extends NanElement {
+class Deployments extends EnclaveElement {
   static templateUrl = new URL("./deployments.html", import.meta.url);
 
   renderedCallback() {
@@ -67,13 +67,13 @@ class Deployments extends NanElement {
     // document-level listener must be removable: the soft-nav router mounts a
     // fresh instance per visit, and detached ones must not keep refreshing
     this._onAuth = (e) => this.refresh({ spinner: !!(e.detail && e.detail.spinner) });
-    document.addEventListener("nan:auth", this._onAuth);
+    document.addEventListener("enclave:auth", this._onAuth);
     this.refresh();
   }
   disconnectedCallback() {
     super.disconnectedCallback();
     this._stopPoll();
-    if (this._onAuth) document.removeEventListener("nan:auth", this._onAuth);
+    if (this._onAuth) document.removeEventListener("enclave:auth", this._onAuth);
     this._wired = false; this._onAuth = null;
   }
 
@@ -82,11 +82,11 @@ class Deployments extends NanElement {
     const body = this.querySelector(".enc-body"), count = this.querySelector(".enc-count");
     if (!body) return;
     const setCount = t => { if (count) count.textContent = t || ""; };
-    if (!Nan.address){
+    if (!Enclave.address){
       setCount(""); this._stopPoll();
       body.innerHTML = '<div class="enc-empty">Connect your wallet (above) to see your enclaves.</div>'; return;
     }
-    if (!Nan.authed()){
+    if (!Enclave.authed()){
       setCount(""); this._stopPoll();
       body.innerHTML = '<div class="enc-empty">Sign in with your wallet to load your enclaves: <button class="wp-mini enc-signin" type="button">sign in</button></div>';
       const b = body.querySelector(".enc-signin"); if (b) b.addEventListener("click", async () => { try { await authenticate(); } catch(e){ showToast(e.message); } });
@@ -94,12 +94,12 @@ class Deployments extends NanElement {
     }
     if (!body.querySelector(".enc-row") || opts.spinner) body.innerHTML = '<div class="enc-empty">loading your enclaves…</div>';
     try {
-      const res = await Nan.listDeployments();
+      const res = await Enclave.listDeployments();
       const list = Array.isArray(res) ? res : ((res && (res.deployments || res.items || res.data)) || []);
       this._renderRows(list, opts.highlight);
       this._startPoll();
     } catch(e){
-      if (e.status === 401){ Nan.token = null; saveSession(); refreshWallet(); this._stopPoll();
+      if (e.status === 401){ Enclave.token = null; saveSession(); refreshWallet(); this._stopPoll();
         body.innerHTML = '<div class="enc-empty">session expired: <button class="wp-mini enc-signin" type="button">sign in</button></div>';
         const b = body.querySelector(".enc-signin"); if (b) b.addEventListener("click", async () => { try { await authenticate(); } catch(_){} });
         return;
@@ -156,7 +156,7 @@ class Deployments extends NanElement {
       + '<pre class="ap-attpre">fetching…</pre>';
     const badge = box.querySelector(".enc-vbadge");
     try {
-      const att = await Nan.attestation(id);
+      const att = await Enclave.attestation(id);
       const pre = box.querySelector(".ap-attpre"); if (pre) pre.innerHTML = hlJson(att);
       const vspec = vspecOf(att);
       if (!vspec){ if (badge) badge.textContent = ""; return; }
@@ -189,7 +189,7 @@ class Deployments extends NanElement {
         const th = await sendTx(DEPLOYMENTS_ADDRESS, "0x" + DEP_SEL.setActive + pad32(id.replace(/^0x/, "")) + encUint(0));
         await waitReceipt(th);
       }
-      const r = await Nan.terminateDeployment(id).catch(e => {
+      const r = await Enclave.terminateDeployment(id).catch(e => {
         // the enclave's owner-stop watcher may already have torn it down
         if (/^0x[0-9a-f]{64}$/i.test(id)) return null;
         throw e;
@@ -203,7 +203,7 @@ class Deployments extends NanElement {
   _startPoll() {
     if (this._poll) return;
     this._poll = setInterval(() => {
-      if (!Nan.authed()){ this._stopPoll(); return; }
+      if (!Enclave.authed()){ this._stopPoll(); return; }
       if (this.querySelector(".enc-att:not([hidden])")) return;   // don't clobber an open attestation view
       this.refresh();
     }, 10000);

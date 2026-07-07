@@ -18,7 +18,7 @@ strip = true
 lto = true
 
 [package.metadata.component]
-package = "nan:enc-demo"
+package = "enclave:enc-demo"
 
 [package.metadata.component.target]
 path = "wit"

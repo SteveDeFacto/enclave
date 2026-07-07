@@ -1,8 +1,8 @@
 //! llm-chat: a general-purpose LLM service compiled into a wasm component,
-//! running on NaN's wasi-nn GPU interface. Ships with an embedded model
+//! running on Enclave's wasi-nn GPU interface. Ships with an embedded model
 //! (see assets/app-config.json for which); geometry, chat template, sampling
 //! defaults and the API key are configuration, not code - a deployment can
-//! override any of it via NAN_CONFIG (the platform passes the deployment's
+//! override any of it via ENCLAVE_CONFIG (the platform passes the deployment's
 //! CID-verified configCid JSON through the tenant environment).
 //!
 //! Routes:
@@ -322,7 +322,7 @@ struct ChatMsg {
 struct ChatReq {
     messages: Vec<ChatMsg>,
     #[serde(default)]
-    target: Option<String>, // NaN extension: cpu | gpu | auto
+    target: Option<String>, // Enclave extension: cpu | gpu | auto
     #[serde(default)]
     max_tokens: Option<usize>,
     #[serde(default)]
@@ -556,7 +556,7 @@ fn handle_chat(cfg: &AppConfig, req: IncomingRequest, out: ResponseOutparam) {
 // --------------------------------------- OpenAI-compatible /v1 endpoints --
 
 fn completion_id() -> String {
-    format!("chatcmpl-nan{:x}", now_ms())
+    format!("chatcmpl-enclave{:x}", now_ms())
 }
 
 fn handle_completions(cfg: &AppConfig, req: IncomingRequest, out: ResponseOutparam) {
@@ -671,7 +671,7 @@ fn handle_completions(cfg: &AppConfig, req: IncomingRequest, out: ResponseOutpar
                         "completion_tokens": s.tokens,
                         "total_tokens": s.prompt_tokens + s.tokens,
                     },
-                    "nan": { "target": s.target, "load_ms": s.load_ms as u64,
+                    "enclave": { "target": s.target, "load_ms": s.load_ms as u64,
                              "prefill_ms": s.prefill_ms as u64, "decode_ms": s.decode_ms as u64 },
                 });
                 respond_bytes(out, 200, "application/json", body_json.to_string().as_bytes());
@@ -687,7 +687,7 @@ fn handle_models(cfg: &AppConfig, req: IncomingRequest, out: ResponseOutparam) {
     }
     let body = serde_json::json!({
         "object": "list",
-        "data": [{ "id": cfg.name, "object": "model", "owned_by": "nan-deployment" }],
+        "data": [{ "id": cfg.name, "object": "model", "owned_by": "enclave-deployment" }],
     });
     respond_bytes(out, 200, "application/json", body.to_string().as_bytes());
 }

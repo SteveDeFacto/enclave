@@ -1,8 +1,8 @@
-// vault-app - the browser side of NaN's wallet-gated encrypted volumes.
+// vault-app - the browser side of Enclave's wallet-gated encrypted volumes.
 //
-// This is scripts/nan-vault-client.mjs translated to a web page: same
-// protocol (scripts/nan-vault.mjs - imported here, not reimplemented), same
-// contract (NanVolumeAccess), same enclave endpoints. It is bundled by
+// This is scripts/enclave-vault-client.mjs translated to a web page: same
+// protocol (scripts/enclave-vault.mjs - imported here, not reimplemented), same
+// contract (EnclaveVolumeAccess), same enclave endpoints. It is bundled by
 // js/build.mjs into src/vault.js and served BY THE WASM APP ITSELF - nothing
 // is loaded from a CDN at runtime, because any runtime-fetched script could
 // exfiltrate the wallet-derived vault key or an unsealed VEK.
@@ -15,9 +15,9 @@
 //   - nothing is ever written to localStorage/cookies; a reload forgets all.
 //
 // Trust chain for unlock (the load-bearing order):
-//   1. resolve the deployment's runner from CHAIN STATE - NanDeployments
+//   1. resolve the deployment's runner from CHAIN STATE - EnclaveDeployments
 //      .get(id).runner is keccak256 of the enclave endpoint registered in
-//      NanRegistry. No gateway is trusted for discovery.
+//      EnclaveRegistry. No gateway is trusted for discovery.
 //   2. verify THAT origin's attestation (@tinfoilsh/verifier): TLS must
 //      terminate inside a measured CVM before any key material moves.
 //   3. fetch the enclave's per-boot vault pubkey over the verified origin
@@ -30,7 +30,7 @@ import {
   getAddress, isAddress, keccak256, encodeAbiParameters, stringToBytes,
 } from "viem";
 import { Verifier } from "@tinfoilsh/verifier";
-import { DERIVE_MESSAGE, deriveKeypair, seal, unseal } from "../../../../scripts/nan-vault.mjs";
+import { DERIVE_MESSAGE, deriveKeypair, seal, unseal } from "../../../../scripts/enclave-vault.mjs";
 
 // ---------------------------------------------------------------- helpers --
 
@@ -104,8 +104,8 @@ const REGISTRY_ABI = [
 
 // ------------------------------------------------------- chain resolution --
 
-// id -> runner enclave, from chain state alone. NanDeployments.get(id).runner
-// is keccak256(endpoint-string) of a NanRegistry entry; scan the registry for
+// id -> runner enclave, from chain state alone. EnclaveDeployments.get(id).runner
+// is keccak256(endpoint-string) of a EnclaveRegistry entry; scan the registry for
 // the match. Returns { endpoint, repo, dep } or throws with a reason a user
 // can act on. Trust note: picking the endpoint from chain does NOT trust it -
 // attestation at connect time is what gates key release.
@@ -113,7 +113,7 @@ export async function resolveRunner(pub, cfg, depId) {
   const dep = await pub.readContract({
     address: getAddress(cfg.deployments), abi: DEPLOYMENTS_ABI, functionName: "get", args: [depId] });
   if (!dep || dep.owner === "0x0000000000000000000000000000000000000000")
-    throw new Error("no such deployment on NanDeployments");
+    throw new Error("no such deployment on EnclaveDeployments");
   if (dep.runner === ZERO32)
     throw new Error("deployment has never been claimed - no runner to unlock");
   const live = Number(dep.leaseUntil) * 1000 > Date.now();
@@ -127,7 +127,7 @@ export async function resolveRunner(pub, cfg, depId) {
     hit = page.find((e) => keccak256(stringToBytes(e.endpoint)) === dep.runner) || null;
   }
   if (!hit)
-    throw new Error(`runner ${dep.runner} is not in NanRegistry - cannot resolve its endpoint`);
+    throw new Error(`runner ${dep.runner} is not in EnclaveRegistry - cannot resolve its endpoint`);
   return { endpoint: hit.endpoint.replace(/\/+$/, ""), repo: hit.repo || cfg.repo, dep, leaseLive: live };
 }
 
@@ -197,7 +197,7 @@ function applyConfig() {
 }
 
 const needACL = () => {
-  if (!isAddress(S.cfg.volumeAccess || "")) throw new Error("set the NanVolumeAccess contract address first (top bar)");
+  if (!isAddress(S.cfg.volumeAccess || "")) throw new Error("set the EnclaveVolumeAccess contract address first (top bar)");
   return getAddress(S.cfg.volumeAccess);
 };
 const readACL = (fn, args) => S.pub.readContract({ address: needACL(), abi: VOLUME_ACCESS_ABI, functionName: fn, args });
@@ -340,8 +340,8 @@ function renderVekState() {
 
 async function resolveDep() {
   const depId = $("inDep").value.trim();
-  if (!/^0x[0-9a-fA-F]{64}$/.test(depId)) throw new Error("deployment id must be the 0x… bytes32 from NanDeployments");
-  log("resolving runner from chain state (NanDeployments → NanRegistry)…");
+  if (!/^0x[0-9a-fA-F]{64}$/.test(depId)) throw new Error("deployment id must be the 0x… bytes32 from EnclaveDeployments");
+  log("resolving runner from chain state (EnclaveDeployments → EnclaveRegistry)…");
   S.run = await resolveRunner(S.pub, S.cfg, depId);
   S.run.depId = depId;
   S.verified = null;
@@ -420,14 +420,14 @@ async function createVolume() {
   await refreshAccess();
 }
 
-// Owner bootstrap: paste the VEK printed by `nan-vault pack`/`pack-blocks`,
+// Owner bootstrap: paste the VEK printed by `enclave-vault pack`/`pack-blocks`,
 // seal it to your OWN derived key, self-grant Writer. After this the VEK
 // lives (sealed) on-chain and the paste box can be cleared.
 async function selfGrant() {
   if (!S.kp) await deriveKey();
   const vol = currentVol();
   const vekHex = $("inVek").value.trim();
-  if (!/^(0x)?[0-9a-fA-F]{64}$/.test(vekHex)) throw new Error("paste the 32-byte VEK hex printed by nan-vault pack");
+  if (!/^(0x)?[0-9a-fA-F]{64}$/.test(vekHex)) throw new Error("paste the 32-byte VEK hex printed by enclave-vault pack");
   const [, pubkey, registered] = await readACL("getMember", [vol.id, S.account]);
   if (!registered || pubkey !== hex(S.kp.publicKey)) {
     log("registering your pubkey first…");
@@ -524,7 +524,7 @@ async function init() {
 // Expose the protocol surface for the node interop test (js/test-bundle.mjs)
 // and for power users in the browser console. Guarded DOM init so the same
 // bundle loads headless.
-globalThis.NanVault = {
+globalThis.EnclaveVault = {
   DERIVE_MESSAGE, deriveKeypair, seal, unseal, volIdOf, hex, unhex, keccak256, resolveRunner, Verifier,
 };
 if (typeof document !== "undefined" && document.getElementById) {

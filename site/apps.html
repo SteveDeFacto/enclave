@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="dark" />
 <meta name="theme-color" content="#070A0F" />
 <title>Apps · Enclave</title>
-<meta name="description" content="Browse and publish Wasm apps. Every app is a wasi:http component on IPFS, listed in the NanAppCatalog contract on Base — publishing is one transaction." />
+<meta name="description" content="Browse and publish Wasm apps. Every app is a wasi:http component on IPFS, listed in the EnclaveAppCatalog contract on Base — publishing is one transaction." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 9v14L16 30 4 23V9z' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 7.333 24 12v8L16 24.667 8 20v-8z' fill='none' stroke='%232FE6A8' stroke-width='1.4' opacity='.55'/%3E%3Ccircle cx='16' cy='12.55' r='2.45' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 15v6.6M16 21.6h2M16 19.4h1.5' fill='none' stroke='%232FE6A8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
 <script>
 /* Cross-document view transitions are skipped by Chromium when extensions
@@ -15,9 +15,9 @@
    plays the same settle-in itself (html.soft-enter, see base.css) — content
    only, the static header stays put. */
 (function(){
-  try { if (sessionStorage.getItem("nan_novt")) { sessionStorage.removeItem("nan_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}
+  try { if (sessionStorage.getItem("enclave_novt")) { sessionStorage.removeItem("enclave_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}
   addEventListener("pageswap", function(e){
-    try { if (!e.viewTransition && e.activation) sessionStorage.setItem("nan_novt", "1"); } catch(e){}
+    try { if (!e.viewTransition && e.activation) sessionStorage.setItem("enclave_novt", "1"); } catch(e){}
   });
 })();
 </script>
@@ -32,7 +32,7 @@
        (apps.html#publish) — apps.js toggles them; not a header tab -->
   <div class="wrap" id="storeView">
     <c-section-head eyebrow="App store · on-chain catalog" heading="Browse and publish Wasm apps.">
-      <p>Every app here is a <b>wasi:http</b> component whose bytes live on <b>IPFS</b>, addressed by their <b>CID</b>. The catalog itself is a smart contract on <b>Base</b> (<span class="mono">NanAppCatalog</span>): anyone can publish, each listing is attributed on-chain to the publisher's wallet, and because a CID is a hash of the exact wasm you can pull it from any IPFS peer and verify the bytes yourself. Reading needs no wallet; publishing is one Base transaction.</p>
+      <p>Every app here is a <b>wasi:http</b> component whose bytes live on <b>IPFS</b>, addressed by their <b>CID</b>. The catalog itself is a smart contract on <b>Base</b> (<span class="mono">EnclaveAppCatalog</span>): anyone can publish, each listing is attributed on-chain to the publisher's wallet, and because a CID is a hash of the exact wasm you can pull it from any IPFS peer and verify the bytes yourself. Reading needs no wallet; publishing is one Base transaction.</p>
       <div class="store-meta">
         <a class="chip" id="catAddrLink" target="_blank" rel="noopener">contract <b id="catAddrShort">…</b></a>
         <span class="chip">chain <b id="catChain">Base · 8453</b></span>
@@ -150,7 +150,7 @@
           <c-volume-picker></c-volume-picker>
         </div>
         <div class="field">
-          <label for="cfgConfig">App config CID <span class="dim">(optional · IPFS CID of a JSON config the enclave verifies and hands the app as NAN_CONFIG · e.g. pick a model or set an API key for llm-chat · leave empty when using the volume picker above)</span></label>
+          <label for="cfgConfig">App config CID <span class="dim">(optional · IPFS CID of a JSON config the enclave verifies and hands the app as ENCLAVE_CONFIG · e.g. pick a model or set an API key for llm-chat · leave empty when using the volume picker above)</span></label>
           <input type="text" id="cfgConfig" value="" placeholder="empty · or bafybei… (ipfs add your config.json)" spellcheck="false" autocapitalize="off" autocomplete="off" />
         </div>
         <div class="field">

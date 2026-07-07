@@ -1,5 +1,5 @@
 [Unit]
-Description=NAN dedicated-IP EGRESS relay (per-deployment IPv6 source; app outbound tunneled from the enclave)
+Description=Enclave dedicated-IP EGRESS relay (per-deployment IPv6 source; app outbound tunneled from the enclave)
 After=network-online.target
 Wants=network-online.target
 

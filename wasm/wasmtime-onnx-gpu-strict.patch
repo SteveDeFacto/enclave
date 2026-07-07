@@ -22,7 +22,7 @@ index 8ea57c1..0bfe7bf 100644
  #[derive(Debug, Error)]
  pub enum BackendError {
 -    #[error("Failed while accessing backend")]
-+    // NAN: surface the underlying cause - the bare string hid every real
++    // Enclave: surface the underlying cause - the bare string hid every real
 +    // diagnostic (ort messages, shape mismatches) from the guest.
 +    #[error("Failed while accessing backend: {0:#}")]
      BackendAccess(#[from] wasmtime::Error),
@@ -43,7 +43,7 @@ index c7cc645..c1f8576 100644
 -use std::sync::{Arc, Mutex};
 +use std::sync::{Arc, Mutex, OnceLock};
 +
-+/// NAN: process-global session cache. `wasmtime serve` runs each REQUEST in a
++/// Enclave: process-global session cache. `wasmtime serve` runs each REQUEST in a
 +/// fresh instance, so an app embedding its model pays a full ORT session init
 +/// (weights parsed + uploaded to the GPU) per request - for a 100MB+ model
 +/// under confidential compute that is tens of seconds, every time, and each
@@ -64,7 +64,7 @@ index c7cc645..c1f8576 100644
              return Err(BackendError::InvalidNumberOfBuilders(1, builders.len()));
          }
  
-+        // NAN: serve one session per (model, target) per process - see
++        // Enclave: serve one session per (model, target) per process - see
 +        // SESSION_CACHE. The digest is the full model bytes, so a collision
 +        // means sha256 is broken, not that a tenant gets the wrong model.
 +        let key = {
@@ -82,7 +82,7 @@ index c7cc645..c1f8576 100644
          // Configure execution providers based on target
          let execution_providers = configure_execution_providers(target)?;
  
-+        // NAN: graph-optimization level is env-configurable. ORT's Level3
++        // Enclave: graph-optimization level is env-configurable. ORT's Level3
 +        // fusions synthesize fused-attention kernels from decomposed graphs,
 +        // and on sm_90 under a small MPS partition those kernels misbehave
 +        // (SIGFPE at a 2% share, decode-step hangs at 4% - observed live on
@@ -101,7 +101,7 @@ index c7cc645..c1f8576 100644
              .with_execution_providers(execution_providers)?
 -            .with_optimization_level(GraphOptimizationLevel::Level3)?
 +            .with_optimization_level(opt_level)?
-+            // NAN: ORT's default intra-op pool is one SPINNING thread per core
++            // Enclave: ORT's default intra-op pool is one SPINNING thread per core
 +            // - wrong for a multi-tenant node (a 1% tenant must not burn 16
 +            // cores busy-waiting), and the saturating spinners starve libcuda's
 +            // init wait-loops on fully-committed TDX guests (observed livelock
@@ -129,7 +129,7 @@ index c7cc645..c1f8576 100644
              #[cfg(feature = "onnx-cuda")]
              {
 -                // Use CUDA execution provider for GPU acceleration
-+                // Use CUDA execution provider for GPU acceleration. NAN: fail
++                // Use CUDA execution provider for GPU acceleration. Enclave: fail
 +                // the load if the provider can't initialize — ORT's default is
 +                // a SILENT fallback to CPU, which would let a "GPU" inference
 +                // quietly run on the CPU.
@@ -196,7 +196,7 @@ index c7cc645..c1f8576 100644
              TensorElementType::Uint8 => Ok(TensorType::U8),
              TensorElementType::Int32 => Ok(TensorType::I32),
              TensorElementType::Int64 => Ok(TensorType::I64),
-+            // NAN: fp16/bf16 models (e.g. transformer decoders quantized to
++            // Enclave: fp16/bf16 models (e.g. transformer decoders quantized to
 +            // q4f16) must be loadable; without these arms a session whose
 +            // inputs or outputs are half-precision fails at context init.
 +            TensorElementType::Float16 => Ok(TensorType::Fp16),
@@ -228,7 +228,7 @@ index c7cc645..c1f8576 100644
 +                .iter()
 +                .map(|d| *d as i64) // TODO: fewer conversions
 +                .collect();
-+            // NAN: the upstream backend accepted Fp32 only and PANICKED
++            // Enclave: the upstream backend accepted Fp32 only and PANICKED
 +            // (`unimplemented!`) on anything else - a guest-reachable host
 +            // panic, and a blocker for any real model (transformer decoders
 +            // need i64 token ids and fp16 KV-cache tensors). Decode the
@@ -285,7 +285,7 @@ index c7cc645..c1f8576 100644
      }
  }
  
-+/// NAN: extract a session output as a wasi-nn tensor, faithful to the value's
++/// Enclave: extract a session output as a wasi-nn tensor, faithful to the value's
 +/// actual element type. The upstream code extracted every output as f32
 +/// ("TODO: fix preexisting gap"), which fails outright on fp16/i64 outputs -
 +/// i.e. on the logits and KV-cache tensors of any real transformer model.

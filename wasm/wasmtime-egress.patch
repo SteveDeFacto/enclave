@@ -7,12 +7,12 @@ index 45ed76d..14ba726 100644
          #[serde(default)]
          pub vault: Vec<String>,
 +        /// Route ALL guest outbound (wasi:sockets TCP connect + wasi:http)
-+        /// through nan's dedicated-IP egress front: `egress=<host>:<port>`, the
++        /// through the enclave's dedicated-IP egress front: `egress=<host>:<port>`, the
 +        /// loopback SOCKS5 endpoint the enclave supervisor listens on.
 +        ///
 +        /// The per-deployment SOCKS credential is read from the environment
-+        /// variable `NAN_EGRESS_CRED` (`<id>:<token>`; host process env only,
-+        /// never visible to the guest — like the nan-vault VEKs). With this set,
++        /// variable `ENCLAVE_EGRESS_CRED` (`<id>:<token>`; host process env only,
++        /// never visible to the guest — like the enclave-vault VEKs). With this set,
 +        /// a socket-address check permitting TCP bind/connect + UDP bind (but not
 +        /// raw UDP egress) is installed and `-Sinherit-network` should be omitted:
 +        /// the guest can no longer reach the raw network, so its outbound leaves
@@ -32,7 +32,7 @@ index 0e6a4f2..2df8bcd 100644
          return Err(ErrorCode::HttpRequestUriInvalid);
      };
 -    let tcp_stream = timeout(connect_timeout, TcpStream::connect(&authority))
-+    // nan transparent egress: when on, route the outgoing request's TCP dial
++    // enclave transparent egress: when on, route the outgoing request's TCP dial
 +    // through the enclave's loopback SOCKS front (dedicated source at the relay)
 +    // so a `serve`-mode app's wasi:http leaves from the deployment's own IPv6.
 +    // The host name is sent to the front as a SOCKS DOMAIN (socks5h — remote
@@ -59,7 +59,7 @@ index aa3ed70..720ff7f 100644
          .unwrap_or(Duration::from_secs(600));
  
 -    let stream = match tokio::time::timeout(connect_timeout, TcpStream::connect(&authority)).await {
-+    // nan transparent egress: when on, dial through the enclave's loopback SOCKS
++    // enclave transparent egress: when on, dial through the enclave's loopback SOCKS
 +    // front (dedicated source at the relay), sending the host name as a SOCKS
 +    // DOMAIN (socks5h — SSRF enforced post-DNS at the relay). See egress.rs.
 +    let connect_fut = async {
@@ -80,16 +80,16 @@ index 0000000..3137a39
 --- /dev/null
 +++ b/crates/wasi/src/egress.rs
 @@ -0,0 +1,260 @@
-+//! nan transparent egress: route ALL guest outbound through the enclave's
++//! enclave transparent egress: route ALL guest outbound through the enclave's
 +//! loopback SOCKS5 front so an UNMODIFIED app leaves from the deployment's own
-+//! IPv6 — the same dedicated-source identity `NAN_EGRESS` gives an app that
++//! IPv6 — the same dedicated-source identity `ENCLAVE_EGRESS` gives an app that
 +//! opts in explicitly, but automatic and un-bypassable.
 +//!
 +//! Enabled by `-S egress=<socks-host>:<socks-port>` on the wasmtime CLI (see
 +//! `RunCommon::configure_wasip2`). The per-deployment SOCKS CREDENTIAL is read
-+//! from the environment variable `NAN_EGRESS_CRED` (`<id>:<token>`, the same
-+//! HMAC the supervisor mints for `NAN_EGRESS`) — HOST process env only, never
-+//! visible to the guest, exactly like the nan-vault VEKs. One wasmtime process
++//! from the environment variable `ENCLAVE_EGRESS_CRED` (`<id>:<token>`, the same
++//! HMAC the supervisor mints for `ENCLAVE_EGRESS`) — HOST process env only, never
++//! visible to the guest, exactly like the enclave-vault VEKs. One wasmtime process
 +//! serves one deployment, so the config is a process global.
 +//!
 +//! With egress on, the CLI grants a socket-address check that permits TCP
@@ -136,7 +136,7 @@ index 0000000..3137a39
 +/// spec/credential is malformed.
 +///
 +/// `spec` is the `-S egress=` value (`<host>:<port>`); `cred` is the
-+/// `NAN_EGRESS_CRED` env value (`<id>:<token>`).
++/// `ENCLAVE_EGRESS_CRED` env value (`<id>:<token>`).
 +pub fn init(spec: &str, cred: &str) -> Result<(), String> {
 +    let front = parse_endpoint(spec)
 +        .ok_or_else(|| format!("-S egress expects <host>:<port>, got `{spec}`"))?;
@@ -144,13 +144,13 @@ index 0000000..3137a39
 +    // the token is base64url (no colon), but split-once is the safe rule.
 +    let (id, token) = cred
 +        .split_once(':')
-+        .ok_or_else(|| "$NAN_EGRESS_CRED must be `<id>:<token>`".to_string())?;
++        .ok_or_else(|| "$ENCLAVE_EGRESS_CRED must be `<id>:<token>`".to_string())?;
 +    if id.is_empty() || token.is_empty() {
-+        return Err("$NAN_EGRESS_CRED must be `<id>:<token>`".to_string());
++        return Err("$ENCLAVE_EGRESS_CRED must be `<id>:<token>`".to_string());
 +    }
 +    // SOCKS5 user/pass fields are single-byte-length-prefixed (RFC 1929).
 +    if id.len() > 255 || token.len() > 255 {
-+        return Err("$NAN_EGRESS_CRED id/token too long for SOCKS auth".to_string());
++        return Err("$ENCLAVE_EGRESS_CRED id/token too long for SOCKS auth".to_string());
 +    }
 +    let cfg = EgressCfg {
 +        front,
@@ -217,7 +217,7 @@ index 0000000..3137a39
 +pub async fn connect_addr(addr: SocketAddr) -> io::Result<TcpStream> {
 +    let cfg = get().expect("connect_addr called with egress disabled");
 +    // A dial TO the front itself passes through directly: that is a guest
-+    // speaking phase-1 SOCKS (NAN_EGRESS) explicitly, which must keep working
++    // speaking phase-1 SOCKS (ENCLAVE_EGRESS) explicitly, which must keep working
 +    // under the phase-2 lockdown ("two ways in, one front"). Nothing else is
 +    // exposed — the front authenticates every CONNECT with per-deployment
 +    // credentials, and every destination it accepts is SSRF-checked as usual.
@@ -348,11 +348,11 @@ index 00f725f..a5c9789 100644
  pub mod random;
  pub mod runtime;
  pub mod sockets;
-+// nan transparent egress: route ALL guest outbound (wasi:sockets + wasi:http)
++// enclave transparent egress: route ALL guest outbound (wasi:sockets + wasi:http)
 +// through the enclave's loopback SOCKS front so an UNMODIFIED app leaves from
 +// the deployment's dedicated IPv6 (see egress.rs; enabled via -S egress).
 +pub mod egress;
- // nan-vault: transparent read-only decryption for NANVOL2 encrypted preopens
+ // enclave-vault: transparent read-only decryption for NANVOL2 encrypted preopens
  // (see vault.rs; applied via WasiCtxBuilder::preopened_vault_dir / -S vault).
  mod vault;
 diff --git a/crates/wasi/src/p2/host/tcp.rs b/crates/wasi/src/p2/host/tcp.rs
@@ -367,7 +367,7 @@ index 47d638d..81beeea 100644
 -            .start_connect(&remote_address)?
 -            .connect(remote_address);
 +        let tokio_socket = socket.start_connect(&remote_address)?;
-+        // nan transparent egress: when on, route the connect through the
++        // enclave transparent egress: when on, route the connect through the
 +        // enclave's loopback SOCKS front (dedicated source at the relay) instead
 +        // of dialing the destination directly. The freshly-created `tokio_socket`
 +        // is dropped — we return a stream connected via the front. See egress.rs.
@@ -390,7 +390,7 @@ index 6a08715..5443d13 100644
          // FIXME: handle possible cancellation of the outer `connect`
          // https://github.com/bytecodealliance/wasmtime/pull/11291#discussion_r2223917986
 -        let res = sock.connect(remote_address).await;
-+        // nan transparent egress: when on, dial through the enclave's loopback
++        // enclave transparent egress: when on, dial through the enclave's loopback
 +        // SOCKS front (dedicated source at the relay); `sock` is dropped. See
 +        // egress.rs.
 +        let res = if crate::egress::enabled() {
@@ -410,10 +410,10 @@ index 86bd620..5b31bfb 100644
              builder.allow_udp(enable);
          }
 +
-+        // nan transparent egress: `-S egress=<host>:<port>` routes ALL guest
++        // enclave transparent egress: `-S egress=<host>:<port>` routes ALL guest
 +        // outbound (wasi:sockets TCP connect + wasi:http) through the loopback
 +        // SOCKS front so an UNMODIFIED app leaves from the deployment's own IPv6.
-+        // The credential rides $NAN_EGRESS_CRED (host process env only, never in
++        // The credential rides $ENCLAVE_EGRESS_CRED (host process env only, never in
 +        // the guest env or on the cmdline — same delivery as the vault VEKs).
 +        // We install a socket-address check that permits TCP bind/connect and
 +        // UDP bind but DENIES raw UDP egress (phase-1 SOCKS is TCP CONNECT only);
@@ -423,8 +423,8 @@ index 86bd620..5b31bfb 100644
 +        // if both are somehow set.)
 +        if let Some(spec) = &self.common.wasi.egress {
 +            use wasmtime_wasi::sockets::SocketAddrUse;
-+            let cred = std::env::var("NAN_EGRESS_CRED").map_err(|_| {
-+                format_err!("-S egress: $NAN_EGRESS_CRED must hold the `<id>:<token>` credential")
++            let cred = std::env::var("ENCLAVE_EGRESS_CRED").map_err(|_| {
++                format_err!("-S egress: $ENCLAVE_EGRESS_CRED must hold the `<id>:<token>` credential")
 +            })?;
 +            wasmtime_wasi::egress::init(spec, &cred).map_err(|e| format_err!("{e}"))?;
 +            builder.socket_addr_check(|_addr, use_| {

@@ -8,14 +8,14 @@
    Owns the wallet lifecycle for whichever page mounts it: boots
    EIP-6963 discovery, silently restores the previous session,
    and repaints on every wallet/session change (wallet.js emits
-   `nan:wallet`; the button itself is repainted by refreshWallet).
+   `enclave:wallet`; the button itself is repainted by refreshWallet).
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
-import { Nan } from "../../js/core/api.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
+import { Enclave } from "../../js/core/api.js";
 import { Wallet, connectWallet, authenticate, refreshWallet, restoreSession, toggleWalletPop } from "../../js/core/wallet.js";
 import { $, showToast } from "../../js/core/util.js";
 
-class WalletButton extends NanElement {
+class WalletButton extends EnclaveElement {
   static templateUrl = new URL("./wallet-button.html", import.meta.url);
 
   renderedCallback() {
@@ -31,11 +31,11 @@ class WalletButton extends NanElement {
 
     const wb = this.querySelector("#walletBtn");
     wb.addEventListener("click", async () => {
-      if (Nan.address){ toggleWalletPop(); return; }
+      if (Enclave.address){ toggleWalletPop(); return; }
       const o = wb.innerHTML; wb.disabled = true; wb.innerHTML = "connecting…";
       try { await connectWallet(); await authenticate(); }
       catch(e){ showToast(e.message); }
-      finally { wb.disabled = false; if (!Nan.address) wb.innerHTML = o; }
+      finally { wb.disabled = false; if (!Enclave.address) wb.innerHTML = o; }
     });
 
     document.addEventListener("click", (e) => {

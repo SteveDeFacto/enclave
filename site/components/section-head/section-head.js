@@ -6,9 +6,9 @@
    section on the site. `flush` drops the bottom margin (the API
    reference header sits in a flex row).
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 
-class SectionHead extends NanElement {
+class SectionHead extends EnclaveElement {
   static properties = { eyebrow: "", heading: "" };
   static templateUrl = new URL("./section-head.html", import.meta.url);
 }

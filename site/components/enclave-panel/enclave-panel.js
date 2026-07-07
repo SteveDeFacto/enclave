@@ -3,13 +3,13 @@
    particle canvas inside a dashed boundary, periodically swept
    by a "measurement" that rolls the fake rtmr3 hash.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 
 const HEXC = "0123456789abcdef";
 const hex = (n) => { let s = ""; for (let i = 0; i < n; i++) s += HEXC[(Math.random() * 16) | 0]; return s; };
 const fmtHash = () => "0x" + hex(4) + "…" + hex(4);
 
-class EnclavePanel extends NanElement {
+class EnclavePanel extends EnclaveElement {
   static templateUrl = new URL("./enclave-panel.html", import.meta.url);
 
   renderedCallback() {

@@ -80,7 +80,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/stevedefacto/nan:${{ inputs.version }}
+            ghcr.io/stevedefacto/enclave-supervisor:${{ inputs.version }}
 
   prepare-release:
     needs: build
@@ -104,10 +104,10 @@ jobs:
           set -euo pipefail
           # materialize the CPU flavor at the default path the Tinfoil dashboard reads
           cp enclaves/cpu/tinfoil-config.yml tinfoil-config.yml
-          # `nan[:@]` cannot match nan-wasm-manager (next char is '-'), so only
+          # `enclave-supervisor[:@]` cannot match enclave-wasm-manager (next char is '-'), so only
           # the supervisor line is repinned; the wasm-manager pin stays as committed.
-          sed -i -E "s#(image: \"ghcr\.io/stevedefacto/nan)[:@][^\"]*\"#\1@${DIGEST}\"#" tinfoil-config.yml
-          grep -q "ghcr.io/stevedefacto/nan@${DIGEST}" tinfoil-config.yml \
+          sed -i -E "s#(image: \"ghcr\.io/stevedefacto/enclave-supervisor)[:@][^\"]*\"#\1@${DIGEST}\"#" tinfoil-config.yml
+          grep -q "ghcr.io/stevedefacto/enclave-supervisor@${DIGEST}" tinfoil-config.yml \
             || { echo "::error::failed to pin supervisor digest into tinfoil-config.yml"; exit 1; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

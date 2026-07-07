@@ -34,7 +34,7 @@ ssh nan-relay 'cd /opt/nan-relay && npm install --omit=dev --no-audit --no-fund 
        && systemctl is-active nan-egress-relay; \
      else echo "nan-egress-relay: no /etc/nan-relay/egress-relay.env yet — skipped"; fi'
 
-echo "== nan: api relay"
+echo "== api relay (site box)"
 scp api-relay.js package.json nan:/opt/nan-relay/
 scp systemd/nan-api-relay.service nan:/etc/systemd/system/
 ssh nan 'cd /opt/nan-relay && npm install --omit=dev --no-audit --no-fund \

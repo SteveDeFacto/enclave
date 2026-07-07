@@ -3,7 +3,7 @@
    the chain-of-measurements links on the left, and the selected
    link's artifact (json / verifier code) on the right.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { hlJson, hlCode, copyText } from "../../js/core/util.js";
 
 /* the artifact shown for each template link, in template order (the link
@@ -21,7 +21,7 @@ const LINKS = [
     code: "import { Verifier } from '@tinfoilsh/verifier';\n// or from a shell: tinfoil attestation verify -e <enclave-host> -r <repo>\n\nconst att = await (await fetch(`/v1/attestation`)).json(); // public: verify BEFORE login\natt.verification.selfCheck;          // enclave's own diagnostic: useful, but not trust\n\nawait new Verifier({\n  serverURL:  new URL(att.verification.attestationEndpoint).origin,\n  configRepo: att.verification.repo, // exact GitHub casing; Sigstore compares verbatim\n}).verify();  // hardware report → vendor root · Sigstore release provenance · measurements match\n\npinTls(att.tlsKeyFingerprint);       // only now: connect" }
 ];
 
-class AttestChain extends NanElement {
+class AttestChain extends EnclaveElement {
   static templateUrl = new URL("./attest-chain.html", import.meta.url);
 
   show(i) {

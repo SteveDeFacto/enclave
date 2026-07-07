@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // catalog-status.mjs — read APP_CATALOG_* out of site/index.html and report what
 // the site points at: whether an address is wired, and WHICH revision of
-// NanAppCatalog lives there (detected by function selectors in the bytecode).
+// EnclaveAppCatalog lives there (detected by function selectors in the bytecode).
 //
 // Usage:  node scripts/catalog-status.mjs
 
@@ -66,23 +66,23 @@ async function main() {
   } else if (code.includes(SEL_PUBLISH_SHARES)) {
     let n = "?";
     try { n = BigInt(await rpc(rpcUrl, "eth_call", [{ to: addr, data: "0x" + SEL_APP_COUNT }, "latest"]) || "0x0").toString(); } catch {}
-    console.log(`=> CURRENT NanAppCatalog ✓ (exact resources: vramMb/gpuGflops/memMb/cpuGflops, shares derived by runners). Apps listed: ${n}`);
+    console.log(`=> CURRENT EnclaveAppCatalog ✓ (exact resources: vramMb/gpuGflops/memMb/cpuGflops, shares derived by runners). Apps listed: ${n}`);
   } else if (code.includes(SEL_SET_APPROVAL)) {
-    console.log(`=> OLDER NanAppCatalog (approval-gated, but memMb-only resources — no VRAM`);
+    console.log(`=> OLDER EnclaveAppCatalog (approval-gated, but memMb-only resources — no VRAM`);
     console.log(`   requirement, so runners can't derive both shares). Redeploy:`);
     console.log(`     node scripts/deploy-app-catalog.mjs`);
   } else if (code.includes(SEL_PUBLISH_PORTS)) {
-    console.log(`=> OLDER NanAppCatalog (firewall ports, NO approval gating — the supervisor's`);
+    console.log(`=> OLDER EnclaveAppCatalog (firewall ports, NO approval gating — the supervisor's`);
     console.log(`   cidStatus() deploy gate can't work against it). Redeploy:`);
     console.log(`     node scripts/deploy-app-catalog.mjs`);
   } else if (code.includes(SEL_PUBLISH_V2)) {
-    console.log(`=> OLDER NanAppCatalog (versions, NO firewall ports). Redeploy:`);
+    console.log(`=> OLDER EnclaveAppCatalog (versions, NO firewall ports). Redeploy:`);
     console.log(`     node scripts/deploy-app-catalog.mjs`);
   } else if (code.includes(SEL_PUBLISH_V1)) {
-    console.log(`=> ORIGINAL NanAppCatalog (no versions). Redeploy:`);
+    console.log(`=> ORIGINAL EnclaveAppCatalog (no versions). Redeploy:`);
     console.log(`     node scripts/deploy-app-catalog.mjs`);
   } else {
-    console.log(`=> A contract exists here but matches no NanAppCatalog revision.`);
+    console.log(`=> A contract exists here but matches no EnclaveAppCatalog revision.`);
   }
   console.log(`   Explorer: ${explorer}/address/${addr}`);
 }

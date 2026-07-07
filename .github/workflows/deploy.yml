@@ -47,7 +47,7 @@ jobs:
       registry:      ${{ steps.diff.outputs.registry }}
       deployments:   ${{ steps.diff.outputs.deployments }}
       catalog:       ${{ steps.diff.outputs.catalog }}
-      nanpay:        ${{ steps.diff.outputs.nanpay }}
+      enclavepay:        ${{ steps.diff.outputs.enclavepay }}
       contracts_any: ${{ steps.diff.outputs.contracts_any }}
       worker:        ${{ steps.diff.outputs.worker }}
       mps:           ${{ steps.diff.outputs.mps }}
@@ -107,7 +107,7 @@ jobs:
           fi
           printf 'changed files:\n%s\n' "${CHANGED:-<none>}"
 
-          site=false relay=false registry=false deployments=false catalog=false nanpay=false
+          site=false relay=false registry=false deployments=false catalog=false enclavepay=false
           sup=false worker=false mps=false wasm=false config_touched=false
           while IFS= read -r f; do
             [ -n "$f" ] || continue
@@ -115,10 +115,10 @@ jobs:
               site/deploy.sh|relay/deploy.sh) ;;   # deploy tooling runs from a fresh checkout; nothing to redeploy
               site/*)                  site=true ;;
               relay/*)                 relay=true ;;
-              contracts/NanRegistry.sol)    registry=true ;;
-              contracts/NanDeployments.sol) deployments=true ;;
-              contracts/NanAppCatalog.sol)  catalog=true ;;
-              contracts/NanPay.sol)         nanpay=true ;;
+              contracts/EnclaveRegistry.sol)    registry=true ;;
+              contracts/EnclaveDeployments.sol) deployments=true ;;
+              contracts/EnclaveAppCatalog.sol)  catalog=true ;;
+              contracts/EnclavePay.sol)         enclavepay=true ;;
               Dockerfile|supervisor.js|package.json|package-lock.json) sup=true ;;
               worker/*)                worker=true ;;
               mps-daemon/*)            mps=true ;;
@@ -139,7 +139,7 @@ jobs:
           fi
 
           contracts_any=false
-          if [ "$registry" = true ] || [ "$deployments" = true ] || [ "$catalog" = true ] || [ "$nanpay" = true ]; then
+          if [ "$registry" = true ] || [ "$deployments" = true ] || [ "$catalog" = true ] || [ "$enclavepay" = true ]; then
             contracts_any=true
           fi
           release=false
@@ -155,7 +155,7 @@ jobs:
           {
             echo "site=$site"; echo "relay=$relay"
             echo "registry=$registry"; echo "deployments=$deployments"
-            echo "catalog=$catalog"; echo "nanpay=$nanpay"
+            echo "catalog=$catalog"; echo "enclavepay=$enclavepay"
             echo "contracts_any=$contracts_any"
             echo "worker=$worker"; echo "mps=$mps"; echo "wasm=$wasm"
             echo "release=$release"; echo "cpu_release=$cpu_release"
@@ -206,12 +206,12 @@ jobs:
           REG='${{ needs.detect.outputs.registry }}'
           DEP='${{ needs.detect.outputs.deployments }}'
           CAT='${{ needs.detect.outputs.catalog }}'
-          PAY='${{ needs.detect.outputs.nanpay }}'
+          PAY='${{ needs.detect.outputs.enclavepay }}'
           if [ "$REG" = "true" ]; then
             node scripts/deploy-registry.mjs --yes
             DEP=true   # claims are gated to the registry: a new registry needs a new deployments ledger
           fi
-          if [ "$PAY" = "true" ]; then node scripts/deploy-nanpay.mjs --yes; fi
+          if [ "$PAY" = "true" ]; then node scripts/deploy-enclave-pay.mjs --yes; fi
           if [ "$DEP" = "true" ]; then node scripts/deploy-deployments.mjs --yes; fi
           if [ "$CAT" = "true" ]; then node scripts/deploy-app-catalog.mjs --yes; fi
 
@@ -223,7 +223,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/sync-contract-addresses.sh
-          git add contracts/*.abi.json enclaves site/index.html scripts/nan-discover.mjs
+          git add contracts/*.abi.json enclaves site/index.html scripts/enclave-discover.mjs
           if git diff --cached --quiet; then
             echo "wired_site=false" >> "$GITHUB_OUTPUT"
             echo "wired_config=false" >> "$GITHUB_OUTPUT"
@@ -250,7 +250,7 @@ jobs:
     steps:
       - name: Contract change needs a hand deploy
         run: |
-          echo "::warning::Contract sources changed (registry=${{ needs.detect.outputs.registry }} deployments=${{ needs.detect.outputs.deployments }} catalog=${{ needs.detect.outputs.catalog }} nanpay=${{ needs.detect.outputs.nanpay }}) but CONTRACTS_HAND_DEPLOY=1: CI holds no deployer key (it is a governance root). Deploy locally with DEPLOYER_PRIVATE_KEY=... node scripts/deploy-<contract>.mjs --yes, then bash scripts/sync-contract-addresses.sh, commit and push - the next run deploys the site and cuts the enclave releases with the new addresses."
+          echo "::warning::Contract sources changed (registry=${{ needs.detect.outputs.registry }} deployments=${{ needs.detect.outputs.deployments }} catalog=${{ needs.detect.outputs.catalog }} enclavepay=${{ needs.detect.outputs.enclavepay }}) but CONTRACTS_HAND_DEPLOY=1: CI holds no deployer key (it is a governance root). Deploy locally with DEPLOYER_PRIVATE_KEY=... node scripts/deploy-<contract>.mjs --yes, then bash scripts/sync-contract-addresses.sh, commit and push - the next run deploys the site and cuts the enclave releases with the new addresses."
 
   site:
     needs: [detect, contracts]
@@ -317,7 +317,7 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           # two boxes: tcp+udp relays live on nan-relay; the api relay lives on
-          # the nan box (api.enclave.host) - relay/deploy.sh targets both aliases
+          # the site box (ssh alias `nan`, api.enclave.host) - relay/deploy.sh targets both aliases
           printf 'Host nan-relay\n  HostName %s\n  User root\nHost nan\n  HostName %s\n  User root\n' \
             "$RELAY_SSH_HOST" "$SITE_SSH_HOST" > ~/.ssh/config
           chmod 600 ~/.ssh/config
@@ -358,9 +358,9 @@ jobs:
         run: |
           set -euo pipefail
           TARGETS=""
-          [ '${{ needs.detect.outputs.mps }}'    = 'true' ] && TARGETS="$TARGETS nan-mps"
-          [ '${{ needs.detect.outputs.worker }}' = 'true' ] && TARGETS="$TARGETS nan-worker"
-          [ '${{ needs.detect.outputs.wasm }}'   = 'true' ] && TARGETS="$TARGETS nan-wasm-manager"
+          [ '${{ needs.detect.outputs.mps }}'    = 'true' ] && TARGETS="$TARGETS enclave-mps"
+          [ '${{ needs.detect.outputs.worker }}' = 'true' ] && TARGETS="$TARGETS enclave-worker"
+          [ '${{ needs.detect.outputs.wasm }}'   = 'true' ] && TARGETS="$TARGETS enclave-wasm-manager"
           if [ -z "$TARGETS" ]; then echo "no sidecar images changed"; exit 0; fi
 
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin

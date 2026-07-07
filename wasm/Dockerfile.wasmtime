@@ -1,4 +1,4 @@
-# nan-wasmtime: wasmtime CLI built from source with wasi-nn enabled — the
+# enclave-wasmtime: wasmtime CLI built from source with wasi-nn enabled — the
 # GPU interface for tenant apps. The stock release binaries do not compile in
 # wasi-nn, so this toolchain image exists to produce a `wasmtime` that does:
 #
@@ -32,7 +32,7 @@ RUN git clone --depth 1 --branch "${WASMTIME_VERSION}" \
       https://github.com/bytecodealliance/wasmtime /src/wasmtime
 WORKDIR /src/wasmtime
 
-# ONNX Runtime GPU: NaN's own PATCHED build (nan-onnxruntime), NOT Microsoft's
+# ONNX Runtime GPU: Enclave's own PATCHED build (nan-onnxruntime), NOT Microsoft's
 # prebuilt. Version still 1.22.0 (must match ort-sys 2.0.0-rc.10). The patch
 # (wasm/onnxruntime-sm90-mps.patch) guards the sm_90-under-MPS division sites in
 # flash/lean attention and adds ORT_DISABLE_MATMUL4BITS_KERNEL - so the fused
@@ -40,16 +40,16 @@ WORKDIR /src/wasmtime
 # with native sm_86+sm_90 SASS (verified: 8 sm_90 cubins, so no PTX-JIT hang
 # under TDX - the original 2026-07-05 root cause). Same tarball layout as MS's,
 # so ORT_LIB_LOCATION is unchanged. Rebuild flow: run ort-toolchain.yml -> paste
-# ORT_URL/ORT_SHA256 here -> this commit triggers the nan-wasmtime rebuild.
+# ORT_URL/ORT_SHA256 here -> this commit triggers the enclave-wasmtime rebuild.
 ARG ORT_VERSION=1.22.0
-ARG ORT_URL=https://github.com/SteveDeFacto/nan/releases/download/nan-onnxruntime-v1.22.0-nan1/nan-onnxruntime-linux-x64-gpu-1.22.0.tgz
+ARG ORT_URL=https://github.com/SteveDeFacto/enclave/releases/download/nan-onnxruntime-v1.22.0-nan1/nan-onnxruntime-linux-x64-gpu-1.22.0.tgz
 ARG ORT_SHA256=3972e1591d6587c76ec54446b07e3af03ea4ffd5fbccb8f1414c0e252d87846b
 RUN curl -fsSL -o /tmp/ort.tgz "${ORT_URL}" \
  && echo "${ORT_SHA256}  /tmp/ort.tgz" | sha256sum -c - \
  && tar -xzf /tmp/ort.tgz -C /opt && rm /tmp/ort.tgz
 ENV ORT_LIB_LOCATION=/opt/onnxruntime-linux-x64-gpu-${ORT_VERSION}
 
-# NAN patches (see the .patch header): 1) strict ExecutionTarget::Gpu - the
+# Enclave patches (see the .patch header): 1) strict ExecutionTarget::Gpu - the
 # CUDA provider initializes or load() fails, never ORT's silent CPU fallback
 # (tenants BUY the share); 2) small, non-spinning ORT thread pool - fair on a
 # multi-tenant node, and ORT's default per-core spinners livelock CUDA init
@@ -58,10 +58,10 @@ COPY wasmtime-onnx-gpu-strict.patch /tmp/
 RUN git apply --check /tmp/wasmtime-onnx-gpu-strict.patch \
  && git apply /tmp/wasmtime-onnx-gpu-strict.patch
 
-# nan-vault WASI-fs shim: `-S vault=<guest>::<skeleton>::<cipherdir>` mounts a
+# enclave-vault WASI-fs shim: `-S vault=<guest>::<skeleton>::<cipherdir>` mounts a
 # NANVOL2 block-encrypted volume as a normal read-only guest directory - the
 # wasmtime HOST decrypts 4MiB blocks on demand (XChaCha20-Poly1305 + HKDF, VEK
-# via $NAN_VAULT_KEY_<i>, host process env only). Pure userspace: no FUSE, no
+# via $ENCLAVE_VAULT_KEY_<i>, host process env only). Pure userspace: no FUSE, no
 # device-mapper, nothing privileged. Metadata is served by a sparse skeleton
 # tree the wasm-manager materializes at unlock; only content reads route
 # through decryption. This is how tenants read LARGE confidential volumes
@@ -73,11 +73,11 @@ COPY wasmtime-vault-fs.patch /tmp/
 RUN git apply --check /tmp/wasmtime-vault-fs.patch \
  && git apply /tmp/wasmtime-vault-fs.patch
 
-# nan transparent egress (phase 2 of dedicated-IP egress): `-S egress=<host>:<port>`
+# enclave transparent egress (phase 2 of dedicated-IP egress): `-S egress=<host>:<port>`
 # routes ALL guest outbound — wasi:sockets TCP connect AND the wasi:http outgoing
 # handler — through the enclave's loopback SOCKS5 front (egress.js), so an
 # UNMODIFIED app leaves from the deployment's dedicated IPv6 with no way to reach
-# the raw network. The per-deployment SOCKS credential rides $NAN_EGRESS_CRED
+# the raw network. The per-deployment SOCKS credential rides $ENCLAVE_EGRESS_CRED
 # (host process env only, guest-invisible — same delivery as the vault VEKs); the
 # wasm-manager also drops -Sinherit-network in run mode when egress is on. Pure
 # userspace: no new crates (std + the tokio already in wasmtime-wasi), so no

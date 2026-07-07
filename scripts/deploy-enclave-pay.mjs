@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// deploy-nanpay.mjs - compile + deploy contracts/NanPay.sol to Base, print the
+// deploy-enclave-pay.mjs - compile + deploy contracts/EnclavePay.sol to Base, print the
 // address, and (optionally) write it into enclaves/gpu/tinfoil-config.yml as
 // FORWARDER_ADDRESS (scripts/sync-contract-addresses.sh fans it out to the CPU flavor).
 //
-// NanPay is non-custodial: it forwards USDC (payWithAuthorization, EIP-3009 —
+// EnclavePay is non-custodial: it forwards USDC (payWithAuthorization, EIP-3009 —
 // the payer signs a ReceiveWithAuthorization, no approve) or native ETH (payEth)
 // payer -> payout in the same tx and holds nothing across transactions. The
 // deployer EOA becomes `owner` (can later setPayout/setOwner).
@@ -12,10 +12,10 @@
 //
 // Usage:
 //   DEPLOYER_PRIVATE_KEY=0x... PAYOUT_ADDRESS=0x...coldwallet \
-//     node scripts/deploy-nanpay.mjs                 # -> Base SEPOLIA testnet (default)
+//     node scripts/deploy-enclave-pay.mjs                 # -> Base SEPOLIA testnet (default)
 //
 //   NETWORK=base DEPLOYER_PRIVATE_KEY=0x... PAYOUT_ADDRESS=0x... \
-//     node scripts/deploy-nanpay.mjs                 # -> Base MAINNET
+//     node scripts/deploy-enclave-pay.mjs                 # -> Base MAINNET
 //
 // On a successful deploy it writes FORWARDER_ADDRESS into enclaves/gpu/tinfoil-config.yml
 // automatically (pass --no-write-config to skip).
@@ -50,7 +50,7 @@ import { normalize } from "viem/ens";
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..");
-const CONTRACT = path.join(REPO, "contracts", "NanPay.sol");
+const CONTRACT = path.join(REPO, "contracts", "EnclavePay.sol");
 const CONFIG = path.join(REPO, "enclaves", "gpu", "tinfoil-config.yml");
 
 const args = new Set(process.argv.slice(2));
@@ -90,7 +90,7 @@ function compile() {
   const source = fs.readFileSync(CONTRACT, "utf8");
   const input = {
     language: "Solidity",
-    sources: { "NanPay.sol": { content: source } },
+    sources: { "EnclavePay.sol": { content: source } },
     settings: {
       optimizer: { enabled: true, runs: 200 },
       outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } },
@@ -99,7 +99,7 @@ function compile() {
   const out = JSON.parse(solc.compile(JSON.stringify(input)));
   const errs = (out.errors || []).filter((e) => e.severity === "error");
   if (errs.length) die("solc:\n" + errs.map((e) => e.formattedMessage).join("\n"));
-  const c = out.contracts["NanPay.sol"]["NanPay"];
+  const c = out.contracts["EnclavePay.sol"]["EnclavePay"];
   return { abi: c.abi, bytecode: "0x" + c.evm.bytecode.object };
 }
 
@@ -178,7 +178,7 @@ async function main() {
   console.log(`  rpc            ${rpc}`);
   console.log(`  deployer       ${account.address}`);
   console.log(`  deployer ETH   ${formatEther(bal)}`);
-  console.log(`  contract       NanPay  (owner = deployer)`);
+  console.log(`  contract       EnclavePay  (owner = deployer)`);
   console.log(`  usdc  (arg1)   ${usdc}`);
   console.log(`  payout(arg2)   ${payout}   <- USDC lands here`);
   console.log(`  bytecode       ${(bytecode.length / 2 - 1)} bytes`);
@@ -206,7 +206,7 @@ async function main() {
   const addr = getAddress(rcpt.contractAddress);
 
   console.log("\n=======================  DEPLOYED  ============================");
-  console.log(`  NanPay address   ${addr}`);
+  console.log(`  EnclavePay address   ${addr}`);
   console.log(`  explorer         ${net.explorer}/address/${addr}`);
   console.log(`  set in config    FORWARDER_ADDRESS: "${addr}"`);
   console.log("===============================================================\n");
@@ -216,7 +216,7 @@ async function main() {
 
   console.log("\nNext:");
   console.log(`  1. Set FORWARDER_ADDRESS in enclaves/*/tinfoil-config.yml to ${addr}`);
-  console.log("  2. Rebuild+repin the supervisor:  ./scripts/release.sh nan");
+  console.log("  2. Rebuild+repin the supervisor:  ./scripts/release.sh enclave-supervisor");
   console.log("  3. Confirm the enclave has outbound egress to BASE_RPC so it can watch this contract.");
   if (!isMainnet) console.log("  4. Test the pay flow on testnet, THEN re-run with NETWORK=base for mainnet.");
 }

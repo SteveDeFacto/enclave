@@ -1,18 +1,18 @@
 /* ============================================================
    Base chain access — hand-rolled ABI codec (verified vs viem),
    a rotating pool of public RPCs for reads, and the
-   NanDeployments / NanAppCatalog contract surface.
+   EnclaveDeployments / EnclaveAppCatalog contract surface.
    No web3 library loads on the site.
    ============================================================ */
 import { APP_CATALOG_ADDRESS, DEPLOYMENTS_ADDRESS, APP_CATALOG_CHAIN, APP_CATALOG_RPCS } from "./config.js";
-import { NanError } from "./api.js";
+import { EnclaveError } from "./api.js";
 import { wait } from "./util.js";
 
 /* ---- word-level encoders ---- */
 export const pad32 = (h) => h.replace(/^0x/, "").toLowerCase().padStart(64, "0");
 export const encAddr = (a) => pad32(a.replace(/^0x/, ""));
 export const encUint = (n) => pad32(BigInt(n).toString(16));
-export const encBytes32 = (h) => { const x = h.replace(/^0x/, "").toLowerCase(); if (x.length !== 64) throw new NanError("bad payment reference", 0); return x; };
+export const encBytes32 = (h) => { const x = h.replace(/^0x/, "").toLowerCase(); if (x.length !== 64) throw new EnclaveError("bad payment reference", 0); return x; };
 // dynamic `bytes` tail: length word, then the data right-padded to a 32-byte boundary
 export const encBytesTail = (hex) => { const x = hex.replace(/^0x/, "").toLowerCase(); return encUint(x.length / 2) + x.padEnd(Math.ceil(x.length / 64) * 64, "0"); };
 export const randHex = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, "0")).join("");
@@ -22,7 +22,7 @@ export const randHex = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n
 export const usdc6 = (amt) => BigInt(Math.round((parseFloat(amt) || 0) * 100)) * 10000n;
 export const hexBig = (h) => (!h || h === "0x") ? 0n : BigInt(h);
 
-/* ---- NanDeployments: on-chain work items (contracts/DEPLOYMENTS.md) ----
+/* ---- EnclaveDeployments: on-chain work items (contracts/DEPLOYMENTS.md) ----
    create() from the deployer's wallet (they own the record), fund it
    (EIP-3009 USDC or ETH), and enclaves claim + serve it under expiring
    leases - so a deployment outlives any single enclave, its update, or
@@ -30,7 +30,7 @@ export const hexBig = (h) => (!h || h === "0x") ? 0n : BigInt(h);
 export const DEP_SEL = { create:"1a8e502a", fundAuth:"209c0069", fundEth:"9f33dca0", get:"8eaa6ac0",
                          price:"1e897c58", cpuPrice:"3f6195cc", setActive:"6485d678" };
 export const DEP_CREATED_TOPIC = "0x3b201eb11e77934b296f908775fc0a82679683fd83a1232579f1014bcf7d3239"; // Created(bytes32,address,string,uint16,uint16,uint256)
-export const DEP_SCHEMA = [   // mirrors NanDeployments.Deployment field order exactly
+export const DEP_SCHEMA = [   // mirrors EnclaveDeployments.Deployment field order exactly
   {k:"id",t:"bytes32"},{k:"owner",t:"addr"},{k:"appRef",t:"str"},{k:"ports",t:"str"},
   {k:"sshPubKey",t:"str"},{k:"configCid",t:"str"},{k:"gpuMilli",t:"uint"},{k:"cpuMilli",t:"uint"},
   {k:"appPort",t:"uint"},{k:"isPublic",t:"bool"},{k:"active",t:"bool"},{k:"createdAt",t:"uint"},
@@ -38,7 +38,7 @@ export const DEP_SCHEMA = [   // mirrors NanDeployments.Deployment field order e
   {k:"runner",t:"bytes32"},{k:"runnerOperator",t:"addr"},{k:"leaseUntil",t:"uint"},
 ];
 
-/* ---- NanAppCatalog ---- */
+/* ---- EnclaveAppCatalog ---- */
 export const CAT_SEL = {
   appCount:"b55ca2c3", getAppsPage:"a0483de1", getVersionsPage:"2eb7c1f0", owner:"8da5cb5b",
   publishVersion:"adbf439a",   // publishVersion(...,uint32[4] res,string ports) - res = [vramMb, gpuGflops, memMb, cpuGflops]
@@ -72,21 +72,21 @@ export async function baseRpc(method, params){
       const r = await fetch(url, { method:"POST", headers:{ "content-type":"application/json" },
         body: JSON.stringify({ jsonrpc:"2.0", id:1, method, params }),
         signal: AbortSignal.timeout(8000) });   // fail fast and rotate; a hung RPC must not freeze flows
-      if (!r.ok) throw new NanError("HTTP " + r.status, r.status);
+      if (!r.ok) throw new EnclaveError("HTTP " + r.status, r.status);
       const j = await r.json();
       if (j.error){
-        if (/revert/i.test(j.error.message || "")) throw { fatal: true, err: new NanError(j.error.message, 0) };
-        throw new NanError(j.error.message || "rpc error", 0);
+        if (/revert/i.test(j.error.message || "")) throw { fatal: true, err: new EnclaveError(j.error.message, 0) };
+        throw new EnclaveError(j.error.message || "rpc error", 0);
       }
       return j.result;                       // null is a valid result (e.g. pending receipt)
     } catch(e){
       if (e && e.fatal) throw e.err;
-      lastErr = (e instanceof NanError) ? e : new NanError(e.message || String(e), 0);
+      lastErr = (e instanceof EnclaveError) ? e : new EnclaveError(e.message || String(e), 0);
       _rpcIdx++;
       if (attempt === APP_CATALOG_RPCS.length - 1) await wait(700);
     }
   }
-  throw lastErr || new NanError("all Base RPC endpoints failed", 0);
+  throw lastErr || new EnclaveError("all Base RPC endpoints failed", 0);
 }
 export async function ethCall(data){
   return (await baseRpc("eth_call", [{ to: APP_CATALOG_ADDRESS, data }, "latest"])) || "0x";
@@ -94,7 +94,7 @@ export async function ethCall(data){
 export async function depCall(data){
   return (await baseRpc("eth_call", [{ to: DEPLOYMENTS_ADDRESS, data }, "latest"])) || "0x";
 }
-// NanDeployments.get(id) -> one Deployment struct (see DEP_SCHEMA). The tuple
+// EnclaveDeployments.get(id) -> one Deployment struct (see DEP_SCHEMA). The tuple
 // contains dynamic strings, so the return is offset-prefixed like a dynamic type.
 export async function depGet(id){
   const hex = (await depCall("0x" + DEP_SEL.get + pad32(id.replace(/^0x/, "")))).replace(/^0x/, "");
@@ -180,8 +180,8 @@ export async function waitReceipt(hash, tries){
   for (let i = 0; i < tries; i++){
     let rec = null;
     try { rec = await baseRpc("eth_getTransactionReceipt", [hash]); } catch(e){}
-    if (rec){ if (hexBig(rec.status) === 0n) throw new NanError("transaction reverted", 0); return rec; }
+    if (rec){ if (hexBig(rec.status) === 0n) throw new EnclaveError("transaction reverted", 0); return rec; }
     await new Promise(res => setTimeout(res, 2000));
   }
-  throw new NanError("timed out waiting for confirmation (it may still land; hit refresh shortly)", 0);
+  throw new EnclaveError("timed out waiting for confirmation (it may still land; hit refresh shortly)", 0);
 }

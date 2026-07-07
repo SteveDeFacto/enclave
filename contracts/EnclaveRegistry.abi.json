@@ -161,7 +161,7 @@
             "type": "bool"
           }
         ],
-        "internalType": "struct NanRegistry.Enclave",
+        "internalType": "struct EnclaveRegistry.Enclave",
         "name": "",
         "type": "tuple"
       }
@@ -222,7 +222,7 @@
             "type": "bool"
           }
         ],
-        "internalType": "struct NanRegistry.Enclave[]",
+        "internalType": "struct EnclaveRegistry.Enclave[]",
         "name": "page",
         "type": "tuple[]"
       }

@@ -22,7 +22,7 @@ strip = true
 lto = true
 
 [package.metadata.component]
-package = "nan:llm-chat"
+package = "enclave:llm-chat"
 
 [package.metadata.component.target]
 path = "wit"

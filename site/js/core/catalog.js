@@ -1,5 +1,5 @@
 /* ============================================================
-   App store · on-chain catalog (NanAppCatalog on Base) + IPFS CIDs
+   App store · on-chain catalog (EnclaveAppCatalog on Base) + IPFS CIDs
    Apps are versioned: keyed by keccak256(publisher, slug), each with an
    append-only list of releases (own CID, label, verified/yank flags).
    Browsing reads the contract via a public RPC eth_call (no wallet).
@@ -7,7 +7,7 @@
    This module is the shared READ side + the friendly-ref caches:
    the Apps page renders from it, and the Deploy page resolves
    slug:version references and pre-flights the deploy gate with it.
-   Load progress is announced with `nan:catalog` events (detail.type:
+   Load progress is announced with `enclave:catalog` events (detail.type:
    loading | loaded | error) — pages render, this module doesn't.
    ============================================================ */
 import { APP_CATALOG_ADDRESS } from "./config.js";
@@ -34,23 +34,23 @@ export function validPortsCsv(s){
 // paint it instantly, refresh behind it, and a failed refresh keeps the page
 // usable instead of replacing it with an error wall.
 export function catCacheGet(){
-  try { const c = JSON.parse(lsGet("nan_catalog_" + APP_CATALOG_ADDRESS) || "null");
+  try { const c = JSON.parse(lsGet("enclave_catalog_" + APP_CATALOG_ADDRESS) || "null");
         return (c && Array.isArray(c.apps)) ? c : null; } catch(e){ return null; }
 }
-export function catCacheSet(apps){ lsSet("nan_catalog_" + APP_CATALOG_ADDRESS, JSON.stringify({ at: Date.now(), apps })); }
+export function catCacheSet(apps){ lsSet("enclave_catalog_" + APP_CATALOG_ADDRESS, JSON.stringify({ at: Date.now(), apps })); }
 
 export async function loadCatalog(force){
-  if (!catConfigured()){ STORE.loaded = true; emit("nan:catalog", { type: "loaded" }); return; }
+  if (!catConfigured()){ STORE.loaded = true; emit("enclave:catalog", { type: "loaded" }); return; }
   if (STORE.loading || (STORE.loaded && !force)) return;
   STORE.loading = true;
   if (STORE.owner === null)   // fetch alongside the catalog read, not after it: badges need it
-    catOwner().then(o => { STORE.owner = o.toLowerCase(); emit("nan:catalog", { type: "loaded" }); }).catch(() => {});
+    catOwner().then(o => { STORE.owner = o.toLowerCase(); emit("enclave:catalog", { type: "loaded" }); }).catch(() => {});
   if (!STORE.loaded){
     const cached = catCacheGet();
     if (cached){
       STORE.apps = cached.apps; STORE.byId = {}; cached.apps.forEach(a => STORE.byId[a.appId] = a);
-      STORE.loaded = true; emit("nan:catalog", { type: "loaded", stale: true });
-    } else emit("nan:catalog", { type: "loading" });
+      STORE.loaded = true; emit("enclave:catalog", { type: "loaded", stale: true });
+    } else emit("enclave:catalog", { type: "loading" });
   }
   try {
     const n = await appCount();
@@ -61,10 +61,10 @@ export async function loadCatalog(force){
     STORE.loaded = true;
     catCacheSet(apps);
   } catch(e){
-    emit("nan:catalog", { type: "error", message: e.message || String(e) });
+    emit("enclave:catalog", { type: "error", message: e.message || String(e) });
     STORE.loading = false; return;
   }
-  STORE.loading = false; emit("nan:catalog", { type: "loaded" });
+  STORE.loading = false; emit("enclave:catalog", { type: "loaded" });
 }
 
 /* ---- version selection helpers ---- */
@@ -128,7 +128,7 @@ export function slugOfRef(ref){
   const lists = [];
   if (Array.isArray(STORE.apps) && STORE.apps.length) lists.push(STORE.apps);
   try {
-    const raw = lsGet("nan_catalog_" + APP_CATALOG_ADDRESS);
+    const raw = lsGet("enclave_catalog_" + APP_CATALOG_ADDRESS);
     if (raw){ const j = JSON.parse(raw); if (j && Array.isArray(j.apps)) lists.push(j.apps); }
   } catch(e){}
   for (const apps of lists) for (const a of apps){

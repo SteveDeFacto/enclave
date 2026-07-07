@@ -3,10 +3,10 @@
    The site's top bar: brand, primary nav, and a composed
    <c-wallet-button> (which owns the wallet lifecycle).
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import "../wallet-button/wallet-button.js";
 
-class Header extends NanElement {
+class Header extends EnclaveElement {
   static properties = { current: "" };
   static templateUrl = new URL("./header.html", import.meta.url);
 

@@ -7,11 +7,11 @@
 // (transparent egress: the -S egress shim) with two unmodified guest components,
 // proving an app's raw wasi:sockets / wasi:http outbound is transparently routed
 // through this same front — and that the raw bypass is gone. Those tests SKIP
-// unless a patched wasmtime is pointed at via $NAN_EGRESS_WASMTIME, so the pure
+// unless a patched wasmtime is pointed at via $ENCLAVE_EGRESS_WASMTIME, so the pure
 // phase-1 suite stays green everywhere.
 //
 //   run: node --test test/egress.test.mjs
-//   run (incl. phase 2): NAN_EGRESS_WASMTIME=/path/to/wasmtime node --test test/egress.test.mjs
+//   run (incl. phase 2): ENCLAVE_EGRESS_WASMTIME=/path/to/wasmtime node --test test/egress.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -202,19 +202,19 @@ test("control channel rejects a bad relay token", async () => {
 // ===========================================================================
 // These drive an ACTUAL patched wasmtime (`-S egress` shim) so an UNMODIFIED
 // app's raw wasi:sockets / wasi:http outbound is transparently routed through
-// the SAME front + relay as phase 1 — no NAN_EGRESS in the guest. They prove:
+// the SAME front + relay as phase 1 — no ENCLAVE_EGRESS in the guest. They prove:
 //   (1) transparent routing carries the deployment's derived source;
 //   (2) an internal/loopback destination is refused (SSRF; raw bypass closed);
 //   (3) with the network locked down a raw dial reaches nothing directly;
 //   (4) the wasi:http outgoing handler is mediated too (socks5h domain path).
-// Skipped unless $NAN_EGRESS_WASMTIME points at a patched binary — the phase-1
+// Skipped unless $ENCLAVE_EGRESS_WASMTIME points at a patched binary — the phase-1
 // suite above needs no toolchain and stays green everywhere.
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const WASMTIME = process.env.NAN_EGRESS_WASMTIME;
-const GUEST_TCP = process.env.NAN_EGRESS_GUEST_TCP || `${HERE}fixtures/egress-guest-tcp.wasm`;
-const GUEST_HTTP = process.env.NAN_EGRESS_GUEST_HTTP || `${HERE}fixtures/egress-guest-http.wasm`;
-const GUEST_SOCKS = process.env.NAN_EGRESS_GUEST_SOCKS || `${HERE}fixtures/egress-guest-socks.wasm`;
-const phase2Skip = !WASMTIME ? "set $NAN_EGRESS_WASMTIME to a patched wasmtime to run phase-2 e2e"
+const WASMTIME = process.env.ENCLAVE_EGRESS_WASMTIME;
+const GUEST_TCP = process.env.ENCLAVE_EGRESS_GUEST_TCP || `${HERE}fixtures/egress-guest-tcp.wasm`;
+const GUEST_HTTP = process.env.ENCLAVE_EGRESS_GUEST_HTTP || `${HERE}fixtures/egress-guest-http.wasm`;
+const GUEST_SOCKS = process.env.ENCLAVE_EGRESS_GUEST_SOCKS || `${HERE}fixtures/egress-guest-socks.wasm`;
+const phase2Skip = !WASMTIME ? "set $ENCLAVE_EGRESS_WASMTIME to a patched wasmtime to run phase-2 e2e"
   : ![GUEST_TCP, GUEST_HTTP, GUEST_SOCKS].every((g) => fs.existsSync(g)) ? "guest fixtures missing (test/fixtures/*.wasm)"
   : false;
 
@@ -256,18 +256,18 @@ async function phase2Harness(dialTarget) {
 }
 
 // Spawn `wasmtime run` on a command guest with the given TARGET; capture stdout.
-// egressOn injects `-S egress` + the host-side NAN_EGRESS_CRED (guest-invisible);
+// egressOn injects `-S egress` + the host-side ENCLAVE_EGRESS_CRED (guest-invisible);
 // inheritNetwork adds -Sinherit-network (the phase-1 raw path, for the negative);
-// nanEgress exports the guest-visible NAN_EGRESS url (the phase-1 explicit path).
+// enclaveEgress exports the guest-visible ENCLAVE_EGRESS url (the phase-1 explicit path).
 function runTcpGuest({ socksPort, id, target, egressOn = true, inheritNetwork = false,
-                       guest = GUEST_TCP, nanEgress = false }) {
+                       guest = GUEST_TCP, enclaveEgress = false }) {
   const args = ["run", "-Scli", "-Sp3", "-Stcp", "-Sudp", "-Sallow-ip-name-lookup"];
   if (inheritNetwork) args.push("-Sinherit-network");
   if (egressOn) args.push("-S", `egress=127.0.0.1:${socksPort}`);
-  if (nanEgress) args.push("--env", `NAN_EGRESS=socks5h://${id}:${egressToken(SECRET, id)}@127.0.0.1:${socksPort}`);
+  if (enclaveEgress) args.push("--env", `ENCLAVE_EGRESS=socks5h://${id}:${egressToken(SECRET, id)}@127.0.0.1:${socksPort}`);
   args.push("--env", `TARGET=${target}`, guest);
   const env = { ...process.env };
-  if (egressOn) env.NAN_EGRESS_CRED = `${id}:${egressToken(SECRET, id)}`;
+  if (egressOn) env.ENCLAVE_EGRESS_CRED = `${id}:${egressToken(SECRET, id)}`;
   return new Promise((resolve) => {
     const p = spawn(WASMTIME, args, { env, stdio: ["ignore", "pipe", "pipe"] });
     let out = "", err = "";
@@ -302,16 +302,16 @@ test("phase2: a locked-down guest dialing a loopback literal is refused (SSRF; r
   h.teardown();
 });
 
-test("phase2: phase-1 explicit SOCKS (NAN_EGRESS) still works under the lockdown (front pass-through)",
+test("phase2: phase-1 explicit SOCKS (ENCLAVE_EGRESS) still works under the lockdown (front pass-through)",
   { skip: phase2Skip }, async () => {
   const echo = net.createServer((s) => s.on("data", (d) => s.write(d)));
   echo.listen(0, "127.0.0.1"); await once(echo, "listening");
   const h = await phase2Harness({ host: "127.0.0.1", port: echo.address().port });
   // The guest dials the loopback FRONT itself and speaks SOCKS5 explicitly —
   // the shim must pass that one destination through (everything else stays
-  // mediated), or NAN_EGRESS would be dead on phase-2 toolchains.
+  // mediated), or ENCLAVE_EGRESS would be dead on phase-2 toolchains.
   const r = await runTcpGuest({ socksPort: h.socksPort, id: "depS",
-                                target: "egress-fixture.test:80", guest: GUEST_SOCKS, nanEgress: true });
+                                target: "egress-fixture.test:80", guest: GUEST_SOCKS, enclaveEgress: true });
   const m = r.out.match(/^OK (\S+) (.*)$/);
   assert.ok(m, `expected OK <bnd> <reply>, got out=${JSON.stringify(r.out)} err=${r.err.slice(0, 300)}`);
   // BND.ADDR carries the deployment's derived source (guardrail 1, phase-1 semantics)
@@ -343,7 +343,7 @@ test("phase2: the wasi:http outgoing handler is mediated too (serve mode, socks5
   const h = await phase2Harness({ host: "127.0.0.1", port: target.address().port });
   const servePort = 34000 + Math.floor((Date.now() % 1000));
   const id = "depH";
-  const env = { ...process.env, NAN_EGRESS_CRED: `${id}:${egressToken(SECRET, id)}` };
+  const env = { ...process.env, ENCLAVE_EGRESS_CRED: `${id}:${egressToken(SECRET, id)}` };
   // a DOMAIN target exercises the socks5h path (relay-side DNS): the front sends
   // the name, so hyper never resolves it locally.
   const p = spawn(WASMTIME, ["serve", "-Scli", "-Shttp", "-Sp3", "-O", "pooling-allocator=n",

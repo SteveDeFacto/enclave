@@ -3,11 +3,11 @@
    /enclaves table). Assign `.rows` (already sorted upstream) and
    it renders each box's two free pools.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc, fmtNum } from "../../js/core/util.js";
 import { CARD_GB, NODE_RAM_GB, NODE_VCPUS } from "../../js/core/pricing.js";
 
-class FleetList extends NanElement {
+class FleetList extends EnclaveElement {
   static properties = { rows: null };
   static templateUrl = new URL("./fleet-list.html", import.meta.url);
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// deploy-deployments.mjs - compile + deploy contracts/NanDeployments.sol to Base,
+// deploy-deployments.mjs - compile + deploy contracts/EnclaveDeployments.sol to Base,
 // print the address, and (optionally) write it into tinfoil-config.yml as
-// DEPLOYMENTS_ADDRESS. Re-emits contracts/NanDeployments.abi.json on every run so
+// DEPLOYMENTS_ADDRESS. Re-emits contracts/EnclaveDeployments.abi.json on every run so
 // the checked-in ABI can't drift from what's deployed.
 //
-// NanDeployments is the portable deployment ledger: intent + funded balance +
+// EnclaveDeployments is the portable deployment ledger: intent + funded balance +
 // runner lease live on-chain, so any registered enclave can claim a deployment
 // whose runner died and serve it until the funded time runs out. Non-custodial
-// like NanPay (funding forwards payer -> payout in the same tx). The deployer
+// like EnclavePay (funding forwards payer -> payout in the same tx). The deployer
 // EOA becomes `owner` (sets pricePerSec6 / leaseSec / payout; holds no funds).
 //
 // Deps (run from repo root):  npm i viem solc
@@ -24,7 +24,7 @@
 //   PAYOUT_ADDRESS        cold wallet that receives funds. If unset, resolves
 //                         PAYOUT_ENS (default nan.eth) via ETH_RPC (L1 mainnet).
 //   PAYOUT_ENS            ENS name to resolve when PAYOUT_ADDRESS is unset.
-//   REGISTRY_ADDRESS      NanRegistry to gate claims against. If unset, read from
+//   REGISTRY_ADDRESS      EnclaveRegistry to gate claims against. If unset, read from
 //                         tinfoil-config.yml's REGISTRY_ADDRESS line.
 //   ETH_USD_FEED          Chainlink ETH/USD aggregator; defaults per network;
 //                         "none" disables ETH funding (USDC only).
@@ -69,8 +69,8 @@ import { normalize } from "viem/ens";
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..");
-const CONTRACT = path.join(REPO, "contracts", "NanDeployments.sol");
-const ABI_OUT = path.join(REPO, "contracts", "NanDeployments.abi.json");
+const CONTRACT = path.join(REPO, "contracts", "EnclaveDeployments.sol");
+const ABI_OUT = path.join(REPO, "contracts", "EnclaveDeployments.abi.json");
 const CONFIG = path.join(REPO, "enclaves", "gpu", "tinfoil-config.yml");
 const CONFIG_CPU = path.join(REPO, "enclaves", "cpu", "tinfoil-config.yml");  // CPU flavor points at the same ledger
 
@@ -115,7 +115,7 @@ function compile() {
   const source = fs.readFileSync(CONTRACT, "utf8");
   const input = {
     language: "Solidity",
-    sources: { "NanDeployments.sol": { content: source } },
+    sources: { "EnclaveDeployments.sol": { content: source } },
     settings: {
       optimizer: { enabled: true, runs: 200 },
       outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } },
@@ -124,7 +124,7 @@ function compile() {
   const out = JSON.parse(solc.compile(JSON.stringify(input)));
   const errs = (out.errors || []).filter((e) => e.severity === "error");
   if (errs.length) die("solc:\n" + errs.map((e) => e.formattedMessage).join("\n"));
-  const c = out.contracts["NanDeployments.sol"]["NanDeployments"];
+  const c = out.contracts["EnclaveDeployments.sol"]["EnclaveDeployments"];
   fs.writeFileSync(ABI_OUT, JSON.stringify(c.abi, null, 2) + "\n");   // keep the checked-in ABI honest
   return { abi: c.abi, bytecode: "0x" + c.evm.bytecode.object };
 }
@@ -145,7 +145,7 @@ async function resolvePayout(explicit) {
   return getAddress(addr);
 }
 
-// Claims are gated to NanRegistry operators, so the ledger must point at the same
+// Claims are gated to EnclaveRegistry operators, so the ledger must point at the same
 // registry the enclaves advertise to. Default to the one wired into the config.
 function resolveRegistry() {
   const explicit = process.env.REGISTRY_ADDRESS;
@@ -229,7 +229,7 @@ async function readWithRetry(label, fn, tries = 6, gapMs = 5000) {
 // failed follow-up step can never lose the deployed address again.
 function announce(addr, net) {
   console.log("\n=======================  DEPLOYED  ============================");
-  console.log(`  NanDeployments   ${addr}`);
+  console.log(`  EnclaveDeployments   ${addr}`);
   console.log(`  explorer         ${net.explorer}/address/${addr}`);
   console.log(`  set in config    DEPLOYMENTS_ADDRESS: "${addr}"`);
   console.log("===============================================================\n");
@@ -337,7 +337,7 @@ async function main() {
       if (!/^y(es)?$/i.test(ans)) { console.log("Skipped setPrice (re-run with --finish when ready)."); return; }
     }
     await ensurePrice(pub, wallet, abi, addr, price, cpuPrice);
-    console.log("\nNext:  rebuild+repin the supervisor:  ./scripts/release.sh nan");
+    console.log("\nNext:  rebuild+repin the supervisor:  ./scripts/release.sh enclave-supervisor");
     return;
   }
 
@@ -354,7 +354,7 @@ async function main() {
   console.log(`  rpc            ${rpc}`);
   console.log(`  deployer       ${account.address}`);
   console.log(`  deployer ETH   ${formatEther(bal)}`);
-  console.log(`  contract       NanDeployments  (owner = deployer)`);
+  console.log(`  contract       EnclaveDeployments  (owner = deployer)`);
   console.log(`  usdc    (arg1) ${usdc}`);
   console.log(`  payout  (arg2) ${payout}   <- funds land here`);
   console.log(`  registry(arg3) ${registry}   <- claims gated to its operators`);
@@ -392,7 +392,7 @@ async function main() {
 
   console.log("\nNext:");
   console.log(`  1. Ensure DEPLOYMENTS_ADDRESS in tinfoil-config.yml is ${addr} (written above)`);
-  console.log("  2. Rebuild+repin the supervisor (CLAIM_ENABLED is on in tinfoil-config.yml):  ./scripts/release.sh nan");
+  console.log("  2. Rebuild+repin the supervisor (CLAIM_ENABLED is on in tinfoil-config.yml):  ./scripts/release.sh enclave-supervisor");
   if (!isMainnet) console.log("  3. Exercise create/fund/claim/renew/release on testnet, THEN re-run with NETWORK=base.");
 }
 

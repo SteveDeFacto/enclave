@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>vault - wallet-gated encrypted volumes on NaN</title>
+<title>vault - wallet-gated encrypted volumes on Enclave</title>
 <style>
   :root {
     --bg: #0b0e14; --panel: #131722; --border: #232a3a;
@@ -61,7 +61,7 @@
 
 <div class="card">
   <h2>chain</h2>
-  <div class="row"><label for="cfgContract">NanVolumeAccess</label><input id="cfgContract" placeholder="0x… (the on-chain ACL contract)" spellcheck="false"></div>
+  <div class="row"><label for="cfgContract">EnclaveVolumeAccess</label><input id="cfgContract" placeholder="0x… (the on-chain ACL contract)" spellcheck="false"></div>
   <div class="row"><label for="cfgRpc">RPC</label><input id="cfgRpc" spellcheck="false"><button id="btnApplyCfg" class="sec">apply</button></div>
   <div class="row">
     <button id="btnConnect">Connect wallet</button><span id="who" class="chip">not connected</span>
@@ -87,7 +87,7 @@
 
 <div class="card">
   <h2>unlock a deployment</h2>
-  <div class="row"><label for="inDep">deployment id</label><input id="inDep" placeholder="0x… (bytes32 id from NanDeployments)" spellcheck="false"><button id="btnResolve" class="sec">Resolve runner</button></div>
+  <div class="row"><label for="inDep">deployment id</label><input id="inDep" placeholder="0x… (bytes32 id from EnclaveDeployments)" spellcheck="false"><button id="btnResolve" class="sec">Resolve runner</button></div>
   <div class="info" id="depInfo">the runner enclave is resolved from chain state - no gateway is trusted for discovery</div>
   <div class="row" style="margin-top:8px">
     <button id="btnVerify">Verify enclave attestation</button>
@@ -109,7 +109,7 @@
   </div>
   <div class="row" style="margin-top:8px">
     <label for="inVek">VEK (bootstrap)</label>
-    <input id="inVek" placeholder="0x… the 32-byte key printed by `nan-vault pack` - sealed to your wallet, then cleared" spellcheck="false" autocomplete="off">
+    <input id="inVek" placeholder="0x… the 32-byte key printed by `enclave-vault pack` - sealed to your wallet, then cleared" spellcheck="false" autocomplete="off">
     <button id="btnSelfGrant">Self-grant Writer</button>
   </div>
   <div class="row" style="margin-top:8px">

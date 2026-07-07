@@ -4,7 +4,7 @@
     "title": "Enclave API",
     "version": "1.0.0",
     "summary": "Trustless on-demand confidential GPU compute for WebAssembly apps.",
-    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority; just the request/response socket the runtime hands it. Apps are published to the on-chain app catalog (NanAppCatalog on Base) addressed by IPFS CID; the enclave fetches the CID and verifies every byte hashes to it before launch, and the verified CID is folded into the attestation. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
+    "description": "Deploy a confidential WebAssembly app into a hardware-isolated enclave with an H200 in NVIDIA confidential-computing mode exposed to it. Each app is a `wasi:http` component that runs sandboxed inside the enclave: no SSH, no host filesystem, no host environment, no ambient authority; just the request/response socket the runtime hands it. Apps are published to the on-chain app catalog (EnclaveAppCatalog on Base) addressed by IPFS CID; the enclave fetches the CID and verifies every byte hashes to it before launch, and the verified CID is folded into the attestation. Authenticate with an Ethereum signature (SIWE), pay USDC or ETH per deployment (no accounts, no held balance), and verify the enclave yourself before you send data. Every endpoint is CORS-enabled so it can be driven directly from browser JavaScript."
   },
   "servers": [
     {
@@ -255,7 +255,7 @@
         ],
         "operationId": "createDeployment",
         "summary": "Create a deployment (awaiting payment)",
-        "description": "RETIRED on Wasm enclaves - returns 410 `deploy_on_chain` with the on-chain coordinates. Deployments are created on the NanDeployments contract (Base), not through this endpoint: the ledger holds the spec and the funded balance, so a deployment survives enclave updates and crashes (runners serve it under expiring leases; a dead runner's lease lapses and any enclave re-claims the work). Flow: (1) create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid) from YOUR wallet - msg.sender owns the record; the id is the Created event's first topic; shares are 1/1000ths and the app's catalog specs set the minimums runners will accept. (2) Fund it: fundWithAuthorization (EIP-3009 USDC ReceiveWithAuthorization signed to the contract, nonce prefixed with the id's first 16 bytes) or fundEth (credited at the contract's Chainlink ETH/USD read); funds forward to Enclave in the same tx, the credit lands in on-chain balance6. (3) Optionally POST /claim-hint {id} so the fleet claims immediately instead of on the ~60s sweep. Runners enforce the same catalog-approval gate (403-equivalent: unapproved CIDs are never claimed) and the same share minimums. GET /pricing carries the contract address, USDC EIP-712 domain, and an ETH/USD quote.",
+        "description": "RETIRED on Wasm enclaves - returns 410 `deploy_on_chain` with the on-chain coordinates. Deployments are created on the EnclaveDeployments contract (Base), not through this endpoint: the ledger holds the spec and the funded balance, so a deployment survives enclave updates and crashes (runners serve it under expiring leases; a dead runner's lease lapses and any enclave re-claims the work). Flow: (1) create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid) from YOUR wallet - msg.sender owns the record; the id is the Created event's first topic; shares are 1/1000ths and the app's catalog specs set the minimums runners will accept. (2) Fund it: fundWithAuthorization (EIP-3009 USDC ReceiveWithAuthorization signed to the contract, nonce prefixed with the id's first 16 bytes) or fundEth (credited at the contract's Chainlink ETH/USD read); funds forward to Enclave in the same tx, the credit lands in on-chain balance6. (3) Optionally POST /claim-hint {id} so the fleet claims immediately instead of on the ~60s sweep. Runners enforce the same catalog-approval gate (403-equivalent: unapproved CIDs are never claimed) and the same share minimums. GET /pricing carries the contract address, USDC EIP-712 domain, and an ETH/USD quote.",
         "requestBody": {
           "required": true,
           "content": {
@@ -288,7 +288,7 @@
             }
           },
           "403": {
-            "description": "App not approved (`not_approved`): the referenced catalog app version has not been approved by the catalog owner (or was rejected, yanked, or delisted). Only the NanAppCatalog deployer can approve a version, by signing a setApproval transaction; until then its ipfs:// CID cannot be deployed.",
+            "description": "App not approved (`not_approved`): the referenced catalog app version has not been approved by the catalog owner (or was rejected, yanked, or delisted). Only the EnclaveAppCatalog deployer can approve a version, by signing a setApproval transaction; until then its ipfs:// CID cannot be deployed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -353,7 +353,7 @@
       "post": {
         "operationId": "claimHint",
         "summary": "Nudge the fleet to claim a funded on-chain deployment right now",
-        "description": "Unauthenticated fast-path for NanDeployments work items: after create() + funding, POST the bytes32 id here and every live enclave immediately evaluates the deployment (capacity, catalog approval, share minimums) and races to claim it - the contract referees, the loser's tx reverts. Without a hint the sweep claims funded work within about a minute. The response is advisory: accepted=true means an enclave is attempting the claim in its background; watch NanDeployments.get(id).runner/leaseUntil for the authoritative result.",
+        "description": "Unauthenticated fast-path for EnclaveDeployments work items: after create() + funding, POST the bytes32 id here and every live enclave immediately evaluates the deployment (capacity, catalog approval, share minimums) and races to claim it - the contract referees, the loser's tx reverts. Without a hint the sweep claims funded work within about a minute. The response is advisory: accepted=true means an enclave is attempting the claim in its background; watch EnclaveDeployments.get(id).runner/leaseUntil for the authoritative result.",
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "type": "object", "required": ["id"], "properties": {
@@ -778,7 +778,7 @@
       },
       "PaymentInstructions": {
         "type": "object",
-        "description": "How to fund (or top up) a deployment by paying the NanPay forwarder. Funds pass straight through to Enclave; nothing is custodied.",
+        "description": "How to fund (or top up) a deployment by paying the EnclavePay forwarder. Funds pass straight through to Enclave; nothing is custodied.",
         "properties": {
           "chainId": {
             "type": "integer",
@@ -798,7 +798,7 @@
               "string",
               "null"
             ],
-            "description": "NanPay contract to call. null until configured.",
+            "description": "EnclavePay contract to call. null until configured.",
             "example": "0x..."
           },
           "deploymentRef": {
@@ -1421,7 +1421,7 @@
           },
           "firewall": {
             "type": "object",
-            "description": "Ports the app may bind, from its catalog version's firewall config (the store's Use-in-Deploy prefills this). Entries: `http` (default: standard wasi:http web app), `http:N` (app serves HTTP on N itself), `tcp:N`, `udp:N`; N in 1-19999 excluding 8080/8091 (labels below 1024, e.g. udp:53, are always remapped to an unprivileged actual). Omitted/empty = standard web app with NO socket capability. Ports are LOGICAL: each deployment gets its own actual loopback bind (see `portMap`; passed to the app as `NAN_PORTS=tcp:5432=31245`), so multiple tenants can run the same app simultaneously without conflicts. When ports are declared the app gets wasi:sockets and the enclave audits its binds; binding an unassigned port kills the app. Declared TCP ports are reached through the attested origin as a WebSocket bridge at `/x/{id}/tcp/{logical-port}` (auth follows `public`).",
+            "description": "Ports the app may bind, from its catalog version's firewall config (the store's Use-in-Deploy prefills this). Entries: `http` (default: standard wasi:http web app), `http:N` (app serves HTTP on N itself), `tcp:N`, `udp:N`; N in 1-19999 excluding 8080/8091 (labels below 1024, e.g. udp:53, are always remapped to an unprivileged actual). Omitted/empty = standard web app with NO socket capability. Ports are LOGICAL: each deployment gets its own actual loopback bind (see `portMap`; passed to the app as `ENCLAVE_PORTS=tcp:5432=31245`), so multiple tenants can run the same app simultaneously without conflicts. When ports are declared the app gets wasi:sockets and the enclave audits its binds; binding an unassigned port kills the app. Declared TCP ports are reached through the attested origin as a WebSocket bridge at `/x/{id}/tcp/{logical-port}` (auth follows `public`).",
             "properties": {
               "ports": {
                 "type": "array",
@@ -1851,11 +1851,11 @@
         "properties": {
           "service": {
             "type": "string",
-            "example": "nan-supervisor/0.1.0"
+            "example": "enclave-supervisor/0.1.0"
           },
           "contract": {
             "type": "string",
-            "example": "nan-openapi/1.0.0"
+            "example": "enclave-openapi/1.0.0"
           },
           "chainId": {
             "type": "integer",

@@ -4,22 +4,22 @@
    trees, request/response examples, runnable fetch()/cURL
    samples (the ▶ run button evaluates the displayed snippet
    against the live API with the session's address + token).
-   Dispatches a document-level `nan:api-rendered` event once the
+   Dispatches a document-level `enclave:api-rendered` event once the
    operations exist, so deep links (#op-…) can resolve.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { $$, esc, hlJson, hlCode, copyText, on, emit } from "../../js/core/util.js";
-import { Nan } from "../../js/core/api.js";
+import { Enclave } from "../../js/core/api.js";
 import { loadSpec, getSpec, deref, schemaExample, typeLabel, schemaTree, bodyExample, bodySchema, responseExample, collectOps } from "../../js/core/spec.js";
 
 const SAMPLE_ID = "dep_3xK9f2Qa";
 // samples embed the CONNECTED wallet's address so they run as-is; a full-length
 // (still fake) address stands in until someone signs in - never an elided "0x…".
 const EX_ADDR_FULL = "0x4E5A101112131415161718191a1B1C1D1E1Fb9c1";
-const sampFill = (s) => s.replace(/0x4E5A\.\.\.b9c1/g, Nan.address || EX_ADDR_FULL);
+const sampFill = (s) => s.replace(/0x4E5A\.\.\.b9c1/g, Enclave.address || EX_ADDR_FULL);
 const opPublic = (op) => Array.isArray(op.security) && op.security.length === 0;
 
-class ApiReference extends NanElement {
+class ApiReference extends EnclaveElement {
   static templateUrl = new URL("./api-reference.html", import.meta.url);
 
   constructor() {
@@ -34,11 +34,11 @@ class ApiReference extends NanElement {
     if (this._wired) return;
     this._wired = true;
     // samples embed the connected address + token var; keep them current
-    on("nan:wallet", () => this.refreshSamples());
+    on("enclave:wallet", () => this.refreshSamples());
     loadSpec().then(spec => {
       this.BASE = spec.servers[0].url;
       this.renderApi();
-      emit("nan:api-rendered");
+      emit("enclave:api-rendered");
     }, e => {
       const m = this.querySelector(".api-main");
       if (m) m.innerHTML = '<div class="store-note">Couldn’t load openapi.json: ' + esc(e.message || String(e)) + '</div>';
@@ -206,7 +206,7 @@ class ApiReference extends NanElement {
   async runSample(oi, btn) {
     const s = this.SAMP[oi]; if (!s) return;
     const out = this.querySelector('[data-srun="' + oi + '"]'); if (!out) return;
-    if (s.auth && !Nan.token){
+    if (s.auth && !Enclave.token){
       out.innerHTML = '<div class="wp-err" style="margin-top:8px">This endpoint needs auth - hit Sign in first, then run again.</div>';
       return;
     }
@@ -214,7 +214,7 @@ class ApiReference extends NanElement {
     const t0 = btn.textContent; btn.disabled = true; btn.textContent = "running…";
     try {
       const fn = new Function("LOGIN_TOKEN", '"use strict"; return (async () => {\n' + code + '\nreturn { status: res.status, ok: res.ok, data };\n})();');
-      const r = await fn(Nan.token || "");
+      const r = await fn(Enclave.token || "");
       out.innerHTML = '<div class="code" style="margin-top:8px"><div class="codebar"><span class="fn">' +
         (r.ok ? "" : "⚠ ") + esc(String(r.status)) + ' response</span></div>' +
         '<pre style="margin:0;padding:13px 16px;max-height:280px;overflow:auto"><code>' + hlJson(r.data) + "</code></pre></div>";

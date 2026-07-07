@@ -1,6 +1,6 @@
 // Bundle js/vault-app.mjs -> src/vault.js (checked in; served by the wasm).
 //
-// Everything the page runs is vendored at build time - scripts/nan-vault.mjs
+// Everything the page runs is vendored at build time - scripts/enclave-vault.mjs
 // (the protocol), viem (chain access), @tinfoilsh/verifier (attestation) -
 // so the served app has NO runtime CDN dependency: a script fetched at run
 // time could exfiltrate the wallet-derived vault key or an unsealed VEK.
@@ -20,14 +20,14 @@ const r = await build({
   format: "iife",
   platform: "browser",
   target: "es2020",
-  // nan-vault.mjs lazily imports node:fs/child_process in its node-only CLI
+  // enclave-vault.mjs lazily imports node:fs/child_process in its node-only CLI
   // paths, and the verifier lazily imports zlib as its no-DecompressionStream
   // fallback (every browser has DecompressionStream); keep those imports
   // external so they never execute in the browser.
   external: ["node:*", "zlib"],
   define: {
     "process.env.NODE_ENV": '"production"',
-    // nan-vault.mjs's run-as-CLI guard reads process.argv at module load; in
+    // enclave-vault.mjs's run-as-CLI guard reads process.argv at module load; in
     // the browser there is no process - pin the guard to a constant miss.
     "process.argv": "[]",
     "import.meta.url": '""',

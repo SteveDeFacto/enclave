@@ -11,7 +11,7 @@ import "../../components/section-head/section-head.js";
 import "../../components/app-card/app-card.js";
 import { $, $$, esc, short, blen, showToast, on } from "../core/util.js";
 import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, IPFS_UPLOAD_URL, MAX_WASM_MB, MAX_WASM_BYTES, BASE_CHAIN } from "../core/config.js";
-import { Nan, NanError } from "../core/api.js";
+import { Enclave, EnclaveError } from "../core/api.js";
 import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, waitReceipt } from "../core/chain.js";
 import { connectWallet, ensureBaseChain, sendTx } from "../core/wallet.js";
 import { STORE, loadCatalog, selIdx, appVerified, validPortsCsv, REF_CACHE, PORTS_CACHE, MINS_CACHE } from "../core/catalog.js";
@@ -22,7 +22,7 @@ import { navigate } from "../boot.js";
 function renderApps(){
   const grid = $("#storeGrid"), count = $("#storeCount"); if (!grid) return;
   if (!catConfigured()){
-    grid.innerHTML = '<div class="store-note">The on-chain catalog isn’t wired up on this deployment yet.<br><span class="dim">Deploy <code>NanAppCatalog</code> with <code>scripts/deploy-app-catalog.mjs</code>; it writes the address in for you.</span></div>';
+    grid.innerHTML = '<div class="store-note">The on-chain catalog isn’t wired up on this deployment yet.<br><span class="dim">Deploy <code>EnclaveAppCatalog</code> with <code>scripts/deploy-app-catalog.mjs</code>; it writes the address in for you.</span></div>';
     if (count) count.textContent = ""; return;
   }
   if (!STORE.loaded){ grid.innerHTML = '<div class="store-note">reading catalog from Base…</div>'; return; }
@@ -30,7 +30,7 @@ function renderApps(){
   // Delisted apps are hidden from the public store, but their PUBLISHER (and
   // the catalog owner) still see them - that's the only path back: relist, or
   // publish a new version to the slug (which auto-relists).
-  const me = (Nan.address || "").toLowerCase();
+  const me = (Enclave.address || "").toLowerCase();
   const canSeeDelisted = (a) => me && (a.publisher.toLowerCase() === me || (STORE.owner && me === STORE.owner));
   let apps = STORE.apps.filter(a => a.versions.length && (a.active || canSeeDelisted(a)));
   if (STORE.filter === "verified") apps = apps.filter(appVerified);
@@ -57,7 +57,7 @@ function useInDeploy(app, v){
   PORTS_CACHE[friendly] = v.ports || "";
   MINS_CACHE[friendly] = minPctsOf(v);
   try {
-    sessionStorage.setItem("nan_use_in_deploy", JSON.stringify({
+    sessionStorage.setItem("enclave_use_in_deploy", JSON.stringify({
       friendly, cid: v.cid, ports: v.ports || "", mins: MINS_CACHE[friendly] }));
   } catch(e){}
   // same page, new search: the router re-fetches + swaps <main>, and boot()'s
@@ -72,17 +72,17 @@ function useInDeploy(app, v){
 // gate at deploy. WebAssembly.validate() can't help: it only validates core
 // modules, and Enclave apps are components, so we check the binary preamble by hand.
 async function validateWasm(file){
-  if (!/\.wasm$/i.test(file.name || "")) throw new NanError("Pick a .wasm file.", 0);
-  if (file.size < 8) throw new NanError("That file is too small to be a WebAssembly module.", 0);
-  if (file.size > MAX_WASM_BYTES) throw new NanError("Too large: max " + MAX_WASM_MB + " MB (this file is " + (file.size / 1048576).toFixed(1) + " MB).", 0);
+  if (!/\.wasm$/i.test(file.name || "")) throw new EnclaveError("Pick a .wasm file.", 0);
+  if (file.size < 8) throw new EnclaveError("That file is too small to be a WebAssembly module.", 0);
+  if (file.size > MAX_WASM_BYTES) throw new EnclaveError("Too large: max " + MAX_WASM_MB + " MB (this file is " + (file.size / 1048576).toFixed(1) + " MB).", 0);
   const h = new Uint8Array(await file.slice(0, 8).arrayBuffer());
   if (!(h[0] === 0x00 && h[1] === 0x61 && h[2] === 0x73 && h[3] === 0x6d))    // "\0asm" magic
-    throw new NanError("Not a WebAssembly file (missing the \\0asm magic bytes).", 0);
+    throw new EnclaveError("Not a WebAssembly file (missing the \\0asm magic bytes).", 0);
   // Preamble after the magic is version:u16 + layer:u16. Key on the layer, which is
   // stable across component-version bumps: 0 = core module, 1 = component.
   const layer = h[6] | (h[7] << 8);
-  if (layer === 0) throw new NanError("This is a core wasm module, but Enclave runs wasi:http *components*. Rebuild with cargo-component (target wasm32-wasip2).", 0);
-  if (layer !== 1) throw new NanError("Unrecognized wasm preamble (layer " + layer + "); expected a wasi:http component.", 0);
+  if (layer === 0) throw new EnclaveError("This is a core wasm module, but Enclave runs wasi:http *components*. Rebuild with cargo-component (target wasm32-wasip2).", 0);
+  if (layer !== 1) throw new EnclaveError("Unrecognized wasm preamble (layer " + layer + "); expected a wasi:http component.", 0);
   return true;
 }
 // In-flight publish upload (XHR so we get upload progress - fetch can't report
@@ -91,8 +91,8 @@ async function validateWasm(file){
 let pubXhr = null, pubSeq = 0;
 function putWasm(file, onProgress){
   return new Promise((resolve, reject) => {
-    if (!IPFS_UPLOAD_URL) return reject(new NanError("Direct upload isn’t configured here; paste a CID you’ve pinned (e.g. `ipfs add app.wasm`).", 0));
-    if (file.size > MAX_WASM_BYTES) return reject(new NanError("Too large: max " + MAX_WASM_MB + " MB.", 0));
+    if (!IPFS_UPLOAD_URL) return reject(new EnclaveError("Direct upload isn’t configured here; paste a CID you’ve pinned (e.g. `ipfs add app.wasm`).", 0));
+    if (file.size > MAX_WASM_BYTES) return reject(new EnclaveError("Too large: max " + MAX_WASM_MB + " MB.", 0));
     // raw bytes to the validating gateway; it re-checks size + wasm component preamble
     // server-side, pins to IPFS, and returns { cid }. (The browser checks are just UX.)
     const xhr = new XMLHttpRequest();
@@ -100,12 +100,12 @@ function putWasm(file, onProgress){
     xhr.setRequestHeader("content-type", "application/wasm");
     xhr.responseType = "json";
     xhr.upload.onprogress = (ev) => { if (ev.lengthComputable && onProgress) onProgress(ev.loaded, ev.total); };
-    xhr.onerror = () => reject(new NanError("upload failed: network error", 0));
-    xhr.onabort = () => reject(new NanError("upload canceled", 0));
+    xhr.onerror = () => reject(new EnclaveError("upload failed: network error", 0));
+    xhr.onabort = () => reject(new EnclaveError("upload canceled", 0));
     xhr.onload = () => {
       const j = xhr.response || {};
-      if (xhr.status < 200 || xhr.status >= 300) return reject(new NanError("upload rejected: " + (j.error || ("HTTP " + xhr.status)), 0));
-      if (!j.cid) return reject(new NanError("gateway returned no CID", 0));
+      if (xhr.status < 200 || xhr.status >= 300) return reject(new EnclaveError("upload rejected: " + (j.error || ("HTTP " + xhr.status)), 0));
+      if (!j.cid) return reject(new EnclaveError("gateway returned no CID", 0));
       resolve(j.cid);
     };
     pubXhr = xhr;
@@ -122,10 +122,10 @@ function setPubUploading(on){
 async function ensureCatalogChain(){
   if (APP_CATALOG_CHAIN === BASE_CHAIN) return ensureBaseChain();
   const hex = "0x" + APP_CATALOG_CHAIN.toString(16);
-  let cur; try { cur = await Nan.provider.request({ method: "eth_chainId" }); } catch { cur = null; }
+  let cur; try { cur = await Enclave.provider.request({ method: "eth_chainId" }); } catch { cur = null; }
   if (cur && String(cur).toLowerCase() === hex) return;
-  try { await Nan.provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hex }] }); }
-  catch(e){ throw new NanError("Switch your wallet to chain " + APP_CATALOG_CHAIN + " to publish.", 0); }
+  try { await Enclave.provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hex }] }); }
+  catch(e){ throw new EnclaveError("Switch your wallet to chain " + APP_CATALOG_CHAIN + " to publish.", 0); }
 }
 function pubStatus(msg, err){ const el = $("#pubStatus"); if (!el) return; el.textContent = msg || ""; el.className = "pub-status" + (err ? " err" : ""); }
 async function onPubFile(e){
@@ -198,7 +198,7 @@ async function publishApp(){
   //    metadata-fix path (same bytes, corrected specs/ports) and is allowed;
   //    the deploy gate then follows the newest listing.
   if (STORE.apps){
-    const me = (Nan.address || "").toLowerCase();
+    const me = (Enclave.address || "").toLowerCase();
     for (const a of STORE.apps){
       const hit = (a.versions || []).find(v => v.cid === cid);
       if (!hit) continue;
@@ -208,13 +208,13 @@ async function publishApp(){
       break;
     }
     // 2) version labels are immutable history within an app (your namespace)
-    const mine = STORE.apps.find(a => a.slug === slug && Nan.address && (a.publisher || "").toLowerCase() === Nan.address.toLowerCase());
+    const mine = STORE.apps.find(a => a.slug === slug && Enclave.address && (a.publisher || "").toLowerCase() === Enclave.address.toLowerCase());
     if (mine && (mine.versions || []).some(v => v.version === version))
       return pubStatus("version " + version + " of " + slug + " already exists - labels are immutable history; bump it (e.g. 1.0.1).", true);
   }
   const btn = $("#pubSubmit"); btn.disabled = true; const lbl = btn.textContent; btn.textContent = "working…";
   try {
-    if (!Nan.provider) await connectWallet();
+    if (!Enclave.provider) await connectWallet();
     await ensureCatalogChain();
     pubStatus("confirm the transaction in your wallet…");
     // uint32[4] is a STATIC array: it ABI-encodes as four inline words, exactly
@@ -240,7 +240,7 @@ async function publishApp(){
 }
 async function catTx(data, verb){
   try {
-    if (!Nan.provider) await connectWallet();
+    if (!Enclave.provider) await connectWallet();
     await ensureCatalogChain();
     const hash = await sendTx(APP_CATALOG_ADDRESS, data);
     showToast(verb + " · " + hash.slice(0, 12) + "…");
@@ -379,7 +379,7 @@ function initStore(){
 /* ============================================================
    boot
    ============================================================ */
-on("nan:catalog", (d) => {
+on("enclave:catalog", (d) => {
   if (d.type === "error"){
     if (STORE.apps && STORE.apps.length)          // stale view beats an error wall
       showToast("catalog refresh failed (" + d.message + ") · showing the last good read");
@@ -392,7 +392,7 @@ on("nan:catalog", (d) => {
   }
   renderApps();
 });
-on("nan:wallet", () => { if (STORE.loaded) renderApps(); });   // publisher/owner buttons follow the connected wallet
+on("enclave:wallet", () => { if (STORE.loaded) renderApps(); });   // publisher/owner buttons follow the connected wallet
 // (both subscriptions are module-load-once; renderApps null-guards #storeGrid,
 // so they're inert while another page's <main> is mounted)
 

@@ -1,4 +1,4 @@
-// nan-discover — read the on-chain registry, aggregate live availability, pick
+// enclave-discover — read the on-chain registry, aggregate live availability, pick
 // an enclave. No trusted gateway: this runs in the CALLER (browser or server).
 //
 // IMPORTANT — this helper does discovery + placement ONLY. It does NOT verify
@@ -10,7 +10,7 @@
 // at connect time. Treat `repo` from the registry as the value you hand to
 // SecureClient(endpoint, repo).
 //
-// Node: `npm i viem` then `node nan-discover.mjs`. Browser: import the same way;
+// Node: `npm i viem` then `node enclave-discover.mjs`. Browser: import the same way;
 // `fetch` and viem both work in-page.
 
 import { createPublicClient, http } from "viem";
@@ -101,7 +101,7 @@ export async function pickEnclave(want = {}, address = REGISTRY_ADDRESS) {
   };
 }
 
-// CLI: `node nan-discover.mjs [gpuShare] [cpuShare]` (0..1 each)
+// CLI: `node enclave-discover.mjs [gpuShare] [cpuShare]` (0..1 each)
 if (import.meta.url === `file://${process.argv[1]}`) {
   const want = { gpuShare: parseFloat(process.argv[2] || "0"), cpuShare: parseFloat(process.argv[3] || "0") };
   pickEnclave(want).then((r) => {

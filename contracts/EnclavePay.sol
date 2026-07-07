@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @title NanPay — non-custodial pay-per-deploy forwarder for NAN.
+/// @title EnclavePay — non-custodial pay-per-deploy forwarder for Enclave.
 /// @notice Users fund a deployment (and top it up) by paying USDC here. The
 ///         contract holds NOTHING across transactions: USDC is pulled from the
-///         payer and forwarded to `payout` (the NAN cold wallet, e.g. nan.eth's
+///         payer and forwarded to `payout` (the Enclave cold wallet's
 ///         address) in the SAME transaction. It emits Paid(deploymentId, payer,
 ///         amount) so the supervisor — which only WATCHES this contract, never
 ///         holds a key — can convert each payment into runtime and extend the
@@ -43,9 +43,9 @@ interface IERC20Auth {
     ) external;
 }
 
-contract NanPay {
+contract EnclavePay {
     address public owner;             // can update payout / hand off ownership
-    address public payout;            // where USDC lands (nan.eth cold wallet)
+    address public payout;            // where USDC lands (the Enclave cold wallet)
     IERC20Auth public immutable usdc; // USDC token (Base: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913)
 
     event Paid(bytes32 indexed deploymentId, address indexed payer, uint256 amount);

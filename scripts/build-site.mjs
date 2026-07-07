@@ -30,7 +30,7 @@ const DIST = path.join(SITE, "dist");
 /* inline each component's .html template into its js: the source keeps the
    LWC-style `static templateUrl = new URL("./x.html", import.meta.url)`
    pairing (fetched at runtime in dev); the bundle replaces it with the
-   template text so NanElement renders synchronously and never fetches. */
+   template text so EnclaveElement renders synchronously and never fetches. */
 const inlineTemplates = {
   name: "inline-templates",
   setup(b) {
@@ -79,7 +79,7 @@ const result = await build({
    Expand every <c-*> element in the page HTML using its component template:
    {attr} bindings substituted, <slot> replaced by the authored children,
    nested components expanded recursively, and the host marked data-ssr so
-   NanElement HYDRATES (wires events, fills async data) instead of
+   EnclaveElement HYDRATES (wires events, fills async data) instead of
    re-rendering. Result: the header and all static chrome are plain HTML —
    visible at first paint even before (or without) any JavaScript. */
 const TPL = {};
@@ -93,7 +93,7 @@ for (const n of fs.readdirSync(path.join(SITE, "components"))) {
    static "Sign in →" flash through the header on every navigation until
    hydration + the wallet round-trip (~300ms with MetaMask) restores it. */
 const WALLET_PAINT = `<script>(function(){try{
-var s=JSON.parse(localStorage.getItem("nan_session")||"null");if(!s||!s.address)return;
+var s=JSON.parse(localStorage.getItem("enclave_session")||"null");if(!s||!s.address)return;
 var t=s.token||null;
 if(t){try{var b64=t.split(".")[1].replace(/-/g,"+").replace(/_/g,"/");b64+="=".repeat((4-b64.length%4)%4);
 var p=JSON.parse(atob(b64));if(typeof p.exp==="number"&&p.exp*1000<=Date.now())t=null;}catch(e){t=null;}}

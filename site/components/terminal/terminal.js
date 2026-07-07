@@ -4,13 +4,13 @@
    API: startRun() begins a buffer, line(cls, txt) appends to the
    live run, clear() resets the pane.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc, lsGet, lsSet } from "../../js/core/util.js";
 
-const TERM_STORE_KEY = "nan_term_logs";
+const TERM_STORE_KEY = "enclave_term_logs";
 const IDLE_LINE = '<span class="ln dimln">// press “Deploy” to provision a confidential enclave…</span>';
 
-class Terminal extends NanElement {
+class Terminal extends EnclaveElement {
   static templateUrl = new URL("./terminal.html", import.meta.url);
 
   constructor() {

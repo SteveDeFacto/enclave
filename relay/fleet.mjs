@@ -1,4 +1,4 @@
-// NAN relay fleet discovery — shared by the DATA-PLANE relays (tcp6-relay,
+// Enclave relay fleet discovery — shared by the DATA-PLANE relays (tcp6-relay,
 // udp-relay, egress-relay) so they follow an arbitrary, CHANGING set of
 // enclaves instead of being pinned to one by env. The fleet can grow and
 // shrink at any time; nobody should be hand-editing relay env files when it
@@ -8,13 +8,13 @@
 //   ENCLAVES           static comma list of enclave origins (wins if set)
 //   ENCLAVE_URL        legacy single-enclave pin — folded into the list, so
 //                      existing env files keep working unchanged
-//   REGISTRY_ADDRESS   NanRegistry on Base (chain 8453): the on-chain truth of
+//   REGISTRY_ADDRESS   EnclaveRegistry on Base (chain 8453): the on-chain truth of
 //                      the live fleet, re-read every REGISTRY_POLL_SEC and
 //                      filtered to active + recently-seen entries. This is the
 //                      set-and-forget mode: a new enclave registers itself and
 //                      every relay picks it up within one poll.
 //
-// The registry read mirrors api-relay.js / scripts/nan-discover.mjs (count +
+// The registry read mirrors api-relay.js / scripts/enclave-discover.mjs (count +
 // getPage paging). This module holds NO trust: it only tells the relays which
 // origins to serve; every origin still authenticates the relay (egress) or
 // scopes it to public deployments (tcp6/udp) exactly as before.
@@ -100,7 +100,7 @@ export function createFleet(cfg, log = () => {}) {
   return {
     origins: () => origins,
     async start() {
-      log(`on-chain fleet: NanRegistry ${cfg.registryAddress}`);
+      log(`on-chain fleet: EnclaveRegistry ${cfg.registryAddress}`);
       await refresh();
       setInterval(refresh, cfg.registryPollSec * 1000);
     },

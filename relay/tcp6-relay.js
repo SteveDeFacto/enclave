@@ -1,4 +1,4 @@
-// NAN dedicated-IP TCP relay — serves each deployment's declared tcp:N ports on
+// Enclave dedicated-IP TCP relay — serves each deployment's declared tcp:N ports on
 // its OWN IPv6, at the real (logical) port. UNTRUSTED, like the other relays.
 //
 //   client ──TCP──> [<per-deployment IPv6>]:N ──WSS──> enclave
@@ -33,7 +33,7 @@
 // Apps needing confidentiality terminate their own TLS. Documented in README.md.
 //
 // Config (env):
-//   REGISTRY_ADDRESS   required*   NanRegistry on Base: on-chain fleet discovery
+//   REGISTRY_ADDRESS   required*   EnclaveRegistry on Base: on-chain fleet discovery
 //   ENCLAVES           required*   *instead: static comma list of enclave origins
 //   ENCLAVE_URL        (legacy)    single-enclave pin, folded into ENCLAVES
 //   BASE_RPC / REGISTRY_POLL_SEC / STALE_AFTER_SEC   registry mode knobs (fleet.mjs)

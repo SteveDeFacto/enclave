@@ -90,7 +90,7 @@ document.addEventListener("click", (e) => {
 
 // a deep link into the reference (#op-… / #grp-…) only resolves once
 // <c-api-reference> has rendered the operations
-document.addEventListener("nan:api-rendered", () => {
+document.addEventListener("enclave:api-rendered", () => {
   if (!document.getElementById("devTabs")) return;
   const id0 = (location.hash || "").slice(1);
   if (id0 && (id0.startsWith("op-") || id0.startsWith("grp-"))) run(() => gotoAnchor(id0));

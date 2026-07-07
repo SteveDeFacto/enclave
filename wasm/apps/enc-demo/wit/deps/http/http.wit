@@ -672,6 +672,6 @@ interface outgoing-handler {
   handle: func(request: outgoing-request, options: option<request-options>) -> result<future-incoming-response, error-code>;
 }
 
-// NOTE (nan): the `imports` and `proxy` worlds are stripped from this vendored
+// NOTE (enclave): the `imports` and `proxy` worlds are stripped from this vendored
 // copy — nn-demo defines its own world, and the proxy world would drag in
 // wasi:cli / wasi:random / etc. that the app neither imports nor vendors.

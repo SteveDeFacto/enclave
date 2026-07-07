@@ -1,4 +1,4 @@
-// NAN dedicated-IP EGRESS relay — the outbound half of the per-deployment
+// Enclave dedicated-IP EGRESS relay — the outbound half of the per-deployment
 // address. Mirror of the inbound tcp6-relay: UNTRUSTED, holds no keys, sees
 // only whatever the app sends (ciphertext if the app speaks TLS).
 //
@@ -27,7 +27,7 @@
 // SOCKS failure. This protects the relay box's OWN localhost + private services.
 //
 // Config (env):
-//   REGISTRY_ADDRESS    required*  NanRegistry on Base: on-chain fleet discovery
+//   REGISTRY_ADDRESS    required*  EnclaveRegistry on Base: on-chain fleet discovery
 //   ENCLAVES            required*  *instead: static comma list of enclave origins
 //   ENCLAVE_URL         (legacy)   single-enclave pin, folded into ENCLAVES
 //   BASE_RPC / REGISTRY_POLL_SEC / STALE_AFTER_SEC   registry mode knobs (fleet.mjs)

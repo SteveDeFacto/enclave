@@ -1,4 +1,4 @@
-# NAN enclave — CPU-ONLY flavor (no GPU attached, no GPU containers).
+# Enclave enclave — CPU-ONLY flavor (no GPU attached, no GPU containers).
 #
 # Two containers share one confidential VM (shared localhost network, shared
 # /mnt/ramdisk volume):
@@ -26,7 +26,7 @@ memory: 65536      # 64 GiB
 containers:
   # --- supervisor: control plane (no GPU), public ingress -----------------------
   - name: "supervisor"
-    image: "ghcr.io/stevedefacto/nan@sha256:57a458ea614935acf1f021409bb34ea24ab6a0c8ddbd95a1c18666dde4df4a52"
+    image: "ghcr.io/stevedefacto/enclave-supervisor@sha256:57a458ea614935acf1f021409bb34ea24ab6a0c8ddbd95a1c18666dde4df4a52"
     restart: always
     env:
       - PORT: "8080"
@@ -46,10 +46,10 @@ containers:
       - CHAIN_ID: "8453"
       - CORS_ORIGINS: "https://enclave.host"
       - BASE_RPC: "https://mainnet.base.org"
-      # pay-per-deploy (no custody): same NanPay forwarder as the GPU flavor.
+      # pay-per-deploy (no custody): same EnclavePay forwarder as the GPU flavor.
       - FORWARDER_ADDRESS: "0xaA943DfDF4e9F9F33C04e35D31E2645C69C7D8D9"
       - USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"   # USDC on Base
-      # app approval gate: same NanAppCatalog as the GPU flavor.
+      # app approval gate: same EnclaveAppCatalog as the GPU flavor.
       - APP_CATALOG_ADDRESS: "0x17071414BD19fDFdA8E58559d2CcFb99b2c8d0FC"
       - PAYMENT_WINDOW_SEC: "600"
       - GRACE_SEC: "90"
@@ -59,16 +59,16 @@ containers:
       # on the same repo. NOTE: verifiers that fetch the repo's LATEST release
       # (tinfoil-cli default) will see the GPU flavor's measurement — point them
       # at the matching -cpu release explicitly.
-      - ENCLAVE_REPO: "SteveDeFacto/nan"
+      - ENCLAVE_REPO: "SteveDeFacto/enclave"
       # on-chain discovery: same registry; a CPU enclave advertises like any
       # other and callers learn it is CPU-only from its /availability.
       - REGISTRY_ENABLED: "1"
       - REGISTRY_ADDRESS: "0x13deE63b80353a15C6E03D54240EE463B420353F"
       # Portable deployments: the claim loop adopts ONLY CPU deployments
-      # (NanDeployments records created with gpu=false).
+      # (EnclaveDeployments records created with gpu=false).
       - CLAIM_ENABLED: "1"
       - DEPLOYMENTS_ADDRESS: "0x81037A2081bc000F12B8aA771bede0d36742ec4b"
-      # wallet-gated encrypted volumes: NanVolumeAccess ACL (empty = disabled;
+      # wallet-gated encrypted volumes: EnclaveVolumeAccess ACL (empty = disabled;
       # same address as the GPU flavor - sync-contract-addresses.sh mirrors it)
       - VOLUME_ACCESS_ADDRESS: "0x4e3Dc12FF865e259F6bBD97689Df6Ccc7103e7dD"
       # dedicated per-deployment IPv6 (tcp + udp): the relay box's routed /64
@@ -78,7 +78,7 @@ containers:
       # relay/README.md.
       - DEP_ADDR_PREFIX: "2a01:4f9:c013:9b52::/64"
       # dedicated-IP EGRESS (the outbound half): with DEP_ADDR_PREFIX set, app
-      # outbound leaves FROM its own IPv6 via NAN_EGRESS. EGRESS_RELAY_TOKEN is a
+      # outbound leaves FROM its own IPv6 via ENCLAVE_EGRESS. EGRESS_RELAY_TOKEN is a
       # shared secret matching the egress-relay box's env — delivered via
       # `secrets:` below (NOT a plaintext env, which would pin it empty and
       # shadow the injected secret). Optional EGRESS_SOCKS_PORT (default 1080).
@@ -92,11 +92,11 @@ containers:
       # owns the deployment. Empty disables the /tls/ bridge on this flavor.
       - TLS_BRIDGE_DOMAIN: "tcp.enclave.host"
     volumes:
-      - /mnt/ramdisk/nan-state:/var/lib/nan
+      - /mnt/ramdisk/enclave-state:/var/lib/enclave
     secrets:
       - SECRET
       - ADMIN_TOKEN              # operator token for POST /v1/admin/deployments/:id/provision
-      - REGISTRY_PRIVATE_KEY     # NanRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
+      - REGISTRY_PRIVATE_KEY     # EnclaveRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
       - EGRESS_RELAY_TOKEN       # shared secret with the egress-relay box; same value fleet-wide (like SECRET). Unset = egress off.
     command: ["node", "supervisor.js"]
 
@@ -104,7 +104,7 @@ containers:
   # Identical to the GPU flavor's wasm-manager except NODE_HAS_GPU=0: catalog
   # apps marked `gpu: true` are refused at launch (a CPU node cannot serve them).
   - name: "wasm-manager"
-    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:bdbe80e972a6cfc6f9891a2bb79f111ba0ef5c216a412d143954db98b1fb05e3"
+    image: "ghcr.io/stevedefacto/enclave-wasm-manager@sha256:bdbe80e972a6cfc6f9891a2bb79f111ba0ef5c216a412d143954db98b1fb05e3"
     restart: always
     env:
       - WASM_MANAGER_PORT: "8091"

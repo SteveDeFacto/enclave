@@ -4,7 +4,7 @@
 // Every command maps 1:1 onto the public HTTP API (https://api.enclave.host/v1)
 // and the on-chain contracts on Base — the CLI holds the pieces, it owns
 // nothing: auth is a SIWE signature, payment is your USDC, deployments are
-// NanDeployments work items your key created. Run any command with -x to see
+// EnclaveDeployments work items your key created. Run any command with -x to see
 // the exact API traffic and transactions, ready to replay with curl.
 //
 //   enclave key new | import         bring a wallet (or ENCLAVE_KEY env)
@@ -247,8 +247,8 @@ function wallet(account) {
 const read = (address, abi, functionName, a = []) =>
   pub().readContract({ address, abi, functionName, args: a });
 async function sendTx(account, { address, abi, functionName, args: a, value }) {
-  const name = { [DEFAULTS.DEPLOYMENTS_ADDRESS]: "NanDeployments",
-                 [DEFAULTS.APP_CATALOG_ADDRESS]: "NanAppCatalog" }[address] || address;
+  const name = { [DEFAULTS.DEPLOYMENTS_ADDRESS]: "EnclaveDeployments",
+                 [DEFAULTS.APP_CATALOG_ADDRESS]: "EnclaveAppCatalog" }[address] || address;
   trace(`tx ${name}.${functionName}(${a.map(fmtArg).join(", ")})${value ? ` value=${formatUnits(value, 18)} ETH` : ""}`);
   const hash = await wallet(account).writeContract({ address, abi, functionName, args: a, ...(value ? { value } : {}) });
   trace(`tx sent ${hash} — waiting for receipt`);
@@ -434,7 +434,7 @@ function minShares(ver, pricing) {
   return { gpuMilli: grain(gpu), cpuMilli: Math.max(10, grain(cpu)) };
 }
 
-// ---- funding (EIP-3009 receiveWithAuthorization -> NanDeployments) ---------------
+// ---- funding (EIP-3009 receiveWithAuthorization -> EnclaveDeployments) ---------------
 async function fundUsdc(account, id, amountUsd) {
   const value = BigInt(Math.round(amountUsd * 100)) * 10000n;   // whole cents -> 6dp
   const bal = await read(DEFAULTS.USDC_ADDRESS, ERC20_ABI, "balanceOf", [account.address]);

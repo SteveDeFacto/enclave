@@ -1,4 +1,4 @@
-# nan-wasm-manager: runs tenant Wasm apps via `wasmtime serve`.
+# enclave-wasm-manager: runs tenant Wasm apps via `wasmtime serve`.
 # No privileged mode, no nested runtime, no namespace/mount/exec ops. The whole
 # reason this backend exists: it runs unprivileged inside Tinfoil's confinement.
 # Image integrity is covered by Tinfoil attestation (the built image is measured),
@@ -12,17 +12,17 @@
 # CPU flavor ships the same image (the libs idle without a GPU; ExecutionTarget
 # ::Cpu uses the CPU provider) — one image, one measurement, both flavors.
 #
-# The wasmtime binary comes from the nan-wasmtime toolchain image (built from
+# The wasmtime binary comes from the enclave-wasmtime toolchain image (built from
 # source with wasi-nn + onnx-cuda; see Dockerfile.wasmtime). Bump = rebuild that
 # image via the "Wasmtime Toolchain" workflow, then repin WASMTIME_IMAGE here.
-ARG WASMTIME_IMAGE=ghcr.io/stevedefacto/nan-wasmtime:v45.0.0@sha256:a466914494d2ad16e82437a85d027c3381fbe04038e3444b29bca11d8e8a3d68
+ARG WASMTIME_IMAGE=ghcr.io/stevedefacto/enclave-wasmtime:v45.0.0@sha256:a466914494d2ad16e82437a85d027c3381fbe04038e3444b29bca11d8e8a3d68
 FROM ${WASMTIME_IMAGE} AS wasmtime
 
 FROM nvidia/cuda:12.6.2-cudnn-runtime-ubuntu24.04
 
 # gdb: the nn readiness probe captures symbol-level stacks of a hung GPU
 # init (spawns the e2e wasmtime UNDER gdb, interrupts, thread apply all bt)
-# python3-pycryptodome: XChaCha20-Poly1305 for wallet-gated (nan-vault) volumes
+# python3-pycryptodome: XChaCha20-Poly1305 for wallet-gated (enclave-vault) volumes
 # - the manager decrypts them in-RAM with the VEK the supervisor unsealed
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-pycryptodome ca-certificates curl gdb \
@@ -53,26 +53,26 @@ COPY --from=wasmtime /bin/wasmtime /usr/local/bin/wasmtime
 COPY --from=wasmtime /lib/ /usr/local/lib/
 RUN ldconfig && /usr/local/bin/wasmtime --version
 
-WORKDIR /opt/nan
+WORKDIR /opt/enclave
 
 # NO deployable apps ship in the image: every app deploys from the on-chain
 # catalog by ipfs://<cid> (fetched + hash-verified in-enclave, cached under
-# /opt/nan/apps). The ONE .wasm here is the boot probe's fixture: the CUDA
+# /opt/enclave/apps). The ONE .wasm here is the boot probe's fixture: the CUDA
 # readiness probe serves nn-demo through the real wasmtime + ORT stack to
 # prove GPU inference end-to-end before any tenant deploy is allowed - without
 # it the probe would have to skip its most load-bearing stage (the one that
 # caught the sm_90 PTX-JIT hang). It is launched only by the manager itself;
 # the supervisor's approval gate refuses non-CID references, so it is not
 # deployable through the API.
-COPY apps/nn-demo.wasm /opt/nan/apps/nn-demo.wasm
-COPY wasm_manager.py /opt/nan/wasm_manager.py
-COPY ipfs_fetch.py /opt/nan/ipfs_fetch.py
+COPY apps/nn-demo.wasm /opt/enclave/apps/nn-demo.wasm
+COPY wasm_manager.py /opt/enclave/wasm_manager.py
+COPY ipfs_fetch.py /opt/enclave/ipfs_fetch.py
 
 ENV WASM_MANAGER_PORT=8091 \
-    WASM_APPS_DIR=/opt/nan/apps \
+    WASM_APPS_DIR=/opt/enclave/apps \
     WASMTIME_BIN=/usr/local/bin/wasmtime
 
 EXPOSE 8091
 # the nvidia/cuda base ships a banner-printing entrypoint; drop it so CMD execs
 ENTRYPOINT []
-CMD ["/usr/bin/python3", "/opt/nan/wasm_manager.py"]
+CMD ["/usr/bin/python3", "/opt/enclave/wasm_manager.py"]

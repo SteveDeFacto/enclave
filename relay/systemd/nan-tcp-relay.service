@@ -1,5 +1,5 @@
 [Unit]
-Description=NAN TCP relay (SNI router; TLS terminates in-enclave)
+Description=Enclave TCP relay (SNI router; TLS terminates in-enclave)
 After=network-online.target
 Wants=network-online.target
 

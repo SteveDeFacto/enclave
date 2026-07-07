@@ -2,7 +2,7 @@
 //
 // Loads the IIFE in a vm sandbox WITHOUT Buffer/process/node globals - the
 // same deprivation a browser imposes - then proves the bundled protocol is
-// byte-compatible with scripts/nan-vault.mjs (the source of truth) and that
+// byte-compatible with scripts/enclave-vault.mjs (the source of truth) and that
 // volId matches the canonical vectors pinned across the contract, the
 // supervisor and the CLI.
 //
@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { webcrypto } from "node:crypto";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
-import { deriveKeypair, seal, unseal, newVEK, DERIVE_MESSAGE } from "../../../../scripts/nan-vault.mjs";
+import { deriveKeypair, seal, unseal, newVEK, DERIVE_MESSAGE } from "../../../../scripts/enclave-vault.mjs";
 
 const bundle = readFileSync(fileURLToPath(new URL("../src/vault.js", import.meta.url)), "utf8");
 
@@ -29,14 +29,14 @@ sandbox.window = undefined;   // headless: the bundle must skip DOM init
 vm.createContext(sandbox);
 vm.runInContext(bundle, sandbox, { filename: "vault.js" });
 
-const NV = sandbox.NanVault;
+const NV = sandbox.EnclaveVault;
 let failures = 0;
 const check = (name, ok) => {
   console.log(`${ok ? "ok " : "FAIL"} ${name}`);
   if (!ok) failures++;
 };
 
-check("bundle exposes NanVault", !!NV);
+check("bundle exposes EnclaveVault", !!NV);
 check("DERIVE_MESSAGE matches the protocol", NV.DERIVE_MESSAGE === DERIVE_MESSAGE);
 
 // canonical volId vectors (contract == supervisor == CLI == this bundle)

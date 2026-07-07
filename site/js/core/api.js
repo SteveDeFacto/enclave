@@ -1,5 +1,5 @@
 /* ============================================================
-   Live client (Nan) — the exact client the pages use; mirrors
+   Live client (Enclave) — the exact client the pages use; mirrors
    the published HTTP API. Base URL persists across pages via
    localStorage (the Deploy page exposes the field).
    ============================================================ */
@@ -7,14 +7,14 @@ import { DEFAULT_API_BASE } from "./config.js";
 import { lsGet, lsSet } from "./util.js";
 
 /* ---- typed error carrying HTTP status ---- */
-export class NanError extends Error {
-  constructor(message, status, body){ super(message); this.name = "NanError"; this.status = status; this.body = body; }
+export class EnclaveError extends Error {
+  constructor(message, status, body){ super(message); this.name = "EnclaveError"; this.status = status; this.body = body; }
 }
 
-export const Nan = {
-  base: (lsGet("nan_api_base") || DEFAULT_API_BASE).replace(/\/+$/, ""),
+export const Enclave = {
+  base: (lsGet("enclave_api_base") || DEFAULT_API_BASE).replace(/\/+$/, ""),
   token: null, address: null, chainId: null, provider: null, walletRdns: null, walletEmail: null,
-  setBase(u){ this.base = String(u || "").trim().replace(/\/+$/, "") || DEFAULT_API_BASE; lsSet("nan_api_base", this.base); },
+  setBase(u){ this.base = String(u || "").trim().replace(/\/+$/, "") || DEFAULT_API_BASE; lsSet("enclave_api_base", this.base); },
   authed(){ return !!this.token; },
   async _req(method, path, opts){
     opts = opts || {};
@@ -29,14 +29,14 @@ export const Nan = {
     const hasBody = opts.body !== undefined;
     if (hasBody) headers["Content-Type"] = "application/json";
     if (opts.auth){
-      if (!this.token) throw new NanError("Not signed in. Connect your wallet first.", 401);
+      if (!this.token) throw new EnclaveError("Not signed in. Connect your wallet first.", 401);
       headers["Authorization"] = "Bearer " + this.token;
     }
     let res;
     try {
       res = await fetch(url, { method, headers, mode: "cors", body: hasBody ? JSON.stringify(opts.body) : undefined });
     } catch(e){
-      throw new NanError("Could not reach " + url + ". Check the endpoint is live and returns CORS headers.", 0);
+      throw new EnclaveError("Could not reach " + url + ". Check the endpoint is live and returns CORS headers.", 0);
     }
     const text = await res.text();
     let data = null;
@@ -45,7 +45,7 @@ export const Nan = {
       const msg = (data && data.message) ? data.message
         : (typeof data === "string" && data) ? data
         : ("HTTP " + res.status + " " + res.statusText);
-      throw new NanError(msg, res.status, data);
+      throw new EnclaveError(msg, res.status, data);
     }
     return data;
   },
@@ -62,7 +62,7 @@ export const Nan = {
     // calling BASE/v1/availability 404s and spams the console
     const url = (this.base || "").replace(/\/v1\/?$/, "") + "/availability";
     return fetch(url, { headers: { "Accept": "application/json" } }).then(r => {
-      if (!r.ok) throw new NanError("availability: HTTP " + r.status, r.status);
+      if (!r.ok) throw new EnclaveError("availability: HTTP " + r.status, r.status);
       return r.json();
     });
   },

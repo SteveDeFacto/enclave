@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @title NanRegistry — transparent, gateway-free discovery for NAN enclaves.
+/// @title EnclaveRegistry — transparent, gateway-free discovery for Enclave enclaves.
 /// @notice The on-chain source of truth for "which enclaves exist, where they
 ///         are, and what code they claim to run." There is NO trusted gateway:
 ///         a caller reads this registry from any RPC, then connects to an
@@ -22,10 +22,10 @@ pragma solidity ^0.8.20;
 ///     stake-to-register + slashing is a deliberate FUTURE addition (see notes);
 ///     it is not needed for correctness because attestation, not registration,
 ///     is what gates trust.
-contract NanRegistry {
+contract EnclaveRegistry {
     struct Enclave {
         string  endpoint;     // e.g. "https://enclave1.nan.containers.tinfoil.dev"
-        string  repo;         // attestation source, e.g. "SteveDeFacto/Nan" (Sigstore-measured)
+        string  repo;         // attestation source, e.g. "SteveDeFacto/enclave" (Sigstore-measured; exact casing)
         bytes32 measurement;  // optional cross-check digest (0x0 if unset); the live quote is authoritative
         address operator;     // controls this entry
         uint64  registeredAt;

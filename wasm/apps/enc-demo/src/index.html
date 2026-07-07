@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>enc-demo - encrypted volumes on NaN</title>
+<title>enc-demo - encrypted volumes on Enclave</title>
 <style>
   :root {
     --bg: #0b0e14; --panel: #131722; --border: #232a3a;
@@ -87,7 +87,7 @@ async function view(vol, path) {
     const { volumes } = await fetch("./ls").then((r) => r.json());
     const names = Object.keys(volumes);
     if (!names.length) {
-      box.innerHTML = '<div class="card"><span class="empty">No encrypted volumes attached (NAN_ENC is empty). Deploy with an encVolumes config.</span></div>';
+      box.innerHTML = '<div class="card"><span class="empty">No encrypted volumes attached (ENCLAVE_ENC is empty). Deploy with an encVolumes config.</span></div>';
       return;
     }
     box.innerHTML = names.map((n) => {

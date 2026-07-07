@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # pre-push: when commits that touch site/ are pushed to the deploy branch, deploy
 # the site to IPFS via site/deploy.sh. Non-blocking: a deploy failure warns but
-# does NOT abort your push (set NAN_DEPLOY_STRICT=1 to abort instead).
+# does NOT abort your push (set ENCLAVE_DEPLOY_STRICT=1 to abort instead).
 #
 # Install once per clone (git does not auto-install hooks):
 #     git config core.hooksPath scripts/hooks
 # or symlink just this one:
 #     ln -sf ../../scripts/hooks/pre-push .git/hooks/pre-push
 set -uo pipefail
-DEPLOY_BRANCH="${NAN_DEPLOY_BRANCH:-main}"     # repo default is 'main' (use 'master' if renamed)
+DEPLOY_BRANCH="${ENCLAVE_DEPLOY_BRANCH:-main}"     # repo default is 'main' (use 'master' if renamed)
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 ZERO="0000000000000000000000000000000000000000"
 
@@ -28,5 +28,5 @@ if bash "$REPO_ROOT/site/deploy.sh"; then
   exit 0
 fi
 echo "[pre-push] WARNING: site deploy failed. Re-run manually: bash site/deploy.sh" >&2
-[ "${NAN_DEPLOY_STRICT:-0}" = "1" ] && { echo "[pre-push] NAN_DEPLOY_STRICT=1 -> aborting push"; exit 1; }
+[ "${ENCLAVE_DEPLOY_STRICT:-0}" = "1" ] && { echo "[pre-push] ENCLAVE_DEPLOY_STRICT=1 -> aborting push"; exit 1; }
 exit 0

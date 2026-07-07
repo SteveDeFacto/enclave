@@ -6,8 +6,8 @@ plaintext while the operator's host only ever saw ciphertext.
 
 The point for app authors: **your code needs no crypto**. The deployment holds
 at `awaiting_unlock` until an authorized wallet delivers the sealed volume key
-(vault app or `nan-vault-client unlock`); after that, `/enc/<name>` is an
-ordinary read-only directory (`NAN_ENC` lists the names) and plain `std::fs`
+(vault app or `enclave-vault-client unlock`); after that, `/enc/<name>` is an
+ordinary read-only directory (`ENCLAVE_ENC` lists the names) and plain `std::fs`
 works — identically for the small tier (NANVOL1, decrypted to enclave RAM) and
 the large tier (NANVOL2, blocks decrypted on demand under the wasmtime
 vault-fs shim).
@@ -17,7 +17,7 @@ vault-fs shim).
 | route                | what                                          |
 |----------------------|-----------------------------------------------|
 | `GET /`              | volume browser                                |
-| `GET /ls`            | JSON listing of every `NAN_ENC` volume        |
+| `GET /ls`            | JSON listing of every `ENCLAVE_ENC` volume        |
 | `GET /f/<vol>/<path>`| raw file bytes (streamed; any size)           |
 | `GET /ping`          | liveness                                      |
 
@@ -26,7 +26,7 @@ vault-fs shim).
 ```sh
 cargo component build --release --target wasm32-wasip2
 wasmtime serve --addr 127.0.0.1:8080 -Scli -Shttp \
-  --dir ./some-plaintext-dir::/enc/demo --env NAN_ENC=demo \
+  --dir ./some-plaintext-dir::/enc/demo --env ENCLAVE_ENC=demo \
   target/wasm32-wasip*/release/enc_demo.wasm
 ```
 
@@ -34,7 +34,7 @@ wasmtime serve --addr 127.0.0.1:8080 -Scli -Shttp \
 
 ```sh
 # 1. encrypt a directory (prints the VEK + the plaintext hash to pin)
-node scripts/nan-vault.mjs pack ./secret-dir ./secret.enc
+node scripts/enclave-vault.mjs pack ./secret-dir ./secret.enc
 
 # 2. host secret.enc anywhere public (IPFS, a release asset, any URL)
 
@@ -44,6 +44,6 @@ node scripts/nan-vault.mjs pack ./secret-dir ./secret.enc
 #      "vault":{"owner":"0x<you>","volume":"demo","autoGrant":true}}]}
 
 # 4. on-chain ACL + unlock (or use the vault app UI):
-node scripts/nan-vault-client.mjs setup  --volume demo --vek 0x<printed VEK>
-node scripts/nan-vault-client.mjs unlock --id 0x<deployment> --owner 0x<you> --name demo
+node scripts/enclave-vault-client.mjs setup  --volume demo --vek 0x<printed VEK>
+node scripts/enclave-vault-client.mjs unlock --id 0x<deployment> --owner 0x<you> --name demo
 ```

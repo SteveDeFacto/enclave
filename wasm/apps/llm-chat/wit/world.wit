@@ -3,7 +3,7 @@
 // wasi:nn (the GPU interface bought with gpuShare), exports the wasi:http
 // handler. WIT deps are vendored verbatim from wasmtime v45 (wasi@0.2.6,
 // wasi:nn@0.2.0-rc-2024-10-28) so guest and host always agree.
-package nan:llm-chat;
+package enclave:llm-chat;
 
 world llm-chat {
   import wasi:nn/tensor@0.2.0-rc-2024-10-28;

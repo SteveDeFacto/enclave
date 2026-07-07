@@ -1,5 +1,5 @@
 [Unit]
-Description=NAN API relay (fleet discovery + placement)
+Description=Enclave API relay (fleet discovery + placement)
 After=network-online.target
 Wants=network-online.target
 

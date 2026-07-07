@@ -17,8 +17,8 @@ import { privateKeyToAccount } from "viem/accounts";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = path.join(REPO, "cli", "enclave.mjs");
-const DEP_ABI = JSON.parse(fs.readFileSync(path.join(REPO, "contracts", "NanDeployments.abi.json"), "utf8"));
-const CAT_ABI = JSON.parse(fs.readFileSync(path.join(REPO, "contracts", "NanAppCatalog.abi.json"), "utf8"));
+const DEP_ABI = JSON.parse(fs.readFileSync(path.join(REPO, "contracts", "EnclaveDeployments.abi.json"), "utf8"));
+const CAT_ABI = JSON.parse(fs.readFileSync(path.join(REPO, "contracts", "EnclaveAppCatalog.abi.json"), "utf8"));
 
 const PK = "0x" + "11".repeat(32);
 const OWNER = privateKeyToAccount(PK).address;
@@ -55,7 +55,7 @@ function apiServer() {
       const address = u.searchParams.get("address");
       const nonce = Math.random().toString(36).slice(2, 10);
       nonces.set(nonce, address);
-      const message = `enclave.host wants you to sign in with your Ethereum account:\n${address}\n\nSign in to NAN. This signature is free and will not move funds.\n\nURI: https://enclave.host\nVersion: 1\nChain ID: 8453\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}\nExpiration Time: ${new Date(Date.now() + 600000).toISOString()}`;
+      const message = `enclave.host wants you to sign in with your Ethereum account:\n${address}\n\nSign in to Enclave. This signature is free and will not move funds.\n\nURI: https://enclave.host\nVersion: 1\nChain ID: 8453\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}\nExpiration Time: ${new Date(Date.now() + 600000).toISOString()}`;
       return json(200, { address, message, nonce });
     }
     if (u.pathname === "/v1/auth/login") {

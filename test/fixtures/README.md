@@ -12,7 +12,7 @@ to prove transparent egress works for **unmodified** apps:
   `http://$TARGET/` on each request. Proves the `wasi:http` outgoing handler is
   intercepted too (socks5h domain path). Source:
   [`egress-guest-http.rs`](egress-guest-http.rs).
-- `egress-guest-socks.wasm` (`run` mode) — dials the `NAN_EGRESS` front
+- `egress-guest-socks.wasm` (`run` mode) — dials the `ENCLAVE_EGRESS` front
   directly and speaks SOCKS5 explicitly (the PHASE-1 path) while running under
   the phase-2 lockdown. Proves the shim's front pass-through: a dial to the
   front itself connects directly (everything else stays mediated), so explicit
@@ -23,7 +23,7 @@ These tests **skip** unless a patched wasmtime is provided, so `npm test` stays
 green on machines without the toolchain:
 
 ```bash
-NAN_EGRESS_WASMTIME=/path/to/patched/wasmtime npm test
+ENCLAVE_EGRESS_WASMTIME=/path/to/patched/wasmtime npm test
 ```
 
 ## Regenerating the fixtures

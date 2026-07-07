@@ -4,20 +4,20 @@
    build time); this class holds each step's method+path and
    renders the detail pane live from openapi.json on hydration.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc, hlJson, hlCode } from "../../js/core/util.js";
 import { loadSpec, getSpec, bodyExample, responseExample } from "../../js/core/spec.js";
 
 /* method+path per step button, in template order */
 const STEPS = [
   { method: "POST",   path: "/auth/login" },
-  { method: "TX",     path: "NanDeployments.create()" },
+  { method: "TX",     path: "EnclaveDeployments.create()" },
   { method: "POST",   path: "/claim-hint" },
   { method: "GET",    path: "/deployments/{id}/attestation" },
   { method: "DELETE", path: "/deployments/{id}" },
 ];
 
-class Flow extends NanElement {
+class Flow extends EnclaveElement {
   static templateUrl = new URL("./flow.html", import.meta.url);
 
   detail(i) {

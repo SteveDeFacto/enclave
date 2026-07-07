@@ -1,9 +1,9 @@
 {
-  "name": "nan-supervisor",
+  "name": "enclave-supervisor",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "NAN supervisor — the whole service, running inside the Tinfoil enclave behind the shim. Control + data + per-use container launch. Nothing external touches a prompt.",
+  "description": "Enclave supervisor — the whole service, running inside the Tinfoil enclave behind the shim. Control + data + per-use container launch. Nothing external touches a prompt.",
   "main": "supervisor.js",
   "scripts": {
     "start": "node supervisor.js",

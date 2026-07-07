@@ -172,13 +172,13 @@ index 37e98b9..45ed76d 100644
          /// `wasmtime_wasi_nn` crate.
          #[serde(skip)]
          pub nn_graph: Vec<WasiNnGraph>,
-+        /// Preopen a nan-vault NANVOL2 block-encrypted directory, read-only,
++        /// Preopen a enclave-vault NANVOL2 block-encrypted directory, read-only,
 +        /// decrypted on demand: `vault=<guest-path>::<skeleton-dir>::<cipher-dir>`.
 +        ///
 +        /// The skeleton is a real tree of sparse placeholder files (correct
 +        /// sizes) serving all metadata; content reads decrypt 4MiB blocks from
 +        /// the cipherdir. The 32-byte hex VEK for the i-th vault flag is read
-+        /// from the environment variable `NAN_VAULT_KEY_<i>` (host process env;
++        /// from the environment variable `ENCLAVE_VAULT_KEY_<i>` (host process env;
 +        /// never visible to the guest). Requires the default preview2-backed
 +        /// WASI implementation (not `-S preview2=n`).
 +        #[serde(default)]
@@ -194,7 +194,7 @@ index 829a330..0c4f497 100644
  url = { workspace = true }
  rand = { workspace = true, features = ['std_rng', 'thread_rng'] }
  cfg-if = { workspace = true }
-+# nan-vault (NANVOL2) transparent encrypted preopens: XChaCha20-Poly1305 blocks
++# enclave-vault (NANVOL2) transparent encrypted preopens: XChaCha20-Poly1305 blocks
 +# + HKDF-SHA256 file keys + a JSON manifest (see src/vault.rs). Pinned exactly:
 +# this binary is measured into the enclave image.
 +chacha20poly1305 = { version = "=0.10.1", default-features = false, features = ["alloc", "getrandom"] }
@@ -212,7 +212,7 @@ index 0b84bc2..5c77220 100644
          Ok(self)
      }
  
-+    /// Preopen a nan-vault NANVOL2 encrypted directory (read-only, decrypted
++    /// Preopen a enclave-vault NANVOL2 encrypted directory (read-only, decrypted
 +    /// on demand; see `crate::vault`).
 +    ///
 +    /// `host_path` is the SKELETON: a real directory tree whose files are
@@ -257,7 +257,7 @@ index 1782098..91519d8 100644
      /// oflags back out using fcntl.
      pub open_mode: OpenMode,
  
-+    /// nan-vault: when this file was opened inside an encrypted (NANVOL2)
++    /// enclave-vault: when this file was opened inside an encrypted (NANVOL2)
 +    /// preopen, content reads route through on-demand block decryption
 +    /// instead of the (sparse skeleton) file on disk. Everything else —
 +    /// stat, size, inode identity — is served by the real skeleton file.
@@ -278,7 +278,7 @@ index 1782098..91519d8 100644
      /// oflags back out using fcntl.
      pub open_mode: OpenMode,
  
-+    /// nan-vault: set on the preopen of an encrypted (NANVOL2) skeleton and
++    /// enclave-vault: set on the preopen of an encrypted (NANVOL2) skeleton and
 +    /// propagated to every descriptor opened beneath it, carrying the volume
 +    /// handle plus this directory's logical path prefix. `open_at` uses it to
 +    /// attach the matching decrypting reader to opened files.
@@ -299,7 +299,7 @@ index 1782098..91519d8 100644
              NotDir,
          }
  
-+        // nan-vault: remember the (relative) path so descriptors opened inside
++        // enclave-vault: remember the (relative) path so descriptors opened inside
 +        // an encrypted preopen can be mapped back to their manifest entries.
 +        let vault_path = path.clone();
 +
@@ -361,7 +361,7 @@ index 506fcc3..00f725f 100644
  pub mod random;
  pub mod runtime;
  pub mod sockets;
-+// nan-vault: transparent read-only decryption for NANVOL2 encrypted preopens
++// enclave-vault: transparent read-only decryption for NANVOL2 encrypted preopens
 +// (see vault.rs; applied via WasiCtxBuilder::preopened_vault_dir / -S vault).
 +mod vault;
  mod view;
@@ -375,7 +375,7 @@ index 95c688e..66a9654 100644
                  drop(t);
                  let pos = position.load(Ordering::Relaxed);
                  let file = self.table.get(&fd)?.file()?;
-+                // nan-vault files decrypt content on demand (the descriptor's
++                // enclave-vault files decrypt content on demand (the descriptor's
 +                // real file is only the sparse metadata skeleton)
 +                let vault = file.vault.clone();
                  let bytes_read = match (file.as_blocking_file(), memory.as_slice_mut(iov)?) {
@@ -429,7 +429,7 @@ index 39e10e3..1520723 100644
          let mut buf = BytesMut::zeroed(size.min(crate::MAX_READ_SIZE_ALLOC));
          loop {
 -            match sys::read_at_cursor_unspecified(file, &mut buf, offset) {
-+            // nan-vault files decrypt their content on demand; the real
++            // enclave-vault files decrypt their content on demand; the real
 +            // (sparse skeleton) file only backs metadata.
 +            let r = match vault {
 +                Some(v) => v.read_at(&mut buf, offset),
@@ -492,7 +492,7 @@ index 6ac2082..745dce3 100644
                          .min(crate::MAX_READ_SIZE_ALLOC)
                  ];
 -                let r = sys::read_at_cursor_unspecified(f, &mut buffer, offset);
-+                // nan-vault files decrypt content on demand (the descriptor's
++                // enclave-vault files decrypt content on demand (the descriptor's
 +                // real file is only the sparse metadata skeleton)
 +                let r = match &vault {
 +                    Some(v) => v.read_at(&mut buffer, offset),
@@ -509,7 +509,7 @@ index d59d1a6..2dbc407 100644
          mut dst: Destination<'a, Self::Item, Self::Buffer>,
          finish: bool,
      ) -> Poll<wasmtime::Result<StreamResult>> {
-+        // nan-vault files decrypt content on demand (the descriptor's real
++        // enclave-vault files decrypt content on demand (the descriptor's real
 +        // file is only the sparse metadata skeleton)
 +        let vault = self.file.vault.clone();
          if let Some(file) = self.file.as_blocking_file() {
@@ -547,10 +547,10 @@ index 0000000..cbc0aa6
 --- /dev/null
 +++ b/crates/wasi/src/vault.rs
 @@ -0,0 +1,388 @@
-+//! nan-vault NANVOL2: transparent, read-only, on-demand decryption for
++//! enclave-vault NANVOL2: transparent, read-only, on-demand decryption for
 +//! preopened directories — gocryptfs semantics with ZERO privileges.
 +//!
-+//! A NANVOL2 "cipherdir" (produced by nan's `nan-vault pack-blocks`) holds one
++//! A NANVOL2 "cipherdir" (produced by nan's `enclave-vault pack-blocks`) holds one
 +//! encrypted blob per plaintext file, split into fixed-size XChaCha20-Poly1305
 +//! blocks, plus a VEK-sealed JSON manifest mapping logical paths to blobs and
 +//! sizes. The host preopens a SKELETON directory (a real tree of sparse files
@@ -562,7 +562,7 @@ index 0000000..cbc0aa6
 +//! never exists outside that cache; writes are impossible (the preopen is
 +//! forced read-only and blobs live on a read-only volume).
 +//!
-+//! Crypto (must match nan's scripts/nan-vault.mjs, the protocol's source of
++//! Crypto (must match scripts/enclave-vault.mjs, the protocol's source of
 +//! truth): fileKey = HKDF-SHA256(VEK, salt=packId, info="nan-vault/file/v1:"
 +//! + blobName); block nonce = LE64(blockIndex) || 16 zero bytes; each stored
 +//! block is ciphertext||tag at offset blockIndex * (blockSize + 16). The
@@ -624,7 +624,7 @@ index 0000000..cbc0aa6
 +}
 +
 +fn bad(msg: impl Into<String>) -> Error {
-+    Error::new(ErrorKind::InvalidData, format!("nan-vault: {}", msg.into()))
++    Error::new(ErrorKind::InvalidData, format!("enclave-vault: {}", msg.into()))
 +}
 +
 +fn unhex(s: &str) -> Option<Vec<u8>> {
@@ -661,7 +661,7 @@ index 0000000..cbc0aa6
 +fn open_nanvol1(blob: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
 +    let hdr = NANVOL1_MAGIC.len() + 24;
 +    if blob.len() < hdr + TAG_LEN as usize || &blob[..NANVOL1_MAGIC.len()] != NANVOL1_MAGIC {
-+        return Err(bad("not a nan-vault blob (bad header)"));
++        return Err(bad("not a enclave-vault blob (bad header)"));
 +    }
 +    let nonce = XNonce::from_slice(&blob[NANVOL1_MAGIC.len()..hdr]);
 +    XChaCha20Poly1305::new(Key::from_slice(key))
@@ -710,7 +710,7 @@ index 0000000..cbc0aa6
 +                VaultEntry { blob: b.to_string(), size: s, key },
 +            );
 +        }
-+        let budget = std::env::var("NAN_VAULT_CACHE_MB")
++        let budget = std::env::var("ENCLAVE_VAULT_CACHE_MB")
 +            .ok()
 +            .and_then(|v| v.parse::<usize>().ok())
 +            .unwrap_or(DEFAULT_CACHE_MB)
@@ -842,7 +842,7 @@ index 0000000..cbc0aa6
 +    use super::*;
 +
 +    // A self-contained mini cipherdir: two files (one spanning blocks, one
-+    // empty-tailed), sealed exactly like nan-vault.mjs packBlocks does.
++    // empty-tailed), sealed exactly like enclave-vault.mjs packBlocks does.
 +    fn make_cipherdir(dir: &Path, vek: &[u8; 32], block_size: u64) -> Vec<(String, Vec<u8>)> {
 +        let pack_id: Vec<u8> = (0..16u8).collect();
 +        let mut files = Vec::new();
@@ -943,8 +943,8 @@ index 167d838..86bd620 100644
              )?;
          }
  
-+        // nan-vault encrypted preopens: -S vault=<guest>::<skeleton>::<cipherdir>,
-+        // VEK (32-byte hex) in $NAN_VAULT_KEY_<i>. The env var stays in the HOST
++        // enclave-vault encrypted preopens: -S vault=<guest>::<skeleton>::<cipherdir>,
++        // VEK (32-byte hex) in $ENCLAVE_VAULT_KEY_<i>. The env var stays in the HOST
 +        // process only — guest env is always explicit (--env / inherit-env).
 +        for (i, spec) in self.common.wasi.vault.iter().enumerate() {
 +            let mut it = spec.splitn(3, "::");
@@ -954,7 +954,7 @@ index 167d838..86bd620 100644
 +                }
 +                _ => bail!("-S vault expects <guest-path>::<skeleton-dir>::<cipher-dir>, got `{spec}`"),
 +            };
-+            let var = format!("NAN_VAULT_KEY_{i}");
++            let var = format!("ENCLAVE_VAULT_KEY_{i}");
 +            let hex = std::env::var(&var)
 +                .map_err(|_| format_err!("-S vault: ${var} must hold the 32-byte hex VEK"))?;
 +            let vek = parse_vek(&hex).ok_or_else(|| format_err!("-S vault: ${var} is not 32 bytes of hex"))?;

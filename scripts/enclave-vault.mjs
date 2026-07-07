@@ -1,11 +1,11 @@
-// nan-vault - the cryptographic protocol for wallet-gated encrypted volumes.
+// enclave-vault - the cryptographic protocol for wallet-gated encrypted volumes.
 //
 // Shared foundation for: the client (browser wallet UI + this CLI), the enclave
-// (unseal + serve), and the NanVolumeAccess contract (stores pubkeys + sealed
+// (unseal + serve), and the EnclaveVolumeAccess contract (stores pubkeys + sealed
 // VEKs). Every party implements THIS scheme, so it is the single source of
 // truth for the wire formats. Pure @noble (audited, browser + node identical).
 //
-// Trust model (see nan-encrypted-volumes memory): a volume is encrypted once
+// Trust model: a volume is encrypted once
 // with a symmetric VEK. Access is governed by an on-chain ACL of wallets; each
 // authorized wallet holds the VEK SEALED to its X25519 key. Keys are DERIVED
 // from a deterministic wallet signature (no deprecated eth_decrypt; works with
@@ -14,17 +14,17 @@
 // operator nor Tinfoil ever holds the VEK.
 //
 // CLI:
-//   nan-vault key <sigHex>                       -> X25519 pubkey derived from a wallet signature
-//   nan-vault pack <dir> <out> [--vek <hex>]     -> encrypt a volume (prints VEK + plaintext sha256)
-//   nan-vault unpack <in> <dir> --vek <hex>      -> decrypt a volume
-//   nan-vault pack-blocks <dir> <outdir> [--vek <hex>] [--block <bytes>]
+//   enclave-vault key <sigHex>                       -> X25519 pubkey derived from a wallet signature
+//   enclave-vault pack <dir> <out> [--vek <hex>]     -> encrypt a volume (prints VEK + plaintext sha256)
+//   enclave-vault unpack <in> <dir> --vek <hex>      -> decrypt a volume
+//   enclave-vault pack-blocks <dir> <outdir> [--vek <hex>] [--block <bytes>]
 //                                                 -> LARGE tier: block-encrypted cipherdir (NANVOL2);
 //                                                    prints VEK + manifest sha256 (pin THAT in the config)
-//   nan-vault unpack-blocks <cipherdir> <outdir> --vek <hex>
-//   nan-vault seal <vekHex> <recipientPubHex>    -> seal the VEK to a member/enclave pubkey
-//   nan-vault unseal <sealedHex> --sig <sigHex>  -> unseal the VEK with your wallet-derived key
-//   nan-vault unseal <sealedHex> --secret <hex>  -> unseal with a raw X25519 secret (enclave)
-//   nan-vault enclave-id                          -> generate a fresh enclave X25519 identity (sk, pk)
+//   enclave-vault unpack-blocks <cipherdir> <outdir> --vek <hex>
+//   enclave-vault seal <vekHex> <recipientPubHex>    -> seal the VEK to a member/enclave pubkey
+//   enclave-vault unseal <sealedHex> --sig <sigHex>  -> unseal the VEK with your wallet-derived key
+//   enclave-vault unseal <sealedHex> --secret <hex>  -> unseal with a raw X25519 secret (enclave)
+//   enclave-vault enclave-id                          -> generate a fresh enclave X25519 identity (sk, pk)
 //
 // The derivation message the wallet signs (personal_sign) is DERIVE_MESSAGE.
 
@@ -77,7 +77,7 @@ export function encryptVolume(plaintext, vek) {
 export function decryptVolume(blob, vek) {
   if (blob.length < VOL_MAGIC.length + 24 + 16 ||
       !VOL_MAGIC.every((b, i) => blob[i] === b))
-    throw new Error("not a nan-vault volume (bad header)");
+    throw new Error("not a enclave-vault volume (bad header)");
   const nonce = blob.subarray(VOL_MAGIC.length, VOL_MAGIC.length + 24);
   const ct = blob.subarray(VOL_MAGIC.length + 24);
   return xchacha20poly1305(vek, nonce).decrypt(ct);   // throws on wrong key / tamper (AEAD tag)
@@ -277,5 +277,5 @@ async function main() {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((e) => { console.error("nan-vault:", e.message); process.exit(1); });
+  main().catch((e) => { console.error("enclave-vault:", e.message); process.exit(1); });
 }

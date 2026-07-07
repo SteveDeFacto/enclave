@@ -14,7 +14,7 @@ from onnx import TensorProto, helper
 B = helper.make_tensor("B", TensorProto.FLOAT, [1, 4], [10.0, 20.0, 30.0, 40.0])
 graph = helper.make_graph(
     nodes=[helper.make_node("Add", inputs=["X", "B"], outputs=["Y"])],
-    name="nan-nn-demo",
+    name="enclave-nn-demo",
     inputs=[helper.make_tensor_value_info("X", TensorProto.FLOAT, [1, 4])],
     outputs=[helper.make_tensor_value_info("Y", TensorProto.FLOAT, [1, 4])],
     initializer=[B],

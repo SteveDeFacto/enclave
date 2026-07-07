@@ -1,14 +1,14 @@
-// Mint a NAN session token via the SIWE handshake, for testing.
+// Mint a Enclave session token via the SIWE handshake, for testing.
 //
 // Interactive: run it bare and it prompts for the enclave URL and an optional
 // wallet key (hidden input; blank = throwaway wallet).
 // Non-interactive (env vars always win; pipes/CI never prompt):
-//   NAN_BASE=https://enclave1.nan.containers.tinfoil.dev PK=0x... node scripts/login.mjs
+//   ENCLAVE_BASE=https://enclave1.nan.containers.tinfoil.dev PK=0x... node scripts/login.mjs
 //
 // NOTE: deployment records are owner-gated. To READ an existing deployment,
 // log in with the wallet that created it — a throwaway wallet only sees its
 // own. (Browser sessions: the site keeps its token in localStorage
-// "nan_session"; no need for this script or your key.)
+// "enclave_session"; no need for this script or your key.)
 import readline from "node:readline/promises";
 import rlSync from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
@@ -32,7 +32,7 @@ async function promptText(query) {
 
 const tty = input.isTTY && output.isTTY;
 
-let base = (process.env.NAN_BASE || "").trim();
+let base = (process.env.ENCLAVE_BASE || "").trim();
 if (!base && tty) base = await promptText("Enclave URL [http://localhost:8080]: ");
 base = (base || "http://localhost:8080").replace(/\/+$/, "");
 if (!/^https?:\/\//.test(base)) base = "https://" + base;
@@ -51,7 +51,7 @@ try {
 } catch (e) {
   console.error(`ERROR: cannot reach ${base} (${e.cause?.code || e.message}).`);
   console.error(`Is that the right URL? For the live enclave use e.g.`);
-  console.error(`  NAN_BASE=https://enclave1.nan.containers.tinfoil.dev node scripts/login.mjs`);
+  console.error(`  ENCLAVE_BASE=https://enclave1.nan.containers.tinfoil.dev node scripts/login.mjs`);
   process.exit(1);
 }
 if (!nonce.message) { console.error("nonce failed:", nonce); process.exit(1); }
@@ -67,4 +67,4 @@ console.log("ADDRESS:", acct.address);
 if (throwaway) console.log("PK:     ", pk);   // only echo keys WE generated; never echo a provided one
 console.log("TOKEN:  ", login.token);
 if (throwaway) console.log("\n(throwaway wallet — it cannot read deployments owned by other addresses)");
-console.log(`\nexport NAN_TOKEN="${login.token}"`);
+console.log(`\nexport ENCLAVE_TOKEN="${login.token}"`);

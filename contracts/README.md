@@ -1,4 +1,4 @@
-# NAN on-chain discovery (NanRegistry)
+# Enclave on-chain discovery (EnclaveRegistry)
 
 Transparent, gateway-free enclave discovery. The registry is the on-chain source
 of truth for *which enclaves exist, where, and what code they claim*. Callers
@@ -7,23 +7,23 @@ attestation with Tinfoil's SecureClient. There is no trusted middleman: the
 contract publishes claims, attestation (at connect time) gates trust.
 
 ```
-caller --(eth_call)--> NanRegistry            "enclave at URL, repo=org/repo"
+caller --(eth_call)--> EnclaveRegistry            "enclave at URL, repo=org/repo"
 caller --(/availability)--> each enclave      live free share (off-chain)
 caller --(SecureClient(URL, repo))--> enclave verifies SEV-SNP/TDX + Sigstore, pins TLS
 ```
 
 ## Files
-- `contracts/NanRegistry.sol` — the registry (open, no deps, ~120 lines).
-- `contracts/NanRegistry.abi.json` — ABI for JS callers (re-emitted by the deploy script).
+- `contracts/EnclaveRegistry.sol` — the registry (open, no deps, ~120 lines).
+- `contracts/EnclaveRegistry.abi.json` — ABI for JS callers (re-emitted by the deploy script).
 - `scripts/deploy-registry.mjs` — compile + deploy + wire config (mirrors the other deploy scripts).
 - supervisor self-registration — built into `supervisor.js` (`registerOnChain`).
-- `scripts/nan-discover.mjs` — caller-side read + availability aggregation + pick.
+- `scripts/enclave-discover.mjs` — caller-side read + availability aggregation + pick.
 
 ## 1. Deploy the contract to Base (chain 8453)
 
 No constructor args, no owner — the deployer keeps no special power. A viem+solc
 script mirrors `deploy-app-catalog.mjs` and **wires `enclaves/gpu/tinfoil-config.yml`'s
-`REGISTRY_ADDRESS` plus `nan-discover.mjs`'s default automatically** on success
+`REGISTRY_ADDRESS` plus `enclave-discover.mjs`'s default automatically** on success
 (pass `--no-write-config` to skip):
 
 ```bash
@@ -39,7 +39,7 @@ NETWORK=base DEPLOYER_PRIVATE_KEY=0x... node scripts/deploy-registry.mjs
 
 > `registerOnChain` in `supervisor.js` signs on Base mainnet (viem `base`), so
 > the registry enclaves advertise to must live on chain 8453. A Sepolia deploy
-> is still useful to exercise `nan-discover.mjs` (`BASE_RPC=https://sepolia.base.org`).
+> is still useful to exercise `enclave-discover.mjs` (`BASE_RPC=https://sepolia.base.org`).
 
 ## 2. Give each enclave a registry config
 
@@ -52,7 +52,7 @@ env:
   REGISTRY_ENABLED: "1"
   REGISTRY_ADDRESS: ""       # written by scripts/deploy-registry.mjs
   ENCLAVE_ENDPOINT: ""       # per enclave, e.g. "https://enclave1.nan.containers.tinfoil.dev"; empty = don't advertise
-  ENCLAVE_REPO: "SteveDeFacto/nan"          # what callers attest against (Sigstore-measured; exact GitHub casing — Sigstore compares it verbatim)
+  ENCLAVE_REPO: "SteveDeFacto/enclave"          # what callers attest against (Sigstore-measured; exact GitHub casing — Sigstore compares it verbatim)
   # REGISTRY_HEARTBEAT_SEC: "900"           # optional, default 15 min
 ```
 
@@ -78,7 +78,7 @@ let the live attestation be authoritative, which it is regardless.
 
 Read the registry and aggregate availability (no gateway, runs anywhere):
 ```bash
-REGISTRY_ADDRESS=0x... BASE_RPC=https://mainnet.base.org node scripts/nan-discover.mjs 0.25 0.05
+REGISTRY_ADDRESS=0x... BASE_RPC=https://mainnet.base.org node scripts/enclave-discover.mjs 0.25 0.05
 ```
 Prints aggregate free capacity across all live enclaves and the best one for a
 deployment buying a 25% GPU share + 5% CPU share (args: gpuShare cpuShare,
@@ -107,7 +107,7 @@ resp, _ := tc.Get("/availability", nil)
   sits in the request path. Picking the wrong enclave costs placement, not safety.
 - **Trust is gated by attestation at connect**, done by the caller's SecureClient
   — not by registration. A malicious operator can register an enclave, but its
-  live quote won't match a NAN-good `repo`/measurement, so callers reject it.
+  live quote won't match a Enclave-good `repo`/measurement, so callers reject it.
 - **Liveness is advisory**: heartbeats set `lastSeen`; readers drop entries
   staler than their window (the helper uses 1h).
 - **Open registration for now.** Sybil resistance via stake-to-register +
@@ -117,7 +117,7 @@ resp, _ := tc.Get("/availability", nil)
 ## Verify on first deploy
 After one enclave registers:
 ```bash
-node scripts/nan-discover.mjs        # should list it with live availability
+node scripts/enclave-discover.mjs        # should list it with live availability
 ```
 You should see it in `all[]` with real `gpuShareFree`/`cpuShareFree`, and `chosen` set. That's the
 full loop: chain registry -> live availability -> a pick, with nothing trusted
@@ -125,18 +125,18 @@ in the middle.
 
 ---
 
-# NAN app store (NanAppCatalog)
+# Enclave app store (EnclaveAppCatalog)
 
 A second, independent on-chain contract: the public catalog of **Wasm apps**
-users can browse and publish. Where `NanRegistry` answers "which enclaves exist,"
-`NanAppCatalog` answers "which apps exist and where their code lives." It backs
+users can browse and publish. Where `EnclaveRegistry` answers "which enclaves exist,"
+`EnclaveAppCatalog` answers "which apps exist and where their code lives." It backs
 the **Apps** tab on the site.
 
 ```
-browser --(eth_call getAppsPage)------> NanAppCatalog   apps: {appId,slug,name,desc,publisher,versionCount,active}
-browser --(eth_call getVersionsPage)--> NanAppCatalog   per app: {cid,version,vramMb,gpuGflops,memMb,cpuGflops,verified,yanked}
+browser --(eth_call getAppsPage)------> EnclaveAppCatalog   apps: {appId,slug,name,desc,publisher,versionCount,active}
+browser --(eth_call getVersionsPage)--> EnclaveAppCatalog   per app: {cid,version,vramMb,gpuGflops,memMb,cpuGflops,verified,yanked}
 browser --(fetch CID)-----------------> any IPFS peer   the .wasm bytes (hash == CID, verify yourself)
-browser --(publishVersion tx)---------> NanAppCatalog   one Base tx; publisher = msg.sender
+browser --(publishVersion tx)---------> EnclaveAppCatalog   one Base tx; publisher = msg.sender
 ```
 
 ## Two catalogs, on purpose
@@ -144,7 +144,7 @@ browser --(publishVersion tx)---------> NanAppCatalog   one Base tx; publisher =
 - **Attested, baked-in catalog** (`wasm/apps/catalog.json`) — curated apps compiled
   into the measured wasm-manager image. What the enclave runs today is exactly what
   attestation measured. Deploys reference these by id (e.g. `hello`).
-- **On-chain community catalog** (`NanAppCatalog`) — open discovery. Anyone
+- **On-chain community catalog** (`EnclaveAppCatalog`) — open discovery. Anyone
   publishes; each entry is a `wasi:http` component addressed by its **IPFS CID**.
   This is *discovery*, not custody or attestation: the catalog stores the CID (a
   hash of the exact wasm), never the bytes, so a caller fetches from any IPFS peer
@@ -196,7 +196,7 @@ Manager env: `IPFS_GATEWAY` (default `https://ipfs.enclave.host`), `WASM_MAX_BYT
   only when ports are declared, audits actual binds, and kills an app that binds
   an unassigned port. Ports are **logical** (labels 1-19999; 8080/8091
   infra-reserved; below 1024, e.g. `udp:53`, always remapped internally): every deployment gets its own actual loopback bind (passed to
-  the app as `NAN_PORTS=tcp:5432=31245`, logical=actual), so any number of
+  the app as `ENCLAVE_PORTS=tcp:5432=31245`, logical=actual), so any number of
   tenants can run the same app simultaneously with no port conflicts. Declared
   TCP ports are reached through the attested origin as a WebSocket bridge at
   `/x/{id}/tcp/{logical-port}`.
@@ -220,7 +220,7 @@ Manager env: `IPFS_GATEWAY` (default `https://ipfs.enclave.host`), `WASM_MAX_BYT
 
 No constructor args; the deployer EOA becomes `owner` (approves/rejects versions,
 can flip `verified`, can `transferOwnership`). A viem+solc script mirrors
-`deploy-nanpay.mjs` and **wires the site and `enclaves/gpu/tinfoil-config.yml` automatically**
+`deploy-enclave-pay.mjs` and **wires the site and `enclaves/gpu/tinfoil-config.yml` automatically**
 on success:
 
 ```bash
@@ -238,7 +238,7 @@ On a successful deploy it rewrites `APP_CATALOG_ADDRESS`, `APP_CATALOG_CHAIN`, a
 `APP_CATALOG_RPC` in `site/index.html`, plus `APP_CATALOG_ADDRESS` in
 the enclave configs so the supervisor enforces the approval gate against the same
 deployment (pass `--no-write-config` to skip both). It also re-emits
-`contracts/NanAppCatalog.abi.json` from source on every run so the checked-in ABI
+`contracts/EnclaveAppCatalog.abi.json` from source on every run so the checked-in ABI
 can't drift from what's deployed.
 
 > **Deploy once.** Re-running deploys a *fresh, empty* contract at a new address

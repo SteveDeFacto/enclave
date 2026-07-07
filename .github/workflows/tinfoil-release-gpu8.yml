@@ -4,7 +4,7 @@
 # (enclaves/gpu8/tinfoil-config.yml: supervisor + vllm, serving GLM-5.2 over an
 # attested OpenAI API). The supervisor image is the SAME build as the other
 # flavors — the flavor is picked by the measured config (PLATFORM_MODEL_URL set,
-# CLAIM_ENABLED=0), not by the image. The nan-vllm image is pinned by DIGEST in
+# CLAIM_ENABLED=0), not by the image. The enclave-vllm image is pinned by DIGEST in
 # the config (pre-built by scripts/release.sh / the vllm-image workflow); this
 # workflow only rebuilds + repins the supervisor.
 #
@@ -15,8 +15,8 @@
 #
 # Versions MUST end in "-gpu8". NOTE: verifiers that check this repo's LATEST
 # release see the GPU flavor's measurement — point them at the matching -gpu8
-# release explicitly. The nan-vllm digest MUST be pinned in the config before
-# running this (release.sh nan-vllm), and the GLM Modelwrap models: entry must
+# release explicitly. The enclave-vllm digest MUST be pinned in the config before
+# running this (release.sh enclave-vllm), and the GLM Modelwrap models: entry must
 # carry a real mpk from the Tinfoil Models tab.
 
 name: Tinfoil Release (8xGPU)
@@ -62,11 +62,11 @@ jobs:
             exit 1
           fi
 
-      - name: Guard against unpinned nan-vllm / unfilled Modelwrap entry
+      - name: Guard against unpinned enclave-vllm / unfilled Modelwrap entry
         run: |
           cfg=enclaves/gpu8/tinfoil-config.yml
-          if grep -q 'nan-vllm@sha256:0\{64\}' "$cfg"; then
-            echo "::error::nan-vllm digest is the zero placeholder in $cfg - run scripts/release.sh nan-vllm first, commit the pin, then release."
+          if grep -q 'enclave-vllm@sha256:0\{64\}' "$cfg"; then
+            echo "::error::enclave-vllm digest is the zero placeholder in $cfg - run scripts/release.sh enclave-vllm first, commit the pin, then release."
             exit 1
           fi
           if grep -qE 'REPLACE_WITH_(PINNED_COMMIT|HASH_FROM_MODELS_TAB)' "$cfg"; then
@@ -93,7 +93,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/stevedefacto/nan:${{ inputs.version }}
+            ghcr.io/stevedefacto/enclave-supervisor:${{ inputs.version }}
 
   prepare-release:
     needs: build
@@ -116,10 +116,10 @@ jobs:
         run: |
           set -euo pipefail
           cp enclaves/gpu8/tinfoil-config.yml tinfoil-config.yml
-          # `nan[:@]` cannot match nan-vllm (next char is '-'), so only the
-          # supervisor line is repinned; the nan-vllm pin stays as committed.
-          sed -i -E "s#(image: \"ghcr\.io/stevedefacto/nan)[:@][^\"]*\"#\1@${DIGEST}\"#" tinfoil-config.yml
-          grep -q "ghcr.io/stevedefacto/nan@${DIGEST}" tinfoil-config.yml \
+          # `enclave-supervisor[:@]` cannot match enclave-vllm (next char is '-'), so only the
+          # supervisor line is repinned; the enclave-vllm pin stays as committed.
+          sed -i -E "s#(image: \"ghcr\.io/stevedefacto/enclave-supervisor)[:@][^\"]*\"#\1@${DIGEST}\"#" tinfoil-config.yml
+          grep -q "ghcr.io/stevedefacto/enclave-supervisor@${DIGEST}" tinfoil-config.yml \
             || { echo "::error::failed to pin supervisor digest into tinfoil-config.yml"; exit 1; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

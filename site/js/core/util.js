@@ -101,7 +101,7 @@ export function statusCls(st){
 /* ---- toast: dispatched as an event, rendered by <c-toast> (the
    LWC ShowToastEvent pattern) ---- */
 export function showToast(msg) {
-  document.dispatchEvent(new CustomEvent("nan:toast", { detail: { message: msg } }));
+  document.dispatchEvent(new CustomEvent("enclave:toast", { detail: { message: msg } }));
 }
 
 /* ---- clipboard ---- */
@@ -127,9 +127,9 @@ export function copyText(text, btn) {
 
 /* ---- page-to-page signals (replaces the single-page world where every
    feature could call every other feature's render directly) ----
-   nan:wallet   — wallet/session state changed (repaint anything user-specific)
-   nan:auth     — sign-in/out edges: detail.authed, detail.spinner
-   nan:catalog  — app-catalog load lifecycle: detail.type = loading|loaded|error
-   nan:toast    — show a toast: detail.message */
+   enclave:wallet   — wallet/session state changed (repaint anything user-specific)
+   enclave:auth     — sign-in/out edges: detail.authed, detail.spinner
+   enclave:catalog  — app-catalog load lifecycle: detail.type = loading|loaded|error
+   enclave:toast    — show a toast: detail.message */
 export function emit(name, detail){ document.dispatchEvent(new CustomEvent(name, { detail: detail || {} })); }
 export function on(name, fn){ document.addEventListener(name, (e) => fn(e.detail || {}, e)); }

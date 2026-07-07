@@ -40,7 +40,7 @@
       },
       {
         "indexed": false,
-        "internalType": "enum NanVolumeAccess.Role",
+        "internalType": "enum EnclaveVolumeAccess.Role",
         "name": "role",
         "type": "uint8"
       }
@@ -197,7 +197,7 @@
     "name": "getMember",
     "outputs": [
       {
-        "internalType": "enum NanVolumeAccess.Role",
+        "internalType": "enum EnclaveVolumeAccess.Role",
         "name": "role",
         "type": "uint8"
       },
@@ -251,7 +251,7 @@
         "type": "address[]"
       },
       {
-        "internalType": "enum NanVolumeAccess.Role[]",
+        "internalType": "enum EnclaveVolumeAccess.Role[]",
         "name": "roles",
         "type": "uint8[]"
       },
@@ -311,7 +311,7 @@
         "type": "address"
       },
       {
-        "internalType": "enum NanVolumeAccess.Role",
+        "internalType": "enum EnclaveVolumeAccess.Role",
         "name": "role",
         "type": "uint8"
       },

@@ -18,7 +18,7 @@ strip = true
 lto = true
 
 [package.metadata.component]
-package = "nan:vault"
+package = "enclave:vault"
 
 [package.metadata.component.target]
 path = "wit"

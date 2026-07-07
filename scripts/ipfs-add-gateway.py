@@ -51,7 +51,7 @@ def preamble_error(b: bytes):
         return "not a WebAssembly file (missing the \\0asm magic bytes)"
     layer = b[6] | (b[7] << 8)   # preamble after magic is version:u16 + layer:u16
     if layer == 0:
-        return "this is a core wasm module, but NAN runs wasi:http components"
+        return "this is a core wasm module, but Enclave runs wasi:http components"
     if layer != 1:
         return "unrecognized wasm layer %d — expected a component" % layer
     return None
@@ -78,7 +78,7 @@ MAX_JSON_BYTES = int(os.environ.get("MAX_CONFIG_BYTES", str(256 * 1024)))
 
 def kubo_add(data: bytes, filename="app.wasm"):
     """Add+pin to the local Kubo node with fixed params; return the CID."""
-    boundary = "----nanwasm" + uuid.uuid4().hex
+    boundary = "----enclavewasm" + uuid.uuid4().hex
     pre = ("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
            "Content-Type: application/octet-stream\r\n\r\n" % (boundary, filename)).encode()
     post = ("\r\n--%s--\r\n" % boundary).encode()

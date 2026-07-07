@@ -15,7 +15,7 @@ import "../../components/volume-picker/volume-picker.js";
 import { appLabel, appEndpoint } from "../../components/deployments/deployments.js";
 import { $, $$, esc, short, wait, fmtNum, fmtDur, hlJson, hlCode, copyText, showToast, statusCls, on } from "../core/util.js";
 import { APP_DOMAIN, DEPLOYMENTS_ADDRESS, IPFS_UPLOAD_URL, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
-import { Nan, NanError } from "../core/api.js";
+import { Enclave, EnclaveError } from "../core/api.js";
 import { CARD_GB, NODE_VCPUS, NODE_RAM_GB, CARD_TFLOPS, NODE_GFLOPS, shareRates } from "../core/pricing.js";
 import { encUint, encAddr, encBytes32, encBytesTail, randHex, usdc6, encCall, DEP_SEL, DEP_CREATED_TOPIC, APPROVAL, depGet, depRate6, waitReceipt } from "../core/chain.js";
 import { authenticate, connectWallet, refreshWallet, ensureBaseChain, sendTx, usdcBalanceOf, ethBalanceOf, openBuyModal } from "../core/wallet.js";
@@ -59,7 +59,7 @@ function deployBody(){
   if (gp > 0 && dep.gpuEnclave) body.attestationPolicy = { requireGpuAttestation: true };
   const cc = ($("#cfgConfig") && $("#cfgConfig").value || "").trim();
   if (dep.volumes.size) body.volumes = [...dep.volumes];   // attached model volumes (built into configCid at deploy)
-  else if (cc) body.configCid = cc;                        // per-deployment config, delivered to the app as NAN_CONFIG
+  else if (cc) body.configCid = cc;                        // per-deployment config, delivered to the app as ENCLAVE_CONFIG
   body.region = "auto";
   return body;
 }
@@ -69,28 +69,28 @@ function deployFetch(b){
   const c = Math.round(((b.resources && b.resources.cpuShare) || 0.05) * 1000);
   const fw = (b.firewall && b.firewall.ports || []).join(",");
   const cc = b.configCid || "";
-  return '// Deployments are ON-CHAIN work items (NanDeployments on Base): the ledger\n'
+  return '// Deployments are ON-CHAIN work items (EnclaveDeployments on Base): the ledger\n'
     + '// holds the spec + funded balance, so they survive enclave updates and crashes.\n'
     + '// 1) create() from your wallet - one tx; msg.sender owns the record:\n'
     + '//    create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid)\n'
     + '//    configCid: optional IPFS CID of a JSON config the enclave verifies and\n'
-    + '//    hands the app as NAN_CONFIG (e.g. choose a model / set an API key).\n'
+    + '//    hands the app as ENCLAVE_CONFIG (e.g. choose a model / set an API key).\n'
     + 'const { id } = await createOnChain("' + DEPLOYMENTS_ADDRESS + '",\n'
     + '  ["' + r + '", ' + g + ', ' + c + ', 8080, "' + fw + '", ' + !!b.public + ', "", "' + cc + '"]);\n'
     + '//    id = topics[1] of the Created event in the receipt\n'
     + '// 2) fund it - credited to the on-chain balance (funds forward to Enclave):\n'
     + '//    fundWithAuthorization(id, …EIP-3009 USDC sig…)  or  fundEth(id) payable\n'
     + '// 3) nudge the fleet (optional; the sweep claims funded work within ~1 min):\n'
-    + 'await fetch("' + Nan.base + '/claim-hint", { method: "POST",\n'
+    + 'await fetch("' + Enclave.base + '/claim-hint", { method: "POST",\n'
     + '  headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) });\n'
-    + '// 4) NanDeployments.get(id).runner is the serving enclave; your app origin is\n'
+    + '// 4) EnclaveDeployments.get(id).runner is the serving enclave; your app origin is\n'
     + '//    https://<first 8 hex chars of id>.' + APP_DOMAIN;
 }
 function deployCurl(b){
   return "# deployments are created on-chain, not by POST (see the JS tab):\n"
     + "#   1) create() + 2) fundWithAuthorization()/fundEth() from your wallet\n"
     + "# then nudge the fleet to claim it right away:\n"
-    + "curl -X POST " + Nan.base + "/claim-hint \\\n"
+    + "curl -X POST " + Enclave.base + "/claim-hint \\\n"
     + '  -H "Content-Type: application/json" \\\n'
     + "  -d '{\"id\": \"0x<deployment id>\"}'";
 }
@@ -137,8 +137,8 @@ function switchPane(name){
 }
 
 /* ============================================================
-   Payments — minimal ABI encoding for NanPay payWithAuthorization
-   + payEth and the NanDeployments funding pair (no web3 lib)
+   Payments — minimal ABI encoding for EnclavePay payWithAuthorization
+   + payEth and the EnclaveDeployments funding pair (no web3 lib)
    ============================================================ */
 const SEL_PAY_AUTH = "7d368d83";  // payWithAuthorization(bytes32,address,uint256,uint256,uint256,bytes32,bytes); verified vs viem
 const SEL_PAYETH   = "00bd4dee";  // payEth(bytes32) payable; verified vs viem
@@ -149,7 +149,7 @@ const dataPayWithAuth = (ref, from, amt6, validAfter, validBefore, nonce, sig) =
        + encUint(validAfter) + encUint(validBefore) + encBytes32(nonce)
        + encUint(7 * 32) + encBytesTail(sig);
 const dataPayEth = (ref) => "0x" + SEL_PAYETH + encBytes32(ref);
-// NanDeployments funding: byte-identical parameter shape to NanPay's pair, but
+// EnclaveDeployments funding: byte-identical parameter shape to EnclavePay's pair, but
 // the credit lands in the deployment's ON-CHAIN balance6 (funds still forward
 // to the payout in the same tx - nothing is custodied by the contract).
 const dataFundWithAuth = (ref, from, amt6, validAfter, validBefore, nonce, sig) =>
@@ -161,7 +161,7 @@ const dataFundEth = (ref) => "0x" + DEP_SEL.fundEth + encBytes32(ref);
 // the enclave credits the actual wei at its own live Chainlink read on arrival)
 function usdToWei(usd, ethUsd){
   const price = parseFloat(ethUsd);
-  if (!(price > 0)) throw new NanError("No live ETH/USD rate from the enclave; pay in USDC, or retry shortly.", 0);
+  if (!(price > 0)) throw new EnclaveError("No live ETH/USD rate from the enclave; pay in USDC, or retry shortly.", 0);
   return BigInt(Math.round((usd / price) * 1e9)) * 1000000000n;   // 9dp of ETH precision
 }
 
@@ -172,19 +172,19 @@ function usdToWei(usd, ethUsd){
    ETH:  payEth(ref) with msg.value: ONE transaction; the enclave credits the wei
          as USDC-equivalent at its live Chainlink ETH/USD read when the event lands. */
 async function payForRuntime(term, pay, fundUsdc){
-  // Two receivers, one shape: the NanPay forwarder (legacy container flavor,
-  // off-chain clock) or the NanDeployments ledger (pay.contract - the credit
+  // Two receivers, one shape: the EnclavePay forwarder (legacy container flavor,
+  // off-chain clock) or the EnclaveDeployments ledger (pay.contract - the credit
   // lands in the deployment's on-chain balance6, so ANY enclave can serve it).
   const ledger = !(pay && pay.forwarder);
   const to = pay && (pay.forwarder || pay.contract);
-  if (!to) throw new NanError("No payment instructions (neither a forwarder nor the deployments contract was returned).", 0);
+  if (!to) throw new EnclaveError("No payment instructions (neither a forwarder nor the deployments contract was returned).", 0);
   await ensureBaseChain();
   const amt6 = usdc6(fundUsdc);                       // cent-rounded 6dp USDC
-  if (amt6 <= 0n) throw new NanError("Fund at least $0.01 (USDC).", 0);
+  if (amt6 <= 0n) throw new EnclaveError("Fund at least $0.01 (USDC).", 0);
   const usd = (Number(amt6) / 1e6).toFixed(2);        // e.g. "10.00", what actually gets signed/paid
   if (dep.asset === "ETH"){
-    if (!ledger && !pay.payEthMethod) throw new NanError("This enclave doesn't accept ETH yet (older release); pay in USDC.", 0);
-    if (!pay.ethUsd) throw new NanError("No ETH/USD quote available right now; fund in USDC instead.", 0);
+    if (!ledger && !pay.payEthMethod) throw new EnclaveError("This enclave doesn't accept ETH yet (older release); pay in USDC.", 0);
+    if (!pay.ethUsd) throw new EnclaveError("No ETH/USD quote available right now; fund in USDC instead.", 0);
     const wei = usdToWei(Number(amt6) / 1e6, pay.ethUsd);
     const eth = (Number(wei) / 1e18).toFixed(6);
     term.line("info", "[*] " + (ledger ? "fundEth" : "payEth") + " ≈ " + eth + " ETH (≈ $" + usd + " @ $" + pay.ethUsd + "/ETH)… (wallet · one tx)");
@@ -215,11 +215,11 @@ async function payForRuntime(term, pay, fundUsdc){
     },
     domain: { name: dom.name, version: dom.version, chainId: Number(dom.chainId), verifyingContract: dom.verifyingContract },
     primaryType: "ReceiveWithAuthorization",
-    message: { from: Nan.address, to: to, value: amt6.toString(),
+    message: { from: Enclave.address, to: to, value: amt6.toString(),
                validAfter: "0", validBefore: String(validBefore), nonce: nonce },
   };
   term.line("info", "[*] sign a " + usd + " USDC payment authorization (EIP-3009)… (wallet · gas-free signature)");
-  let sig = await Nan.provider.request({ method: "eth_signTypedData_v4", params: [Nan.address, JSON.stringify(typed)] });
+  let sig = await Enclave.provider.request({ method: "eth_signTypedData_v4", params: [Enclave.address, JSON.stringify(typed)] });
   // some wallets return v as 0/1; USDC's ecrecover wants 27/28 (65-byte ECDSA
   // sigs only; longer EIP-1271 smart-wallet blobs pass through untouched)
   if (sig.replace(/^0x/, "").length === 130) {
@@ -227,7 +227,7 @@ async function payForRuntime(term, pay, fundUsdc){
     if (v === 0 || v === 1) sig = sig.slice(0, -2) + (v + 27).toString(16);
   }
   term.line("info", "[*] pay " + usd + " USDC · buys runtime… (wallet · one tx, no approve)");
-  const ph = await sendTx(to, (ledger ? dataFundWithAuth : dataPayWithAuth)(pay.deploymentRef, Nan.address, amt6, 0, validBefore, nonce, sig));
+  const ph = await sendTx(to, (ledger ? dataFundWithAuth : dataPayWithAuth)(pay.deploymentRef, Enclave.address, amt6, 0, validBefore, nonce, sig));
   term.line("ok", "[✓] payment sent " + ph);
   term.line("dimln", ledger
     ? "    credited to the deployment's on-chain balance; funds forward to Enclave - nothing is custodied"
@@ -275,7 +275,7 @@ async function runDeploy(){
   const fund = parseFloat($("#cfgBudget").value) || 0;
   const dry = $("#dryRun") && $("#dryRun").checked;
 
-  // ---- ON-CHAIN deploy (NanDeployments): the ledger, not any one enclave,
+  // ---- ON-CHAIN deploy (EnclaveDeployments): the ledger, not any one enclave,
   // holds the spec and the funded balance, so the deployment survives enclave
   // updates and crashes - runners hold expiring leases and re-claim work.
   const gpuMilli = dep.gpuEnclave ? Math.round(Math.max(0, Math.min(100, dep.gpuPct))) * 10 : 0;
@@ -290,7 +290,7 @@ async function runDeploy(){
   if (dry){
     term.line("warn", "// dry run: nothing is sent");
     if (volNames.length) term.line("info", "0) volumes " + JSON.stringify(volNames) + " -> the console pins {\"volumes\":[…]} to IPFS and passes its CID as configCid");
-    term.line("p", "1) NanDeployments.create(app, shares, ports) - one wallet tx; you own the record");
+    term.line("p", "1) EnclaveDeployments.create(app, shares, ports) - one wallet tx; you own the record");
     term.line("dimln", "   create(\"" + rref.reference + "\", " + gpuMilli + ", " + cpuMilli + ", " + appPort + ", \"" + portsCsv + "\", " + dep.public + ", \"\", \"" + (volNames.length ? "<pinned config CID>" : configCid) + "\")");
     term.line("p", dep.asset === "ETH"
       ? "2) fundEth(id) with ≈ $" + fund + " of ETH - one wallet tx; credited on-chain"
@@ -303,16 +303,16 @@ async function runDeploy(){
 
   btn.disabled = true; const lbl = btn.textContent; btn.textContent = "working…";
   try {
-    if (!Nan.token){
+    if (!Enclave.token){
       term.line("info", "[*] connecting wallet + signing in (SIWE)…");
       await authenticate();
-      term.line("ok", "[✓] signed in as " + short(Nan.address));
+      term.line("ok", "[✓] signed in as " + short(Enclave.address));
     }
     // a restored session has a token but NO provider - reconnect before any tx
-    if (!Nan.provider){
+    if (!Enclave.provider){
       term.line("info", "[*] reconnecting wallet…");
       await connectWallet();
-      term.line("ok", "[✓] wallet " + short(Nan.address));
+      term.line("ok", "[✓] wallet " + short(Enclave.address));
     }
     term.line("dimln", "    if nothing happens, check your wallet - a popup may be waiting (or queued behind an old one; open the wallet and clear pending requests)");
     await ensureBaseChain();
@@ -333,17 +333,17 @@ async function runDeploy(){
       term.line("p", "$ pin app config  (volumes -> IPFS -> configCid)");
       if (configCid) term.line("warn", "    (ignoring the pasted config CID - the volume picker builds the config; put volumes in your own config to combine)");
       const jsonUrl = (IPFS_UPLOAD_URL || "").replace(/\/add-wasm$/, "/add-json");
-      if (!jsonUrl) throw new NanError("volume attach needs the upload gateway; not configured here. Pin {\"volumes\":[…]} yourself and paste its CID.", 0);
+      if (!jsonUrl) throw new EnclaveError("volume attach needs the upload gateway; not configured here. Pin {\"volumes\":[…]} yourself and paste its CID.", 0);
       const cfgObj = { volumes: volNames };
       const pr = await fetch(jsonUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(cfgObj) });
       const pj = await pr.json().catch(() => ({}));
-      if (!pr.ok || !pj.cid) throw new NanError("config pin failed: " + (pj.error || ("HTTP " + pr.status)), 0);
+      if (!pr.ok || !pj.cid) throw new EnclaveError("config pin failed: " + (pj.error || ("HTTP " + pr.status)), 0);
       configCid = pj.cid;
       term.line("ok", "[✓] config pinned " + configCid + "  (mounts: " + volNames.join(", ") + " -> /models/…)");
     }
 
     // 1) create: one tx from YOUR wallet - msg.sender owns the on-chain record
-    term.line("p", "$ NanDeployments.create(…)  (wallet · one tx · you own the record)");
+    term.line("p", "$ EnclaveDeployments.create(…)  (wallet · one tx · you own the record)");
     term.line("info", "[*] confirm the create transaction in your wallet…");
     const cdata = encCall(DEP_SEL.create, [
       { t: "str", v: rref.reference }, { t: "uint", v: gpuMilli }, { t: "uint", v: cpuMilli },
@@ -355,13 +355,13 @@ async function runDeploy(){
     const rcpt = await waitReceipt(chash);
     const clog = (rcpt.logs || []).find(l => (l.topics || [])[0] === DEP_CREATED_TOPIC
       && (l.address || "").toLowerCase() === DEPLOYMENTS_ADDRESS.toLowerCase());
-    if (!clog) throw new NanError("create() confirmed but no Created event found in the receipt", 0);
+    if (!clog) throw new EnclaveError("create() confirmed but no Created event found in the receipt", 0);
     const id = clog.topics[1];
     term.line("ok", "[✓] created " + id);
 
     // 2) fund: the credit lands in the deployment's on-chain balance
     let pricing = null;
-    try { pricing = await (await fetch(Nan.base + "/pricing", { signal: AbortSignal.timeout(8000) })).json(); } catch(e){}
+    try { pricing = await (await fetch(Enclave.base + "/pricing", { signal: AbortSignal.timeout(8000) })).json(); } catch(e){}
     try {
       await payForRuntime(term, {
         contract: DEPLOYMENTS_ADDRESS, deploymentRef: id,
@@ -378,7 +378,7 @@ async function runDeploy(){
     // 3) nudge the fleet - otherwise the next sweep (<=60s) picks it up
     term.line("info", "[*] hinting enclaves to claim…");
     try {
-      const h = await (await fetch(Nan.base + "/claim-hint", { method: "POST",
+      const h = await (await fetch(Enclave.base + "/claim-hint", { method: "POST",
         headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) })).json();
       if (h && h.accepted === false && h.reason) term.line("dimln", "    hint declined: " + h.reason + " (the sweep may still claim it)");
     } catch(e){ term.line("dimln", "    hint failed (" + (e.message || e) + "); the sweep claims funded work within ~1 min"); }
@@ -393,7 +393,7 @@ async function runDeploy(){
       else if (i > 1 && i % 15 === 0){
         // don't wait in silence: ask the fleet WHY it isn't claiming
         try {
-          const h = await (await fetch(Nan.base + "/claim-hint", { method: "POST",
+          const h = await (await fetch(Enclave.base + "/claim-hint", { method: "POST",
             headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) })).json();
           if (h && h.accepted === false && h.reason && h.reason !== lastReason){
             lastReason = h.reason;
@@ -428,7 +428,7 @@ async function pollDeployment(id){
   const done = { running: 1, failed: 1, stopped: 1, error: 1 };
   let last = null, d = null;
   for (let i = 0; i < 180; i++){
-    try { d = await Nan.getDeployment(id); }
+    try { d = await Enclave.getDeployment(id); }
     catch(e){ term.line("dimln", "  … " + e.message); await wait(2500); continue; }
     if (d.status !== last){ last = d.status; term.line(statusCls(d.status), "  • " + d.status); }
     if (done[d.status]){
@@ -457,7 +457,7 @@ async function refreshAvailability(){
   const cIn = $("#cfgCpuShare"), capC = $("#cpuShareCap");
   if (!gIn) return;
   try {
-    const a = await Nan.getAvailability();
+    const a = await Enclave.getAvailability();
     dep.gpuEnclave = a.gpu !== false;               // gpu:false = CPU-only enclave (older enclaves omit the field)
     const unitG = $("#gpuShareUnit");
     if (unitG) unitG.textContent = dep.gpuEnclave ? "(% of one card · 0 = CPU-only app)" : "(CPU-only enclave · no GPU here)";
@@ -495,7 +495,7 @@ async function refreshFleet(){
   const field = $("#fleetField"), volField = $("#volField");
   if (!field || !fleetList) return;
   try {
-    const r = await fetch(Nan.base.replace(/\/v1\/?$/, "") + "/enclaves", { headers: { "Accept": "application/json" } });
+    const r = await fetch(Enclave.base.replace(/\/v1\/?$/, "") + "/enclaves", { headers: { "Accept": "application/json" } });
     if (!r.ok) throw new Error("no fleet view");
     const j = await r.json();
     const rows = (j.enclaves || []).slice().sort((a, b) =>
@@ -535,7 +535,7 @@ function startAvailPoll(){
    and show a live USDC balance under the Pay-with control. */
 function updatePayAssetUI(){
   const seg = $("#cfgAsset"); if (!seg) return;
-  const privy = Nan.walletRdns === PRIVY_RDNS;
+  const privy = Enclave.walletRdns === PRIVY_RDNS;
   const ethBtn = seg.querySelector('button[data-asset="ETH"]');
   if (ethBtn) ethBtn.hidden = privy;
   if (privy && dep.asset === "ETH"){
@@ -548,17 +548,17 @@ function updatePayAssetUI(){
 let _balSeq = 0;
 async function updateUsdcBalance(){
   const el = $("#payBal"); if (!el) return;
-  if (!Nan.address || !Nan.provider){ el.hidden = true; return; }
+  if (!Enclave.address || !Enclave.provider){ el.hidden = true; return; }
   const seq = ++_balSeq;
   try {
     // the card follows the selected pay asset: USDC by default, ETH when an
     // extension user flips the toggle
-    const wantEth = (dep.asset === "ETH" && Nan.walletRdns !== PRIVY_RDNS);
+    const wantEth = (dep.asset === "ETH" && Enclave.walletRdns !== PRIVY_RDNS);
     const label = wantEth ? "ETH balance" : "USDC balance";
-    const val = wantEth ? (await ethBalanceOf(Nan.address)).toFixed(4) + " ETH"
-                        : (await usdcBalanceOf(Nan.address)).toFixed(2) + " USDC";
+    const val = wantEth ? (await ethBalanceOf(Enclave.address)).toFixed(4) + " ETH"
+                        : (await usdcBalanceOf(Enclave.address)).toFixed(2) + " USDC";
     if (seq !== _balSeq) return;
-    const privy = Nan.walletRdns === PRIVY_RDNS;
+    const privy = Enclave.walletRdns === PRIVY_RDNS;
     el.innerHTML = '<div><span class="pb-k">' + label + '</span><span class="pb-v">' + esc(val) + '</span></div>' +
       (privy ? '<button class="pb-buy" id="payBuyMore" type="button">Buy more →</button>' : "");
     el.hidden = false;
@@ -570,7 +570,7 @@ async function checkHealth(){
   const ind = $("#epState");
   if (ind){ ind.className = "ep-state"; ind.textContent = "checking…"; }
   try {
-    await Nan.health();
+    await Enclave.health();
     if (ind){ ind.className = "ep-state ok"; ind.textContent = "reachable"; }
   } catch(e){
     if (ind){ ind.className = "ep-state down"; ind.textContent = "unreachable · set a live endpoint"; }
@@ -589,7 +589,7 @@ function applyUseInDeploy(){
   const inp = $("#cfgImage"); if (!inp) return;
   inp.value = friendly;
   let stash = null;
-  try { stash = JSON.parse(sessionStorage.getItem("nan_use_in_deploy") || "null"); } catch(e){}
+  try { stash = JSON.parse(sessionStorage.getItem("enclave_use_in_deploy") || "null"); } catch(e){}
   const applyMins = (mins, ports) => {
     dep.minGpuPct = mins.gpuPct; dep.minCpuPct = mins.cpuPct;
     dep.gpuPct = mins.gpuPct; dep.cpuPct = mins.cpuPct;
@@ -672,8 +672,8 @@ function initDeploy(){
   // API endpoint field + health probe
   const ep = $("#apiBase");
   if (ep){
-    ep.value = Nan.base;
-    ep.addEventListener("change", () => { Nan.setBase(ep.value); ep.value = Nan.base; renderDeploy(); checkHealth(); });
+    ep.value = Enclave.base;
+    ep.addEventListener("change", () => { Enclave.setBase(ep.value); ep.value = Enclave.base; renderDeploy(); checkHealth(); });
     ep.addEventListener("keydown", (e) => { if (e.key === "Enter") ep.blur(); });
   }
 
@@ -686,9 +686,9 @@ function initDeploy(){
 // wallet/session signals from the shared chrome (<c-deployments> handles its
 // own). Subscribed once at module load; every callee null-guards its elements,
 // so it's inert while another page's <main> is mounted.
-on("nan:wallet", ({ authed }) => {
+on("enclave:wallet", ({ authed }) => {
   const rh = $("#runHint");
-  if (rh) rh.textContent = Nan.address ? (authed ? "ready to deploy" : "click Deploy to sign in") : "sign in to deploy";
+  if (rh) rh.textContent = Enclave.address ? (authed ? "ready to deploy" : "click Deploy to sign in") : "sign in to deploy";
   updatePayAssetUI();
 });
 

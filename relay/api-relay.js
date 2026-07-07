@@ -1,9 +1,9 @@
-// NAN API relay — discovery + placement front door for the fleet. UNTRUSTED
+// Enclave API relay — discovery + placement front door for the fleet. UNTRUSTED
 // as a router (it can misroute, not impersonate: enclaves are attested on
 // their own origins), but on the /v1 gateway path it IS a TLS terminator and
 // sees control-plane traffic — accepted trade for giving browsers one origin.
 //
-// It reads NanRegistry on Base for live enclaves (slow-moving truth: who
+// It reads EnclaveRegistry on Base for live enclaves (slow-moving truth: who
 // exists), polls each one's public /availability (fast-moving truth: free
 // capacity), and routes each request by what it IS. A deployment lives on ONE
 // enclave, sessions are stateless JWTs (HS256 over the enclave SECRET — give
@@ -26,7 +26,7 @@
 //                                  that want to hit the enclave directly
 //
 // Config (env):
-//   REGISTRY_ADDRESS   required*   NanRegistry on Base (chain 8453)
+//   REGISTRY_ADDRESS   required*   EnclaveRegistry on Base (chain 8453)
 //   BASE_RPC           optional    RPC url (default https://mainnet.base.org)
 //   ENCLAVES           required*   *instead of the registry: static comma list
 //                                  of enclave origins (pilot / local dev)
@@ -61,7 +61,7 @@ if (!REGISTRY_ADDRESS && !STATIC_ENCLAVES.length) {
   process.exit(1);
 }
 
-// --- registry read (mirrors scripts/nan-discover.mjs) ------------------------
+// --- registry read (mirrors scripts/enclave-discover.mjs) ------------------------
 const ABI = [
   { type: "function", name: "count", stateMutability: "view", inputs: [],
     outputs: [{ type: "uint256" }] },
@@ -122,7 +122,7 @@ async function pollAvailability() {
   updatedAt = new Date().toISOString();
 }
 
-// Share-based routing — same rule as nan-discover.mjs. Deployments buy two
+// Share-based routing — same rule as enclave-discover.mjs. Deployments buy two
 // shares, so callers route on the shares they intend to buy (the app's specs
 // only set the MINIMUM shares — compute those from /availability's
 // cardVramGb/cardTflops/nodeRamGb/nodeGflops if you're sizing from specs).
@@ -342,7 +342,7 @@ async function gateway(u, req, res) {
   if (p === "/v1/claim-hint" && req.method === "POST") {
     // Fan the hint to every live enclave: CPU-only enclaves take CPU work
     // immediately, GPU enclaves skip their CPU-first grace when hinted, and
-    // the NanDeployments contract referees any race (the loser's claim tx
+    // the EnclaveDeployments contract referees any race (the loser's claim tx
     // reverts; gas is cents). Enclaves answer fast - the actual claim runs in
     // their background; deployers watch the ledger for the runner.
     let body; try { body = await readBody(req); } catch (e) { return json(res, 413, { error: "too_large", message: e.message }, req); }
@@ -401,7 +401,7 @@ function depFromHost(host) {
   const dom = APP_DOMAINS.find(d => host.endsWith("." + d));
   if (!dom) return null;
   const label = host.slice(0, -(dom.length + 1)).replace(/^dep[-_]/, "");   // strip a legacy prefix if present
-  // On-chain (NanDeployments) ids are bytes32; a full 64-hex id exceeds DNS's
+  // On-chain (EnclaveDeployments) ids are bytes32; a full 64-hex id exceeds DNS's
   // 63-char label limit, so their subdomain is a hex PREFIX of the id - the
   // canonical label is the FIRST 8 CHARS (32 bits; collisions are fantasy),
   // and any longer prefix keeps working. Enclaves resolve the prefix to the
@@ -491,4 +491,4 @@ setInterval(pollRegistry, REGISTRY_POLL_SEC * 1000);
 setInterval(pollAvailability, AVAIL_POLL_SEC * 1000);
 
 server.listen(PORT, process.env.API_RELAY_BIND || undefined, () => console.log(
-  `[api-relay] :${PORT} · ${STATIC_ENCLAVES.length ? `static list (${STATIC_ENCLAVES.length})` : `NanRegistry ${REGISTRY_ADDRESS}`} · ${live.length}/${registry.length} live`));
+  `[api-relay] :${PORT} · ${STATIC_ENCLAVES.length ? `static list (${STATIC_ENCLAVES.length})` : `EnclaveRegistry ${REGISTRY_ADDRESS}`} · ${live.length}/${registry.length} live`));

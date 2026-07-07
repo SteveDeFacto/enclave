@@ -3,7 +3,7 @@
 # file that ships them, so no flavor/config drifts after a redeploy.
 #
 # The deploy scripts each wire their own primary target (deploy-registry /
-# -nanpay / -deployments write enclaves/gpu/tinfoil-config.yml; deploy-app-catalog
+# -enclavepay / -deployments write enclaves/gpu/tinfoil-config.yml; deploy-app-catalog
 # writes site/index.html) but none of them touch the CPU flavor's config, and the
 # catalog address is never copied into the enclave configs. This script reads
 # the authoritative values from those primary targets and rewrites BOTH
@@ -37,4 +37,4 @@ for f in "$GPU" "$CPU" "$REPO/cli/enclave.mjs"; do
   set_key "$f" VOLUME_ACCESS_ADDRESS "$VOLACCESS"
   set_key "$f" APP_CATALOG_ADDRESS   "$CATALOG"
 done
-echo "[sync] registry=${REGISTRY:-?} deployments=${DEPLOYMENTS:-?} nanpay=${FORWARDER:-?} volume-access=${VOLACCESS:-?} catalog=${CATALOG:-?}"
+echo "[sync] registry=${REGISTRY:-?} deployments=${DEPLOYMENTS:-?} enclavepay=${FORWARDER:-?} volume-access=${VOLACCESS:-?} catalog=${CATALOG:-?}"

@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @title NanVolumeAccess — on-chain ACL for wallet-gated encrypted volumes.
-/// @notice The allowlist of wallets that may decrypt a NaN encrypted volume, and
+/// @title EnclaveVolumeAccess — on-chain ACL for wallet-gated encrypted volumes.
+/// @notice The allowlist of wallets that may decrypt a Enclave encrypted volume, and
 ///         the sealed key material each one holds. This is the on-chain half of
 ///         the wallet-gated vault design (the cryptographic half is
-///         scripts/nan-vault.mjs — the shared protocol every party implements).
+///         scripts/enclave-vault.mjs — the shared protocol every party implements).
 ///
 ///         A volume is encrypted ONCE with a symmetric Volume Encryption Key
 ///         (VEK). Access is not a secret stored here — it is CRYPTOGRAPHIC: each
 ///         authorized wallet publishes an X25519 public key (derived from a
-///         deterministic wallet signature; see nan-vault DERIVE_MESSAGE), and the
+///         deterministic wallet signature; see enclave-vault DERIVE_MESSAGE), and the
 ///         owner or the enclave SEALS the VEK to that pubkey. The sealed blob is
 ///         safe to store on a public chain: only the holder of the matching
 ///         wallet-derived secret can unseal it. So EVERYTHING here is public and
 ///         untrusted — confidentiality rests on the sealing, not on-chain secrecy
-///         (same ethos as NanRegistry: published, verified, never trusted).
+///         (same ethos as EnclaveRegistry: published, verified, never trusted).
 ///
 /// Trust model / who can write:
 ///   - Each volume has an `owner` = its deployer. volId = keccak256(deployer,name)
@@ -37,7 +37,7 @@ pragma solidity ^0.8.20;
 /// (read/write volumes are a follow-on; the ROLE bit is recorded now so policy is
 /// ready). The contract does not itself gate data — it gates who holds a decryptable
 /// VEK and at what role.
-contract NanVolumeAccess {
+contract EnclaveVolumeAccess {
     enum Role { None, Reader, Writer } // None = 0 = no access
 
     struct Member {
@@ -124,7 +124,7 @@ contract NanVolumeAccess {
 
     /// @notice Grant `member` access by storing the VEK sealed to their pubkey.
     ///         Callable by the volume owner OR the enclave operator (auto-grant).
-    ///         The VEK is sealed OFF-CHAIN (see nan-vault seal()); this only records it.
+    ///         The VEK is sealed OFF-CHAIN (see enclave-vault seal()); this only records it.
     function grant(bytes32 volId, address member, Role role, bytes calldata sealedVEK) external {
         Volume storage v = _vol[volId];
         require(v.exists, "no volume");

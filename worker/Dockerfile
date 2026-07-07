@@ -1,4 +1,4 @@
-# NAN GPU worker (CuPy). cupy-cuda12x ships precompiled wheels, so this needs NO
+# Enclave GPU worker (CuPy). cupy-cuda12x ships precompiled wheels, so this needs NO
 # compiler, NO dev headers, and NO NumPy<2 pinning — runtime base is enough.
 # Config gives it runtime:nvidia, gpus:all, ipc:host, and the shared
 # /tmp/nvidia-mps mount so it joins the MPS daemon.

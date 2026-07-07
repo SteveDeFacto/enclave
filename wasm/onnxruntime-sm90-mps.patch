@@ -6,7 +6,7 @@ index 453dffa..25722cd 100644
  // of the best efficiency.
  size_t num_splits_heuristic(size_t batch_size, size_t seqlen_q, size_t seqlen_k, size_t num_heads,
                              size_t head_size, size_t num_SMs, size_t max_splits) {
-+  // NAN: under MPS execution-resource provisioning the client-visible SM
++  // Enclave: under MPS execution-resource provisioning the client-visible SM
 +  // count can be very small (a 2% slice of an H200 reports 2 SMs). The wave
 +  // efficiency math below divides by num_SMs and min()s max_splits with it;
 +  // clamp so degenerate partitions cannot produce zero splits or FP faults.
@@ -22,7 +22,7 @@ index 81301eb..f3a4f21 100644
      // to account for ceil
      lean_griddimz = std::min(2 * num_SMs, 32 * num_heads_k * batch_size * num_m_blocks);
    }
-+  // NAN: guard degenerate launch geometry. Under a small MPS partition the
++  // Enclave: guard degenerate launch geometry. Under a small MPS partition the
 +  // client-visible SM count is tiny (a 2% slice of an H200 reports 2 SMs),
 +  // which drives lean_griddimz down until max_tiles_per_tb == 1 - and the
 +  // else-branch below then divides by (max_tiles_per_tb - 1) == 0: SIGFPE,
@@ -53,7 +53,7 @@ index 3326574..40fe919 100644
  namespace cuda {
  using namespace onnxruntime::cuda;
  
-+// NAN: kill-switch for the hand-written small-M matmul kernels. On sm_90
++// Enclave: kill-switch for the hand-written small-M matmul kernels. On sm_90
 +// under an MPS partition the custom fp16 M=1 (GEMV) path misbehaves (decode
 +// hangs at tiny shares, computes wrong values at larger ones) while the
 +// dequantize + cuBLAS fallback is correct everywhere. Setting

@@ -1,5 +1,5 @@
 // wasip2 guest that uses the PHASE-1 explicit path while running under the
-// PHASE-2 lockdown: dial the NAN_EGRESS front directly (the shim must pass a
+// PHASE-2 lockdown: dial the ENCLAVE_EGRESS front directly (the shim must pass a
 // dial to the front itself through), speak SOCKS5 (RFC 1928/1929), CONNECT to
 // $TARGET as a DOMAIN (socks5h), print the BND.ADDR (= this deployment's
 // derived source) and the tunneled echo reply. Proves "two ways in, one front"
@@ -15,7 +15,7 @@ fn main() {
 }
 
 fn run() -> Result<String, String> {
-    let url = std::env::var("NAN_EGRESS").map_err(|_| "no NAN_EGRESS")?;
+    let url = std::env::var("ENCLAVE_EGRESS").map_err(|_| "no ENCLAVE_EGRESS")?;
     let target = std::env::var("TARGET").unwrap_or_else(|_| "egress.test:80".into());
     let rest = url.split_once("://").map(|(_, r)| r).ok_or("bad url")?;
     let (creds, front) = rest.rsplit_once('@').ok_or("no creds")?;

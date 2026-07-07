@@ -1,4 +1,4 @@
-// NAN supervisor - the WHOLE service, running INSIDE the Tinfoil enclave behind
+// Enclave supervisor - the WHOLE service, running INSIDE the Tinfoil enclave behind
 // the shim (the single ingress). It is the measured/attested image: the same
 // published code that checks a user's signature, gates on escrow, mints the
 // session token, launches the per-use container, and proxies the data path.
@@ -35,9 +35,9 @@ import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { SignJWT, jwtVerify } from "jose";
 import { Verifier } from "@tinfoilsh/verifier";
-// nan-vault: the wallet-gated encrypted-volume protocol (single source of truth
-// shared with the client CLI and the browser app; see scripts/nan-vault.mjs)
-import { seal as vaultSeal, unseal as vaultUnseal, newIdentity as vaultNewIdentity } from "./scripts/nan-vault.mjs";
+// enclave-vault: the wallet-gated encrypted-volume protocol (single source of truth
+// shared with the client CLI and the browser app; see scripts/enclave-vault.mjs)
+import { seal as vaultSeal, unseal as vaultUnseal, newIdentity as vaultNewIdentity } from "./scripts/enclave-vault.mjs";
 // dedicated-IP egress: the outbound half of the per-deployment address (see egress.js)
 import { createEgress } from "./egress.js";
 
@@ -51,12 +51,12 @@ const SIWE_DOMAIN    = process.env.SIWE_DOMAIN || "enclave.host";
 const SIWE_URI       = process.env.SIWE_URI || "https://enclave.host";
 const CHAIN_ID       = parseInt(process.env.CHAIN_ID || "8453", 10);
 const CORS_ORIGINS   = (process.env.CORS_ORIGINS || "https://enclave.host").split(",").map(s => s.trim()).filter(Boolean);
-// --- pay-per-deploy (no custody): users pay the NanPay forwarder; the supervisor
+// --- pay-per-deploy (no custody): users pay the EnclavePay forwarder; the supervisor
 //     WATCHES it for Paid events and converts each payment to runtime. No held
 //     balance, no escrow contract, no key in the enclave that can move funds.
-const FORWARDER_ADDRESS  = process.env.FORWARDER_ADDRESS || "";   // NanPay contract (watch-only)
+const FORWARDER_ADDRESS  = process.env.FORWARDER_ADDRESS || "";   // EnclavePay contract (watch-only)
 const USDC_ADDRESS       = process.env.USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // USDC on Base
-// --- app approval: NanAppCatalog (read-only) is the deploy gate for ALL apps
+// --- app approval: EnclaveAppCatalog (read-only) is the deploy gate for ALL apps
 //     (the image ships no deployable apps of its own). Only the catalog's owner
 //     (the EOA that deployed it) can approve/reject a version, by signing a
 //     setApproval transaction; an ipfs://<cid> deploy is refused until its
@@ -72,7 +72,7 @@ const PAY_POLL_SEC       = parseInt(process.env.PAY_POLL_SEC || "12", 10);      
 // State is persisted so a supervisor restart freezes (never forfeits) the clock.
 const BILL_TICK_SEC      = parseInt(process.env.BILL_TICK_SEC || "15", 10);       // billing/reaper cadence
 const WATCHER_STALE_SEC  = Math.max(60, 5 * PAY_POLL_SEC);                        // watcher silence that freezes billing
-const STATE_FILE         = process.env.STATE_FILE || "/var/lib/nan/state.json";   // mount a volume here to survive restarts
+const STATE_FILE         = process.env.STATE_FILE || "/var/lib/enclave/state.json";   // mount a volume here to survive restarts
 // manual-billing / pilot: boot deployments WITHOUT waiting for an on-chain payment.
 //   AUTO_PROVISION=1            -> every deploy provisions immediately (closed pilot).
 //   ADMIN_TOKEN set            -> operator can provision one deployment on demand via
@@ -98,7 +98,7 @@ const DEFAULT_IMAGE  = process.env.DEFAULT_IMAGE || "debian:bookworm-slim"; // a
 const DOCKER_SOCK    = process.env.DOCKER_SOCK || "/var/run/docker.sock";  // Engine API endpoint (mounted into the supervisor)
 const MPS_PIPE_DIR   = process.env.CUDA_MPS_PIPE_DIRECTORY || "/tmp/nvidia-mps";
 const ENABLE_MPS     = !/^(0|false|off)$/i.test(process.env.ENABLE_MPS || "1"); // MPS enforces BOTH the SM cap and the VRAM cap (validated under CC)
-const WORKER_PREFIX  = process.env.WORKER_PREFIX || "nan_";
+const WORKER_PREFIX  = process.env.WORKER_PREFIX || "enclave_";
 const SPAWN_TIMEOUT_MS = parseInt(process.env.SPAWN_TIMEOUT_MS || "300000", 10); // includes image pull / wasm fetch (prefetched claims hit the cache, this is headroom)
 const WORKER_MEM      = process.env.WORKER_MEM || "16g";                // host-RAM cap per worker (not GPU)
 const WORKER_PIDS     = process.env.WORKER_PIDS || "512";
@@ -160,7 +160,7 @@ async function vmHealth(timeoutMs = 3000) {
   return r.body;
 }
 
-// ---- on-chain discovery: self-register in NanRegistry (no trusted gateway) --
+// ---- on-chain discovery: self-register in EnclaveRegistry (no trusted gateway) --
 // On boot the enclave publishes itself (endpoint + attestation repo) to the
 // registry contract on Base, then heartbeats. Callers read the registry from
 // any RPC and connect DIRECTLY, verifying attestation themselves. Entirely
@@ -168,7 +168,7 @@ async function vmHealth(timeoutMs = 3000) {
 const REGISTRY_ENABLED  = /^(1|true|on)$/i.test(process.env.REGISTRY_ENABLED || "");
 const REGISTRY_ADDRESS  = process.env.REGISTRY_ADDRESS || "";
 const REGISTRY_PK       = process.env.REGISTRY_PRIVATE_KEY || "";        // operator key (enclave secret); needs a little Base ETH for gas
-const ENCLAVE_REPO      = process.env.ENCLAVE_REPO || "";                // e.g. "SteveDeFacto/nan" - what callers attest against; MUST match GitHub's canonical casing (Sigstore compares it verbatim)
+const ENCLAVE_REPO      = process.env.ENCLAVE_REPO || "";                // e.g. "SteveDeFacto/enclave" - what callers attest against; MUST match GitHub's canonical casing (Sigstore compares it verbatim)
 const ENCLAVE_MEASUREMENT = process.env.ENCLAVE_MEASUREMENT || ("0x" + "0".repeat(64)); // optional cross-check
 const HEARTBEAT_SEC     = parseInt(process.env.REGISTRY_HEARTBEAT_SEC || "900", 10);
 // The endpoint we advertise is NOT configured — it is derived from the request
@@ -191,7 +191,7 @@ const REGISTRY_ABI = [
 // guard so a later request retries. Never fatal — a failed advertisement must
 // not take down the enclave.
 let _registered = false;
-let _enclaveId = null;            // our NanRegistry id (keccak256 of the advertised endpoint); claim gating needs it
+let _enclaveId = null;            // our EnclaveRegistry id (keccak256 of the advertised endpoint); claim gating needs it
 let _advertisedEndpoint = null;   // the endpoint we registered under; adopted deployments build their URL from it
 async function registerOnChain(endpoint) {
   endpoint = (endpoint || "").replace(/\/+$/, "");
@@ -313,7 +313,7 @@ const maxFreeCpu = () => Math.max(0, Math.min(1, cpuPool.shareFree));
 const normalizeCpuReq = (share) => { const pct = quantizePct(share); return { cpu: true, gpuShare: 0, cpuShare: pct / 100, share: pct / 100, pct }; };
 
 // price = both shares, additively: the GPU slice at the whole-card rate plus
-// the CPU slice at the whole-node rate (mirrors NanDeployments' rate formula).
+// the CPU slice at the whole-node rate (mirrors EnclaveDeployments' rate formula).
 const rateFor = (gpuShare, cpuShare) => FULL_RATE * gpuShare + CPU_RATE * cpuShare;
 // normalize a GPU request: quantize both shares to the integer-percent grain
 // (the MPS cap grain — the true allocatable unit), clamp cpuShare to the
@@ -455,9 +455,9 @@ async function initSshHostKey() {
   // image. Resilient: if ssh-keygen is absent (local dev), boot continues with a
   // placeholder fingerprint.
   try {
-    const dir  = mkdtempSync(join(tmpdir(), "nan-hostkey-"));
+    const dir  = mkdtempSync(join(tmpdir(), "enclave-hostkey-"));
     const path = join(dir, "ssh_host_ed25519_key");
-    execFileSync("ssh-keygen", ["-t", "ed25519", "-N", "", "-q", "-C", "nan-host", "-f", path]);
+    execFileSync("ssh-keygen", ["-t", "ed25519", "-N", "", "-q", "-C", "enclave-host", "-f", path]);
     const out  = execFileSync("ssh-keygen", ["-lf", `${path}.pub`]).toString(); // "256 SHA256:… comment (ED25519)"
     SSH_HOST_KEY_PATH = path;
     SSH_HOST_KEY_FP   = (out.match(/SHA256:\S+/) || ["SHA256:<unknown>"])[0];
@@ -577,17 +577,17 @@ function loadState() {
 // Generate an ed25519 keypair in-enclave via ssh-keygen (correct OpenSSH format).
 // privateKey is surfaced to the user exactly ONCE, in the create response.
 function generateSshKeypair(label) {
-  const dir = mkdtempSync(join(tmpdir(), "nan-ssh-"));
+  const dir = mkdtempSync(join(tmpdir(), "enclave-ssh-"));
   try {
     const key = join(dir, "id");
-    execFileSync("ssh-keygen", ["-t", "ed25519", "-N", "", "-q", "-C", label || "nan", "-f", key]);
+    execFileSync("ssh-keygen", ["-t", "ed25519", "-N", "", "-q", "-C", label || "enclave", "-f", key]);
     return { privateKey: readFileSync(key, "utf8"), publicKey: readFileSync(key + ".pub", "utf8").trim() };
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 // SSH rides the one attested origin over a WebSocket (no extra port): /x/:id/ssh.
 function sshCommandFor(endpoint) {
   const wss = endpoint.replace(/^https:/i, "wss:") + "/ssh";
-  return `ssh -o ProxyCommand='websocat -b ${wss}' ${SSH_USER}@nan`;
+  return `ssh -o ProxyCommand='websocat -b ${wss}' ${SSH_USER}@enclave`;
 }
 // public access shape (NEVER includes the private key)
 function sshAccessOf(rec) {
@@ -701,10 +701,10 @@ async function spawnContainer({ deploymentId, gpuShare, cpuShare, image, appPort
         cpuTflops: round3(c * NODE_GFLOPS / 1000),
         appPort: appPort || 8080, name: deploymentId, ports: ports || [],
         // per-deployment config CID: the manager fetches + verifies it and
-        // passes the JSON to the tenant as NAN_CONFIG (empty = app defaults)
+        // passes the JSON to the tenant as ENCLAVE_CONFIG (empty = app defaults)
         configCid: configCid || "",
         // dedicated-IP egress: a per-deployment SOCKS URL the manager forwards
-        // verbatim as the guest's NAN_EGRESS (empty when egress is off). The
+        // verbatim as the guest's ENCLAVE_EGRESS (empty when egress is off). The
         // token in it is minted from the enclave SECRET, so the manager never
         // needs the secret and the value never touches a log line.
         egress: egress ? egress.envFor(deploymentId) : "" }, SPAWN_TIMEOUT_MS);
@@ -1129,7 +1129,7 @@ const netMap = () => [...deployments.values()]
 
 // --- dedicated-IP EGRESS (the outbound half of depAddrFor) ------------------
 // A deployment's OUTBOUND connections leave from its own IPv6, mirroring the
-// inbound tcp6/udp relays. Guests opt in via NAN_EGRESS (a per-deployment SOCKS
+// inbound tcp6/udp relays. Guests opt in via ENCLAVE_EGRESS (a per-deployment SOCKS
 // URL); the enclave front is here (egress.js), the source-binding dialer is
 // relay/egress-relay.js. Enabled only when dedicated addressing is on AND a
 // shared relay token is configured (EGRESS_RELAY_TOKEN — proves the control/
@@ -1195,7 +1195,7 @@ app.use("/x/:id", async (req, res) => {
     target = new URL(`${WORKER_MGR_URL}/tenants/${encodeURIComponent(rec.id)}/${sub}`);
   }
   const headers = { ...req.headers, host: target.host };
-  delete headers.authorization; // the NAN token stays at the supervisor; the worker never sees it
+  delete headers.authorization; // the Enclave token stays at the supervisor; the worker never sees it
   const up = http.request(
     { host: target.hostname, port: target.port || 80, method: req.method,
       path: target.pathname + target.search, headers },
@@ -1253,7 +1253,7 @@ app.get("/v1/health", (_req, res) => res.json({ status: "ok", deployments: deplo
   // watcher freshness is billing-critical: while it's stale, funded clocks are frozen
   watcher: FORWARDER_ADDRESS ? { lastPollOkAt: _lastPollOkAt ? new Date(_lastPollOkAt).toISOString() : null,
                                  fresh: (Date.now() - _lastPollOkAt) < WATCHER_STALE_SEC * 1000 } : null }));
-app.get("/v1/version", (_req, res) => res.json({ service: "nan-supervisor/0.1.0", contract: "nan-openapi/1.0.0", chainId: CHAIN_ID,
+app.get("/v1/version", (_req, res) => res.json({ service: "enclave-supervisor/0.1.0", contract: "enclave-openapi/1.0.0", chainId: CHAIN_ID,
   // a big-model flavor advertises the attested platform model it serves at
   // /v1/chat/completions (OpenAI-compatible; auth-gated when a key is set)
   platformModel: PLATFORM_MODEL_URL ? { name: PLATFORM_MODEL_NAME || "platform-model", api: "/v1", auth: !!PLATFORM_MODEL_KEY } : null }));
@@ -1263,7 +1263,7 @@ app.get("/v1/pricing", async (_req, res) => {
   // shares are CALCULATED from them. A CPU-only enclave simply has no card to
   // sell (vramGb must be 0 here).
   // Deploy coordinates ride along: deployments are created and funded on the
-  // NanDeployments ledger (see POST /v1/deployments for the method shapes),
+  // EnclaveDeployments ledger (see POST /v1/deployments for the method shapes),
   // and the console needs the contract, the USDC EIP-712 domain, and an
   // ETH/USD quote for fundEth estimates - all public, all cache-friendly.
   const [ethUsd8, usdcDomain] = await Promise.all([
@@ -1413,7 +1413,7 @@ app.get("/v1/auth/nonce", (req, res) => {
   const nonce = rid("");
   const issuedAt = new Date(), expirationTime = new Date(issuedAt.getTime() + 10 * 60_000);
   nonces.set(nonce, { address, exp: expirationTime.getTime() });
-  const statement = "Sign in to NAN. This signature is free and will not move funds.";
+  const statement = "Sign in to Enclave. This signature is free and will not move funds.";
   const message =
     `${SIWE_DOMAIN} wants you to sign in with your Ethereum account:\n${address}\n\n${statement}\n\n` +
     `URI: ${SIWE_URI}\nVersion: 1\nChain ID: ${CHAIN_ID}\nNonce: ${nonce}\n` +
@@ -1440,7 +1440,7 @@ app.post("/v1/auth/login", async (req, res) => {
 });
 
 // ============================================================================
-// payments (pay-per-deploy) - the supervisor WATCHES the NanPay forwarder on
+// payments (pay-per-deploy) - the supervisor WATCHES the EnclavePay forwarder on
 // Base for Paid events and converts each payment into runtime. No held balance.
 // (outbound Base RPC required - confirm the CVM egress allows BASE_RPC.)
 // ============================================================================
@@ -1675,7 +1675,7 @@ app.post("/v1/deployments", authed, async (req, res) => {
   const b = req.body || {};
   // RETIRED on the wasm backend (Steven, 2026-07-05): this path held the spec
   // and the funded clock in enclave-local state, which died with the CVM on
-  // every update. Deployments are created ON-CHAIN instead (NanDeployments):
+  // every update. Deployments are created ON-CHAIN instead (EnclaveDeployments):
   // create() from the owner's wallet, fund with fundWithAuthorization (EIP-3009
   // USDC) or fundEth, and any enclave claims, serves, renews - and re-claims
   // after this one is updated or dies. The ledger IS the deployment; an
@@ -1684,7 +1684,7 @@ app.post("/v1/deployments", authed, async (req, res) => {
     return res.status(410).json({
       code: "deploy_on_chain",
       message: "Deployments are created on-chain, not through this endpoint: send create() to the "
-             + "NanDeployments contract from your wallet (you own the record), fund it via "
+             + "EnclaveDeployments contract from your wallet (you own the record), fund it via "
              + "fundWithAuthorization (EIP-3009 USDC, nonce prefixed with the id's first 16 bytes) or "
              + "fundEth, then POST /v1/claim-hint {id} to start it immediately. The deploy console at "
              + "the site does all of this for you. On-chain deployments survive enclave updates: the "
@@ -1775,13 +1775,13 @@ app.post("/v1/deployments", authed, async (req, res) => {
   // SSH: install the caller's key, or mint one in-enclave and return it ONCE (now, at create).
   let keySource = "provided", authorizedKey = (b.sshPublicKey || "").trim(), oneTimePrivateKey = null;
   if (!authorizedKey) {
-    try { const kp = generateSshKeypair(`nan:${req.address.slice(0, 10)}`);
+    try { const kp = generateSshKeypair(`enclave:${req.address.slice(0, 10)}`);
           authorizedKey = kp.publicKey; oneTimePrivateKey = kp.privateKey; keySource = "generated"; }
     catch (e) { releaseGpu(gpu); return fail(res, 500, "keygen_error", "Could not generate an SSH key: " + e.message); }
   }
 
   const id = rid("dep_");
-  const payRef = keccak256(stringToBytes(id));          // the bytes32 to pass to NanPay.payWithAuthorization()
+  const payRef = keccak256(stringToBytes(id));          // the bytes32 to pass to EnclavePay.payWithAuthorization()
   const rec = {
     id, owner: req.address, status: "awaiting_payment", public: isPublic, firewall,
     image, command: b.command || [],
@@ -2133,7 +2133,7 @@ app.delete("/v1/deployments/:id", authed, async (req, res) => {
     return res.json({ id: rec.id, status: "terminated",
                ranSeconds: Math.round((rec.consumedMs || 0) / 1000),
                note: "On-chain deployment: lease released (unused lease time refunded to its balance). It stays "
-                   + "claimable by any enclave while active and funded — call setActive(false) on NanDeployments "
+                   + "claimable by any enclave while active and funded — call setActive(false) on EnclaveDeployments "
                    + "to stop it for good." });
   }
   res.json({ id: rec.id, status: "terminated",
@@ -2179,15 +2179,15 @@ app.post("/v1/deployments/:id/unlock", authed, async (req, res) => {
 });
 
 // ============================================================================
-// Wallet-gated encrypted volumes (nan-vault) - the enclave side (Phase 3).
+// Wallet-gated encrypted volumes (enclave-vault) - the enclave side (Phase 3).
 //
 // A vault volume's key is a 32-byte VEK held by an on-chain ACL of wallets
-// (contracts/NanVolumeAccess.sol), not by a lone deployer passphrase. Any
+// (contracts/EnclaveVolumeAccess.sol), not by a lone deployer passphrase. Any
 // AUTHORIZED wallet unlocks: it unseals its own sealedVEK from the contract,
 // verifies THIS enclave's attestation, re-seals the VEK to the enclave's
 // per-boot X25519 identity below, and POSTs it to /unlock-sealed. We check the
 // ACL on-chain, unseal, and hand the VEK to the app manager, which decrypts
-// in-RAM (scripts/nan-vault.mjs is the protocol both sides implement). Neither
+// in-RAM (scripts/enclave-vault.mjs is the protocol both sides implement). Neither
 // the operator nor Tinfoil ever holds a decryptable key: the identity secret
 // lives only in CVM memory, and the sealed blob rode the attested TLS.
 // ============================================================================
@@ -2196,7 +2196,7 @@ const VAULT_POLL_SEC = parseInt(process.env.VAULT_POLL_SEC || "15", 10);   // au
 
 // Per-boot enclave vault identity: generated in-process, RAM only, never
 // persisted or logged. A restart mints a new one - by design (see the FAILOVER
-// note in NanVolumeAccess.sol): a key sealed to a dead enclave must be dead too.
+// note in EnclaveVolumeAccess.sol): a key sealed to a dead enclave must be dead too.
 const _vaultId = vaultNewIdentity();
 const _vaultPubHex = "0x" + Buffer.from(_vaultId.publicKey).toString("hex");
 
@@ -2230,7 +2230,7 @@ const VOLUME_ACCESS_ABI = [
     inputs: [{ name: "volId", type: "bytes32" }, { name: "member", type: "address" },
              { name: "role", type: "uint8" }, { name: "sealedVEK", type: "bytes" }], outputs: [] },
 ];
-// volId = keccak256(abi.encode(owner, name)) - MUST match NanVolumeAccess.volumeId
+// volId = keccak256(abi.encode(owner, name)) - MUST match EnclaveVolumeAccess.volumeId
 // (abi.encode, not encodePacked) and the client CLI's volIdOf; all three
 // implementations are pinned to the same canonical vectors.
 const vaultVolId = (owner, volume) =>
@@ -2243,7 +2243,7 @@ const readVaultACL = (functionName, args) => chainClient.readContract({
 // the attestation (the TLS key is generated in-enclave and bound to the
 // CPU-signed quote), and you know the matching secret lives only in this CVM.
 const vaultPubkeyPayload = () => ({
-  pubkey: _vaultPubHex, scheme: "nan-vault/v1 (x25519 sealed box, xchacha20-poly1305)",
+  pubkey: _vaultPubHex, scheme: "enclave-vault/v1 (x25519 sealed box, xchacha20-poly1305)",
   contract: VOLUME_ACCESS_ADDRESS || null, chainId: CHAIN_ID,
   note: "Per-boot key: seal the VEK to it only AFTER verifying this enclave's attestation "
       + "(tinfoil-cli / @tinfoilsh/verifier). Re-fetch on unseal_failed - it rotates on restart." });
@@ -2285,7 +2285,7 @@ app.post("/v1/deployments/:id/unlock-sealed", authed, async (req, res) => {
     const volId = vaultVolId(owner, volume);
     const member = getAddress(req.address);
     if (!(await readVaultACL("isAuthorized", [volId, member])))
-      return fail(res, 403, "not_authorized", `${member} holds no access to volume '${volume}' (volId ${volId}) on NanVolumeAccess. `
+      return fail(res, 403, "not_authorized", `${member} holds no access to volume '${volume}' (volId ${volId}) on EnclaveVolumeAccess. `
         + "Register your pubkey via the contract's register(), then a writer (the owner, or this enclave once unlocked) must grant you.");
     let vek;
     try { vek = vaultUnseal(Buffer.from(sealedHex, "hex"), _vaultId.secretKey); } catch {}
@@ -2319,7 +2319,7 @@ app.post("/v1/deployments/:id/unlock-sealed", authed, async (req, res) => {
 });
 
 // Auto-grant: while this enclave holds a volume's VEK, any wallet that
-// self-registers on NanVolumeAccess gets the VEK sealed to its pubkey and a
+// self-registers on EnclaveVolumeAccess gets the VEK sealed to its pubkey and a
 // Reader grant, signed by the operator EOA ("written to by the deployer of the
 // wasm app or by the enclave itself"). Implemented as a STATE poll, not an
 // event scan: registered-with-no-role on-chain IS the work queue, so a missed
@@ -2336,7 +2336,7 @@ async function sweepVaultGrants() {
       const op = await readVaultACL("operator", []);
       _vaultOperatorOk = getAddress(op) === getAddress(claimSigner().account.address);
       if (!_vaultOperatorOk)
-        console.warn(`[vault] NanVolumeAccess operator is ${op}, not this enclave's EOA - auto-grant disabled (owner grants still work)`);
+        console.warn(`[vault] EnclaveVolumeAccess operator is ${op}, not this enclave's EOA - auto-grant disabled (owner grants still work)`);
     }
     if (!_vaultOperatorOk) return;
     for (const [volId, held] of _heldVaults) {
@@ -2380,7 +2380,7 @@ function startVaultWatcher() {
   if (t.unref) t.unref();
 }
 
-// Top-up instructions: just call NanPay.pay(deploymentRef, amount) again to extend.
+// Top-up instructions: just call EnclavePay.pay(deploymentRef, amount) again to extend.
 app.post("/v1/deployments/:id/topup", authed, (req, res) => {
   const rec = deployments.get(req.params.id);
   if (!rec || rec.owner !== req.address) return fail(res, 404, "not_found", "No such deployment.");
@@ -2700,7 +2700,7 @@ server.on("upgrade", async (req, socket, head) => {
 });
 
 // ============================================================================
-// portable deployments — the NanDeployments claim loop (see contracts/DEPLOYMENTS.md)
+// portable deployments — the EnclaveDeployments claim loop (see contracts/DEPLOYMENTS.md)
 // ============================================================================
 // Deployments created on-chain are work items on a queue: this enclave CLAIMS
 // one (burning a bounded lease from its funded balance), serves it through the
@@ -2722,7 +2722,7 @@ const CPU_CLAIM_GRACE_SEC = parseInt(process.env.CPU_CLAIM_GRACE_SEC || "120", 1
 const CLAIM_PAGE = 100;
 const CLAIM_READY = CLAIM_ENABLED && !!(DEPLOYMENTS_ADDRESS && REGISTRY_READY && PROVISION_BACKEND === "vm");
 
-// mirrors NanDeployments.Deployment (field order must match the struct exactly)
+// mirrors EnclaveDeployments.Deployment (field order must match the struct exactly)
 const DEPLOYMENT_COMPONENTS = [
   { name: "id", type: "bytes32" }, { name: "owner", type: "address" },
   { name: "appRef", type: "string" }, { name: "ports", type: "string" },
@@ -3168,7 +3168,7 @@ async function adopt(d, ref, firewall, slice) {
     _gpu: gpu, _gpuSpec: gpu.cpu ? null : { cardId: gpu.cardId, cardUuid: gpuCards[gpu.cardId]?.uuid || null, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare },
     _port: 0, _sshPort: 0, _sshKeySource: "on-chain", _authorizedKey: (d.sshPubKey || "").trim(), _payTimer: null,
     // per-deployment config: an IPFS CID of a JSON object the manager fetches,
-    // verifies against the CID, and hands the tenant as NAN_CONFIG. This is
+    // verifies against the CID, and hands the tenant as ENCLAVE_CONFIG. This is
     // how one published app serves many models/keys (llm-chat reads it).
     configCid: (d.configCid || "").trim(),
   };
@@ -3245,7 +3245,7 @@ function startClaimLoop() {
 }
 
 // Funding instructions for a claimed deployment: top-ups go to the ledger
-// contract (credited on-chain), NOT to NanPay — same EIP-3009 shape, different
+// contract (credited on-chain), NOT to EnclavePay — same EIP-3009 shape, different
 // receiver, and the nonce binds to the on-chain id.
 function onchainPaymentInstructions(rec) {
   return {
@@ -3257,14 +3257,14 @@ function onchainPaymentInstructions(rec) {
     payEthMethod: "fundEth(bytes32 id) payable",
     usdcDomain: _usdcDomain,
     ethUsd: _ethUsd.price8 ? (Number(_ethUsd.price8) / 1e8).toFixed(2) : null,
-    note: "On-chain deployment: fund NanDeployments directly. USDC (EIP-3009, no approve): sign a USDC "
-        + "ReceiveWithAuthorization (EIP-712, to = the NanDeployments contract, nonce = first 16 bytes of the "
+    note: "On-chain deployment: fund EnclaveDeployments directly. USDC (EIP-3009, no approve): sign a USDC "
+        + "ReceiveWithAuthorization (EIP-712, to = the EnclaveDeployments contract, nonce = first 16 bytes of the "
         + "deployment id + 16 random bytes), then anyone submits fundWithAuthorization; amount(6dp)/rate = seconds. "
         + "ETH: fundEth(id) with msg.value; credited on-chain at the live Chainlink ETH/USD rate.",
   };
 }
 
-server.listen(PORT, () => console.log(`nan supervisor on :${PORT} · ${IS_GPU
+server.listen(PORT, () => console.log(`enclave supervisor on :${PORT} · ${IS_GPU
   ? `${GPU_COUNT}×GPU @ ${CARD_VRAM_GB}GB (arbitrary split)`
   : `CPU-only enclave (${NODE_VCPUS} vCPU / ${NODE_RAM_GB}GB, node-share split)`} · ssh host key ${SSH_HOST_KEY_FP}`));
 if (egress) { egress.start(); console.log(`[egress] dedicated-IP egress on (SOCKS 127.0.0.1:${EGRESS_SOCKS_PORT}); awaiting relay control channel`); }

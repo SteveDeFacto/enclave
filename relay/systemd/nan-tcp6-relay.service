@@ -1,5 +1,5 @@
 [Unit]
-Description=NAN dedicated-IP TCP relay (per-deployment IPv6; raw TCP tunneled to the enclave)
+Description=Enclave dedicated-IP TCP relay (per-deployment IPv6; raw TCP tunneled to the enclave)
 After=network-online.target
 Wants=network-online.target
 

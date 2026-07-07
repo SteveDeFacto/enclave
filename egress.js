@@ -1,4 +1,4 @@
-// NAN dedicated-IP EGRESS — the outbound half of the "give me an IP and a port"
+// Enclave dedicated-IP EGRESS — the outbound half of the "give me an IP and a port"
 // model. Inbound (tcp6-relay/udp-relay) already serves each deployment's
 // declared ports on its OWN IPv6; this makes the app's OUTBOUND connections
 // LEAVE from that same address, so a deployment has one stable identity in both
@@ -15,11 +15,11 @@
 //                                        <──data WS /x/egress/<cid>── relay
 //   relay ──connect(localAddress = depAddr)──> destination
 //
-// TWO WAYS IN, ONE FRONT: a guest can opt in explicitly by honouring NAN_EGRESS
+// TWO WAYS IN, ONE FRONT: a guest can opt in explicitly by honouring ENCLAVE_EGRESS
 // (a SOCKS5h URL with per-deployment credentials), OR — with the phase-2
 // wasmtime shim (`-S egress`, wasm/wasmtime-egress.patch) — the platform routes
 // the guest's raw wasi:sockets / wasi:http outbound through this SAME front
-// automatically, delivering the credential host-side (NAN_EGRESS_CRED,
+// automatically, delivering the credential host-side (ENCLAVE_EGRESS_CRED,
 // guest-invisible) and dropping the guest's ambient `-Sinherit-network` so there
 // is no raw path left to bypass it. Either way the source IP is derived
 // server-side from the AUTHENTICATED credential, never chosen by the guest or
@@ -51,7 +51,7 @@ const enc = (s) => Buffer.from(String(s), "utf8");
 
 // Per-deployment SOCKS password: HMAC(SECRET, "nan-egress:"+id). Deterministic
 // (no state to store), unforgeable without the enclave SECRET, and scoped to
-// exactly one deployment. The supervisor mints this into the guest's NAN_EGRESS
+// exactly one deployment. The supervisor mints this into the guest's ENCLAVE_EGRESS
 // env; possessing it == being that guest.
 export function egressToken(secret, id) {
   return createHmac("sha256", secret).update("nan-egress:" + id).digest("base64url");
@@ -256,7 +256,7 @@ export function createEgress({ secret, socksPort, relayToken, sourceAddrFor, isK
     handleUpgrade,
     // the actual listening port (config `socksPort` may be 0)
     socksPort: () => socks.address()?.port ?? socksPort,
-    // the NAN_EGRESS value handed to a guest: SOCKS5h so DNS resolves at the
+    // the ENCLAVE_EGRESS value handed to a guest: SOCKS5h so DNS resolves at the
     // relay (remote-side), giving the app the deployment's egress identity.
     envFor(id) { return `socks5h://${id}:${egressToken(secret, id)}@127.0.0.1:${socks.address()?.port ?? socksPort}`; },
     connected: () => !!controlWs,

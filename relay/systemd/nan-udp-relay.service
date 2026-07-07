@@ -1,5 +1,5 @@
 [Unit]
-Description=NAN UDP relay (per-deployment IPv6; datagrams tunneled to the enclave)
+Description=Enclave UDP relay (per-deployment IPv6; datagrams tunneled to the enclave)
 After=network-online.target
 Wants=network-online.target
 

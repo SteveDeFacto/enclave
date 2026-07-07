@@ -4,9 +4,9 @@
    no JS at all); hydration just doubles the track, which the
    -50% keyframe needs for a seamless loop.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 
-class Ticker extends NanElement {
+class Ticker extends EnclaveElement {
   static templateUrl = new URL("./ticker.html", import.meta.url);
 
   renderedCallback() {

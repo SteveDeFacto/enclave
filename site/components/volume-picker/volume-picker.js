@@ -5,10 +5,10 @@
    (a live Set the page owns — deployBody reads it); toggling a
    row mutates the Set and dispatches a bubbling `change`.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc } from "../../js/core/util.js";
 
-class VolumePicker extends NanElement {
+class VolumePicker extends EnclaveElement {
   static properties = { volumes: null, selected: null };
   static templateUrl = new URL("./volume-picker.html", import.meta.url);
 

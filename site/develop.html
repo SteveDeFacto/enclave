@@ -15,9 +15,9 @@
    plays the same settle-in itself (html.soft-enter, see base.css) — content
    only, the static header stays put. */
 (function(){
-  try { if (sessionStorage.getItem("nan_novt")) { sessionStorage.removeItem("nan_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}
+  try { if (sessionStorage.getItem("enclave_novt")) { sessionStorage.removeItem("enclave_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}
   addEventListener("pageswap", function(e){
-    try { if (!e.viewTransition && e.activation) sessionStorage.setItem("nan_novt", "1"); } catch(e){}
+    try { if (!e.viewTransition && e.activation) sessionStorage.setItem("enclave_novt", "1"); } catch(e){}
   });
 })();
 </script>
@@ -79,7 +79,7 @@
           <p>Inside the enclave your app runs in a strict capability sandbox, in its own OS process, launched by the exact same <code>wasmtime</code> command you can run locally:</p>
           <ul>
             <li><b>Filesystem</b>: a single private, writable <code>/data</code> directory (RAM-backed scratch, torn down with the deployment). Nothing else is visible, and paths that escape it (<code>/data/../..</code>) are refused by the runtime. <a href="#docs-data">Chapter 08 →</a></li>
-            <li><b>Environment</b>: empty, except <code>NAN_PORTS</code> for service apps. No host env ever leaks in.</li>
+            <li><b>Environment</b>: empty, except <code>ENCLAVE_PORTS</code> for service apps. No host env ever leaks in.</li>
             <li><b>Network</b>: none by default beyond the HTTP socket the runtime serves for you. Declaring firewall ports switches the app to service mode with <code>wasi:sockets</code>. <a href="#docs-ports">Chapter 09 →</a></li>
             <li><b>GPU</b>: none by default. A deployment that buys a GPU share gets <code>wasi-nn</code> - ONNX inference through the enclave's runtime, on an MPS-capped slice of the H200. <a href="#docs-gpu">Chapter 12 →</a></li>
             <li><b>Memory</b>: the guest's linear memory is capped at the deployment's CPU share of the node's RAM (cpuShare × 64&nbsp;GB), enforced by the runtime - always at least the <code>memMb</code> the app's specs declare, since the specs floor the share.</li>
@@ -92,7 +92,7 @@
           </ul>
           <p>And one catalog every app reference points at:</p>
           <ul>
-            <li><b>The on-chain app store</b>: the <a href="apps.html">Apps</a> tab: anyone publishes, bytes live on IPFS addressed by CID, listings live in the <code>NanAppCatalog</code> contract on Base. First-party samples (<code>hello</code>, <code>nn-demo</code>, <code>llm-chat</code>) are published there too - the enclave image ships no deployable apps, so every deploy resolves to a CID the enclave fetches and hash-verifies. <a href="#docs-publish">Chapter 04 →</a></li>
+            <li><b>The on-chain app store</b>: the <a href="apps.html">Apps</a> tab: anyone publishes, bytes live on IPFS addressed by CID, listings live in the <code>EnclaveAppCatalog</code> contract on Base. First-party samples (<code>hello</code>, <code>nn-demo</code>, <code>llm-chat</code>) are published there too - the enclave image ships no deployable apps, so every deploy resolves to a CID the enclave fetches and hash-verifies. <a href="#docs-publish">Chapter 04 →</a></li>
           </ul>
           <div class="doc-note">
             <span class="nt">The contract</span>
@@ -179,7 +179,7 @@ wasmtime serve -Scli -Shttp -Sp3 \
         <!-- 04 ------------------------------------------------------------ -->
         <article class="doc" id="docs-publish">
           <h3><span class="n">04</span>Publish to the app store</h3>
-          <p>Your app's bytes go on <b>IPFS</b>, addressed by their CID (a hash of the exact wasm). The listing goes on <b>Base</b>, in the <code>NanAppCatalog</code> contract. Publishing is one wallet transaction on the <a href="apps.html">Apps</a> tab:</p>
+          <p>Your app's bytes go on <b>IPFS</b>, addressed by their CID (a hash of the exact wasm). The listing goes on <b>Base</b>, in the <code>EnclaveAppCatalog</code> contract. Publishing is one wallet transaction on the <a href="apps.html">Apps</a> tab:</p>
           <ol>
             <li>Connect your wallet (header button) and hit <b>+ Publish app</b>.</li>
             <li>Pick a <b>slug</b>, your app's stable id, e.g. <code>my-hello</code> (a–z, 0–9, hyphens, ≤ 40 chars). Slugs live in <i>your wallet's namespace</i>: the on-chain app id is <code>keccak256(publisher, slug)</code>, so nobody can squat or write to your lineage. The slug doesn't have to match your crate name.</li>
@@ -225,8 +225,8 @@ const { token }   = await (await fetch(`${API}/auth/login`, {
 })).json();          // short-lived bearer token, bound to your address</code></pre></c-code>
 
           <h4>Create the deployment: one transaction, you own the record</h4>
-          <p>A deployment is an <b>on-chain work item</b>, not one enclave's private state. <code>create()</code> on the <code>NanDeployments</code> contract records the intent - app CID, the two shares (in 1/1000ths), ports, visibility - under <i>your</i> address, and mints the id (<code>keccak256(sender, nonce)</code>, the <code>Created</code> event's first topic). Because the ledger holds the spec and the balance, the deployment <b>survives enclave updates and crashes</b>: runners serve it under expiring leases, and when a runner dies, any other enclave picks the work up. Nothing to sign in besides your wallet.</p>
-          <c-code fn="deploy.js · NanDeployments.create()"><pre><code>// create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid)
+          <p>A deployment is an <b>on-chain work item</b>, not one enclave's private state. <code>create()</code> on the <code>EnclaveDeployments</code> contract records the intent - app CID, the two shares (in 1/1000ths), ports, visibility - under <i>your</i> address, and mints the id (<code>keccak256(sender, nonce)</code>, the <code>Created</code> event's first topic). Because the ledger holds the spec and the balance, the deployment <b>survives enclave updates and crashes</b>: runners serve it under expiring leases, and when a runner dies, any other enclave picks the work up. Nothing to sign in besides your wallet.</p>
+          <c-code fn="deploy.js · EnclaveDeployments.create()"><pre><code>// create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid)
 // shares are 1/1000ths: gpuShare 0.25 -&gt; 250; a GPU app needs gpuMilli &gt;= cpuMilli
 create("ipfs://bafybei…", 250, 50, 8080, "", true, "", "")
 // -&gt; the receipt's Created event: topics[1] is your deployment id (bytes32)</code></pre></c-code>
@@ -236,14 +236,14 @@ create("ipfs://bafybei…", 250, 50, 8080, "", true, "", "")
           <c-code fn="config.json → ipfs add → configCid"><pre><code>// pin this JSON (POST /add-json, or `ipfs add --cid-version=1`), pass its CID as
 // create()'s configCid arg. The enclave verifies the CID, reads `volumes`, and
 // mounts each at /models/&lt;name&gt; (read-only). Other keys pass through to the app
-// as NAN_CONFIG, so app config and volumes share one object.
+// as ENCLAVE_CONFIG, so app config and volumes share one object.
 { "volumes": ["qwen2.5-0.5b"], "system_prompt": "…optional app config…" }
 // GET /availability lists the volumes the fleet carries (name, bytes, which enclaves).</code></pre></c-code>
 
           <h4>Fund it: pay-per-second, credited on-chain, no custody</h4>
           <p>Funding lands in the deployment's on-chain <code>balance6</code> (the USDC itself forwards to Enclave in the same transaction - the contract holds nothing). Your rate is snapshotted at create: <code>gpuShare × $6/hr + cpuShare × $1/hr</code>. Pay either way:</p>
-          <c-code fn="NanDeployments · two ways to fund"><pre><code>// USDC: sign an EIP-3009 ReceiveWithAuthorization (gas-free wallet signature,
-// to = the NanDeployments contract, nonce prefixed with the id's first 16 bytes), then ONE tx:
+          <c-code fn="EnclaveDeployments · two ways to fund"><pre><code>// USDC: sign an EIP-3009 ReceiveWithAuthorization (gas-free wallet signature,
+// to = the EnclaveDeployments contract, nonce prefixed with the id's first 16 bytes), then ONE tx:
 fundWithAuthorization(bytes32 id, address from, uint256 value,
                       uint256 validAfter, uint256 validBefore,
                       bytes32 nonce, bytes signature)
@@ -386,7 +386,7 @@ curl -X POST --data-binary 'round trip' 127.0.0.1:8080/echo</code></pre></c-code
 
         <!-- 09 ------------------------------------------------------------ -->
         <article class="doc" id="docs-ports">
-          <h3><span class="n">09</span>Service apps: the firewall &amp; NAN_PORTS</h3>
+          <h3><span class="n">09</span>Service apps: the firewall &amp; ENCLAVE_PORTS</h3>
           <p>Declaring firewall ports (on the version you publish, prefilled into the deploy request by <b>Use in Deploy</b>) changes how your app runs: instead of <code>wasmtime serve</code> calling your handler, the enclave launches it with <code>wasmtime run</code> as a <b>long-running command component</b> (a <code>main()</code>) granted <code>wasi:sockets</code>: it binds its declared ports itself, and may also make outbound TCP/UDP connections and DNS lookups. Rust's <code>std::net</code> on <code>wasm32-wasip2</code> maps straight onto it.</p>
           <div class="tbl"><table class="params">
             <thead><tr><th>entry</th><th>meaning</th><th>reached at</th></tr></thead>
@@ -397,18 +397,18 @@ curl -X POST --data-binary 'round trip' 127.0.0.1:8080/echo</code></pre></c-code
             </tbody>
           </table></div>
           <p>Declared ports are <b>logical</b>: your app's stable, advertised interface, like a container's <code>EXPOSE</code>. Each deployment gets its own <b>actual</b> loopback bind, so any number of tenants can run "the <code>tcp:5432</code> app" simultaneously with zero conflicts; URLs always use the logical number and route by deployment id. The mapping arrives in one environment variable:</p>
-          <c-code fn="the NAN_PORTS contract"><pre><code>NAN_PORTS=tcp:5432=31245,udp:9053=31246     # logical=actual; BIND THE ACTUAL</code></pre></c-code>
+          <c-code fn="the ENCLAVE_PORTS contract"><pre><code>ENCLAVE_PORTS=tcp:5432=31245,udp:9053=31246     # logical=actual; BIND THE ACTUAL</code></pre></c-code>
           <div class="doc-note warn">
             <span class="nt">The one rule</span>
-            <p><b>Read <code>NAN_PORTS</code> and bind the actual ports. Never hardcode.</b> The socket grant is coarse, so an audit sweep polices the fine print: an app that binds a port it wasn't assigned is killed on the spot. Labels are 1–19999 (8080/8091 reserved for infrastructure); labels below 1024 (say <code>udp:53</code>) are always remapped to an unprivileged actual. Up to 8 entries per version.</p>
+            <p><b>Read <code>ENCLAVE_PORTS</code> and bind the actual ports. Never hardcode.</b> The socket grant is coarse, so an audit sweep polices the fine print: an app that binds a port it wasn't assigned is killed on the spot. Labels are 1–19999 (8080/8091 reserved for infrastructure); labels below 1024 (say <code>udp:53</code>) are always remapped to an unprivileged actual. Up to 8 entries per version.</p>
           </div>
           <p>Parsing the contract is a few lines; every service example below uses this helper:</p>
-          <c-code fn="src/main.rs · NAN_PORTS helper"><pre><code>/// "tcp:7000=31245,udp:9053=31246" → the actual port for a logical entry.
+          <c-code fn="src/main.rs · ENCLAVE_PORTS helper"><pre><code>/// "tcp:7000=31245,udp:9053=31246" → the actual port for a logical entry.
 fn actual_port(logical: &amp;str) -&gt; u16 {
-    std::env::var("NAN_PORTS").unwrap_or_default()
+    std::env::var("ENCLAVE_PORTS").unwrap_or_default()
         .split(',')
         .find_map(|e| e.trim().strip_prefix(&amp;format!("{logical}="))?.parse().ok())
-        .unwrap_or_else(|| panic!("{logical} not in NAN_PORTS"))
+        .unwrap_or_else(|| panic!("{logical} not in ENCLAVE_PORTS"))
 }</code></pre></c-code>
           <p>Readiness: the enclave waits (~20 s) for your first <code>http:</code>/<code>tcp:</code> port to accept before marking the deployment running, so bind early in <code>main()</code>. Both launch modes also pass <code>-S p3</code>, so you may target the async <b>WASIp3</b> API surface instead of wasip2's poll-based one. Same sandbox, same rules; guest toolchains for p3 are still young.</p>
         </article>
@@ -437,7 +437,7 @@ cargo component build --release --target wasm32-wasip2
 
 # exactly how the enclave launches a service app:
 wasmtime run -Scli -Sp3 -Stcp -Sudp -Sinherit-network -Sallow-ip-name-lookup \
-  --env NAN_PORTS=tcp:7000=7000 \
+  --env ENCLAVE_PORTS=tcp:7000=7000 \
   target/wasm32-wasip2/release/tcp-echo.wasm
 printf 'ping\n' | nc 127.0.0.1 7000              # → ping   (another terminal)</code></pre></c-code>
           <p>Publish it with firewall ports <code>tcp:7000</code>, deploy, and reach it three ways:</p>
@@ -540,7 +540,7 @@ await c.ready();          // verifies the CPU TEE quote (SEV-SNP/TDX) + Sigstore
                           // code provenance, compares measurements, pins TLS
 const res = await c.fetch("/x/dep_3xK9f2Qa/");   // provably served by attested code</code></pre></c-code>
           <c-code fn="terminal · independent paths"><pre><code># fully independent check with tinfoil-cli:
-tinfoil attestation verify -e &lt;enclave-host&gt; -r SteveDeFacto/nan
+tinfoil attestation verify -e &lt;enclave-host&gt; -r SteveDeFacto/enclave
 
 # the enclave's attestation (public), and your deployment's view of it (owner):
 curl https://&lt;enclave-host&gt;/v1/attestation
@@ -575,7 +575,7 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
               <tr><td class="pname">sockets</td><td>none</td><td>bind assigned actuals · outbound TCP/UDP · DNS lookups</td></tr>
               <tr><td class="pname">GPU (wasi-nn)</td><td colspan="2">only with <code>gpuShare</code> &gt; 0: ONNX inference via <code>wasi:nn</code> on an MPS-capped slice (SM% = share, VRAM = share × 141 GB); no share = no import (<a href="#docs-gpu">ch. 12</a>)</td></tr>
               <tr><td class="pname">filesystem</td><td colspan="2"><code>/data</code> only: private, RAM-backed, ephemeral, capped by <code>storage_mb</code></td></tr>
-              <tr><td class="pname">environment</td><td>empty</td><td><code>NAN_PORTS</code> only</td></tr>
+              <tr><td class="pname">environment</td><td>empty</td><td><code>ENCLAVE_PORTS</code> only</td></tr>
               <tr><td class="pname">memory</td><td colspan="2">linear memory capped at the deployment's <code>cpuShare</code> × node RAM, enforced by the runtime</td></tr>
               <tr><td class="pname">host / exec / SSH</td><td colspan="2">none: structurally absent, not merely denied</td></tr>
             </tbody>
@@ -606,7 +606,7 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
             <tbody>
               <tr><td class="pname">"a core wasm module, not a wasi:http component"</td><td>You built a plain module. Build with <code>cargo component</code> (or a toolchain that emits components); the upload gateway and the enclave both check the component layer field.</td></tr>
               <tr><td class="pname">403 not_approved on deploy</td><td>That version is still Pending (or was Rejected); the catalog owner approves each CID before it can run. Check the status badge on your app card in <a href="apps.html">Apps</a>.</td></tr>
-              <tr><td class="pname">"firewall: bound unassigned port(s) … app killed"</td><td>The app hardcoded a port. Read <code>NAN_PORTS</code> and bind the <i>actual</i> ports (<a href="#docs-ports">ch. 09</a>).</td></tr>
+              <tr><td class="pname">"firewall: bound unassigned port(s) … app killed"</td><td>The app hardcoded a port. Read <code>ENCLAVE_PORTS</code> and bind the <i>actual</i> ports (<a href="#docs-ports">ch. 09</a>).</td></tr>
               <tr><td class="pname">"did not open port in time"</td><td>Bind your first <code>http:</code>/<code>tcp:</code> port early in <code>main()</code>; the readiness window is ~20 s.</td></tr>
               <tr><td class="pname">"storage: /data used … exceeds the cap; app killed"</td><td>Write less, or publish the next version with a larger <code>storage_mb</code>.</td></tr>
               <tr><td class="pname">502 no_http at /x/{id}</td><td>The app declares only <code>tcp:</code>/<code>udp:</code> ports, so there's no HTTP to proxy. Use the bridge or relay paths (<a href="#docs-tcp">ch. 10</a>–<a href="#docs-udp">11</a>).</td></tr>
@@ -621,7 +621,7 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
           <h4>Ship checklist</h4>
           <ol>
             <li><code>wasmtime serve</code> (or <code>run</code>, for service apps) runs it locally, including with the enclave-parity flags.</li>
-            <li>No hardcoded ports anywhere; everything comes from <code>NAN_PORTS</code>.</li>
+            <li>No hardcoded ports anywhere; everything comes from <code>ENCLAVE_PORTS</code>.</li>
             <li>All writes go under <code>/data</code>, stay under the cap, and survive being wiped.</li>
             <li>Publish on the <a href="apps.html">Apps</a> tab → wait for the version's <b>Approved</b> badge → <a href="apps.html">deploy</a> with <b>Use in Deploy</b>.</li>
             <li>Verify your own deployment's <a href="#docs-attest">attestation</a>, then hand the same check to your users.</li>
@@ -642,8 +642,8 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
 
           <h4>Install &amp; authenticate</h4>
           <c-code fn="install · any OS"><pre><code># needs node ≥ 20; npm puts the `enclave` command on your PATH
-git clone https://github.com/SteveDeFacto/nan
-cd nan/cli
+git clone https://github.com/SteveDeFacto/enclave
+cd enclave/cli
 npm i
 npm i -g .
 
@@ -662,16 +662,16 @@ enclave whoami                     # address, USDC balance, running deployments<
           <div class="tbl"><table class="params">
             <thead><tr><th>command</th><th>does</th><th>maps to</th></tr></thead>
             <tbody>
-              <tr><td class="pname">enclave deploy &lt;app&gt; --gpu 0.25 --cpu 0.05 --fund 5</td><td>create + fund + wait until live, one shot; prints the app URL. Shares are fractions of one card / one node; omitted, they default to the app's catalog minimums</td><td><code>NanDeployments.create()</code> · <code>fundWithAuthorization</code> · <code>POST /claim-hint</code></td></tr>
+              <tr><td class="pname">enclave deploy &lt;app&gt; --gpu 0.25 --cpu 0.05 --fund 5</td><td>create + fund + wait until live, one shot; prints the app URL. Shares are fractions of one card / one node; omitted, they default to the app's catalog minimums</td><td><code>EnclaveDeployments.create()</code> · <code>fundWithAuthorization</code> · <code>POST /claim-hint</code></td></tr>
               <tr><td class="pname">enclave ls</td><td>your deployments, state and funded time remaining</td><td><code>GET /deployments</code> · <code>GET /account</code></td></tr>
               <tr><td class="pname">enclave status &lt;id&gt;</td><td>one deployment: state, runner, lease, balance, URL</td><td><code>GET /deployments/{id}</code></td></tr>
               <tr><td class="pname">enclave logs &lt;id&gt; [-f]</td><td>your app's stdout/stderr; <code>-f</code> follows</td><td><code>GET /deployments/{id}/logs</code></td></tr>
               <tr><td class="pname">enclave fund &lt;id&gt; --usdc 5 | --eth 0.002</td><td>top up runtime by the second</td><td><code>fundWithAuthorization</code> / <code>fundEth</code></td></tr>
               <tr><td class="pname">enclave attest &lt;id&gt;</td><td>fetch the TDX quote + GPU report and verify them locally; prints measurements and the verdict</td><td><code>GET /deployments/{id}/attestation</code></td></tr>
               <tr><td class="pname">enclave unlock &lt;id&gt; --vol &lt;name&gt;</td><td>verify attestation first, then stream an encrypted-volume passphrase (never from shell history)</td><td><code>POST /deployments/{id}/unlock</code></td></tr>
-              <tr><td class="pname">enclave stop &lt;id&gt;</td><td>take the work item off the queue, then terminate; there is no balance to reclaim</td><td><code>NanDeployments.setActive(false)</code> · <code>DELETE /deployments/{id}</code></td></tr>
-              <tr><td class="pname">enclave publish app.wasm --slug hello</td><td>validate the component, pin to IPFS, cut a catalog version</td><td><code>ipfs.enclave.host/add-wasm</code> · <code>NanAppCatalog</code></td></tr>
-              <tr><td class="pname">enclave apps [query]</td><td>browse or search the on-chain catalog</td><td><code>NanAppCatalog</code> reads</td></tr>
+              <tr><td class="pname">enclave stop &lt;id&gt;</td><td>take the work item off the queue, then terminate; there is no balance to reclaim</td><td><code>EnclaveDeployments.setActive(false)</code> · <code>DELETE /deployments/{id}</code></td></tr>
+              <tr><td class="pname">enclave publish app.wasm --slug hello</td><td>validate the component, pin to IPFS, cut a catalog version</td><td><code>ipfs.enclave.host/add-wasm</code> · <code>EnclaveAppCatalog</code></td></tr>
+              <tr><td class="pname">enclave apps [query]</td><td>browse or search the on-chain catalog</td><td><code>EnclaveAppCatalog</code> reads</td></tr>
               <tr><td class="pname">enclave pricing · availability · gpu</td><td>rates + live ETH quote · fleet headroom · GPU probe state</td><td><code>GET /pricing</code> · <code>/availability</code> · <code>/gpu</code></td></tr>
               <tr><td class="pname">enclave account</td><td>address, payment forwarder, totals</td><td><code>GET /account</code></td></tr>
             </tbody>

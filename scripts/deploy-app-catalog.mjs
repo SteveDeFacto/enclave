@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// deploy-app-catalog.mjs - compile + deploy contracts/NanAppCatalog.sol to Base,
+// deploy-app-catalog.mjs - compile + deploy contracts/EnclaveAppCatalog.sol to Base,
 // print the address, and (optionally) write it into site/index.html as the
 // APP_CATALOG_ADDRESS the store reads from.
 //
-// NanAppCatalog has no constructor args: the deployer EOA becomes `owner` (the
+// EnclaveAppCatalog has no constructor args: the deployer EOA becomes `owner` (the
 // only address that can flip an app's `verified` flag; can later transferOwnership).
 //
 // Deps (run from repo root):  npm i viem solc
@@ -37,8 +37,8 @@ import { base, baseSepolia } from "viem/chains";
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..");
-const CONTRACT = path.join(REPO, "contracts", "NanAppCatalog.sol");
-const ABI_OUT = path.join(REPO, "contracts", "NanAppCatalog.abi.json");
+const CONTRACT = path.join(REPO, "contracts", "EnclaveAppCatalog.sol");
+const ABI_OUT = path.join(REPO, "contracts", "EnclaveAppCatalog.abi.json");
 const SITE = path.join(REPO, "site", "index.html");
 const CONFIG = path.join(REPO, "enclaves", "gpu", "tinfoil-config.yml");
 
@@ -73,7 +73,7 @@ function compile() {
   const source = fs.readFileSync(CONTRACT, "utf8");
   const input = {
     language: "Solidity",
-    sources: { "NanAppCatalog.sol": { content: source } },
+    sources: { "EnclaveAppCatalog.sol": { content: source } },
     // viaIR: publishVersion's 7 params (6 dynamic) overflow the legacy codegen's
     // calldata decoder ("stack too deep"); the IR pipeline spills to memory.
     settings: { optimizer: { enabled: true, runs: 200 }, viaIR: true, outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } } },
@@ -81,7 +81,7 @@ function compile() {
   const out = JSON.parse(solc.compile(JSON.stringify(input)));
   const errs = (out.errors || []).filter((e) => e.severity === "error");
   if (errs.length) die("solc:\n" + errs.map((e) => e.formattedMessage).join("\n"));
-  const c = out.contracts["NanAppCatalog.sol"]["NanAppCatalog"];
+  const c = out.contracts["EnclaveAppCatalog.sol"]["EnclaveAppCatalog"];
   // keep the checked-in ABI in lockstep with what we deploy
   fs.writeFileSync(ABI_OUT, JSON.stringify(c.abi, null, 2) + "\n");
   return { abi: c.abi, bytecode: "0x" + c.evm.bytecode.object };
@@ -104,7 +104,7 @@ function writeSiteConfig(addr, chainId, rpc) {
 
 // Point the supervisor at the same deployment: it reads cidStatus() at deploy
 // time and refuses ipfs:// apps the catalog owner hasn't Approved. Mirrors
-// deploy-nanpay.mjs's FORWARDER_ADDRESS write.
+// deploy-enclave-pay.mjs's FORWARDER_ADDRESS write.
 function writeSupervisorConfig(addr, chainId) {
   let cfg = fs.readFileSync(CONFIG, "utf8");
   const re = /(-\s*APP_CATALOG_ADDRESS:\s*)"[^"]*"/;
@@ -157,7 +157,7 @@ async function main() {
   console.log(`  rpc            ${rpc}`);
   console.log(`  deployer       ${account.address}`);
   console.log(`  deployer ETH   ${formatEther(bal)}`);
-  console.log(`  contract       NanAppCatalog  (owner = deployer; no constructor args)`);
+  console.log(`  contract       EnclaveAppCatalog  (owner = deployer; no constructor args)`);
   console.log(`  bytecode       ${(bytecode.length / 2 - 1)} bytes`);
   console.log("===============================================================\n");
 
@@ -181,7 +181,7 @@ async function main() {
   const addr = getAddress(rcpt.contractAddress);
 
   console.log("\n=======================  DEPLOYED  ============================");
-  console.log(`  NanAppCatalog     ${addr}`);
+  console.log(`  EnclaveAppCatalog     ${addr}`);
   console.log(`  explorer          ${net.explorer}/address/${addr}`);
   console.log(`  set in site        const APP_CATALOG_ADDRESS = "${addr}"`);
   console.log(`  set in site        const APP_CATALOG_CHAIN   = ${net.chain.id}`);
@@ -193,7 +193,7 @@ async function main() {
   console.log("\nNext:");
   console.log(`  1. site/index.html + tinfoil-config.yml now point at ${addr} on chain ${net.chain.id}.`);
   console.log("  2. Redeploy the site:  cd site && ./deploy.sh");
-  console.log("  3. Rebuild+repin the supervisor so the enclave enforces approval:  ./scripts/release.sh nan");
+  console.log("  3. Rebuild+repin the supervisor so the enclave enforces approval:  ./scripts/release.sh enclave-supervisor");
   console.log("  4. Approve versions from the Apps tab with the deployer wallet (it is the catalog owner).");
   if (!isMainnet) console.log("  5. Test publish/approve/deploy on testnet, THEN re-run with NETWORK=base for mainnet.");
 }

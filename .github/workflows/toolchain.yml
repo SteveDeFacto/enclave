@@ -1,8 +1,8 @@
-# Builds the nan-wasmtime toolchain image: wasmtime compiled from source with
+# Builds the enclave-wasmtime toolchain image: wasmtime compiled from source with
 # wasi-nn (ONNX Runtime backend + CUDA execution provider) — the GPU interface
 # for tenant Wasm apps. See wasm/Dockerfile.wasmtime for what's inside.
 #
-# MANUAL, on purpose: this image is a build INPUT of nan-wasm-manager, pinned
+# MANUAL, on purpose: this image is a build INPUT of enclave-wasm-manager, pinned
 # there by digest, not a deployable. Run it only when bumping the wasmtime
 # version (or the feature set), then copy the digest this run prints into
 # Dockerfile.wasm's WASMTIME_IMAGE ARG — that commit triggers the ordinary
@@ -22,7 +22,7 @@ on:
         type: string
 
 concurrency:
-  group: nan-wasmtime-${{ inputs.wasmtime-version }}
+  group: enclave-wasmtime-${{ inputs.wasmtime-version }}
 
 jobs:
   build:
@@ -56,7 +56,7 @@ jobs:
           push: true
           build-args: |
             WASMTIME_VERSION=${{ inputs.wasmtime-version }}
-          tags: ghcr.io/stevedefacto/nan-wasmtime:${{ inputs.wasmtime-version }}
+          tags: ghcr.io/stevedefacto/enclave-wasmtime:${{ inputs.wasmtime-version }}
 
       - name: Print the digest to pin in Dockerfile.wasm
         env:
@@ -64,12 +64,12 @@ jobs:
           VERSION: ${{ inputs.wasmtime-version }}
         run: |
           {
-            echo "## nan-wasmtime pushed"
+            echo "## enclave-wasmtime pushed"
             echo
             echo "Pin it in \`wasm/Dockerfile.wasm\`:"
             echo
             echo '```'
-            echo "ARG WASMTIME_IMAGE=ghcr.io/stevedefacto/nan-wasmtime:${VERSION}@${DIGEST}"
+            echo "ARG WASMTIME_IMAGE=ghcr.io/stevedefacto/enclave-wasmtime:${VERSION}@${DIGEST}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "digest=${DIGEST}"

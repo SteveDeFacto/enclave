@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# nan-volume - pack a directory into a NaN encrypted volume you control.
+# enclave-volume - pack a directory into a Enclave encrypted volume you control.
 #
 # The trust model: YOU hold the passphrase. The ciphertext can live anywhere
 # (IPFS, S3, a URL) - the host and the platform only ever see ciphertext. At
@@ -16,21 +16,21 @@
 # authenticated plaintext hash is the equivalent guarantee for a whole blob.)
 #
 # Usage:
-#   NAN_VOL_PASS=... scripts/nan-volume.sh pack   <dir> <out.enc>   # encrypt
-#   NAN_VOL_PASS=... scripts/nan-volume.sh unpack <in.enc> <dir>    # decrypt (what the enclave does)
-#   scripts/nan-volume.sh --help
+#   ENCLAVE_VOL_PASS=... scripts/enclave-volume.sh pack   <dir> <out.enc>   # encrypt
+#   ENCLAVE_VOL_PASS=... scripts/enclave-volume.sh unpack <in.enc> <dir>    # decrypt (what the enclave does)
+#   scripts/enclave-volume.sh --help
 #
-# If NAN_VOL_PASS is unset, you're prompted (never echoed, never stored).
+# If ENCLAVE_VOL_PASS is unset, you're prompted (never echoed, never stored).
 set -euo pipefail
 
 ITER=600000
 CIPHER=aes-256-ctr
 
-die(){ echo "nan-volume: $*" >&2; exit 1; }
+die(){ echo "enclave-volume: $*" >&2; exit 1; }
 usage(){ sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 get_pass(){
-  if [ -n "${NAN_VOL_PASS:-}" ]; then printf '%s' "$NAN_VOL_PASS"; return; fi
+  if [ -n "${ENCLAVE_VOL_PASS:-}" ]; then printf '%s' "$ENCLAVE_VOL_PASS"; return; fi
   local p; read -r -s -p "volume passphrase: " p >&2; echo >&2
   [ -n "$p" ] || die "empty passphrase"
   printf '%s' "$p"
@@ -61,7 +61,7 @@ case "$cmd" in
     echo "plaintext sha256). Deliver the passphrase to the enclave AFTER verifying" >&2
     echo "attestation - never put it in the config." >&2
     # machine-readable line for tooling/console
-    echo "NAN_VOLUME sha256=$sha plaintext_bytes=$size cipher=$CIPHER pbkdf2_iter=$ITER"
+    echo "ENCLAVE_VOLUME sha256=$sha plaintext_bytes=$size cipher=$CIPHER pbkdf2_iter=$ITER"
     ;;
   unpack)
     in="${2:-}"; dir="${3:-}"
@@ -75,7 +75,7 @@ case "$cmd" in
     sha="$(sha256sum "$tmp" | cut -d' ' -f1)"
     tar -xf "$tmp" -C "$dir"
     echo "unpacked $in -> $dir  (plaintext sha256 $sha)" >&2
-    echo "NAN_VOLUME sha256=$sha"
+    echo "ENCLAVE_VOLUME sha256=$sha"
     ;;
   *) die "unknown command '$cmd' (pack|unpack|--help)";;
 esac

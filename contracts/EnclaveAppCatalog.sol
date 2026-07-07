@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @title NanAppCatalog — on-chain, versioned catalog of NAN Wasm apps.
+/// @title EnclaveAppCatalog — on-chain, versioned catalog of Enclave Wasm apps.
 /// @notice The public source of truth for "which Wasm apps exist, their releases,
 ///         and where each release's code lives." Each app is a lineage of versions;
 ///         each version is a `wasi:http` component whose bytes live on IPFS. The
@@ -29,7 +29,7 @@ pragma solidity ^0.8.20;
 ///     CID in a later version: that is the metadata fix (same bytes, corrected
 ///     specs/ports), and the `cidStatus` deploy gate follows the NEWEST listing.
 ///
-/// Trust model (mirrors NanRegistry: claims on-chain, verification off-chain):
+/// Trust model (mirrors EnclaveRegistry: claims on-chain, verification off-chain):
 ///   - `verified` is an OPTIONAL owner-curated signal, set PER VERSION (you verify
 ///     a specific CID, and a new release starts unverified — it must be re-checked).
 ///     It does not gate execution; the CID does. The site can filter to verified.
@@ -42,7 +42,7 @@ pragma solidity ^0.8.20;
 ///   - The phased "run-by-CID" deploy path references a chosen version as
 ///     `image.reference = ipfs://<cid>`; runners resolve deployability in one
 ///     call via `cidStatus(cid)`.
-contract NanAppCatalog {
+contract EnclaveAppCatalog {
     struct App {
         bytes32 appId;        // keccak256(publisher, slug); stable identity across versions
         address publisher;    // owns this app's lineage (only they add versions)

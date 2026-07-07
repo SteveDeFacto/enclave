@@ -20,7 +20,7 @@ if ($major -lt 20) { Fail "node >= 20 required (found $(node -v))" }
 
 $cliDir = $PSScriptRoot
 if (-not $cliDir -or -not (Test-Path (Join-Path $cliDir "enclave.mjs"))) {
-  Fail "run this from a checkout: git clone https://github.com/SteveDeFacto/nan; .\nan\cli\install.ps1"
+  Fail "run this from a checkout: git clone https://github.com/SteveDeFacto/enclave; .\enclave\cli\install.ps1"
 }
 
 # bundle deps: the repo root has them; a bare checkout of cli/ installs its own

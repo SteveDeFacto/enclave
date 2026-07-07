@@ -1,5 +1,5 @@
 // Minimal wasip2 guest: connect out via std (→ wasi:sockets), send a probe,
-// print the reply. Used to prove nan transparent egress routes an UNMODIFIED
+// print the reply. Used to prove enclave transparent egress routes an UNMODIFIED
 // app's raw outbound through the dedicated-IP tunnel (and that with the network
 // locked down a direct/loopback dial is refused).
 use std::io::{Read, Write};

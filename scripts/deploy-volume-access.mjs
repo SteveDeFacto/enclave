@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// deploy-volume-access.mjs - compile + deploy contracts/NanVolumeAccess.sol to
+// deploy-volume-access.mjs - compile + deploy contracts/EnclaveVolumeAccess.sol to
 // Base and print the address. This is the on-chain ACL for wallet-gated encrypted
-// volumes (the crypto half is scripts/nan-vault.mjs). Hand-deployed by the
+// volumes (the crypto half is scripts/enclave-vault.mjs). Hand-deployed by the
 // platform admin (CONTRACTS_HAND_DEPLOY): the deploying EOA becomes `admin` (may
 // rotate the operator); it holds NO keys and cannot read any volume.
 //
 // Constructor arg: the ENCLAVE OPERATOR EOA (the existing runner key, same one in
-// REGISTRY_PRIVATE_KEY / the NanDeployments operator). That address is a permitted
+// REGISTRY_PRIVATE_KEY / the EnclaveDeployments operator). That address is a permitted
 // WRITER so the running enclave can auto-grant self-registering members. It is
 // rotatable later via setOperator(). Per-volume owners are the app deployers.
 //
@@ -43,8 +43,8 @@ import { base, baseSepolia } from "viem/chains";
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..");
-const CONTRACT = path.join(REPO, "contracts", "NanVolumeAccess.sol");
-const ABI_OUT = path.join(REPO, "contracts", "NanVolumeAccess.abi.json");
+const CONTRACT = path.join(REPO, "contracts", "EnclaveVolumeAccess.sol");
+const ABI_OUT = path.join(REPO, "contracts", "EnclaveVolumeAccess.abi.json");
 
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has("--dry-run");
@@ -72,7 +72,7 @@ function writeVolumeAccessAddress(addr) {
     console.log(`Wrote VOLUME_ACCESS_ADDRESS="${addr}" into ${path.relative(REPO, file)}`);
   }
   // the vault app ships the address as its config.json default (still
-  // overridable per deployment via NAN_CONFIG or ?contract=)
+  // overridable per deployment via ENCLAVE_CONFIG or ?contract=)
   if (fs.existsSync(VAULT_APP)) {
     const are = /("volumeAccess":\s*)"[^"]*"/;
     const src = fs.readFileSync(VAULT_APP, "utf8");
@@ -111,13 +111,13 @@ function compile() {
   const source = fs.readFileSync(CONTRACT, "utf8");
   const input = {
     language: "Solidity",
-    sources: { "NanVolumeAccess.sol": { content: source } },
+    sources: { "EnclaveVolumeAccess.sol": { content: source } },
     settings: { optimizer: { enabled: true, runs: 200 }, outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } } },
   };
   const out = JSON.parse(solc.compile(JSON.stringify(input)));
   const errs = (out.errors || []).filter((e) => e.severity === "error");
   if (errs.length) die("solc:\n" + errs.map((e) => e.formattedMessage).join("\n"));
-  const c = out.contracts["NanVolumeAccess.sol"]["NanVolumeAccess"];
+  const c = out.contracts["EnclaveVolumeAccess.sol"]["EnclaveVolumeAccess"];
   // keep the checked-in ABI in lockstep with what we deploy
   fs.writeFileSync(ABI_OUT, JSON.stringify(c.abi, null, 2) + "\n");
   return { abi: c.abi, bytecode: "0x" + c.evm.bytecode.object };
@@ -173,7 +173,7 @@ async function main() {
   console.log(`  deployer/admin ${account.address}`);
   console.log(`  deployer ETH   ${DRY_RUN ? "(not checked, --dry-run)" : formatEther(bal)}`);
   console.log(`  operator EOA   ${operator}   (auto-grant writer; rotatable via setOperator)`);
-  console.log(`  contract       NanVolumeAccess  (wallet-gated volume ACL; admin rotates operator only)`);
+  console.log(`  contract       EnclaveVolumeAccess  (wallet-gated volume ACL; admin rotates operator only)`);
   console.log(`  bytecode       ${(bytecode.length / 2 - 1)} bytes`);
   console.log("===============================================================\n");
 
@@ -197,7 +197,7 @@ async function main() {
   const addr = getAddress(rcpt.contractAddress);
 
   console.log("\n=======================  DEPLOYED  ============================");
-  console.log(`  NanVolumeAccess   ${addr}`);
+  console.log(`  EnclaveVolumeAccess   ${addr}`);
   console.log(`  operator          ${operator}`);
   console.log(`  explorer          ${net.explorer}/address/${addr}`);
   console.log("===============================================================\n");

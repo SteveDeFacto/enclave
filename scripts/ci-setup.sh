@@ -18,7 +18,7 @@ set -euo pipefail
 say() { printf '\033[1;36m[ci-setup]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[ci-setup] WARNING:\033[0m %s\n' "$*" >&2; }
 
-REPO_SLUG="${REPO_SLUG:-SteveDeFacto/nan}"
+REPO_SLUG="${REPO_SLUG:-SteveDeFacto/enclave}"
 SITE_HOST="${SITE_HOST:-62.238.4.214}"
 RELAY_HOST="${RELAY_HOST:-46.62.128.36}"
 KEYFILE="${KEYFILE:-$HOME/.ssh/nan-ci-deploy}"
@@ -64,5 +64,5 @@ say "environment contract-deploy created (required reviewer: ${REPO_SLUG%%/*})"
 
 say "still manual:"
 say "  1. gh secret set DEPLOYER_PRIVATE_KEY -R $REPO_SLUG --env contract-deploy   # funded Base EOA for contract deploys"
-say "  2. ghcr package settings for nan-worker / nan-mps / nan-wasm-manager: grant this repo"
+say "  2. ghcr package settings for enclave-worker / enclave-mps / enclave-wasm-manager: grant this repo"
 say "     'Actions access: write' (or set a classic PAT: gh secret set CR_PAT -R $REPO_SLUG)"

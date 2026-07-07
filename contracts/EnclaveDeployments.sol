@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @title NanDeployments — portable deployment ledger + failover lease market for NAN.
+/// @title EnclaveDeployments — portable deployment ledger + failover lease market for Enclave.
 /// @notice Makes a deployment a CHAIN OBJECT instead of one enclave's private state,
 ///         so any registered enclave can pick up a deployment whose runner died and
 ///         keep serving it until the funded time runs out. Three things move on-chain
@@ -16,23 +16,23 @@ pragma solidity ^0.8.20;
 ///         the remainder — at-most-one-runner-at-a-time is enforced by the chain, not
 ///         by an operator.
 ///
-/// Non-custodial, like NanPay: funding forwards USDC/ETH payer -> payout in the SAME
+/// Non-custodial, like EnclavePay: funding forwards USDC/ETH payer -> payout in the SAME
 ///         transaction; nothing is ever held here. `balance6` is an ACCOUNTING number
 ///         (prepaid runtime, USDC 6dp), not escrowed money — so leases can "burn" and
 ///         "refund" it freely, but stopping a deployment cannot push funds back to the
 ///         payer on-chain (that stays a payout-wallet action, as today).
 ///
-/// Trust model (consistent with the other NAN contracts — claims here, attestation
+/// Trust model (consistent with the other Enclave contracts — claims here, attestation
 ///         gates trust at connect time):
 ///   - CREATE is permissionless: any address records an intent (it is inert until
 ///     funded — an unfunded deployment cannot be claimed and costs nobody anything).
 ///   - CLAIM is structurally gated to registered enclaves: msg.sender must be the
-///     operator of an active NanRegistry entry. That does NOT make the runner
+///     operator of an active EnclaveRegistry entry. That does NOT make the runner
 ///     trusted — callers still attest the enclave itself when they connect. A rogue
 ///     operator can claim, but can't fake the measurement clients verify.
 ///   - Catalog approval is enforced by RUNNERS, off-chain, exactly as today: an
 ///     enclave refuses to claim an ipfs:// appRef whose version isn't Approved in
-///     NanAppCatalog (one cidStatus eth_call, fail closed). The ledger doesn't parse
+///     EnclaveAppCatalog (one cidStatus eth_call, fail closed). The ledger doesn't parse
 ///     appRefs; the enclave that would run the code is the one that checks it.
 ///   - Pricing: two global per-second prices, hardcoded at deploy (~$6.00/hour
 ///     for a full GPU card, ~$2.00/hour for a full CPU node) and owner-adjustable
@@ -41,7 +41,7 @@ pragma solidity ^0.8.20;
 ///     of a card's GPU+VRAM and cpuMilli of a node's vCPU+RAM, in 1/1000ths —
 ///     and pays for both: rate = (gpuPrice * gpuMilli + cpuPrice * cpuMilli)
 ///     / 1000, rounded up. Apps declare their EXACT resource specs (VRAM,
-///     TFLOPS, RAM) in NanAppCatalog; runners convert those specs into each
+///     TFLOPS, RAM) in EnclaveAppCatalog; runners convert those specs into each
 ///     app's MINIMUM shares (spec / their hardware, the larger of the memory
 ///     and compute axes) and refuse deployments that bought less.
 ///
@@ -65,8 +65,8 @@ interface IERC20Auth {
     ) external;
 }
 
-/// @dev Field order MUST match NanRegistry.Enclave exactly (ABI-decoded struct).
-interface INanRegistry {
+/// @dev Field order MUST match EnclaveRegistry.Enclave exactly (ABI-decoded struct).
+interface IEnclaveRegistry {
     struct Enclave {
         string  endpoint;
         string  repo;
@@ -86,12 +86,12 @@ interface IAggregatorV3 {
     );
 }
 
-contract NanDeployments {
+contract EnclaveDeployments {
     struct Deployment {
         bytes32 id;
         address owner;          // the user: controls config + active, receives nothing (non-custodial)
         string  appRef;         // "ipfs://<cid>" or a baked-in catalog id (e.g. "hello")
-        string  ports;          // firewall CSV, same grammar as NanAppCatalog Version.ports ("" = plain wasi:http)
+        string  ports;          // firewall CSV, same grammar as EnclaveAppCatalog Version.ports ("" = plain wasi:http)
         string  sshPubKey;      // optional OpenSSH public key every runner installs ("" = ssh disabled;
                                 // enclave-minted keys are NOT portable — the private key would die with the runner)
         string  configCid;      // optional IPFS CID of a config blob ("" = none). NOTE: whatever it
@@ -101,7 +101,7 @@ contract NanDeployments {
                                 // enclaves ONLY; CPU-only ones by CPU-only enclaves first, and by GPU
                                 // enclaves with spare CPU/RAM after a grace window (runner-enforced).
                                 // Must be >= the app's minimum share: runners derive minimums from the
-                                // app's exact specs in NanAppCatalog (spec / their hardware, the larger
+                                // app's exact specs in EnclaveAppCatalog (spec / their hardware, the larger
                                 // of the memory and compute axes) and refuse under-provisioned claims.
         uint16  cpuMilli;       // CPU/RAM share bought, in 1/1000ths of a node (1..1000). A GPU
                                 // deployment's CPU share rides along on the same node, so it may never
@@ -115,21 +115,21 @@ contract NanDeployments {
         uint256 balance6;       // funded runtime credit not yet burned by a lease
         uint256 spent6;         // burned by leases (release refunds the unused tail back to balance6)
         // ---- lease (the "processing lock") ----
-        bytes32 runner;         // NanRegistry enclave id currently serving (0x0 = unclaimed)
+        bytes32 runner;         // EnclaveRegistry enclave id currently serving (0x0 = unclaimed)
         address runnerOperator; // the operator EOA that claimed (sends renew/release)
         uint64  leaseUntil;     // lease expiry; in the past (or 0) = claimable
     }
 
     uint256 private constant MAX_APPREF = 100;   // ipfs://<cid> fits
-    uint256 private constant MAX_PORTS  = 96;    // mirrors NanAppCatalog
+    uint256 private constant MAX_PORTS  = 96;    // mirrors EnclaveAppCatalog
     uint256 private constant MAX_SSHKEY = 800;   // ed25519 ~100 chars; RSA-4096 ~740
     uint256 private constant MAX_CFG    = 100;   // a CID
     uint256 private constant FEED_MAX_AGE = 2 hours; // reject stale ETH/USD answers
 
     address public owner;                  // sets price/leaseSec/payout; NOT a custodian
-    address public payout;                 // where funding lands (nan.eth cold wallet)
+    address public payout;                 // where funding lands (the Enclave cold wallet)
     IERC20Auth   public immutable usdc;
-    INanRegistry public immutable registry;
+    IEnclaveRegistry public immutable registry;
     IAggregatorV3 public ethUsdFeed;       // 0x0 = ETH funding disabled (USDC only)
 
     // Prices are HARDCODED at deploy (no post-deploy setter txs needed — Base's
@@ -164,7 +164,7 @@ contract NanDeployments {
         owner = msg.sender;
         usdc = IERC20Auth(_usdc);
         payout = _payout;
-        registry = INanRegistry(_registry);
+        registry = IEnclaveRegistry(_registry);
         ethUsdFeed = IAggregatorV3(_ethUsdFeed);   // may be 0x0: ETH funding off
         emit PayoutChanged(_payout);
         emit OwnerChanged(msg.sender);
@@ -185,7 +185,7 @@ contract NanDeployments {
     ///      by CPU-only enclaves first, then by GPU enclaves with spare CPU/RAM.
     ///      A GPU deployment's CPU share may never exceed its GPU share. The
     ///      shares must also cover the app's minimum (derived by runners from
-    ///      its NanAppCatalog specs) or no enclave will claim the deployment.
+    ///      its EnclaveAppCatalog specs) or no enclave will claim the deployment.
     function create(
         string calldata appRef,
         uint16 gpuMilli,
@@ -257,7 +257,7 @@ contract NanDeployments {
 
     /// @notice Fund/top-up with a signed USDC authorization (EIP-3009). Callable by
     ///         anyone; the payer credited is `from`. Same non-custodial forward and
-    ///         nonce-binding as NanPay: the authorization's nonce must start with
+    ///         nonce-binding as EnclavePay: the authorization's nonce must start with
     ///         the first 16 bytes of `id`, so a relayer can't redirect the credit.
     function fundWithAuthorization(
         bytes32 id,
@@ -278,7 +278,7 @@ contract NanDeployments {
     }
 
     /// @notice Fund/top-up with native ETH, credited as USDC-equivalent at the live
-    ///         Chainlink ETH/USD rate (on-chain, unlike NanPay where the supervisor
+    ///         Chainlink ETH/USD rate (on-chain, unlike EnclavePay where the supervisor
     ///         priced it off-chain — here the BALANCE is chain state, so the
     ///         conversion must be too). Forwarded straight to payout.
     function fundEth(bytes32 id) external payable {
@@ -304,14 +304,14 @@ contract NanDeployments {
     ///         remaining funded time) from the balance and makes the caller the
     ///         sole legitimate runner until leaseUntil. Claimable = active, funded,
     ///         and no live lease (never claimed, expired, or released).
-    /// @dev msg.sender must be the operator of `enclaveId`, an active NanRegistry
+    /// @dev msg.sender must be the operator of `enclaveId`, an active EnclaveRegistry
     ///      entry — structural gating, same shape as catalog lineage ownership.
     ///      The previous runner's burned lease is NOT refunded (it may be dead;
     ///      nobody trustworthy can attest how much it actually served).
     function claim(bytes32 id, bytes32 enclaveId) external {
         Deployment storage d = _requireActive(id);
         require(block.timestamp > d.leaseUntil, "leased");
-        INanRegistry.Enclave memory e = registry.get(enclaveId);
+        IEnclaveRegistry.Enclave memory e = registry.get(enclaveId);
         require(e.operator == msg.sender, "not operator");
         require(e.active, "enclave inactive");
 

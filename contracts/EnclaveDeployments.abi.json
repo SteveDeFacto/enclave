@@ -628,7 +628,7 @@
             "type": "uint64"
           }
         ],
-        "internalType": "struct NanDeployments.Deployment",
+        "internalType": "struct EnclaveDeployments.Deployment",
         "name": "",
         "type": "tuple"
       }
@@ -744,7 +744,7 @@
             "type": "uint64"
           }
         ],
-        "internalType": "struct NanDeployments.Deployment[]",
+        "internalType": "struct EnclaveDeployments.Deployment[]",
         "name": "page",
         "type": "tuple[]"
       }
@@ -828,7 +828,7 @@
     "name": "registry",
     "outputs": [
       {
-        "internalType": "contract INanRegistry",
+        "internalType": "contract IEnclaveRegistry",
         "name": "",
         "type": "address"
       }

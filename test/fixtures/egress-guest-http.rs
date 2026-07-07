@@ -1,5 +1,5 @@
 // serve-mode wasip2 guest: on each request, make an OUTBOUND wasi:http GET to
-// http://$TARGET/ and echo the status + first bytes. Proves nan transparent
+// http://$TARGET/ and echo the status + first bytes. Proves enclave transparent
 // egress routes wasi:http outgoing requests through the dedicated-IP tunnel.
 use wasi::http::types::{
     Fields, Headers, IncomingRequest, Method, OutgoingRequest, OutgoingResponse, ResponseOutparam,

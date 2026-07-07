@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Untrusted public TCP relay for NAN enclaves — SNI-routes client TLS to the enclave's /x/:id/tls/:port bridge. Holds no keys, sees only ciphertext.",
+  "description": "Untrusted public TCP relay for Enclave enclaves — SNI-routes client TLS to the enclave's /x/:id/tls/:port bridge. Holds no keys, sees only ciphertext.",
   "main": "relay.js",
   "scripts": {
     "start": "node relay.js",

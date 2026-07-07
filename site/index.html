@@ -27,9 +27,9 @@
    plays the same settle-in itself (html.soft-enter, see base.css) — content
    only, the static header stays put. */
 (function(){
-  try { if (sessionStorage.getItem("nan_novt")) { sessionStorage.removeItem("nan_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}
+  try { if (sessionStorage.getItem("enclave_novt")) { sessionStorage.removeItem("enclave_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}
   addEventListener("pageswap", function(e){
-    try { if (!e.viewTransition && e.activation) sessionStorage.setItem("nan_novt", "1"); } catch(e){}
+    try { if (!e.viewTransition && e.activation) sessionStorage.setItem("enclave_novt", "1"); } catch(e){}
   });
 })();
 </script>

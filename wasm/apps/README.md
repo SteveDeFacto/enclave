@@ -1,8 +1,8 @@
-# NAN Wasm apps
+# Enclave Wasm apps
 
 Sources and prebuilt artifacts for the platform's first-party apps. **Nothing
 here is deployable straight from the image**: every app — first-party or
-community — is published to the **on-chain app catalog** (`NanAppCatalog` on
+community — is published to the **on-chain app catalog** (`EnclaveAppCatalog` on
 Base, the **Apps** tab on the site), addressed by IPFS CID, and deploys as
 `ipfs://<cid>`. The manager fetches the CID in-enclave and verifies the bytes
 hash to it (`ipfs_fetch.py`), so "what ran == this exact CID" holds without
@@ -46,7 +46,7 @@ source-tagged and it has no raw network — see *Dedicated-IP egress* below.
 **WASIp3 (component-model async).** Both modes are also launched with `-S p3`
 (wasmtime 45+), so apps may target the WASIp3 API surface — native async
 sockets/streams instead of wasip2's poll-based ones — as an alternative to
-wasip2. Every other rule is unchanged: same `NAN_PORTS` contract, same bind
+wasip2. Every other rule is unchanged: same `ENCLAVE_PORTS` contract, same bind
 audit, same no-fs/no-env sandbox, and the p3 flag does not widen network
 access (that stays gated by the socket grants above). Note guest toolchains
 are still young — e.g. Rust lists a `wasm32-wasip3` target but most distros
@@ -78,10 +78,10 @@ tenants can run "the tcp:5432 app" at the same time with zero conflicts; the URL
 routes by deployment id, never by raw port. The mapping is handed to the app as
 
 ```
-NAN_PORTS=tcp:5432=31245,udp:9053=31246     # logical=actual — BIND THE ACTUAL
+ENCLAVE_PORTS=tcp:5432=31245,udp:9053=31246     # logical=actual — BIND THE ACTUAL
 ```
 
-**The one rule for app authors: read `NAN_PORTS` and bind the actual ports.
+**The one rule for app authors: read `ENCLAVE_PORTS` and bind the actual ports.
 Never hardcode.** (When the logical number is free the manager assigns it
 unchanged, so hardcoded apps limp along single-instance — until the audit kills
 them for binding an unassigned port when it isn't.) Enforcement: a /proc audit
@@ -112,7 +112,7 @@ knowing: it's **IPv6-only** (a box has one v4), and the relay sees **cleartext**
 (it's not a confidentiality boundary — encrypt at the app, e.g. DTLS, if you
 need privacy). See `relay/README.md`.
 
-**Dedicated-IP egress (transparent + `NAN_EGRESS`).** The other direction: when
+**Dedicated-IP egress (transparent + `ENCLAVE_EGRESS`).** The other direction: when
 the operator enables egress, **all** of a deployment's outbound — a `run`-mode
 app's raw `wasi:sockets` connects *and* a `serve`-mode app's `wasi:http` calls —
 **leaves from the deployment's own IPv6**, the same address its inbound
@@ -124,7 +124,7 @@ routes it through the enclave's egress front; with it on the guest has **no raw
 network at all** (no ambient `-Sinherit-network`), so nothing can egress
 off-identity.
 
-The tenant env still carries **`NAN_EGRESS`** (a
+The tenant env still carries **`ENCLAVE_EGRESS`** (a
 `socks5h://<id>:<token>@127.0.0.1:<port>` URL) for apps that want to steer
 outbound explicitly — point an HTTP client's proxy or a SOCKS dialer at it — but
 you no longer *need* to: routing is automatic. Notes: dedicated source is
@@ -138,7 +138,7 @@ confidentiality. One quirk worth knowing: under the lockdown a non-blocking
 on its first read/write (`NotConnected`); a plain blocking `connect` reports
 the denial directly. No bytes ever flow either way. The credential is per-deployment: you can only egress as
 yourself. On older toolchains without the transparent shim this degrades to the
-explicit-`NAN_EGRESS`-only (proxy-aware) behavior. See `relay/README.md`.
+explicit-`ENCLAVE_EGRESS`-only (proxy-aware) behavior. See `relay/README.md`.
 
 Sandbox defaults (nothing to configure): a private writable `/data` (see below),
 no host environment, no network beyond the served HTTP socket, memory capped per
@@ -189,7 +189,7 @@ limit, so its artifact is not committed: download it from the
 `cargo component build --release --target wasm32-wasip2`; the manual
 **Wasm Apps** workflow does the same in CI and re-uploads the asset). Publish
 the artifact to the on-chain catalog like any other app — 123MB is under the
-manager's 256MB fetch cap. It needs the nan-wasmtime toolchain from enclave
+manager's 256MB fetch cap. It needs the enclave-wasmtime toolchain from enclave
 release v0.5.26+: tensor dtypes (i64 token ids, fp16 outputs, zero-size KV
 bootstrap tensors; patch parts 3+4) and the per-process session cache (part
 5 — without it every request re-initializes the 117MB session, which under
@@ -210,7 +210,7 @@ cargo component new hello --lib && cd hello
 Set `wit/world.wit`:
 
 ```wit
-package nan:hello;
+package enclave:hello;
 world hello { export wasi:http/incoming-handler@0.2.0; }
 ```
 
@@ -226,7 +226,7 @@ impl wasi::exports::http::incoming_handler::Guest for Component {
         let body = resp.body().unwrap();
         ResponseOutparam::set(out, Ok(resp));
         let stream = body.write().unwrap();
-        stream.blocking_write_and_flush(b"nan-wasm-ok\n").unwrap();
+        stream.blocking_write_and_flush(b"enclave-wasm-ok\n").unwrap();
         drop(stream);
         OutgoingBody::finish(body, None).unwrap();
     }
@@ -249,7 +249,7 @@ handler signature. The shape above is the stable wasi:http/proxy pattern.)
 
 ```bash
 wasmtime serve --addr 127.0.0.1:8080 apps/hello.wasm
-curl 127.0.0.1:8080/    # -> nan-wasm-ok
+curl 127.0.0.1:8080/    # -> enclave-wasm-ok
 ```
 
 If that works locally, it works in the enclave; the manager runs the identical

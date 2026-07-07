@@ -1,4 +1,4 @@
-# NAN portable deployments (NanDeployments) — design
+# Enclave portable deployments (EnclaveDeployments) — design
 
 **Status: implemented. The contract compiles clean; the claim loop is wired
 into `supervisor.js` (search `startClaimLoop`) behind `CLAIM_ENABLED` +
@@ -10,7 +10,7 @@ balance live in that supervisor's `state.json`, and the on-chain `Paid` events
 reference a `payRef` whose preimage only that enclave knows. If the enclave dies
 for good, the deployment — including paid, unconsumed runtime — dies with it.
 
-`NanDeployments` turns deployments into **work items on a queue**, like
+`EnclaveDeployments` turns deployments into **work items on a queue**, like
 transactions waiting to be processed. The chain holds the three things a
 stranger enclave needs to take over:
 
@@ -19,14 +19,14 @@ stranger enclave needs to take over:
 3. the **lease** — who is serving it right now, and until when.
 
 ```
-user    --(create tx)------------> NanDeployments   intent recorded, id minted
-user    --(fundWithAuthorization)> NanDeployments   USDC -> payout (same tx), balance += value
-enclave --(poll getPage)---------> NanDeployments   "anything claimable I can fit?"
-enclave --(claim tx)-------------> NanDeployments   lease taken, min(leaseSec, balance/rate) burned
+user    --(create tx)------------> EnclaveDeployments   intent recorded, id minted
+user    --(fundWithAuthorization)> EnclaveDeployments   USDC -> payout (same tx), balance += value
+enclave --(poll getPage)---------> EnclaveDeployments   "anything claimable I can fit?"
+enclave --(claim tx)-------------> EnclaveDeployments   lease taken, min(leaseSec, balance/rate) burned
 enclave --(wasm-manager launch)--> runs the app     same provisioning path as today
-enclave --(renew tx, each lease)-> NanDeployments   healthy runner keeps extending
+enclave --(renew tx, each lease)-> EnclaveDeployments   healthy runner keeps extending
 enclave dies                      (nothing)         lease expires on its own
-enclave'--(claim tx)-------------> NanDeployments   another enclave picks it up, continues
+enclave'--(claim tx)-------------> EnclaveDeployments   another enclave picks it up, continues
 ...until balance < rate           claim reverts     "no more time left" — the queue drops it
 ```
 
@@ -36,22 +36,22 @@ silence *is* the signal, because the lease it stopped renewing expires.
 
 ## What changes, what doesn't
 
-| | today (NanPay path) | portable (NanDeployments path) |
+| | today (EnclavePay path) | portable (EnclaveDeployments path) |
 |---|---|---|
 | deployment created by | HTTP `POST /v1/deployments` to one enclave | `create()` transaction |
 | spec lives in | that enclave's `state.json` | chain |
 | balance lives in | `rec.remainingMs` in `state.json` | chain (`balance6`), leases prepay slices of it |
-| payment | NanPay `Paid` event, credited off-chain | `fundWithAuthorization` / `fundEth`, credited on-chain |
+| payment | EnclavePay `Paid` event, credited off-chain | `fundWithAuthorization` / `fundEth`, credited on-chain |
 | enclave death | deployment lost | lease expires, any enclave claims the remainder |
 | billing clock | per-tick, freezes during outages | lease-quantum; `release()` refunds unused tail |
 | app state | ephemeral ramdisk `/data` | unchanged — a takeover is a relaunch from the CID |
 | attestation, approval gate, isolation | — | unchanged (runners still check `cidStatus`, fail closed) |
 
-Both paths coexist: `NanPay` + the HTTP deploy flow keep working unchanged;
-`NanDeployments` is opt-in per enclave (`CLAIM_ENABLED`) and per user (deploy
+Both paths coexist: `EnclavePay` + the HTTP deploy flow keep working unchanged;
+`EnclaveDeployments` is opt-in per enclave (`CLAIM_ENABLED`) and per user (deploy
 via transaction instead of via one enclave's API).
 
-## Contract summary (`NanDeployments.sol`)
+## Contract summary (`EnclaveDeployments.sol`)
 
 - **`create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid)`**
   — permissionless; inert until funded. A deployment BUYS two shares, both in
@@ -59,7 +59,7 @@ via transaction instead of via one enclave's API).
   CPU-only deployment) and `cpuMilli` of a node's vCPU+RAM (1..1000). The
   contract enforces `gpuMilli == 0 || gpuMilli >= cpuMilli` — a GPU app's CPU
   slice rides on the same node as its card. The app's exact specs in
-  NanAppCatalog (vramMb, gpuGflops, memMb, cpuGflops) set its MINIMUM shares: each RUNNER
+  EnclaveAppCatalog (vramMb, gpuGflops, memMb, cpuGflops) set its MINIMUM shares: each RUNNER
   re-derives them against its own hardware (spec / server spec, the larger of
   the memory and compute axes, ceil to the percent grain) and skips
   under-provisioned deployments — the chain stays hardware-agnostic. Both
@@ -73,12 +73,12 @@ via transaction instead of via one enclave's API).
   (default 120s), out of their leftover CPU/RAM pool — e.g. a tenant taking a
   whole card + 10% of the node leaves 90% of that node's CPU for CPU-only work.**
 - **`fundWithAuthorization(id, ...)` / `fundEth(id)`** — non-custodial, exactly
-  NanPay's pattern (EIP-3009 nonce bound to the first 16 bytes of `id`; funds
+  EnclavePay's pattern (EIP-3009 nonce bound to the first 16 bytes of `id`; funds
   forward to `payout` in the same tx). The difference: the credit lands in
   on-chain `balance6` instead of an off-chain clock. ETH is priced by the
   Chainlink ETH/USD feed *in the contract* (staleness-checked), because the
   balance is chain state so the conversion must be too.
-- **`claim(id, enclaveId)`** — gated to the operator of an **active NanRegistry
+- **`claim(id, enclaveId)`** — gated to the operator of an **active EnclaveRegistry
   entry** (structural, like catalog lineage ownership). Requires no live lease
   and a balance that buys ≥ 1 second. Burns `min(leaseSec, balance/rate)`.
 - **`renew(id)`** — current runner only, before expiry only; extends **from**
@@ -145,7 +145,7 @@ const DEPLOYMENTS_ABI = [
     inputs: [{ name: "start", type: "uint256" }, { name: "n", type: "uint256" }],
     outputs: [{ type: "tuple[]", components: DEPLOYMENT_TUPLE }] },
 ];
-// DEPLOYMENT_TUPLE mirrors the struct; generate it from NanDeployments.abi.json.
+// DEPLOYMENT_TUPLE mirrors the struct; generate it from EnclaveDeployments.abi.json.
 ```
 
 ### The sweep: find work, filter locally, claim with jitter
@@ -312,8 +312,8 @@ The dashboard/CLI resolves a portable deployment without contacting any
 particular enclave first:
 
 ```
-NanDeployments.get(id)      -> runner (enclave id), leaseUntil, appRef, balance
-NanRegistry.get(runner)     -> endpoint, repo
+EnclaveDeployments.get(id)      -> runner (enclave id), leaseUntil, appRef, balance
+EnclaveRegistry.get(runner)     -> endpoint, repo
 SecureClient(endpoint,repo) -> attest, then https://<endpoint>/x/<id>[...]
 ```
 
@@ -358,6 +358,6 @@ NETWORK=base DEPLOYER_PRIVATE_KEY=0x... node scripts/deploy-deployments.mjs
 
 The script writes `DEPLOYMENTS_ADDRESS` into `tinfoil-config.yml` when the line
 exists (add it under the supervisor `env:` alongside `FORWARDER_ADDRESS`), and
-re-emits `contracts/NanDeployments.abi.json` so the checked-in ABI can't drift.
-Constructor wiring: `usdc`, `payout` (nan.eth), `registry` (claim gating),
+re-emits `contracts/EnclaveDeployments.abi.json` so the checked-in ABI can't drift.
+Constructor wiring: `usdc`, `payout` (the Enclave cold wallet), `registry` (claim gating),
 `ethUsdFeed` (Chainlink; `ETH_USD_FEED=none` disables ETH funding).

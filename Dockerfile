@@ -10,9 +10,9 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 COPY supervisor.js ./
-# nan-vault: the wallet-gated volume protocol the supervisor imports (unseal
+# enclave-vault: the wallet-gated volume protocol the supervisor imports (unseal
 # delivered VEKs + seal auto-grants); single source of truth with the client.
-COPY scripts/nan-vault.mjs ./scripts/nan-vault.mjs
+COPY scripts/enclave-vault.mjs ./scripts/enclave-vault.mjs
 # dedicated-IP egress: the enclave-side SOCKS front + its SSRF classifier
 # (net-guard.mjs is also symlinked into relay/ and shipped to the relay box).
 COPY egress.js ./

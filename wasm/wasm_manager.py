@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""wasm-manager: per-tenant WebAssembly app manager for NAN on Tinfoil.
+"""wasm-manager: per-tenant WebAssembly app manager for Enclave on Tinfoil.
 
 Replaces the runsc/microVM backends. Nested container runtimes need privileged
 namespace/mount/exec operations that Tinfoil confines away; a Wasm runtime needs
@@ -70,7 +70,7 @@ PORT         = int(os.environ.get("WASM_MANAGER_PORT", "8091"))   # same port th
 # tokens) stay open. Unset = legacy-open (local dev).
 VMMGR_TOKEN  = os.environ.get("VMMGR_TOKEN") or os.environ.get("SECRET") or ""
 WASMTIME     = os.environ.get("WASMTIME_BIN", "wasmtime")
-APPS_DIR     = pathlib.Path(os.environ.get("WASM_APPS_DIR", "/opt/nan/apps"))
+APPS_DIR     = pathlib.Path(os.environ.get("WASM_APPS_DIR", "/opt/enclave/apps"))
 CATALOG_PATH = pathlib.Path(os.environ.get("WASM_CATALOG", str(APPS_DIR / "catalog.json")))
 HOST_IP      = os.environ.get("WASM_HOST_IP", "127.0.0.1")
 PORT_LO      = int(os.environ.get("WASM_PORT_LO", "20000"))
@@ -97,7 +97,7 @@ MIN_MEM_MB   = int(os.environ.get("WASM_APP_MIN_MEM_MB", "64"))
 # cache and open the port in seconds.
 READY_SECS   = float(os.environ.get("WASM_READY_TIMEOUT", "150"))
 MOCK         = os.environ.get("WASM_MOCK", "") not in ("", "0", "false")
-LOG_DIR      = pathlib.Path(os.environ.get("WASM_LOG_DIR", "/tmp/nan-wasm-logs"))
+LOG_DIR      = pathlib.Path(os.environ.get("WASM_LOG_DIR", "/tmp/enclave-wasm-logs"))
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 # run-by-CID: fetch an app's bytes from IPFS and verify they hash to the CID.
 IPFS_GATEWAY   = os.environ.get("IPFS_GATEWAY", "https://ipfs.enclave.host").rstrip("/")
@@ -220,7 +220,7 @@ P3_FLAGS       = [] if os.environ.get("WASM_P3", "1").lower() in ("0", "false", 
 # as the port bind audit. Global kill-switch WASM_FS=0; per-app opt-out is
 # `storage_mb: 0` in the catalog.
 FS_ENABLED     = os.environ.get("WASM_FS", "1").lower() not in ("0", "false", "no")
-FS_DIR         = pathlib.Path(os.environ.get("WASM_FS_DIR", "/tmp/nan-wasm-fs"))  # base for per-deployment scratch dirs (ramdisk)
+FS_DIR         = pathlib.Path(os.environ.get("WASM_FS_DIR", "/tmp/enclave-wasm-fs"))  # base for per-deployment scratch dirs (ramdisk)
 FS_GUEST_PATH  = os.environ.get("WASM_FS_GUEST", "/data")                          # where it shows up inside the guest
 DEF_STORAGE_MB = int(os.environ.get("WASM_APP_STORAGE_MB", "256"))                 # per-app /data ceiling; catalog can override
 if FS_ENABLED:
@@ -235,7 +235,7 @@ def _load_catalog() -> dict:
     """Map of app-id -> {file, name, description, vram_mb?, gpu_gflops?,
     mem_mb?, cpu_gflops?, storage_mb?}. Baked-in + attested. The four resource
     fields are the app's EXACT minimums (memory in MB, compute in GFLOPS =
-    1/1000 TFLOPS; any GPU axis > 0 marks a GPU app), mirroring NanAppCatalog;
+    1/1000 TFLOPS; any GPU axis > 0 marks a GPU app), mirroring EnclaveAppCatalog;
     shares are calculated from them."""
     try:
         data = json.loads(CATALOG_PATH.read_text())
@@ -281,13 +281,13 @@ def _resolve_cid(cid: str) -> pathlib.Path:
     return p
 
 
-# Per-deployment config (NAN_CONFIG): a small JSON object addressed by an IPFS
+# Per-deployment config (ENCLAVE_CONFIG): a small JSON object addressed by an IPFS
 # CID, fetched and hash-verified the same trustless way as the app wasm, then
 # handed to the guest. Kept tiny (a config, not a payload); the ceiling stops a
 # bad CID from streaming gigabytes. Returns the JSON text (as stored) or raises
 # ValueError - a config that won't fetch/verify/parse fails the launch loudly
 # rather than silently serving app defaults with the wrong shape.
-CONFIG_MAX_BYTES = int(os.environ.get("NAN_CONFIG_MAX_BYTES", str(256 * 1024)))
+CONFIG_MAX_BYTES = int(os.environ.get("ENCLAVE_CONFIG_MAX_BYTES", str(256 * 1024)))
 
 
 def _resolve_config(cid: str) -> str:
@@ -379,24 +379,24 @@ ENC_GUEST_ROOT = os.environ.get("ENC_GUEST_ROOT", "/enc")
 # ONLY in the CVM's encrypted RAM: never persisted, never host-visible, gone on
 # teardown. (Ciphertext staging is on the same store but would be safe anywhere -
 # it's encrypted.)
-ENC_CIPHER_DIR = pathlib.Path(os.environ.get("ENC_CIPHER_DIR", "/tmp/nan-enc-cipher"))
-ENC_PLAIN_ROOT = pathlib.Path(os.environ.get("ENC_PLAIN_ROOT", "/tmp/nan-enc-plain"))
+ENC_CIPHER_DIR = pathlib.Path(os.environ.get("ENC_CIPHER_DIR", "/tmp/enclave-enc-cipher"))
+ENC_PLAIN_ROOT = pathlib.Path(os.environ.get("ENC_PLAIN_ROOT", "/tmp/enclave-enc-plain"))
 ENC_MAX_BYTES  = int(os.environ.get("ENC_MAX_BYTES", str(8 * 1024 * 1024 * 1024)))  # ciphertext cap
-_ENC_CIPHERS   = {"aes-256-ctr", "aes-256-cbc"}   # allowlist (must match nan-volume.sh)
-# nan-vault (wallet-gated) volume format: NANVOL1 || nonce(24) || XChaCha20-
-# Poly1305(tar). Must match scripts/nan-vault.mjs — the protocol's source of
+_ENC_CIPHERS   = {"aes-256-ctr", "aes-256-cbc"}   # allowlist (must match enclave-volume.sh)
+# enclave-vault (wallet-gated) volume format: NANVOL1 || nonce(24) || XChaCha20-
+# Poly1305(tar). Must match scripts/enclave-vault.mjs — the protocol's source of
 # truth. The key is a 32-byte VEK delivered sealed-to-this-enclave via the
 # supervisor's /unlock-sealed (never a passphrase, never plaintext off-enclave).
 _VAULT_MAGIC   = b"NANVOL1"
 # NANVOL2 = the LARGE tier: a block-encrypted cipherdir (per-file blobs of
-# 4MiB XChaCha20-Poly1305 blocks + a VEK-sealed manifest; see nan-vault.mjs
+# 4MiB XChaCha20-Poly1305 blocks + a VEK-sealed manifest; see enclave-vault.mjs
 # packBlocks). NOTHING is staged or decrypted whole: the ciphertext stays on
 # its (read-only, dm-verity) attached volume and blocks are decrypted ON
 # DEMAND into a bounded LRU when a tenant reads them - gocryptfs semantics in
 # pure userspace, because the enclave grants no FUSE/loop/dm privileges and
 # never will. Tenants read over the manager's loopback data plane
 # (GET /enc/<vid>/<name>/<path>, Range honored, per-deployment bearer token
-# from the NAN_ENC_HTTP env) - wasmtime serve already grants guests outbound
+# from the ENCLAVE_ENC_HTTP env) - wasmtime serve already grants guests outbound
 # HTTP (-Shttp), so no new capability is involved.
 _NANVOL2_TAG   = 16                            # per-block Poly1305 tag
 ENC_CACHE_MB   = int(os.environ.get("ENC_CACHE_MB", "256"))   # plaintext block LRU budget
@@ -427,8 +427,8 @@ def _prepare_enc_volumes(vid: str, specs: list) -> list:
         seen.add(name)
         if not re.fullmatch(r"[0-9a-f]{64}", sha):
             raise ValueError(f"encVolume '{name}': sha256 must be the 64-hex plaintext hash")
-        # A `vault` object marks a WALLET-GATED volume (nan-vault format): the key
-        # is a VEK unsealed by the supervisor after an on-chain NanVolumeAccess
+        # A `vault` object marks a WALLET-GATED volume (enclave-vault format): the key
+        # is a VEK unsealed by the supervisor after an on-chain EnclaveVolumeAccess
         # check, not a deployer passphrase. vault.owner + vault.volume identify
         # the on-chain ACL entry (volId = keccak256(abi.encode(owner, volume)));
         # owner may be empty — the supervisor defaults it to the deployment owner.
@@ -547,7 +547,7 @@ def _pycrypto():
 
 
 def _decrypt_vault_volume(spec: dict, vek_hex: str, verify_only: bool = False) -> str:
-    """Decrypt one staged nan-vault volume (NANVOL1 / XChaCha20-Poly1305) with a
+    """Decrypt one staged enclave-vault volume (NANVOL1 / XChaCha20-Poly1305) with a
     32-byte VEK, streaming ciphertext -> plaintext so peak RAM is one chunk, not
     2x the volume. The AEAD tag AND the plaintext sha256 are both verified
     BEFORE anything is extracted (decrypt-then-verify; the plaintext file is
@@ -566,12 +566,12 @@ def _decrypt_vault_volume(spec: dict, vek_hex: str, verify_only: bool = False) -
     hdr = len(_VAULT_MAGIC) + 24                     # magic || nonce(24); trailing 16 = Poly1305 tag
     size = os.path.getsize(spec["cipher_path"])
     if size < hdr + 16:
-        raise ValueError("not a nan-vault volume (too short)")
+        raise ValueError("not a enclave-vault volume (too short)")
     plain_tar = None
     try:
         with open(spec["cipher_path"], "rb") as f:
             if f.read(len(_VAULT_MAGIC)) != _VAULT_MAGIC:
-                raise ValueError("not a nan-vault volume (bad header)")
+                raise ValueError("not a enclave-vault volume (bad header)")
             cipher = ChaCha20_Poly1305.new(key=key, nonce=f.read(24))  # 24B nonce = XChaCha20
             h = _hl.sha256()
             out = None
@@ -631,7 +631,7 @@ def _open_nanvol2(spec: dict, vek_hex: str) -> None:
     blob = (pathlib.Path(spec["cipher_dir"]) / "manifest.nvm").read_bytes()
     hdr = len(_VAULT_MAGIC) + 24
     if len(blob) < hdr + 16 or blob[:len(_VAULT_MAGIC)] != _VAULT_MAGIC:
-        raise ValueError("manifest.nvm is not a nan-vault blob")
+        raise ValueError("manifest.nvm is not a enclave-vault blob")
     c = ChaCha20_Poly1305.new(key=key, nonce=blob[len(_VAULT_MAGIC):hdr])
     plain = c.decrypt(blob[hdr:-16])
     try:
@@ -652,7 +652,7 @@ def _open_nanvol2(spec: dict, vek_hex: str) -> None:
 
 def _nanvol2_file_key(reader: dict, blob: str) -> bytes:
     """fileKey = HKDF-SHA256(VEK, salt=packId, info='nan-vault/file/v1:'+blob).
-    Must match nan-vault.mjs blockFileKey (@noble hkdf; interop-tested)."""
+    Must match enclave-vault.mjs blockFileKey (@noble hkdf; interop-tested)."""
     k = reader["keys"].get(blob)
     if k is None:
         _, HKDF, SHA256 = _pycrypto()
@@ -730,10 +730,10 @@ def _nanvol2_read(vid: str, spec: dict, path: str, start: int, end: int):
             yield plain[lo:hi]
 
 
-_VAULT_FS = None   # does this wasmtime carry the nan-vault WASI-fs shim (-S vault)?
+_VAULT_FS = None   # does this wasmtime carry the enclave-vault WASI-fs shim (-S vault)?
 
 def _vault_fs_supported() -> bool:
-    """Probe (once) whether the wasmtime toolchain has the nan-vault WASI-fs
+    """Probe (once) whether the wasmtime toolchain has the enclave-vault WASI-fs
     shim: `-S vault=<guest>::<skeleton>::<cipherdir>` mounts a NANVOL2 volume
     as a normal read-only guest directory, the wasmtime HOST decrypting blocks
     on demand (wasmtime-vault-fs.patch). When present, large-tier volumes are
@@ -754,13 +754,13 @@ def _vault_fs_supported() -> bool:
 _EGRESS_FS = None   # does this wasmtime carry the transparent-egress shim (-S egress)?
 
 def _egress_supported() -> bool:
-    """Probe (once) whether the wasmtime toolchain has the nan transparent-egress
+    """Probe (once) whether the wasmtime toolchain has the enclave transparent-egress
     shim: `-S egress=<host>:<port>` routes ALL guest outbound (wasi:sockets TCP
     connect AND the wasi:http outgoing handler) through the enclave's loopback
     SOCKS front, so an UNMODIFIED app leaves from the deployment's dedicated IPv6
     (wasmtime-egress.patch, phase 2). When present the manager makes egress
     transparent and drops the raw -Sinherit-network in run mode; on older
-    toolchains it falls back to phase-1 (guest-visible NAN_EGRESS only)."""
+    toolchains it falls back to phase-1 (guest-visible ENCLAVE_EGRESS only)."""
     global _EGRESS_FS
     if _EGRESS_FS is None:
         try:
@@ -774,10 +774,10 @@ def _egress_supported() -> bool:
 
 
 def _parse_egress_url(url: str):
-    """The supervisor hands us the per-deployment NAN_EGRESS verbatim: a
+    """The supervisor hands us the per-deployment ENCLAVE_EGRESS verbatim: a
     `socks5h://<id>:<token>@<host>:<port>` URL. For TRANSPARENT egress we reuse
     its parts host-side — the endpoint on the `-S egress` flag and `<id>:<token>`
-    in $NAN_EGRESS_CRED (guest-invisible). Returns {endpoint, cred} or None if it
+    in $ENCLAVE_EGRESS_CRED (guest-invisible). Returns {endpoint, cred} or None if it
     isn't a usable socks URL (then we leave egress as the guest-visible env only).
     Parsing the existing field means no supervisor<->manager protocol change."""
     try:
@@ -836,11 +836,11 @@ def _nn_tenant_env(gpu_share: float, pinned: bool) -> dict:
     # (wasm/onnxruntime-sm90-mps.patch: flash/lean num_SMs clamp), so the fused
     # kernels are safe again - and much faster on long contexts / big models.
     # Default is now FUSED ON. Revert WITHOUT a release by setting
-    # NAN_FUSED_ATTENTION=0 on the wasm-manager container (Tinfoil dashboard) -
+    # ENCLAVE_FUSED_ATTENTION=0 on the wasm-manager container (Tinfoil dashboard) -
     # it re-applies the conservative unfused knobs. ORT_DISABLE_MATMUL4BITS_KERNEL
     # (also from the patch) is a SEPARATE, unrelated switch for the fp16 M=1
     # GEMV corruption - production dodges that with fp32-activation models.
-    if os.environ.get("NAN_FUSED_ATTENTION", "1").strip().lower() in ("0", "false", "no", "off"):
+    if os.environ.get("ENCLAVE_FUSED_ATTENTION", "1").strip().lower() in ("0", "false", "no", "off"):
         env.setdefault("ORT_DISABLE_FLASH_ATTENTION", "1")
         env.setdefault("ORT_DISABLE_MEMORY_EFFICIENT_ATTENTION", "1")
         env.setdefault("ORT_GRAPH_OPT_LEVEL", "basic")
@@ -1439,11 +1439,11 @@ def _alloc_ports(pspec) -> dict:
     """Map each LOGICAL port entry ('tcp:5432') to an ACTUAL loopback port.
 
     Declared ports are the app's stable interface (what the bridge URL and
-    NAN_PORTS reference); the actual bind is per-deployment, so two tenants can
+    ENCLAVE_PORTS reference); the actual bind is per-deployment, so two tenants can
     both run "the 5432 app" at the same time with no conflict — the URL routes
     by deployment id, never by the raw port. We prefer the logical number when
     it's free (apps that hardcode their port keep working while they can);
-    otherwise the OS assigns a free one. NAN_PORTS always carries the truth."""
+    otherwise the OS assigns a free one. ENCLAVE_PORTS always carries the truth."""
     with _lock:
         claimed = set()
         for r in _apps.values():
@@ -1461,7 +1461,7 @@ def _alloc_ports(pspec) -> dict:
 
 
 def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdir=None,
-               nn=False, nan_config=None, vol_mounts=None, enc_mounts=None, enc_http=None,
+               nn=False, enclave_config=None, vol_mounts=None, enc_mounts=None, enc_http=None,
                vault_flags=None, vault_names=None, egress=None, egress_transparent=None):
     """The wasmtime invocation for a ports spec. Returns (cmd, host_port, wait_ports).
 
@@ -1469,7 +1469,7 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     run mode:   `wasmtime run` with wasi:sockets granted (-Stcp/-Sudp/
                 -Sinherit-network/-Sallow-ip-name-lookup, verified against
                 wasmtime 45). The app binds the ACTUAL ports from the mapping;
-                NAN_PORTS tells it which ("tcp:5432=31245" = logical=actual —
+                ENCLAVE_PORTS tells it which ("tcp:5432=31245" = logical=actual —
                 bind the actual). The grant is coarse (wasmtime can't allowlist
                 per port), so the audit sweep enforces the firewall: bind an
                 unassigned low port and the app is killed.
@@ -1495,45 +1495,45 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     # what to do with it). Value is the verified config JSON; only forwarded to
     # the GUEST, never to the wasmtime process env (that carries the CUDA/ORT
     # knobs). Kept out of the log line: a config may hold an API key.
-    cfg_args = ["--env", "NAN_CONFIG=" + nan_config] if nan_config else []
+    cfg_args = ["--env", "ENCLAVE_CONFIG=" + enclave_config] if enclave_config else []
     # dedicated-IP egress: a per-deployment SOCKS URL minted by the supervisor
     # (see egress.js). Forwarded verbatim to the GUEST only; it carries a bearer
-    # token, so — like NAN_CONFIG — it never reaches the wasmtime process env or
+    # token, so — like ENCLAVE_CONFIG — it never reaches the wasmtime process env or
     # a log line. Set in both modes: a `serve` app makes outbound calls too.
     if egress:
-        cfg_args += ["--env", "NAN_EGRESS=" + egress]
+        cfg_args += ["--env", "ENCLAVE_EGRESS=" + egress]
     # attached model volumes: preopen each mount as a guest /models/<name> dir.
     # Read-only in practice (dm-verity/EROFS mounts are physically read-only);
-    # NAN_MODELS lists the mounted names so the app can discover them without
+    # ENCLAVE_MODELS lists the mounted names so the app can discover them without
     # probing the filesystem.
     vol_mounts = vol_mounts or {}
     vol_args = []
     for name, host_path in vol_mounts.items():
         vol_args += ["--dir", f"{host_path}::{VOL_GUEST_ROOT}/{name}"]
     if vol_mounts:
-        vol_args += ["--env", "NAN_MODELS=" + ",".join(vol_mounts.keys())]
+        vol_args += ["--env", "ENCLAVE_MODELS=" + ",".join(vol_mounts.keys())]
     # decrypted user-held-key volumes: preopen each at /enc/<name>. The plaintext
     # lives only on the enclave's tmpfs (encrypted RAM); the guest reads it like
-    # any dir. NAN_ENC lists them so the app can find them without probing.
+    # any dir. ENCLAVE_ENC lists them so the app can find them without probing.
     enc_mounts = enc_mounts or {}
     for name, host_path in enc_mounts.items():
         vol_args += ["--dir", f"{host_path}::{ENC_GUEST_ROOT}/{name}"]
-    # nan-vault WASI-fs shim mounts (large tier, transparent): `-S vault=...`
+    # enclave-vault WASI-fs shim mounts (large tier, transparent): `-S vault=...`
     # preopens the sparse skeleton at /enc/<name>; the wasmtime host decrypts
-    # blocks on demand. These count as /enc mounts for NAN_ENC discovery.
+    # blocks on demand. These count as /enc mounts for ENCLAVE_ENC discovery.
     vol_args += list(vault_flags or [])
     enc_names = list(enc_mounts.keys()) + list(vault_names or [])
     if enc_names:
-        vol_args += ["--env", "NAN_ENC=" + ",".join(enc_names)]
+        vol_args += ["--env", "ENCLAVE_ENC=" + ",".join(enc_names)]
     # LARGE-tier volumes WITHOUT the shim have no dir to preopen - the guest
     # reads them over the manager's loopback data plane (Range honored). The
     # env maps each volume to its URL + this deployment's bearer token; guests
     # already hold outbound HTTP (`serve` grants -Shttp; `run` grants sockets).
     if enc_http:
-        vol_args += ["--env", "NAN_ENC_HTTP=" + json.dumps(enc_http)]
-    # nan transparent egress (phase 2): `-S egress=<host>:<port>` makes the
+        vol_args += ["--env", "ENCLAVE_ENC_HTTP=" + json.dumps(enc_http)]
+    # enclave transparent egress (phase 2): `-S egress=<host>:<port>` makes the
     # patched wasmtime funnel ALL guest outbound through the loopback SOCKS front
-    # (credential in $NAN_EGRESS_CRED, set host-side by _spawn_and_wait), so an
+    # (credential in $ENCLAVE_EGRESS_CRED, set host-side by _spawn_and_wait), so an
     # UNMODIFIED app leaves from the deployment's dedicated IPv6. Added in BOTH
     # modes: `serve` intercepts the wasi:http outgoing handler, `run` the
     # wasi:sockets connect. In run mode it ALSO closes the raw bypass — we drop
@@ -1545,7 +1545,7 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
                  "--addr", f"{HOST_IP}:{serve_port}", str(wasm)],
                 serve_port, [serve_port])
     port_map = port_map or {}
-    nan_ports = ",".join(f"{e}={port_map[e]}" for e in pspec["norm"])
+    enclave_ports = ",".join(f"{e}={port_map[e]}" for e in pspec["norm"])
     # inbound binds (declared tcp:N/udp:N) still need the socket-address check to
     # permit them: `-Sinherit-network` allows all, while `-S egress` installs a
     # check that permits TCP bind/connect + UDP bind but DENIES raw UDP egress.
@@ -1554,7 +1554,7 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     cmd = [WASMTIME, "run", "-Scli", *P3_FLAGS, *nn_args, "-Stcp", "-Sudp",
            *net_args, "-Sallow-ip-name-lookup", *fs_args, *cfg_args, *vol_args,
            "-W", f"max-memory-size={mem_bytes}",
-           "--env", "NAN_PORTS=" + nan_ports, str(wasm)]
+           "--env", "ENCLAVE_PORTS=" + enclave_ports, str(wasm)]
     http_entry = f"http:{pspec['http']}" if pspec["http"] else None
     host_port = port_map.get(http_entry, 0) if http_entry else 0
     if host_port:
@@ -1634,10 +1634,10 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
 
     # per-deployment config: fetch + verify before spawning (a bad config CID
     # should fail the launch cleanly, not crash the tenant on first request)
-    nan_config = None
+    enclave_config = None
     if config_cid:
         try:
-            nan_config = _resolve_config(config_cid)
+            enclave_config = _resolve_config(config_cid)
         except ValueError as e:
             rec["status"], rec["error"] = "failed", str(e)
             return rec
@@ -1650,9 +1650,9 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
     # reason (the supervisor backs off; the claim gate keeps it from landing
     # here when enclaves advertise their volumes).
     want = list(volumes or [])
-    if nan_config:
+    if enclave_config:
         try:
-            cfg_vols = json.loads(nan_config).get("volumes")
+            cfg_vols = json.loads(enclave_config).get("volumes")
             if isinstance(cfg_vols, list):
                 want += cfg_vols
         except Exception:
@@ -1678,15 +1678,15 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
     # the tenant in awaiting_unlock and defer the spawn until every volume is
     # unlocked. The host/operator never see the key or the plaintext.
     enc_specs = []
-    if nan_config:
+    if enclave_config:
         try:
-            ev = json.loads(nan_config).get("encVolumes")
+            ev = json.loads(enclave_config).get("encVolumes")
             if isinstance(ev, list):
                 enc_specs = ev
         except Exception:
             pass
     ctx = {"pspec": pspec, "wasm": wasm, "port": port, "port_map": port_map, "fsdir": fsdir,
-           "nn": nn, "nan_config": nan_config, "vol_mounts": vol_mounts, "gpu_share": gpu_share,
+           "nn": nn, "enclave_config": enclave_config, "vol_mounts": vol_mounts, "gpu_share": gpu_share,
            "log_path": log_path, "egress": egress}
     if enc_specs:
         try:
@@ -1720,34 +1720,41 @@ def _spawn_and_wait(rec, ctx):
     """Build the wasmtime command from a prepared context and spawn it, waiting
     for readiness. Shared by launch() (no encrypted volumes) and unlock() (after
     every user-held-key volume is decrypted + mounted)."""
-    pspec, wasm, port, port_map, fsdir, nn, nan_config, vol_mounts, gpu_share, log_path = (
+    pspec, wasm, port, port_map, fsdir, nn, enclave_config, vol_mounts, gpu_share, log_path = (
         ctx["pspec"], ctx["wasm"], ctx["port"], ctx["port_map"], ctx["fsdir"], ctx["nn"],
-        ctx["nan_config"], ctx["vol_mounts"], ctx["gpu_share"], ctx["log_path"])
+        ctx["enclave_config"], ctx["vol_mounts"], ctx["gpu_share"], ctx["log_path"])
     egress = ctx.get("egress", "")
-    # nan transparent egress (phase 2): if the supervisor enabled egress (the
+    # enclave transparent egress (phase 2): if the supervisor enabled egress (the
     # per-deployment socks5h URL rides `egress`) AND this toolchain carries the
     # -S egress shim, make it TRANSPARENT — the endpoint goes on the wasmtime
     # cmdline and the SOCKS credential into the process env (guest-invisible,
     # same delivery as the vault VEKs). On older toolchains _egress_supported()
-    # is False and we fall back to phase-1: the guest-visible NAN_EGRESS only,
+    # is False and we fall back to phase-1: the guest-visible ENCLAVE_EGRESS only,
     # with raw -Sinherit-network still granted in run mode.
     egress_transparent, egress_env = None, {}
     if egress and _egress_supported():
         parsed = _parse_egress_url(egress)
         if parsed:
             egress_transparent = parsed["endpoint"]
+            egress_env["ENCLAVE_EGRESS_CRED"] = parsed["cred"]
+            # TRANSITION (drop after the enclave-wasmtime toolchain is rebuilt
+            # with the renamed patches and repinned): older toolchains read the
+            # pre-rename env name. Host-process only, guest-invisible.
             egress_env["NAN_EGRESS_CRED"] = parsed["cred"]
     enc_mounts = {s["name"]: s["plain_dir"] for s in rec.get("_encVolumes", []) if s.get("plain_dir")}
-    # Large-tier (nanvol2) volumes, two delivery modes: with the nan-vault
+    # Large-tier (nanvol2) volumes, two delivery modes: with the enclave-vault
     # WASI-fs shim in the toolchain, each mounts TRANSPARENTLY at /enc/<name>
     # (wasmtime preopens the sparse skeleton and decrypts blocks on demand;
     # the VEK rides the process env, host-side only). Otherwise the tenant
-    # reads it over the loopback data plane (NAN_ENC_HTTP).
+    # reads it over the loopback data plane (ENCLAVE_ENC_HTTP).
     vault_flags, vault_env, vault_names, enc_http = [], {}, [], {}
     for s in rec.get("_encVolumes", []):
         if s.get("format") != "nanvol2" or not s.get("unlocked"):
             continue
         if s.get("skel_dir") and _vault_fs_supported():
+            vault_env[f"ENCLAVE_VAULT_KEY_{len(vault_names)}"] = s["_reader"]["vek"].hex()
+            # TRANSITION (drop after the toolchain repin): pre-rename name for
+            # older enclave-wasmtime builds. Host-process only.
             vault_env[f"NAN_VAULT_KEY_{len(vault_names)}"] = s["_reader"]["vek"].hex()
             vault_flags += ["-S", f"vault={ENC_GUEST_ROOT}/{s['name']}::{s['skel_dir']}::{s['cipher_dir']}"]
             vault_names.append(s["name"])
@@ -1758,7 +1765,7 @@ def _spawn_and_wait(rec, ctx):
     # can grow) - the real per-app memory ceiling, enforced by the runtime.
     mem_bytes = max(rec["mem_mb"], 1) * 1024 * 1024
     cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir, nn,
-                                            nan_config, vol_mounts, enc_mounts, enc_http,
+                                            enclave_config, vol_mounts, enc_mounts, enc_http,
                                             vault_flags, vault_names, egress, egress_transparent)
     rec["hostPort"] = host_port
     rec["endpoint"] = f"http://{HOST_IP}:{host_port}" if host_port else None
@@ -1819,7 +1826,7 @@ def unlock_enc_volume(vid: str, name: str, passphrase: str = None, vek: str = No
     """Deliver the key for ONE encrypted volume: decrypt it in-enclave, and once
     every volume is unlocked, spawn the held tenant. Returns the public record.
     Passphrase volumes take {passphrase}; wallet-gated vault volumes take {vek}
-    (the supervisor unseals it after the on-chain NanVolumeAccess check). The
+    (the supervisor unseals it after the on-chain EnclaveVolumeAccess check). The
     key is used and dropped here - never stored on rec/disk."""
     with _lock:
         rec = _apps.get(vid)
@@ -1931,7 +1938,7 @@ def _audit_rec(rec):
     if extra:
         rec["status"] = "failed"
         rec["error"] = (f"firewall: bound unassigned port(s) {sorted(extra)}; app killed. "
-                        f"Apps must bind the ACTUAL ports from NAN_PORTS (logical=actual), not hardcode.")
+                        f"Apps must bind the ACTUAL ports from ENCLAVE_PORTS (logical=actual), not hardcode.")
         print(f"[audit] {rec['id']} killed: unassigned ports {sorted(extra)}", flush=True)
         _kill(rec)
 
@@ -1984,7 +1991,7 @@ def _mock_server(port: int, vid: str):
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(f"nan-wasm-ok {vid}".encode())
+            self.wfile.write(f"enclave-wasm-ok {vid}".encode())
         def log_message(self, *a):
             pass
     srv = http.server.HTTPServer((HOST_IP, port), H)
@@ -2106,7 +2113,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """Tenant data plane for LARGE-tier (nanvol2) volumes:
              GET /enc/<vid>/<volume>           -> JSON file listing
              GET /enc/<vid>/<volume>/<path>    -> file bytes (Range honored)
-        Auth = the deployment's own bearer token (NAN_ENC_HTTP env in the guest);
+        Auth = the deployment's own bearer token (ENCLAVE_ENC_HTTP env in the guest);
         every failure is the same 404 so the endpoint is no oracle for foreign
         vids/volumes/paths. Blocks decrypt on demand; only touched blocks ever
         exist as plaintext, in the bounded LRU."""
@@ -2320,7 +2327,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         # No cross-tenant port conflicts by construction: declared ports are LOGICAL;
-        # _alloc_ports gives each deployment its own actual bind (NAN_PORTS tells the
+        # _alloc_ports gives each deployment its own actual bind (ENCLAVE_PORTS tells the
         # app which), so two tenants can both run "the tcp:5432 app" simultaneously.
         cat = _load_catalog()
         meta = cat.get(app_ref, {})
@@ -2355,8 +2362,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if min_ggf and round(_num("gpuTflops") * 1000) < min_ggf:
             return self._json(422, {"error": f"app '{app_ref}' declares a minimum of {min_ggf / 1000} GPU TFLOPS; the request asks for less"})
         storage_mb = int(meta.get("storage_mb", DEF_STORAGE_MB))   # per-app /data cap; 0 opts out
-        config_cid = str(b.get("configCid") or "").strip()         # per-deployment NAN_CONFIG (verified in launch)
-        egress = str(b.get("egress") or "").strip()                # per-deployment NAN_EGRESS (opaque SOCKS URL, forwarded verbatim)
+        config_cid = str(b.get("configCid") or "").strip()         # per-deployment ENCLAVE_CONFIG (verified in launch)
+        egress = str(b.get("egress") or "").strip()                # per-deployment ENCLAVE_EGRESS (opaque SOCKS URL, forwarded verbatim)
         req_vols = b.get("volumes") or []                          # attached model volumes by name
         if not isinstance(req_vols, list):
             return self._json(400, {"error": "volumes must be a list of volume names"})

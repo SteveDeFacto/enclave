@@ -6,15 +6,15 @@
    pattern. Copying the CID and switching the version are handled
    internally.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc, short, copyText } from "../../js/core/util.js";
 import { IPFS_GATEWAY } from "../../js/core/config.js";
-import { Nan } from "../../js/core/api.js";
+import { Enclave } from "../../js/core/api.js";
 import { APPROVAL } from "../../js/core/chain.js";
 import { STORE, selIdx, appOfficial } from "../../js/core/catalog.js";
 import { minPctsOf } from "../../js/core/pricing.js";
 
-class AppCard extends NanElement {
+class AppCard extends EnclaveElement {
   static properties = { app: null };
   static templateUrl = new URL("./app-card.html", import.meta.url);
 
@@ -22,7 +22,7 @@ class AppCard extends NanElement {
     const app = this.app; if (!app) return;
     const i = selIdx(app);
     const v = app.versions[i] || { cid:"", version:"–", vramMb:0, gpuGflops:0, memMb:0, cpuGflops:0, verified:false, yanked:false, approval:APPROVAL.pending };
-    const me = (Nan.address || "").toLowerCase();
+    const me = (Enclave.address || "").toLowerCase();
     const isPub = me && app.publisher.toLowerCase() === me;
     const isOwner = me && STORE.owner && me === STORE.owner;
     const gw = IPFS_GATEWAY.replace(/\/+$/, "") + "/" + encodeURIComponent(v.cid);

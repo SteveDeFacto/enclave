@@ -1,7 +1,7 @@
 //! App configuration: model geometry, chat template, sampling defaults and
 //! the optional API key. Defaults come from the embedded assets/app-config.json
 //! (pinned next to the model it describes); a deployment can override any
-//! field through the NAN_CONFIG env var - a JSON object the platform passes
+//! field through the ENCLAVE_CONFIG env var - a JSON object the platform passes
 //! from the deployment's on-chain configCid (CID-verified by the enclave
 //! before it reaches us). Publish the app once, deploy it per-model/per-key.
 
@@ -39,17 +39,17 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    /// Embedded defaults, overlaid with NAN_CONFIG (if present and valid).
-    /// Unknown NAN_CONFIG fields are ignored; a malformed NAN_CONFIG is
+    /// Embedded defaults, overlaid with ENCLAVE_CONFIG (if present and valid).
+    /// Unknown ENCLAVE_CONFIG fields are ignored; a malformed ENCLAVE_CONFIG is
     /// reported so a bad deployment config fails loudly instead of silently
     /// serving the wrong model shape.
     pub fn load() -> Result<AppConfig, String> {
         let base: serde_json::Value = serde_json::from_slice(APP_CONFIG_JSON)
             .map_err(|e| format!("embedded app-config.json: {e}"))?;
-        let merged = match std::env::var("NAN_CONFIG") {
+        let merged = match std::env::var("ENCLAVE_CONFIG") {
             Ok(raw) if !raw.trim().is_empty() => {
                 let over: serde_json::Value = serde_json::from_str(&raw)
-                    .map_err(|e| format!("NAN_CONFIG is not valid JSON: {e}"))?;
+                    .map_err(|e| format!("ENCLAVE_CONFIG is not valid JSON: {e}"))?;
                 merge(base, over)
             }
             _ => base,

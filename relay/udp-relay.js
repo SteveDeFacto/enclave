@@ -1,4 +1,4 @@
-// NAN public UDP relay — gives service apps' declared udp:N ports a reachable
+// Enclave public UDP relay — gives service apps' declared udp:N ports a reachable
 // public endpoint. UNTRUSTED, like the other relays.
 //
 //   client ──UDP──> [<per-deployment IPv6>]:N ──WS(1 msg=1 datagram)──> enclave
@@ -25,7 +25,7 @@
 // encryption (e.g. DTLS). Documented in relay/README.md.
 //
 // Config (env):
-//   REGISTRY_ADDRESS   required*   NanRegistry on Base: on-chain fleet discovery
+//   REGISTRY_ADDRESS   required*   EnclaveRegistry on Base: on-chain fleet discovery
 //   ENCLAVES           required*   *instead: static comma list of enclave origins
 //   ENCLAVE_URL        (legacy)    single-enclave pin, folded into ENCLAVES
 //   BASE_RPC / REGISTRY_POLL_SEC / STALE_AFTER_SEC   registry mode knobs (fleet.mjs)

@@ -1,4 +1,4 @@
-# NAN public relays
+# Enclave public relays
 
 Small, **untrusted**, stateless daemons that live outside the enclave —
 on any box with a public IP — and give the fleet a friendly front door
@@ -13,15 +13,15 @@ without ever entering the trust boundary:
 - [`udp-relay.js`](udp-relay.js) — **UDP relay**: public reach for apps'
   declared `udp:N` ports, one IPv6 per deployment. Details below.
 - [`egress-relay.js`](egress-relay.js) — **dedicated-IP egress relay**: the
-  OUTBOUND half — the app connects out FROM its own IPv6 (via `NAN_EGRESS`),
+  OUTBOUND half — the app connects out FROM its own IPv6 (via `ENCLAVE_EGRESS`),
   source-bound at the relay. Details below.
 - [`api-relay.js`](api-relay.js) — **API relay**: fleet discovery + placement.
-  Reads NanRegistry on Base for live enclaves, polls their `/availability`,
+  Reads EnclaveRegistry on Base for live enclaves, polls their `/availability`,
   and steers new work to the most available one.
 - [`net-guard.mjs`](net-guard.mjs) — shared SSRF classifier (symlink to the
   repo-root canonical file; also imported by the enclave's `egress.js`).
 - [`fleet.mjs`](fleet.mjs) — shared fleet discovery for the dedicated-IP
-  relays: `REGISTRY_ADDRESS` (NanRegistry on Base, re-read periodically) or
+  relays: `REGISTRY_ADDRESS` (EnclaveRegistry on Base, re-read periodically) or
   `ENCLAVES` (static list; `ENCLAVE_URL` still accepted as a one-entry alias).
 
 Every deployment gets a **dedicated IPv6** out of the box's routed /64,
@@ -64,7 +64,7 @@ ENCLAVES=https://enclave1...,https://enclave2... node api-relay.js
 Trust model: as a **router** it can only misroute, never impersonate —
 clients verify attestation on the enclave's own origin (Tinfoil SecureClient
 with the registry's `repo`), and `/route` exists for clients that want to
-skip the gateway entirely (it mirrors `scripts/nan-discover.mjs`; run that
+skip the gateway entirely (it mirrors `scripts/enclave-discover.mjs`; run that
 locally if you'd rather not trust anyone's relay). The `/v1` gateway path,
 however, terminates TLS here and sees control-plane tokens and bodies in
 plaintext — the accepted trade for giving browsers a single origin.
@@ -193,7 +193,7 @@ VM with a public IP gives you). The inbound relays above bind the address for
 listening; this one source-binds it for dialing.
 
 ```
-guest ──SOCKS5(NAN_EGRESS)──> supervisor ──OPEN{cid,dst,source}──> egress-relay
+guest ──SOCKS5(ENCLAVE_EGRESS)──> supervisor ──OPEN{cid,dst,source}──> egress-relay
 egress-relay ──connect(localAddress = <deployment IPv6>)──> destination
 egress-relay ──data WS /x/egress/<cid>──> supervisor ──> guest's SOCKS tunnel
 ```
@@ -207,7 +207,7 @@ tenant can only ever egress as its own address.
 
 ### How apps use it
 
-Guests opt in by honouring **`NAN_EGRESS`** (injected into the tenant env when
+Guests opt in by honouring **`ENCLAVE_EGRESS`** (injected into the tenant env when
 egress is enabled): a `socks5h://<id>:<token>@127.0.0.1:<port>` URL. Point an
 HTTP client's proxy or a SOCKS-aware dialer at it and outbound traffic leaves
 from the deployment's IPv6. `socks5h` = the relay resolves DNS (remote side),
@@ -247,8 +247,8 @@ exists.
   automatically, for unmodified apps — and the wasm-manager drops the ambient
   `-Sinherit-network` when egress is on, so the guest has no raw network to
   bypass with. The per-deployment SOCKS credential is delivered host-side
-  (`NAN_EGRESS_CRED`, guest-invisible), reusing all three guardrails below;
-  `NAN_EGRESS` stays exported for apps that still want to steer outbound
+  (`ENCLAVE_EGRESS_CRED`, guest-invisible), reusing all three guardrails below;
+  `ENCLAVE_EGRESS` stays exported for apps that still want to steer outbound
   explicitly. On a toolchain without the shim this degrades to phase-1
   (proxy-aware) behavior. UDP egress is not mediated yet, so raw outbound UDP is
   denied under the lockdown (inbound `udp:N` still works). Guaranteed in every

@@ -1,14 +1,14 @@
 /* ============================================================
-   NanElement — a Lightning-Web-Components-flavored base class
-   for the site's custom elements (the `nan-` namespace plays the
-   role of LWC's `c-` namespace).
+   EnclaveElement — a Lightning-Web-Components-flavored base class
+   for the site's custom elements (tags register under the `c-`
+   namespace, like LWC's).
 
    Like LWC, every component is a folder-bundle of three files:
 
-     components/nan-header/
-       nan-header.html    the template
-       nan-header.js      the component class
-       nan-header.css     its styles (stitched into the site
+     components/header/
+       header.html    the template
+       header.js      the component class
+       header.css     its styles (stitched into the site
                           bundle at build time — the same "not
                           scoped" behavior as LWC light DOM)
 
@@ -50,7 +50,7 @@ export const html = (strings, ...vals) =>
     return out + (Array.isArray(v) ? v.join("") : v == null ? "" : String(v)) + s;
   });
 
-export class NanElement extends HTMLElement {
+export class EnclaveElement extends HTMLElement {
   static renderMode = "light";          // 'light' | 'shadow'
   static properties = {};               // { propName: defaultValue } — @api-like
   static templateUrl = null;            // new URL("./<name>.html", import.meta.url)
@@ -107,7 +107,7 @@ export class NanElement extends HTMLElement {
   _render() {
     const ctor = this.constructor;
     if (ctor.templateUrl && ctor._tpl == null) {
-      const key = "nan_tpl:" + ctor.templateUrl.pathname;
+      const key = "enclave_tpl:" + ctor.templateUrl.pathname;
       try { const c = sessionStorage.getItem(key); if (c != null) ctor._tpl = c; } catch (e) {}
     }
     if (ctor.templateUrl && ctor._tpl == null) {
@@ -115,7 +115,7 @@ export class NanElement extends HTMLElement {
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
         .then(t => {
           ctor._tpl = t;
-          try { sessionStorage.setItem("nan_tpl:" + ctor.templateUrl.pathname, t); } catch (e) {}
+          try { sessionStorage.setItem("enclave_tpl:" + ctor.templateUrl.pathname, t); } catch (e) {}
         })
         .catch(e => { ctor._tplLoading = null; throw e; });
       ctor._tplLoading.then(

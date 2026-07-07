@@ -30,19 +30,19 @@ sec "enclaves/gpu/tinfoil-config.yml"
 C=enclaves/gpu/tinfoil-config.yml
 if [ -f "$C" ]; then
   grep -q 'name: *"*wasm-manager' "$C" && ok "has wasm-manager container" || bad "no wasm-manager container (config not updated)"
-  grep -q 'nan-wasm-manager' "$C"      && ok "references nan-wasm-manager image" || bad "no nan-wasm-manager image ref"
+  grep -q 'enclave-wasm-manager' "$C"      && ok "references enclave-wasm-manager image" || bad "no enclave-wasm-manager image ref"
   if grep -Eq 'runsc-manager|nan-runsc-manager' "$C"; then bad "STILL references runsc-manager (stale config)"; else ok "no runsc references"; fi
   if grep -vE '^[[:space:]]*#' "$C" | grep -Eq 'privileged: *true'; then warn "privileged:true still present (Tinfoil ignores it; harmless but stale)"; else ok "no privileged flag"; fi
-  imgline=$(grep 'nan-wasm-manager' "$C" | head -1)
+  imgline=$(grep 'enclave-wasm-manager' "$C" | head -1)
   if   echo "$imgline" | grep -q '@sha256:';   then ok "wasm-manager image pinned (@sha256:)"
-  elif echo "$imgline" | grep -q ':placeholder'; then bad "wasm-manager still :placeholder -> run scripts/release.sh nan-wasm-manager"
+  elif echo "$imgline" | grep -q ':placeholder'; then bad "wasm-manager still :placeholder -> run scripts/release.sh enclave-wasm-manager"
   else warn "could not determine wasm-manager image pin: $imgline"; fi
 else bad "$C MISSING"; fi
 
 sec "scripts/release.sh"
 R=scripts/release.sh
 if [ -f "$R" ]; then
-  grep -q 'nan-wasm-manager' "$R"     && ok "builds nan-wasm-manager" || bad "release.sh does not build nan-wasm-manager"
+  grep -q 'enclave-wasm-manager' "$R"     && ok "builds enclave-wasm-manager" || bad "release.sh does not build enclave-wasm-manager"
   grep -q 'wasm/Dockerfile.wasm' "$R" && ok "maps wasm/Dockerfile.wasm" || bad "release.sh has no wasm/Dockerfile.wasm mapping"
   if grep -Eq 'nan-runsc-manager|vm/Dockerfile.runsc' "$R"; then bad "STILL references runsc (stale release.sh)"; else ok "no runsc references"; fi
 else bad "$R MISSING"; fi

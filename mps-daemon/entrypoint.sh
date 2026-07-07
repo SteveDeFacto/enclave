@@ -1,5 +1,5 @@
 #!/bin/sh
-# NAN MPS control daemon. Runs in its own GPU container so per-tenant worker
+# Enclave MPS control daemon. Runs in its own GPU container so per-tenant worker
 # processes (in the worker container, sharing /tmp/nvidia-mps + ipc:host) get
 # hardware-enforced SM% (CUDA_MPS_ACTIVE_THREAD_PERCENTAGE) and VRAM
 # (CUDA_MPS_PINNED_DEVICE_MEM_LIMIT) caps — both validated enforced under CC.

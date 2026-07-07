@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NAN GPU worker — Layer 2 (per-tenant MPS-capped processes).
+Enclave GPU worker — Layer 2 (per-tenant MPS-capped processes).
 
 Two roles in one file:
 

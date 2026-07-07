@@ -3,9 +3,9 @@
    the full client-side enclave verification (core/verify.js) and
    renders each step's outcome + the verdict.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc } from "../../js/core/util.js";
-import { Nan } from "../../js/core/api.js";
+import { Enclave } from "../../js/core/api.js";
 import { vspecOf, verifyEnclaveInBrowser } from "../../js/core/verify.js";
 
 const LV_STEP_ORDER = ["fetchDigest", "verifyEnclave", "verifyCode", "compareMeasurements", "verifyCertificate"];
@@ -17,7 +17,7 @@ const LV_LABELS = {
   verifyCertificate:   "bind the served certificate to the attested report",
 };
 
-class LiveVerify extends NanElement {
+class LiveVerify extends EnclaveElement {
   static templateUrl = new URL("./live-verify.html", import.meta.url);
 
   renderedCallback() {
@@ -32,8 +32,8 @@ class LiveVerify extends NanElement {
     steps.innerHTML = ""; meta.innerHTML = "";
     const status = (t) => { verdict.className = "lv-verdict"; verdict.textContent = t; };
     try {
-      status("fetching " + Nan.base + "/attestation …");
-      const att = await Nan._req("GET", "/attestation");
+      status("fetching " + Enclave.base + "/attestation …");
+      const att = await Enclave._req("GET", "/attestation");
       const vspec = vspecOf(att);
       if (!vspec) throw new Error("attestation is missing the verification block");
       status("verifying in your browser … (fetches AMD + Sigstore material, takes a few seconds)");

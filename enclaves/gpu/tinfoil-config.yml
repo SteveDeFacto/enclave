@@ -1,4 +1,4 @@
-# NAN enclave - SUBMISSION MODEL (multi-container, all measured & attested).
+# Enclave enclave - SUBMISSION MODEL (multi-container, all measured & attested).
 #
 # Three containers share one confidential VM (shared localhost network, shared
 # /mnt/ramdisk volume, ipc:host so MPS shared-memory works):
@@ -22,7 +22,7 @@ gpus: 1            # whole H200 attached to the enclave (CC allows 1 or 8)
 containers:
   # --- MPS daemon: makes per-tenant SM%/VRAM caps enforceable in prod -----------
   - name: "mps-control"
-    image: "ghcr.io/stevedefacto/nan-mps@sha256:67ca6671620a2c5605a9f427f6d5eb1e9aa21e8a9d3660d2826cc67c78e1794f"
+    image: "ghcr.io/stevedefacto/enclave-mps@sha256:67ca6671620a2c5605a9f427f6d5eb1e9aa21e8a9d3660d2826cc67c78e1794f"
     runtime: nvidia
     gpus: all
     ipc: host
@@ -39,7 +39,7 @@ containers:
 
   # --- GPU worker: forks MPS-capped CUDA processes per tenant, runs submitted jobs
   - name: "worker"
-    image: "ghcr.io/stevedefacto/nan-worker@sha256:04283c46554e3cea5901663ec2045d5a6b578e7941a933542d7bb8b3f9e2155e"
+    image: "ghcr.io/stevedefacto/enclave-worker@sha256:04283c46554e3cea5901663ec2045d5a6b578e7941a933542d7bb8b3f9e2155e"
     runtime: nvidia
     gpus: all
     ipc: host
@@ -59,7 +59,7 @@ containers:
 
   # --- supervisor: control plane (no GPU), public ingress -----------------------
   - name: "supervisor"
-    image: "ghcr.io/stevedefacto/nan@sha256:57a458ea614935acf1f021409bb34ea24ab6a0c8ddbd95a1c18666dde4df4a52"
+    image: "ghcr.io/stevedefacto/enclave-supervisor@sha256:57a458ea614935acf1f021409bb34ea24ab6a0c8ddbd95a1c18666dde4df4a52"
     restart: always
     env:
       - PORT: "8080"
@@ -74,16 +74,16 @@ containers:
       - CORS_ORIGINS: "https://enclave.host"
       - BASE_RPC: "https://mainnet.base.org"
       # pay-per-deploy (no custody): supervisor WATCHES this forwarder for payments.
-      # FORWARDER_ADDRESS = deployed NanPay contract. USDC funds go straight to the
-      # payout wallet set INSIDE that contract (nan.eth's cold wallet) - never here.
+      # FORWARDER_ADDRESS = deployed EnclavePay contract. USDC funds go straight to the
+      # payout wallet set INSIDE that contract (the operator's cold wallet) - never here.
       # NOTE: requires outbound egress from the enclave to BASE_RPC. Confirm with Tinfoil.
-      - FORWARDER_ADDRESS: "0xaA943DfDF4e9F9F33C04e35D31E2645C69C7D8D9"                            # set after deploying NanPay.sol
+      - FORWARDER_ADDRESS: "0xaA943DfDF4e9F9F33C04e35D31E2645C69C7D8D9"                            # set after deploying EnclavePay.sol
       - USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"   # USDC on Base
-      # app approval gate: NanAppCatalog (read-only, written by scripts/deploy-app-catalog.mjs).
+      # app approval gate: EnclaveAppCatalog (read-only, written by scripts/deploy-app-catalog.mjs).
       # ipfs:// app deploys are REFUSED unless the catalog owner has Approved that
       # version (setApproval tx signed by the catalog's deployer key). Empty =
       # catalog apps can't deploy at all; baked-in ids still can (attested image).
-      - APP_CATALOG_ADDRESS: "0x17071414BD19fDFdA8E58559d2CcFb99b2c8d0FC"                          # set after deploying NanAppCatalog.sol (must be on CHAIN_ID's chain, read via BASE_RPC)
+      - APP_CATALOG_ADDRESS: "0x17071414BD19fDFdA8E58559d2CcFb99b2c8d0FC"                          # set after deploying EnclaveAppCatalog.sol (must be on CHAIN_ID's chain, read via BASE_RPC)
       - PAYMENT_WINDOW_SEC: "600"                        # unpaid deployments release the reservation
       - GRACE_SEC: "90"                                  # grace after expiry before teardown (top-up window)
       - PAY_POLL_SEC: "12"
@@ -94,10 +94,10 @@ containers:
       # whose Sigstore-signed release measurements verifiers compare the quote to.
       # MUST match the canonical GitHub casing exactly: Sigstore's policy check
       # compares it verbatim to the cert's GitHubWorkflowRepository claim, and
-      # "SteveDeFacto/Nan" vs "SteveDeFacto/nan" fails verification.
-      - ENCLAVE_REPO: "SteveDeFacto/nan"
+      # "SteveDeFacto/Enclave" vs "SteveDeFacto/enclave" fails verification.
+      - ENCLAVE_REPO: "SteveDeFacto/enclave"
       # on-chain discovery: with these set, the supervisor self-registers this
-      # enclave in NanRegistry and heartbeats every 15 min (registerOnChain in
+      # enclave in EnclaveRegistry and heartbeats every 15 min (registerOnChain in
       # supervisor.js), so callers discover enclaves from the chain with no
       # trusted gateway. Non-fatal: if anything here is missing the enclave still
       # serves, it just doesn't advertise. Registration signs on Base mainnet over
@@ -109,14 +109,14 @@ containers:
       - REGISTRY_ADDRESS: "0x13deE63b80353a15C6E03D54240EE463B420353F"                             # set by scripts/deploy-registry.mjs
       # - REGISTRY_HEARTBEAT_SEC: "900"                  # optional, default 15 min
       # Portable deployments (contracts/DEPLOYMENTS.md): with CLAIM_ENABLED the
-      # enclave polls the NanDeployments ledger and claims funded, unleased
+      # enclave polls the EnclaveDeployments ledger and claims funded, unleased
       # deployments it can serve — including ones whose previous runner died.
       # Claims sign with REGISTRY_PRIVATE_KEY (the contract gates claims to this
       # registry entry's operator), so registry advertising above is a hard
       # prerequisite, as is PROVISION_BACKEND=vm (claims run catalog wasm apps).
       - CLAIM_ENABLED: "1"
       - DEPLOYMENTS_ADDRESS: "0x81037A2081bc000F12B8aA771bede0d36742ec4b"                          # set by scripts/deploy-deployments.mjs
-      # Wallet-gated encrypted volumes (contracts/NanVolumeAccess.sol): the ACL
+      # Wallet-gated encrypted volumes (contracts/EnclaveVolumeAccess.sol): the ACL
       # the enclave checks before accepting a sealed VEK (unlock-sealed) and
       # writes auto-grants to (via REGISTRY_PRIVATE_KEY, the contract operator).
       # Empty = vault volumes disabled on this enclave (passphrase volumes still work).
@@ -143,7 +143,7 @@ containers:
       # legacy alias. See relay/README.md.
       - DEP_ADDR_PREFIX: "2a01:4f9:c013:9b52::/64"       # nan-relay's routed /64 (46.62.128.36); MUST match the relay boxes
       # dedicated-IP EGRESS (outbound half): app outbound leaves FROM its own
-      # IPv6 via NAN_EGRESS. EGRESS_RELAY_TOKEN is a shared secret matching the
+      # IPv6 via ENCLAVE_EGRESS. EGRESS_RELAY_TOKEN is a shared secret matching the
       # egress-relay box's env — delivered via `secrets:` below (NOT a plaintext
       # env, which would pin it empty and shadow the injected secret). Unset =
       # egress off. See relay/README.md.
@@ -172,11 +172,11 @@ containers:
     # CVM relaunch - a relaunch still starts fresh (payments made while fully down
     # are re-scanned only within the persisted cursor's window).
     volumes:
-      - /mnt/ramdisk/nan-state:/var/lib/nan
+      - /mnt/ramdisk/enclave-state:/var/lib/enclave
     secrets:
       - SECRET
       - ADMIN_TOKEN              # operator token for POST /v1/admin/deployments/:id/provision
-      - REGISTRY_PRIVATE_KEY     # NanRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
+      - REGISTRY_PRIVATE_KEY     # EnclaveRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
       - EGRESS_RELAY_TOKEN       # shared secret with the egress-relay box; same value fleet-wide (like SECRET). Unset = egress off.
       # NOTE: the TLS-bridge key/cert are NOT secrets — they are minted
       # in-enclave at boot (see TLS_BRIDGE_DOMAIN above), so nothing outside
@@ -206,7 +206,7 @@ containers:
   # are hardware-enforced per process. Tenants without a GPU share never get
   # the wasi-nn import at all.
   - name: "wasm-manager"
-    image: "ghcr.io/stevedefacto/nan-wasm-manager@sha256:bdbe80e972a6cfc6f9891a2bb79f111ba0ef5c216a412d143954db98b1fb05e3"
+    image: "ghcr.io/stevedefacto/enclave-wasm-manager@sha256:bdbe80e972a6cfc6f9891a2bb79f111ba0ef5c216a412d143954db98b1fb05e3"
     runtime: nvidia
     gpus: all
     ipc: host

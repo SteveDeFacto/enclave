@@ -3,7 +3,7 @@
    link downloads the same openapi.json the API reference and
    code samples render from.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { loadSpec } from "../../js/core/spec.js";
 import { showToast } from "../../js/core/util.js";
 
@@ -17,7 +17,7 @@ export async function downloadSpec() {
   showToast("openapi.json downloaded");
 }
 
-class Footer extends NanElement {
+class Footer extends EnclaveElement {
   static templateUrl = new URL("./footer.html", import.meta.url);
 
   renderedCallback() {

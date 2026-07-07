@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# release.sh - build + push every NAN container for linux/amd64, read each pushed
+# release.sh - build + push every Enclave container for linux/amd64, read each pushed
 # digest, and repin it in enclaves/*/tinfoil-config.yml. Pin by DIGEST (what Tinfoil attests),
 # not by tag. Run from anywhere inside the repo.
 #
 #   ./scripts/release.sh                        # all images
-#   ./scripts/release.sh nan nan-wasm-manager   # just these
+#   ./scripts/release.sh enclave-supervisor enclave-wasm-manager   # just these
 #   DRY_RUN=1 ./scripts/release.sh        # no docker; repin with a fake digest (test)
 #
 # Auth: set CR_PAT (classic PAT with write:packages) or be logged in to ghcr.io.
@@ -22,23 +22,23 @@ TAG="${TAG:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)}"
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CONFIG="$REPO_ROOT/enclaves/gpu/tinfoil-config.yml"
 CONFIG_CPU="$REPO_ROOT/enclaves/cpu/tinfoil-config.yml"    # CPU-only flavor; shares the supervisor + wasm-manager images
-CONFIG_GPU8="$REPO_ROOT/enclaves/gpu8/tinfoil-config.yml"  # 8xGPU platform-model flavor; shares the supervisor image, adds nan-vllm
+CONFIG_GPU8="$REPO_ROOT/enclaves/gpu8/tinfoil-config.yml"  # 8xGPU platform-model flavor; shares the supervisor image, adds enclave-vllm
 cd "$REPO_ROOT"
 
 # image short-name -> build context (Dockerfile is <context>/Dockerfile unless
 # overridden in DOCKERFILE below)
 declare -A CONTEXT=(
-  [nan-mps]="mps-daemon"
-  [nan-worker]="worker"
-  [nan]="."
-  [nan-wasm-manager]="wasm"
-  [nan-vllm]="vllm"
+  [enclave-mps]="mps-daemon"
+  [enclave-worker]="worker"
+  [enclave-supervisor]="."
+  [enclave-wasm-manager]="wasm"
+  [enclave-vllm]="vllm"
 )
 # per-image Dockerfile override (default: <context>/Dockerfile).
 declare -A DOCKERFILE=(
-  [nan-wasm-manager]="wasm/Dockerfile.wasm"
+  [enclave-wasm-manager]="wasm/Dockerfile.wasm"
 )
-ORDER=(nan-mps nan-worker nan nan-wasm-manager nan-vllm)   # deterministic build order
+ORDER=(enclave-mps enclave-worker enclave-supervisor enclave-wasm-manager enclave-vllm)   # deterministic build order
 
 # pick the subset (positional args) or all
 TARGETS=("$@"); [ ${#TARGETS[@]} -eq 0 ] && TARGETS=("${ORDER[@]}")

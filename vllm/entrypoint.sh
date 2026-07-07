@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# nan-vllm entrypoint: serve an ATTESTED model volume with vLLM's OpenAI API.
+# enclave-vllm entrypoint: serve an ATTESTED model volume with vLLM's OpenAI API.
 #
 # The model weights are NOT in this image - they arrive as a Tinfoil Modelwrap
 # volume (dm-verity image mounted read-only at MODEL_VOLUME_ROOT/mpk-<hash>,
@@ -32,17 +32,17 @@ if [ -z "${MODEL_DIR:-}" ]; then
   mounts=("$MODEL_VOLUME_ROOT"/mpk-*)
   shopt -u nullglob
   if [ "${#mounts[@]}" -eq 0 ]; then
-    echo "nan-vllm: no model volume under $MODEL_VOLUME_ROOT/mpk-* - is the Modelwrap models: entry declared and mounted?" >&2
+    echo "enclave-vllm: no model volume under $MODEL_VOLUME_ROOT/mpk-* - is the Modelwrap models: entry declared and mounted?" >&2
     exit 1
   fi
   if [ "${#mounts[@]}" -gt 1 ]; then
-    echo "nan-vllm: multiple model volumes found (${mounts[*]}); set MODEL_DIR to pick one" >&2
+    echo "enclave-vllm: multiple model volumes found (${mounts[*]}); set MODEL_DIR to pick one" >&2
     exit 1
   fi
   MODEL_DIR="${mounts[0]}"
 fi
 if [ ! -d "$MODEL_DIR" ]; then
-  echo "nan-vllm: MODEL_DIR $MODEL_DIR is not a directory" >&2
+  echo "enclave-vllm: MODEL_DIR $MODEL_DIR is not a directory" >&2
   exit 1
 fi
 
@@ -54,7 +54,7 @@ if [ -z "${TENSOR_PARALLEL:-}" ]; then
   TENSOR_PARALLEL="${TENSOR_PARALLEL:-8}"
 fi
 
-echo "nan-vllm: serving $MODEL_DIR as '$SERVED_MODEL_NAME' | TP=$TENSOR_PARALLEL kv=$KV_CACHE_DTYPE ctx=$MAX_MODEL_LEN port=$VLLM_PORT" >&2
+echo "enclave-vllm: serving $MODEL_DIR as '$SERVED_MODEL_NAME' | TP=$TENSOR_PARALLEL kv=$KV_CACHE_DTYPE ctx=$MAX_MODEL_LEN port=$VLLM_PORT" >&2
 
 # Loopback bind: the enclave shim only exposes the supervisor; nothing reaches
 # vLLM except the supervisor's in-CVM proxy.

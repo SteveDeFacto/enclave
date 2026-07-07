@@ -1,9 +1,9 @@
-//! enc-demo: the first-party sample for encrypted volumes (nan-vault).
+//! enc-demo: the first-party sample for encrypted volumes (enclave-vault).
 //!
 //! Deployed with a wallet-gated `encVolumes` config, this app holds at
 //! awaiting_unlock until an authorized wallet delivers the sealed VEK (vault
-//! app / nan-vault-client). Once running, the platform preopens each
-//! decrypted volume READ-ONLY at /enc/<name> and lists the names in NAN_ENC -
+//! app / enclave-vault-client). Once running, the platform preopens each
+//! decrypted volume READ-ONLY at /enc/<name> and lists the names in ENCLAVE_ENC -
 //! and this app simply serves what it sees, proving the guest-visible
 //! plaintext path end to end. Everything here is plain WASI file I/O
 //! (std::fs): identical code for the small tier (NANVOL1, decrypted to
@@ -12,7 +12,7 @@
 //!
 //! Routes:
 //!   GET /              - volume browser (self-contained HTML).
-//!   GET /ls            - JSON: every volume in NAN_ENC, walked recursively.
+//!   GET /ls            - JSON: every volume in ENCLAVE_ENC, walked recursively.
 //!   GET /f/<vol>/<path>- raw file bytes from /enc/<vol>/<path>.
 //!   GET /ping          - liveness, touches no volume.
 //!
@@ -34,7 +34,7 @@ static INDEX_HTML: &str = include_str!("index.html");
 const MAX_LIST: usize = 10_000; // listing cap per volume (guard against huge trees)
 
 fn enc_names() -> Vec<String> {
-    std::env::var("NAN_ENC")
+    std::env::var("ENCLAVE_ENC")
         .unwrap_or_default()
         .split(',')
         .map(str::trim)
@@ -67,7 +67,7 @@ fn walk(dir: &Path, root: &Path, out: &mut Vec<(String, u64)>) {
 }
 
 /// /f/<vol>/<path> -> the on-disk path, refusing traversal and volumes not in
-/// NAN_ENC. Plain segment filtering - no "..", no absolute jumps, no empties.
+/// ENCLAVE_ENC. Plain segment filtering - no "..", no absolute jumps, no empties.
 fn resolve(vol: &str, rel: &str) -> Option<PathBuf> {
     if !enc_names().iter().any(|n| n == vol) {
         return None;

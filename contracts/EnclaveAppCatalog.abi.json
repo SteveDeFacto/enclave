@@ -417,7 +417,7 @@
             "type": "bool"
           }
         ],
-        "internalType": "struct NanAppCatalog.App",
+        "internalType": "struct EnclaveAppCatalog.App",
         "name": "",
         "type": "tuple"
       }
@@ -488,7 +488,7 @@
             "type": "bool"
           }
         ],
-        "internalType": "struct NanAppCatalog.App[]",
+        "internalType": "struct EnclaveAppCatalog.App[]",
         "name": "page",
         "type": "tuple[]"
       }
@@ -569,7 +569,7 @@
             "type": "uint8"
           }
         ],
-        "internalType": "struct NanAppCatalog.Version",
+        "internalType": "struct EnclaveAppCatalog.Version",
         "name": "",
         "type": "tuple"
       }
@@ -655,7 +655,7 @@
             "type": "uint8"
           }
         ],
-        "internalType": "struct NanAppCatalog.Version[]",
+        "internalType": "struct EnclaveAppCatalog.Version[]",
         "name": "page",
         "type": "tuple[]"
       }

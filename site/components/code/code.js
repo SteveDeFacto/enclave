@@ -6,10 +6,10 @@
    working copy button (which copies the slotted <pre>'s text).
    Replaces ~40 hand-repeated codebar blocks in the guide/CLI.
    ============================================================ */
-import { NanElement, register } from "../../js/lib/nan-element.js";
+import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { copyText } from "../../js/core/util.js";
 
-class Code extends NanElement {
+class Code extends EnclaveElement {
   static properties = { fn: "" };
   static templateUrl = new URL("./code.html", import.meta.url);
 

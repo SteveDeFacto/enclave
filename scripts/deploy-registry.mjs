@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// deploy-registry.mjs - compile + deploy contracts/NanRegistry.sol to Base,
+// deploy-registry.mjs - compile + deploy contracts/EnclaveRegistry.sol to Base,
 // print the address, and (optionally) wire it everywhere the repo reads it:
 // tinfoil-config.yml (REGISTRY_ADDRESS -> the supervisor self-registers on boot)
-// and scripts/nan-discover.mjs (default REGISTRY_ADDRESS for callers).
+// and scripts/enclave-discover.mjs (default REGISTRY_ADDRESS for callers).
 //
-// NanRegistry has no constructor args and NO owner: registration is open, each
+// EnclaveRegistry has no constructor args and NO owner: registration is open, each
 // entry is controlled by the operator EOA that registered it. Trust is gated by
 // attestation at connect time, not by this contract (see contracts/README.md).
 //
@@ -20,7 +20,7 @@
 //   NETWORK               base-sepolia (default) | base
 //   RPC_URL               override the chain RPC.
 // Flags:
-//   --no-write-config     do NOT touch tinfoil-config.yml / nan-discover.mjs
+//   --no-write-config     do NOT touch tinfoil-config.yml / enclave-discover.mjs
 //   --yes                 skip the interactive confirmation (CI)
 //   --dry-run             compile + show the plan, do NOT broadcast
 
@@ -37,9 +37,9 @@ import { base, baseSepolia } from "viem/chains";
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..");
-const CONTRACT = path.join(REPO, "contracts", "NanRegistry.sol");
-const ABI_OUT = path.join(REPO, "contracts", "NanRegistry.abi.json");
-const DISCOVER = path.join(REPO, "scripts", "nan-discover.mjs");
+const CONTRACT = path.join(REPO, "contracts", "EnclaveRegistry.sol");
+const ABI_OUT = path.join(REPO, "contracts", "EnclaveRegistry.abi.json");
+const DISCOVER = path.join(REPO, "scripts", "enclave-discover.mjs");
 const CONFIG = path.join(REPO, "enclaves", "gpu", "tinfoil-config.yml");
 
 const args = new Set(process.argv.slice(2));
@@ -73,13 +73,13 @@ function compile() {
   const source = fs.readFileSync(CONTRACT, "utf8");
   const input = {
     language: "Solidity",
-    sources: { "NanRegistry.sol": { content: source } },
+    sources: { "EnclaveRegistry.sol": { content: source } },
     settings: { optimizer: { enabled: true, runs: 200 }, outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } } },
   };
   const out = JSON.parse(solc.compile(JSON.stringify(input)));
   const errs = (out.errors || []).filter((e) => e.severity === "error");
   if (errs.length) die("solc:\n" + errs.map((e) => e.formattedMessage).join("\n"));
-  const c = out.contracts["NanRegistry.sol"]["NanRegistry"];
+  const c = out.contracts["EnclaveRegistry.sol"]["EnclaveRegistry"];
   // keep the checked-in ABI in lockstep with what we deploy
   fs.writeFileSync(ABI_OUT, JSON.stringify(c.abi, null, 2) + "\n");
   return { abi: c.abi, bytecode: "0x" + c.evm.bytecode.object };
@@ -97,7 +97,7 @@ function writeSupervisorConfig(addr) {
   console.log(`Wrote REGISTRY_ADDRESS="${addr}" into ${path.relative(REPO, CONFIG)}`);
 }
 
-// Point callers at the same deployment: nan-discover.mjs's fallback address
+// Point callers at the same deployment: enclave-discover.mjs's fallback address
 // (REGISTRY_ADDRESS env still overrides it).
 function writeDiscoverDefault(addr) {
   let js = fs.readFileSync(DISCOVER, "utf8");
@@ -148,7 +148,7 @@ async function main() {
   console.log(`  rpc            ${rpc}`);
   console.log(`  deployer       ${account.address}`);
   console.log(`  deployer ETH   ${DRY_RUN ? "(not checked, --dry-run)" : formatEther(bal)}`);
-  console.log(`  contract       NanRegistry  (open registration; deployer keeps NO special power)`);
+  console.log(`  contract       EnclaveRegistry  (open registration; deployer keeps NO special power)`);
   console.log(`  bytecode       ${(bytecode.length / 2 - 1)} bytes`);
   console.log("===============================================================\n");
 
@@ -172,21 +172,21 @@ async function main() {
   const addr = getAddress(rcpt.contractAddress);
 
   console.log("\n=======================  DEPLOYED  ============================");
-  console.log(`  NanRegistry       ${addr}`);
+  console.log(`  EnclaveRegistry       ${addr}`);
   console.log(`  explorer          ${net.explorer}/address/${addr}`);
   console.log("===============================================================\n");
 
   if (!NO_WRITE_CONFIG) { writeSupervisorConfig(addr); writeDiscoverDefault(addr); }
-  else console.log("(--no-write-config: skipped wiring tinfoil-config.yml + nan-discover.mjs; set REGISTRY_ADDRESS manually)");
+  else console.log("(--no-write-config: skipped wiring tinfoil-config.yml + enclave-discover.mjs; set REGISTRY_ADDRESS manually)");
 
   console.log("\nNext:");
   console.log(`  1. tinfoil-config.yml now points at ${addr}; set ENCLAVE_ENDPOINT to each enclave's own URL there.`);
   console.log("  2. Set the REGISTRY_PRIVATE_KEY enclave secret (an EOA per enclave) and fund it with a little Base ETH for gas.");
   console.log("  3. Redeploy the enclave config; on boot you should see \"[registry] registered ... tx=0x...\".");
-  console.log("  4. Verify discovery:  REGISTRY_ADDRESS=" + addr + " node scripts/nan-discover.mjs");
+  console.log("  4. Verify discovery:  REGISTRY_ADDRESS=" + addr + " node scripts/enclave-discover.mjs");
   if (!isMainnet) {
     console.log("  NOTE: the supervisor's self-registration signs on Base MAINNET (viem `base` in supervisor.js),");
-    console.log("        so a sepolia registry is only reachable from nan-discover.mjs (BASE_RPC=https://sepolia.base.org).");
+    console.log("        so a sepolia registry is only reachable from enclave-discover.mjs (BASE_RPC=https://sepolia.base.org).");
     console.log("        Re-run with NETWORK=base before wiring real enclaves.");
   }
 }

@@ -1,10 +1,10 @@
-// vault: the browser UI for wallet-gated encrypted volumes (nan-vault).
+// vault: the browser UI for wallet-gated encrypted volumes (enclave-vault).
 // Pure wasi:http - no wasi-nn, no filesystem. It serves a self-contained
 // page (all crypto vendored into vault.js; nothing loaded from a CDN at
-// runtime) that drives NanVolumeAccess + the enclave unlock-sealed path.
+// runtime) that drives EnclaveVolumeAccess + the enclave unlock-sealed path.
 // WIT deps are vendored verbatim from wasmtime v45 (wasi@0.2.6) so guest
 // and host always agree.
-package nan:vault;
+package enclave:vault;
 
 world vault {
   export wasi:http/incoming-handler@0.2.6;
