@@ -601,7 +601,7 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
         <!-- 16 ------------------------------------------------------------ -->
         <article class="doc" id="docs-troubleshoot">
           <h3><span class="n">16</span>Troubleshooting</h3>
-          <div class="tbl"><table class="params">
+          <div class="tbl"><table class="params symptoms">
             <thead><tr><th>symptom</th><th>cause → fix</th></tr></thead>
             <tbody>
               <tr><td class="pname">"a core wasm module, not a wasi:http component"</td><td>You built a plain module. Build with <code>cargo component</code> (or a toolchain that emits components); the upload gateway and the enclave both check the component layer field.</td></tr>
