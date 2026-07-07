@@ -16,3 +16,5 @@ wasm/apps/*/assets/
 !wasm/apps/*/assets/app-config.json
 # enclave CLI: bundled single-file build (cli/install.sh or npm run build)
 cli/dist/
+# site: bundled output (built by scripts/build-site.mjs; deploy.sh ships it)
+site/dist/
