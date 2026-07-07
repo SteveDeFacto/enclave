@@ -136,7 +136,7 @@ contract EnclaveDeployments {
     // public RPC caps delegated EOAs at one in-flight tx, so follow-up sends
     // right after the deploy bounce). Owner setters remain for later changes.
     uint256 public pricePerSec6 = 1667;    // USDC 6dp per second, FULL card (gpuMilli = 1000): ~$6.00/hour
-    uint256 public cpuPricePerSec6 = 556;  // USDC 6dp per second, FULL CPU node (cpuMilli = 1000): ~$2.00/hour
+    uint256 public cpuPricePerSec6 = 278;  // USDC 6dp per second, FULL CPU node (cpuMilli = 1000): ~$1.00/hour
     uint64  public leaseSec = 1800;        // lease quantum: max claim/renew burn, max time lost to a dead runner
 
     bytes32[] private _ids;                                // every deployment ever created

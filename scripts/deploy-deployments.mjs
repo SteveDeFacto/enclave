@@ -33,7 +33,7 @@
 //                         no setPrice tx is sent at all; set this env var only
 //                         to CHANGE the price ("0" skips the check entirely).
 //   CPU_PRICE_PER_SEC6    whole-CPU-node USDC(6dp)/second price (every deployment
-//                         pays it on its derived CPU share). Hardcoded to 556 (~$2.00/hour) at deploy;
+//                         pays it on its derived CPU share). Hardcoded to 278 (~$1.00/hour) at deploy;
 //                         same rules as PRICE_PER_SEC6.
 //   NETWORK               base-sepolia (default) | base
 //   RPC_URL               override the chain RPC.
@@ -298,10 +298,10 @@ async function main() {
   const feedIn = process.env.ETH_USD_FEED || net.ethUsdFeed;
   const feed = /^none$/i.test(feedIn) ? ZERO : getAddress(feedIn);
   // Defaults MATCH the values hardcoded in the contract (~$6.00/hour full card,
-  // ~$2.00/hour whole CPU node), so a fresh deploy sends ZERO follow-up txs —
+  // ~$1.00/hour whole CPU node), so a fresh deploy sends ZERO follow-up txs —
   // ensurePrice just verifies. Set the env vars to change a live contract.
   const price = BigInt(process.env.PRICE_PER_SEC6 ?? "1667");
-  const cpuPrice = BigInt(process.env.CPU_PRICE_PER_SEC6 ?? "556");
+  const cpuPrice = BigInt(process.env.CPU_PRICE_PER_SEC6 ?? "278");
 
   let pk0 = process.env.DEPLOYER_PRIVATE_KEY;
   if (!pk0) {
