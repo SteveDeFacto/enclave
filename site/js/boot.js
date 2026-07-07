@@ -65,10 +65,13 @@ export async function navigate(href, opts) {
 
   // already rendered: just handle the fragment
   if (url.pathname === current.pathname && url.search === current.search) {
+    const prev = location.href;
     if (opts.push) history.pushState({ scroll: 0 }, "", url);
     if (opts.scroll != null) scrollTo(0, opts.scroll);
     else scrollToTarget(url.hash);
-    return;
+    if (location.href !== prev)                   // pushState never fires hashchange itself;
+      dispatchEvent(new HashChangeEvent("hashchange", { oldURL: prev, newURL: location.href }));
+    return;                                       // pages with hash-routed views need the signal
   }
 
   const seq = ++navSeq;

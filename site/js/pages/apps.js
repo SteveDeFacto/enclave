@@ -292,16 +292,34 @@ function prefillPublish(app){
   $("#pubMem").value = String(Number(v.memMb) || 128);
   $("#pubCpuG").value = String(Math.max(1, Number(v.cpuGflops) || 1));
   $("#pubPorts").value = v.ports || "";
-  togglePublish(true);
+  openPublish();
   pubStatus("pre-filled from " + app.slug + " " + (v.version || "") + " - fix specs/ports and publish (same bytes), or pick a new .wasm if the code changed"
           + (app.active ? "" : " · publishing relists the app"));
 }
-function togglePublish(show){
-  const p = $("#publishPanel"), b = $("#storePublishBtn"); if (!p) return;
-  const open = (show === undefined) ? p.hidden : show;
-  p.hidden = !open; if (b) b.textContent = open ? "✕ close" : "+ Publish app";
-  if (open) p.scrollIntoView({ behavior: "smooth", block: "nearest" });
+/* ============================================================
+   The publish page: apps.html#publish — a hash-routed view that
+   replaces the store content (deliberately not a header tab).
+   Plain hash navigation gives us history, back/forward, and
+   shareable links for free; the soft-nav router ignores '#'
+   hrefs, so there's no double handling.
+   ============================================================ */
+function applyView(){
+  const store = $("#storeView"), pub = $("#publishView"); if (!store || !pub) return;
+  const publish = location.hash === "#publish";
+  store.hidden = publish; pub.hidden = !publish;
+  document.title = publish ? "Publish · Enclave" : "Apps · Enclave";
+  scrollTo(0, 0);
 }
+function openPublish(){
+  if (location.hash === "#publish") applyView();
+  else location.hash = "publish";                 // -> hashchange -> applyView
+}
+function closePublish(){
+  history.pushState(null, "", location.pathname + location.search);   // clean URL, no #
+  applyView();
+}
+// module-load-once; inert while another page's <main> is mounted
+addEventListener("hashchange", () => { if (document.getElementById("publishView")) applyView(); });
 function initStore(){
   const grid = $("#storeGrid"); if (!grid) return;
   const link = $("#catAddrLink"), sh = $("#catAddrShort"), ch = $("#catChain");
@@ -316,8 +334,7 @@ function initStore(){
   }));
   const s = $("#storeSearch"); if (s) s.addEventListener("input", renderApps);
   const rf = $("#storeRefresh"); if (rf) rf.addEventListener("click", () => loadCatalog(true));
-  $("#storePublishBtn").addEventListener("click", () => togglePublish());
-  $("#pubCancel").addEventListener("click", () => togglePublish(false));
+  $("#pubCancel").addEventListener("click", closePublish);   // (+ Publish app is a plain <a href="#publish">)
   $("#pubSubmit").addEventListener("click", publishApp);
   const pf = $("#pubFile"); if (pf) pf.addEventListener("change", onPubFile);
   const row = $("#pubFileRow");
@@ -360,6 +377,7 @@ on("nan:wallet", () => { if (STORE.loaded) renderApps(); });   // publisher/owne
 /* called by the router every time this page's <main> is swapped in */
 export function boot() {
   initStore();
+  applyView();          // direct entries and soft-navs to apps.html#publish land on the publish view
   renderApps();
   loadCatalog();
 }
