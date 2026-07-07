@@ -109,7 +109,9 @@ section{padding:84px 0;position:relative;}
 .copybtn{font-family:var(--font-mono);font-size:.7rem;color:var(--text-muted);border:1px solid var(--line);background:var(--surface);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;display:inline-flex;gap:.4em;align-items:center;}
 .copybtn:hover{color:var(--text);border-color:#33465c;}
 .copybtn.ok{color:var(--jade);border-color:rgba(47,230,168,.4);}
-.runbtn{font-family:var(--font-mono);font-size:.7rem;color:var(--jade);border:1px solid var(--jade-dim);background:var(--jade-deep);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;margin-right:6px;}
+/* margin-left:auto: the codebar is space-between, which centers a THIRD child
+   (fn | run | copy) — the auto margin pulls run+copy into one right-side group */
+.runbtn{font-family:var(--font-mono);font-size:.7rem;color:var(--jade);border:1px solid var(--jade-dim);background:var(--jade-deep);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;margin-left:auto;margin-right:6px;}
 .runbtn:hover{border-color:var(--jade);background:rgba(47,230,168,.16);} .runbtn:disabled{opacity:.5;cursor:default;}
 
 
