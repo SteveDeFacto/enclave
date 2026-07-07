@@ -16,7 +16,7 @@
 import { createPublicClient, http } from "viem";
 import { base } from "viem/chains";
 
-const REGISTRY_ADDRESS = process.env?.REGISTRY_ADDRESS || "0x13deE63b80353a15C6E03D54240EE463B420353F";
+const REGISTRY_ADDRESS = process.env?.REGISTRY_ADDRESS || "0xCB65f487eba6564D57FfB860cF9aE701584cB4a2";
 const RPC_URL          = process.env?.BASE_RPC || "https://mainnet.base.org";
 const STALE_AFTER_SEC  = 3600;  // treat enclaves silent longer than this as down
 

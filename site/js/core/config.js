@@ -22,10 +22,10 @@ export const PRIVY_CLIENT_ID = "client-WY6b9c219SjvhdjLGYDriJ9xjSrbV7c4joihKRQPR
 export const PRIVY_RDNS = "io.privy.embedded";
 
 /* ---- on-chain contracts (Base) ---- */
-export const APP_CATALOG_ADDRESS = "0x17071414BD19fDFdA8E58559d2CcFb99b2c8d0FC"; // EnclaveAppCatalog on Base; written automatically by scripts/deploy-app-catalog.mjs
-export const DEPLOYMENTS_ADDRESS = "0x81037A2081bc000F12B8aA771bede0d36742ec4b"; // EnclaveDeployments on Base; written automatically by scripts/deploy-deployments.mjs
+export const APP_CATALOG_ADDRESS = "0x21F2798A51F5970dD43A5D8fAdA48b1b8D59cc67"; // EnclaveAppCatalog on Base; written automatically by scripts/deploy-app-catalog.mjs
+export const DEPLOYMENTS_ADDRESS = "0x267f7F792CA84482698b2f6774B028522247B6CD"; // EnclaveDeployments on Base; written automatically by scripts/deploy-deployments.mjs
 export const APP_CATALOG_CHAIN   = 8453;                        // Base mainnet (kept in sync by the deploy script; 84532 = Base Sepolia)
-export const APP_CATALOG_RPC     = "https://base-rpc.publicnode.com";  // preferred read endpoint (CORS-enabled; browsing needs no wallet)
+export const APP_CATALOG_RPC     = "https://mainnet.base.org";  // preferred read endpoint (CORS-enabled; browsing needs no wallet)
 /* Failover pool: reads are stateless, and every public Base RPC rate-limits by
    IP - the official mainnet.base.org hard enough that one catalog load can
    trip "over rate limit". Calls start on the last endpoint that worked and

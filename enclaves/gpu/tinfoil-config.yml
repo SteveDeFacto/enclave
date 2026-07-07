@@ -77,13 +77,13 @@ containers:
       # FORWARDER_ADDRESS = deployed EnclavePay contract. USDC funds go straight to the
       # payout wallet set INSIDE that contract (the operator's cold wallet) - never here.
       # NOTE: requires outbound egress from the enclave to BASE_RPC. Confirm with Tinfoil.
-      - FORWARDER_ADDRESS: "0xaA943DfDF4e9F9F33C04e35D31E2645C69C7D8D9"                            # set after deploying EnclavePay.sol
+      - FORWARDER_ADDRESS: "0x9487322262F4ED763C1a0880ECD5E996094fb81C"                            # set after deploying EnclavePay.sol
       - USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"   # USDC on Base
       # app approval gate: EnclaveAppCatalog (read-only, written by scripts/deploy-app-catalog.mjs).
       # ipfs:// app deploys are REFUSED unless the catalog owner has Approved that
       # version (setApproval tx signed by the catalog's deployer key). Empty =
       # catalog apps can't deploy at all; baked-in ids still can (attested image).
-      - APP_CATALOG_ADDRESS: "0x17071414BD19fDFdA8E58559d2CcFb99b2c8d0FC"                          # set after deploying EnclaveAppCatalog.sol (must be on CHAIN_ID's chain, read via BASE_RPC)
+      - APP_CATALOG_ADDRESS: "0x21F2798A51F5970dD43A5D8fAdA48b1b8D59cc67"                          # set after deploying EnclaveAppCatalog.sol (must be on CHAIN_ID's chain, read via BASE_RPC)
       - PAYMENT_WINDOW_SEC: "600"                        # unpaid deployments release the reservation
       - GRACE_SEC: "90"                                  # grace after expiry before teardown (top-up window)
       - PAY_POLL_SEC: "12"
@@ -106,7 +106,7 @@ containers:
       # hostname callers actually reach (the attested origin), registered lazily on
       # the first external request. (Pin it with PUBLIC_URL only if you must.)
       - REGISTRY_ENABLED: "1"
-      - REGISTRY_ADDRESS: "0x13deE63b80353a15C6E03D54240EE463B420353F"                             # set by scripts/deploy-registry.mjs
+      - REGISTRY_ADDRESS: "0xCB65f487eba6564D57FfB860cF9aE701584cB4a2"                             # set by scripts/deploy-registry.mjs
       # - REGISTRY_HEARTBEAT_SEC: "900"                  # optional, default 15 min
       # Portable deployments (contracts/DEPLOYMENTS.md): with CLAIM_ENABLED the
       # enclave polls the EnclaveDeployments ledger and claims funded, unleased
@@ -115,12 +115,12 @@ containers:
       # registry entry's operator), so registry advertising above is a hard
       # prerequisite, as is PROVISION_BACKEND=vm (claims run catalog wasm apps).
       - CLAIM_ENABLED: "1"
-      - DEPLOYMENTS_ADDRESS: "0x81037A2081bc000F12B8aA771bede0d36742ec4b"                          # set by scripts/deploy-deployments.mjs
+      - DEPLOYMENTS_ADDRESS: "0x267f7F792CA84482698b2f6774B028522247B6CD"                          # set by scripts/deploy-deployments.mjs
       # Wallet-gated encrypted volumes (contracts/EnclaveVolumeAccess.sol): the ACL
       # the enclave checks before accepting a sealed VEK (unlock-sealed) and
       # writes auto-grants to (via REGISTRY_PRIVATE_KEY, the contract operator).
       # Empty = vault volumes disabled on this enclave (passphrase volumes still work).
-      - VOLUME_ACCESS_ADDRESS: "0x4e3Dc12FF865e259F6bBD97689Df6Ccc7103e7dD"                                                                  # set by scripts/deploy-volume-access.mjs (hand-deployed)
+      - VOLUME_ACCESS_ADDRESS: "0xF999Fa0Ae829A3B762FBA2875788bc8920F3E8Eb"                                                                  # set by scripts/deploy-volume-access.mjs (hand-deployed)
       # - VAULT_POLL_SEC: "15"                           # optional: auto-grant sweep cadence
       # - CLAIM_POLL_SEC: "60"                           # optional: queue sweep / lease audit cadence
       # - RENEW_MARGIN_SEC: "300"                        # optional: renew when less lease than this remains

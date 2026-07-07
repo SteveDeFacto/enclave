@@ -67,10 +67,10 @@ containers:
       # Portable deployments: the claim loop adopts ONLY CPU deployments
       # (EnclaveDeployments records created with gpu=false).
       - CLAIM_ENABLED: "1"
-      - DEPLOYMENTS_ADDRESS: "0x81037A2081bc000F12B8aA771bede0d36742ec4b"
+      - DEPLOYMENTS_ADDRESS: "0x267f7F792CA84482698b2f6774B028522247B6CD"
       # wallet-gated encrypted volumes: EnclaveVolumeAccess ACL (empty = disabled;
       # same address as the GPU flavor - sync-contract-addresses.sh mirrors it)
-      - VOLUME_ACCESS_ADDRESS: "0x4e3Dc12FF865e259F6bBD97689Df6Ccc7103e7dD"
+      - VOLUME_ACCESS_ADDRESS: "0xF999Fa0Ae829A3B762FBA2875788bc8920F3E8Eb"
       # dedicated per-deployment IPv6 (tcp + udp): the relay box's routed /64
       # (shared with the GPU flavor — one relay box, one /64; deployment ids are
       # unique fleet-wide so derived addresses never collide). Empty keeps ports
