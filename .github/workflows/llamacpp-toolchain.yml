@@ -1,0 +1,109 @@
+# Builds the enclave-llamacpp library tarball - llama.cpp (CUDA, sm_86+sm_90)
+# plus the enclave_llama shim (wasm/llama-shim/) - and uploads it as a release
+# asset that Dockerfile.wasmtime consumes (ELL_URL/ELL_SHA256), the same
+# prebuild pattern as ort-toolchain.yml.
+#
+# Why a shim rides the tarball: llama.h passes structs BY VALUE, whose layout
+# shifts between llama.cpp releases; the shim pins the wasmtime<->llama
+# boundary to pointers and scalars (8 functions), compiled HERE against the
+# exact pinned llama.cpp, so the Rust FFI in wasm/wasmtime-nn-ggml.patch can
+# never layout-drift. Bumping llama.cpp = change LLAMA_COMMIT below, run this,
+# paste the printed sha into Dockerfile.wasmtime, dispatch the toolchain.
+#
+# Build shape mirrors ort-toolchain.yml: ubuntu-22.04 (glibc 2.35 links into
+# rust:bookworm AND runs on the ubuntu-24.04 manager runtime), CUDA 12.6
+# (matches the fleet's cudnn-runtime image), SASS for sm_86 (local dev 3070)
+# + sm_90 (fleet H200), NO PTX - an unknown future arch must fail loudly, not
+# PTX-JIT for minutes inside TDX (learned live). GGML_NATIVE=OFF: the runner's
+# AVX flags must not leak into kernels that run on different fleet CPUs.
+name: llama.cpp Toolchain
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag for the lib tarball (created if missing)"
+        required: true
+        default: "enclave-llamacpp-bec4772f"
+
+env:
+  # pinned llama.cpp revision - the one the shim + backend were validated
+  # against (2026-07-07). Bump deliberately; re-verify the batch-by-value
+  # cast note in wasm/llama-shim/enclave_llama.c when you do.
+  LLAMA_COMMIT: bec4772f6a2527d371557b5d2032641e5ff7619c
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CUDA 12.6 toolkit
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -q
+          sudo apt-get install -y -q cuda-toolkit-12-6 cmake
+          /usr/local/cuda-12.6/bin/nvcc --version | tail -1
+
+      - name: Clone llama.cpp (pinned)
+        run: |
+          git clone https://github.com/ggml-org/llama.cpp /tmp/llama.cpp
+          cd /tmp/llama.cpp
+          git checkout "$LLAMA_COMMIT"
+
+      - name: Build (Release, CUDA, shared libs, sm_86+sm_90, portable CPU)
+        run: |
+          cd /tmp/llama.cpp
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
+            -DGGML_CUDA=ON \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.6/bin/nvcc \
+            -DCMAKE_CUDA_ARCHITECTURES="86-real;90-real" \
+            -DGGML_NATIVE=OFF \
+            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF
+          cmake --build build -j"$(nproc)"
+          ls -la build/bin/lib*.so* | head
+
+      - name: Compile the enclave_llama shim against the pinned build
+        run: |
+          cc -shared -fPIC \
+            -I /tmp/llama.cpp/include -I /tmp/llama.cpp/ggml/include \
+            "$GITHUB_WORKSPACE/wasm/llama-shim/enclave_llama.c" \
+            -L /tmp/llama.cpp/build/bin -lllama \
+            -o /tmp/libenclave_llama.so
+          ldd /tmp/libenclave_llama.so | grep llama
+
+      - name: Package tarball (lib/ with SONAME links, ORT-tarball style)
+        env:
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          OUT="/tmp/pkg/enclave-llamacpp-linux-x64-gpu"
+          mkdir -p "$OUT/lib"
+          # real files + their SONAME/dev links, preserved as relative symlinks
+          cp -a /tmp/llama.cpp/build/bin/libllama.so* "$OUT/lib/"
+          cp -a /tmp/llama.cpp/build/bin/libggml*.so* "$OUT/lib/"
+          cp -a /tmp/libenclave_llama.so "$OUT/lib/"
+          ls -la "$OUT/lib/"
+          cd /tmp/pkg
+          tar -czf "$TAG.tgz" enclave-llamacpp-linux-x64-gpu
+          sha256sum "$TAG.tgz"
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+                 --title "$TAG (llama.cpp lib tarball)" \
+                 --notes "llama.cpp $LLAMA_COMMIT CUDA libs (sm_86+sm_90, CUDA 12.6, GGML_NATIVE=OFF) + the enclave_llama shim (wasm/llama-shim/). Consumed by Dockerfile.wasmtime (ELL_URL/ELL_SHA256) for the ggml wasi-nn backend (wasm/wasmtime-nn-ggml.patch)."
+          gh release upload "$TAG" "/tmp/pkg/$TAG.tgz" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          echo "Pin in wasm/Dockerfile.wasmtime:"
+          echo "  ELL_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$TAG.tgz"
+          echo "  ELL_SHA256=$(sha256sum /tmp/pkg/$TAG.tgz | cut -d' ' -f1)"

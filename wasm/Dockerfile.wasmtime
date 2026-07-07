@@ -8,6 +8,10 @@
 #                                      with ExecutionTarget::Gpu runs on the card;
 #                                      ::Cpu stays on the CPU EP, so ONE binary
 #                                      serves both enclave flavors.
+#   - `wasmtime-wasi-nn/ggml`          llama.cpp backend: GGUF models preloaded
+#                                      host-side (-S nn-graph=ggml::<dir>) and
+#                                      load_by_name()'d by guests - the BIG-model
+#                                      path (weights never enter guest memory).
 #   - ONNX Runtime itself is the OFFICIAL Microsoft GPU build (system-linked
 #     via ORT_LIB_LOCATION, pinned by version + sha256). NOT pyke's prebuilt
 #     (ort's download-binaries): that one ships SASS only up to sm_89 plus
@@ -49,6 +53,19 @@ RUN curl -fsSL -o /tmp/ort.tgz "${ORT_URL}" \
  && tar -xzf /tmp/ort.tgz -C /opt && rm /tmp/ort.tgz
 ENV ORT_LIB_LOCATION=/opt/onnxruntime-linux-x64-gpu-${ORT_VERSION}
 
+# enclave-llamacpp: llama.cpp CUDA libs (sm_86+sm_90) + the enclave_llama shim
+# (wasm/llama-shim/), prebuilt by llamacpp-toolchain.yml - the ggml wasi-nn
+# backend links against these (system-link pattern, like ORT above). The shim
+# pins the FFI boundary to pointers/scalars so llama.cpp bumps can't silently
+# break the Rust side. Rebuild flow: run llamacpp-toolchain.yml -> paste
+# ELL_URL/ELL_SHA256 here -> this commit triggers the enclave-wasmtime rebuild.
+ARG ELL_URL=https://github.com/SteveDeFacto/enclave/releases/download/enclave-llamacpp-bec4772f/enclave-llamacpp-bec4772f.tgz
+ARG ELL_SHA256=REPLACE_AFTER_FIRST_llamacpp-toolchain_RUN
+RUN curl -fsSL -o /tmp/ell.tgz "${ELL_URL}" \
+ && echo "${ELL_SHA256}  /tmp/ell.tgz" | sha256sum -c - \
+ && tar -xzf /tmp/ell.tgz -C /opt && rm /tmp/ell.tgz
+ENV ELL_LIB_LOCATION=/opt/enclave-llamacpp-linux-x64-gpu/lib
+
 # Enclave patches (see the .patch header): 1) strict ExecutionTarget::Gpu - the
 # CUDA provider initializes or load() fails, never ORT's silent CPU fallback
 # (tenants BUY the share); 2) small, non-spinning ORT thread pool - fair on a
@@ -86,18 +103,30 @@ COPY wasmtime-egress.patch /tmp/
 RUN git apply --check /tmp/wasmtime-egress.patch \
  && git apply /tmp/wasmtime-egress.patch
 
+# enclave ggml wasi-nn backend: GGUF models (llama.cpp) behind wasi:nn -
+# `-S nn-graph=ggml::<dir>` preloads a model under the dir basename, guests
+# load_by_name() it, and the weights never enter guest linear memory (model
+# size is bounded by the tenant's share, not wasm32's 4 GiB). Pure std+FFI
+# against the enclave_llama shim above - no Cargo.lock delta. MUST apply
+# after the other patches (diffed against the patched tree - onnx-gpu-strict
+# touches the same files).
+COPY wasmtime-nn-ggml.patch /tmp/
+RUN git apply --check /tmp/wasmtime-nn-ggml.patch \
+ && git apply /tmp/wasmtime-nn-ggml.patch
+
 # System-linked ORT: the binary NEEDS libonnxruntime.so.1 at runtime; ship it
 # plus the two provider dylibs the CUDA EP dlopens (providers_shared is the
 # dispatcher). providers_tensorrt is deliberately not shipped (never
 # requested; would need TensorRT libs). ldconfig in the consuming image
 # creates the soname link from the versioned file.
 RUN cargo build --release \
-      --features "wasi-nn,wasmtime-wasi-nn/onnx-cuda" \
+      --features "wasi-nn,wasmtime-wasi-nn/onnx-cuda,wasmtime-wasi-nn/ggml" \
  && mkdir -p /out/bin /out/lib \
  && cp -a target/release/wasmtime /out/bin/ \
  && cp -L "${ORT_LIB_LOCATION}/lib/libonnxruntime.so.${ORT_VERSION}" /out/lib/ \
  && cp -L "${ORT_LIB_LOCATION}/lib/libonnxruntime_providers_shared.so" /out/lib/ \
  && cp -L "${ORT_LIB_LOCATION}/lib/libonnxruntime_providers_cuda.so" /out/lib/ \
+ && cp -a "${ELL_LIB_LOCATION}"/lib*.so* /out/lib/ \
  && ls -laR /out/
 
 # artifact-only image: /bin/wasmtime + /lib/<ORT dylibs>, nothing else

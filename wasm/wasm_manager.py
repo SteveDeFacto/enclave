@@ -349,8 +349,11 @@ def _model_volumes() -> dict:
         except OSError:
             top = []
         onnx = any(x.endswith(".onnx") for x in top) or (p / "model.onnx").exists()
+        # a GGUF volume doubles as a host-preloaded wasi-nn graph (the ggml
+        # backend); the contract is model.gguf or exactly one *.gguf
+        gguf = (p / "model.gguf").exists() or sum(1 for x in top if x.endswith(".gguf")) == 1
         out[name] = {"name": name, "path": str(p), "bytes": _dir_bytes(p),
-                     "onnx": onnx, "files": top}
+                     "onnx": onnx, "gguf": gguf, "files": top}
     if MODEL_VOLUME_ROOT.is_dir():
         try:
             for child in MODEL_VOLUME_ROOT.iterdir():
@@ -972,7 +975,8 @@ def _used_cpu_share() -> float:
 
 def _volumes_public() -> list:
     """Attached model volumes for advertisement (no host paths leaked)."""
-    return [{"name": v["name"], "bytes": v["bytes"], "onnx": v["onnx"], "files": v["files"]}
+    return [{"name": v["name"], "bytes": v["bytes"], "onnx": v["onnx"], "gguf": v["gguf"],
+             "files": v["files"]}
             for v in sorted(_model_volumes().values(), key=lambda x: x["name"])]
 
 
@@ -1127,6 +1131,27 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
         vol_args += ["--dir", f"{host_path}::{VOL_GUEST_ROOT}/{name}"]
     if vol_mounts:
         vol_args += ["--env", "ENCLAVE_MODELS=" + ",".join(vol_mounts.keys())]
+    # GGUF volumes double as HOST-PRELOADED wasi-nn graphs (the ggml/llama.cpp
+    # backend in our wasmtime): -S nn-graph=ggml::<dir> loads the model ONCE at
+    # process start, registered under the dir BASENAME; the guest load_by_name()s
+    # it and the weights never enter guest linear memory - model size is bounded
+    # by the tenant's share, not wasm32's 4 GiB. Gated on `nn` like the
+    # interface itself (no GPU share, no wasi-nn). The registered name must
+    # equal the advertised volume name: true for mpk-* scans (name IS the dir
+    # name) and for MODEL_VOLUMES aliases whose mount basename matches; a
+    # mismatched alias is skipped loudly rather than registered as a surprise.
+    if nn:
+        for name, host_path in vol_mounts.items():
+            hp = pathlib.Path(host_path)
+            has_gguf = (hp / "model.gguf").is_file() or \
+                sum(1 for x in hp.glob("*.gguf") if x.is_file()) == 1
+            if not has_gguf:
+                continue
+            if hp.name != name:
+                print(f"[nn-graph] volume '{name}' mount basename '{hp.name}' differs - "
+                      f"skipping ggml preload (alias the mount so basename == name)", flush=True)
+                continue
+            vol_args += ["-S", f"nn-graph=ggml::{host_path}"]
     # enclave transparent egress (phase 2): `-S egress=<host>:<port>` makes the
     # patched wasmtime funnel ALL guest outbound through the loopback SOCKS front
     # (credential in $ENCLAVE_EGRESS_CRED, set host-side by _spawn_and_wait), so an

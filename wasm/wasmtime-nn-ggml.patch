@@ -1,0 +1,465 @@
+# enclave ggml wasi-nn backend - GGUF language models (llama.cpp) behind the
+# standard wasi:nn interface, against wasmtime v45.0.0.
+#
+# APPLY ORDER: LAST, after wasmtime-onnx-gpu-strict.patch (this diff is based
+# on a tree with the other enclave patches applied - both touch
+# crates/wasi-nn/Cargo.toml and backend/mod.rs).
+#
+# What it adds: crates/wasi-nn/src/backend/ggml.rs (a backend that binds the
+# system-linked enclave_llama shim - see wasm/llama-shim/), its registration
+# in backend/mod.rs + wit.rs FromStr ("ggml" now parses for -S nn-graph), a
+# no-dependency `ggml` cargo feature, and build.rs link directives driven by
+# ELL_LIB_LOCATION (same system-link pattern as ORT_LIB_LOCATION). NO
+# Cargo.lock delta: the backend is pure std + FFI.
+#
+# Model delivery: -S nn-graph=ggml::<dir> preloads <dir>/model.gguf (or the
+# single *.gguf) under the DIRECTORY BASENAME; guests load_by_name() it, so
+# weights never transit the guest's 32-bit linear memory - model size is
+# bounded by the tenant's share, not wasm32. The model loads ONCE per process
+# at preload; per-request cost is llama-context allocation only. Contract:
+# input "tokens" I32 [1,n] -> output "logits" Fp32 [1,n_vocab]; the KV cache
+# lives in the execution context (stateful across compute() calls). GGUF
+# volumes must also carry tokenizer.json (guest-side tokenization).
+#
+# Tuning env (host process only): ENCLAVE_GGML_N_CTX (default 8192),
+# ENCLAVE_GGML_N_BATCH (512), ENCLAVE_GGML_N_GPU_LAYERS (-1 = offload all).
+#
+# Build: cargo build --release --features "wasi-nn,wasmtime-wasi-nn/ggml"
+# with ELL_LIB_LOCATION=<dir holding libenclave_llama.so + libllama.so>
+# (the enclave-llamacpp toolchain artifact; llamacpp-toolchain.yml builds it).
+# CPU-smoked 2026-07-07 on the fully-patched tree (qwen2.5-0.5b q4_k_m,
+# ~116 tok/s, deterministic greedy path identical across shim/probe/llm-chat).
+diff --git a/Cargo.lock b/Cargo.lock
+index 6ffaac1..3c68c51 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2818,6 +2818,7 @@ version = "2.0.0-rc.10"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "1fa7e49bd669d32d7bc2a15ec540a527e7764aec722a45467814005725bcd721"
+ dependencies = [
++ "half 2.4.1",
+  "ort-sys",
+  "smallvec 2.0.0-alpha.10",
+  "tracing",
+@@ -5450,9 +5451,11 @@ name = "wasmtime-wasi-nn"
+ version = "45.0.0"
+ dependencies = [
+  "cap-std",
++ "half 2.4.1",
+  "libtest-mimic",
+  "openvino",
+  "ort",
++ "sha2",
+  "tch",
+  "test-programs-artifacts",
+  "thiserror 2.0.17",
+diff --git a/crates/wasi-nn/Cargo.toml b/crates/wasi-nn/Cargo.toml
+index 98f6a9a..618b7c0 100644
+--- a/crates/wasi-nn/Cargo.toml
++++ b/crates/wasi-nn/Cargo.toml
+@@ -71,6 +71,9 @@ default = ["openvino", "winml"]
+ openvino = ["dep:openvino"]
+ # ONNX is available on all platforms.
+ onnx = ["dep:ort"]
++# ggml/llama.cpp backend: pure FFI against the system-linked enclave_llama
++# shim (ELL_LIB_LOCATION at build time) - no cargo dependencies at all.
++ggml = []
+ # Use prebuilt ONNX Runtime binaries from ort.
+ onnx-download = ["onnx", "ort/download-binaries"]
+ # CUDA execution provider for NVIDIA GPU support (requires CUDA toolkit)
+diff --git a/crates/wasi-nn/build.rs b/crates/wasi-nn/build.rs
+index b2db808..af89d10 100644
+--- a/crates/wasi-nn/build.rs
++++ b/crates/wasi-nn/build.rs
+@@ -1,6 +1,17 @@
+ //! This build script:
+ //!  - has the configuration necessary for the Wiggle and WITX macros.
+ fn main() {
++    // ggml backend links the enclave_llama shim (and transitively libllama)
++    // from ELL_LIB_LOCATION - same system-link pattern as ORT_LIB_LOCATION.
++    if std::env::var("CARGO_FEATURE_GGML").is_ok() {
++        println!("cargo:rerun-if-env-changed=ELL_LIB_LOCATION");
++        if let Ok(dir) = std::env::var("ELL_LIB_LOCATION") {
++            println!("cargo:rustc-link-search=native={dir}");
++        }
++        println!("cargo:rustc-link-lib=dylib=enclave_llama");
++        println!("cargo:rustc-link-lib=dylib=llama");
++    }
++
+     let cwd = std::env::current_dir().unwrap();
+     let wasi_root = cwd.join("witx");
+ 
+diff --git a/crates/wasi-nn/src/backend/ggml.rs b/crates/wasi-nn/src/backend/ggml.rs
+new file mode 100644
+index 0000000..81a87dc
+--- /dev/null
++++ b/crates/wasi-nn/src/backend/ggml.rs
+@@ -0,0 +1,323 @@
++//! A ggml/llama.cpp backend for wasi-nn — GGUF language models behind the
++//! standard `wasi:nn` interface.
++//!
++//! The heavy lifting happens in the system-linked `enclave_llama` shim (a
++//! flat pointer/scalar C ABI over llama.cpp, shipped next to libllama in the
++//! enclave-llamacpp toolchain artifact — see wasm/llama-shim in the platform
++//! repo). This file binds eight shim functions and adapts them to the
++//! wasi-nn backend traits. No new crates: std + FFI only, so the toolchain
++//! patch carries no Cargo.lock delta.
++//!
++//! Model delivery is `load_by_name()` via the CLI preload registry
++//! (`-S nn-graph=ggml::<dir>`): the HOST opens the GGUF straight off the
++//! (read-only, attested) model volume, so weights never transit the guest's
++//! 32-bit linear memory — the whole point for large models. `load()` from
++//! guest bytes also works for small models: the bytes are staged to a temp
++//! file because llama.cpp wants a path.
++//!
++//! Inference contract (WIT named tensors):
++//!   input  "tokens"  I32  dims [1, n] (n <= n_batch)   token ids
++//!   output "logits"  Fp32 dims [1, n_vocab]            last-token logits
++//! The execution context owns a llama context; its KV cache persists across
++//! `compute()` calls, so a generate loop feeds the sampled token back one at
++//! a time. A fresh wasi-nn execution context = a fresh sequence.
++//!
++//! Tuning env (host process only, set per tenant by the wasm-manager):
++//!   ENCLAVE_GGML_N_CTX          context window (default 8192; 0 = model max)
++//!   ENCLAVE_GGML_N_BATCH        max tokens per compute (default 512)
++//!   ENCLAVE_GGML_N_GPU_LAYERS   -1 = offload all (default when built with
++//!                               CUDA-enabled libllama), 0 = pure CPU
++
++use super::{
++    BackendError, BackendExecutionContext, BackendFromDir, BackendGraph, BackendInner, Id,
++    NamedTensor,
++};
++use crate::wit::types::{ExecutionTarget, GraphEncoding, Tensor, TensorType};
++use crate::{ExecutionContext, Graph};
++use std::ffi::{c_char, c_void, CString};
++use std::path::Path;
++use std::sync::{Arc, Once};
++
++unsafe extern "C" {
++    fn ell_init();
++    fn ell_load_model(path: *const c_char, n_gpu_layers: i32) -> *mut c_void;
++    fn ell_free_model(model: *mut c_void);
++    fn ell_n_vocab(model: *mut c_void) -> i32;
++    fn ell_new_context(model: *mut c_void, n_ctx: u32, n_batch: u32) -> *mut c_void;
++    fn ell_free_context(ctx: *mut c_void);
++    #[allow(dead_code)]
++    fn ell_reset(ctx: *mut c_void);
++    fn ell_decode(
++        ctx: *mut c_void,
++        model: *mut c_void,
++        tokens: *const i32,
++        n: i32,
++        logits_out: *mut f32,
++    ) -> i32;
++}
++
++static INIT: Once = Once::new();
++
++fn err(msg: impl Into<String>) -> BackendError {
++    BackendError::BackendAccess(wasmtime::format_err!("{}", msg.into()))
++}
++
++fn env_u32(name: &str, default: u32) -> u32 {
++    std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
++}
++
++fn env_i32(name: &str, default: i32) -> i32 {
++    std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
++}
++
++#[derive(Default)]
++pub struct GgmlBackend();
++unsafe impl Send for GgmlBackend {}
++unsafe impl Sync for GgmlBackend {}
++
++impl GgmlBackend {
++    fn load_path(&self, path: &Path, target: ExecutionTarget) -> Result<Graph, BackendError> {
++        INIT.call_once(|| unsafe { ell_init() });
++        // GPU offload only when asked for AND the linked libllama carries a
++        // GPU backend; a CPU-only libllama silently ignores n_gpu_layers.
++        let ngl = match target {
++            ExecutionTarget::Cpu => 0,
++            _ => env_i32("ENCLAVE_GGML_N_GPU_LAYERS", -1),
++        };
++        let cpath = CString::new(path.to_string_lossy().as_bytes())
++            .map_err(|_| err("model path contains NUL"))?;
++        let model = unsafe { ell_load_model(cpath.as_ptr(), ngl) };
++        if model.is_null() {
++            return Err(err(format!("llama.cpp failed to load {}", path.display())));
++        }
++        let n_vocab = unsafe { ell_n_vocab(model) };
++        if n_vocab <= 0 {
++            unsafe { ell_free_model(model) };
++            return Err(err("model reports no vocabulary"));
++        }
++        let graph: Box<dyn BackendGraph> = Box::new(GgmlGraph(Arc::new(GgmlModel {
++            raw: model,
++            n_vocab: n_vocab as u32,
++        })));
++        Ok(graph.into())
++    }
++}
++
++impl BackendInner for GgmlBackend {
++    fn encoding(&self) -> GraphEncoding {
++        GraphEncoding::Ggml
++    }
++
++    fn load(&mut self, builders: &[&[u8]], target: ExecutionTarget) -> Result<Graph, BackendError> {
++        if builders.len() != 1 {
++            return Err(BackendError::InvalidNumberOfBuilders(1, builders.len()));
++        }
++        // llama.cpp opens files, not buffers: stage guest bytes to a temp
++        // GGUF. Only viable for small models (the bytes crossed the guest's
++        // 32-bit memory to get here); big models come via load_by_name.
++        let dir = std::env::temp_dir().join(format!("wasi-nn-ggml-{}", std::process::id()));
++        std::fs::create_dir_all(&dir).map_err(|e| err(format!("staging dir: {e}")))?;
++        let path = dir.join(format!("model-{:x}.gguf", builders[0].len()));
++        std::fs::write(&path, builders[0]).map_err(|e| err(format!("staging model: {e}")))?;
++        let graph = self.load_path(&path, target);
++        // the shim mmaps/reads it during load; safe to unlink either way
++        let _ = std::fs::remove_file(&path);
++        graph
++    }
++
++    fn as_dir_loadable<'a>(&'a mut self) -> Option<&'a mut dyn BackendFromDir> {
++        Some(self)
++    }
++}
++
++impl BackendFromDir for GgmlBackend {
++    fn load_from_dir(&mut self, path: &Path, target: ExecutionTarget) -> Result<Graph, BackendError> {
++        // model.gguf wins; otherwise exactly one *.gguf in the directory.
++        let preferred = path.join("model.gguf");
++        let model_path = if preferred.is_file() {
++            preferred
++        } else {
++            let mut ggufs: Vec<_> = std::fs::read_dir(path)
++                .map_err(|e| err(format!("reading {}: {e}", path.display())))?
++                .filter_map(|e| e.ok().map(|e| e.path()))
++                .filter(|p| p.extension().map(|x| x == "gguf").unwrap_or(false))
++                .collect();
++            match (ggufs.len(), ggufs.pop()) {
++                (1, Some(p)) => p,
++                (n, _) => {
++                    return Err(err(format!(
++                        "expected model.gguf or exactly one *.gguf in {} (found {n})",
++                        path.display()
++                    )))
++                }
++            }
++        };
++        // Preloads arrive with ExecutionTarget::Cpu from the registry; the
++        // env override decides real offload so operators control it per
++        // process without patching the registry call.
++        let ngl_env = env_i32("ENCLAVE_GGML_N_GPU_LAYERS", i32::MIN);
++        let target = if ngl_env != i32::MIN && ngl_env != 0 {
++            ExecutionTarget::Gpu
++        } else {
++            target
++        };
++        self.load_path(&model_path, target)
++    }
++}
++
++struct GgmlModel {
++    raw: *mut c_void,
++    n_vocab: u32,
++}
++unsafe impl Send for GgmlModel {}
++unsafe impl Sync for GgmlModel {}
++impl Drop for GgmlModel {
++    fn drop(&mut self) {
++        unsafe { ell_free_model(self.raw) };
++    }
++}
++
++struct GgmlGraph(Arc<GgmlModel>);
++unsafe impl Send for GgmlGraph {}
++unsafe impl Sync for GgmlGraph {}
++
++impl BackendGraph for GgmlGraph {
++    fn init_execution_context(&self) -> Result<ExecutionContext, BackendError> {
++        let n_ctx = env_u32("ENCLAVE_GGML_N_CTX", 8192);
++        let n_batch = env_u32("ENCLAVE_GGML_N_BATCH", 512);
++        let raw = unsafe { ell_new_context(self.0.raw, n_ctx, n_batch) };
++        if raw.is_null() {
++            return Err(err("llama.cpp context allocation failed (n_ctx too large for the share?)"));
++        }
++        let ctx: Box<dyn BackendExecutionContext> = Box::new(GgmlExecutionContext {
++            model: self.0.clone(),
++            raw,
++            n_batch,
++            pending: None,
++            logits: None,
++        });
++        Ok(ctx.into())
++    }
++}
++
++struct GgmlExecutionContext {
++    model: Arc<GgmlModel>,
++    raw: *mut c_void,
++    n_batch: u32,
++    pending: Option<Vec<i32>>,  // WITX-style set_input staging
++    logits: Option<Tensor>,     // last compute's output for get_output
++}
++unsafe impl Send for GgmlExecutionContext {}
++unsafe impl Sync for GgmlExecutionContext {}
++impl Drop for GgmlExecutionContext {
++    fn drop(&mut self) {
++        unsafe { ell_free_context(self.raw) };
++    }
++}
++
++fn tokens_from_tensor(tensor: &Tensor) -> Result<Vec<i32>, BackendError> {
++    match tensor.ty {
++        TensorType::I32 => {}
++        _ => return Err(BackendError::UnsupportedTensorType(format!("{:?}", tensor.ty))),
++    }
++    if tensor.data.len() % 4 != 0 {
++        return Err(err("token tensor data is not a whole number of i32s"));
++    }
++    Ok(tensor
++        .data
++        .chunks_exact(4)
++        .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
++        .collect())
++}
++
++impl GgmlExecutionContext {
++    fn decode(&mut self, tokens: &[i32]) -> Result<Tensor, BackendError> {
++        if tokens.is_empty() {
++            return Err(err("empty token batch"));
++        }
++        if tokens.len() > self.n_batch as usize {
++            return Err(err(format!(
++                "batch of {} tokens exceeds n_batch {} (chunk your prefill)",
++                tokens.len(),
++                self.n_batch
++            )));
++        }
++        let n_vocab = self.model.n_vocab as usize;
++        let mut logits = vec![0f32; n_vocab];
++        let rc = unsafe {
++            ell_decode(
++                self.raw,
++                self.model.raw,
++                tokens.as_ptr(),
++                tokens.len() as i32,
++                logits.as_mut_ptr(),
++            )
++        };
++        if rc != 0 {
++            return Err(err(format!("llama_decode failed (rc {rc}; context window exhausted?)")));
++        }
++        let mut data = Vec::with_capacity(n_vocab * 4);
++        for v in logits {
++            data.extend_from_slice(&v.to_le_bytes());
++        }
++        Ok(Tensor {
++            dimensions: vec![1, self.model.n_vocab],
++            ty: TensorType::Fp32,
++            data,
++        })
++    }
++}
++
++impl BackendExecutionContext for GgmlExecutionContext {
++    fn set_input(&mut self, id: Id, tensor: &Tensor) -> Result<(), BackendError> {
++        match id {
++            Id::Index(0) => {}
++            Id::Name(ref n) if n == "tokens" => {}
++            other => return Err(err(format!("unknown input {other:?} (expected \"tokens\")"))),
++        }
++        self.pending = Some(tokens_from_tensor(tensor)?);
++        Ok(())
++    }
++
++    fn compute(
++        &mut self,
++        inputs: Option<Vec<NamedTensor>>,
++    ) -> Result<Option<Vec<NamedTensor>>, BackendError> {
++        match inputs {
++            // WIT path: named tensors in, named tensors out
++            Some(inputs) => {
++                let tokens = inputs
++                    .iter()
++                    .find(|nt| nt.name == "tokens" || nt.name == "0")
++                    .ok_or_else(|| err("missing \"tokens\" input"))?;
++                let ids = tokens_from_tensor(&tokens.tensor)?;
++                let logits = self.decode(&ids)?;
++                self.logits = Some(logits.clone());
++                Ok(Some(vec![NamedTensor {
++                    name: "logits".to_string(),
++                    tensor: logits,
++                }]))
++            }
++            // WITX path: tokens staged via set_input, result via get_output
++            None => {
++                let ids = self
++                    .pending
++                    .take()
++                    .ok_or_else(|| err("no input staged (call set_input first)"))?;
++                self.logits = Some(self.decode(&ids)?);
++                Ok(None)
++            }
++        }
++    }
++
++    fn get_output(&mut self, id: Id) -> Result<Tensor, BackendError> {
++        match id {
++            Id::Index(0) => {}
++            Id::Name(ref n) if n == "logits" => {}
++            other => return Err(err(format!("unknown output {other:?} (expected \"logits\")"))),
++        }
++        self.logits
++            .clone()
++            .ok_or_else(|| err("no logits available (has `compute` been called?)"))
++    }
++}
+diff --git a/crates/wasi-nn/src/backend/mod.rs b/crates/wasi-nn/src/backend/mod.rs
+index f6f81e8..b8d8710 100644
+--- a/crates/wasi-nn/src/backend/mod.rs
++++ b/crates/wasi-nn/src/backend/mod.rs
+@@ -2,6 +2,8 @@
+ //! this crate. The `Box<dyn ...>` types returned by these interfaces allow
+ //! implementations to maintain backend-specific state between calls.
+ 
++#[cfg(feature = "ggml")]
++pub mod ggml;
+ #[cfg(feature = "onnx")]
+ pub mod onnx;
+ #[cfg(all(feature = "openvino", target_pointer_width = "64"))]
+@@ -11,6 +13,8 @@ pub mod pytorch;
+ #[cfg(all(feature = "winml", target_os = "windows"))]
+ pub mod winml;
+ 
++#[cfg(feature = "ggml")]
++use self::ggml::GgmlBackend;
+ #[cfg(feature = "onnx")]
+ use self::onnx::OnnxBackend;
+ #[cfg(all(feature = "openvino", target_pointer_width = "64"))]
+@@ -44,6 +48,10 @@ pub fn list() -> Vec<Backend> {
+     {
+         backends.push(Backend::from(OnnxBackend::default()));
+     }
++    #[cfg(feature = "ggml")]
++    {
++        backends.push(Backend::from(GgmlBackend::default()));
++    }
+     #[cfg(feature = "pytorch")]
+     {
+         backends.push(Backend::from(PytorchBackend::default()));
+diff --git a/crates/wasi-nn/src/wit.rs b/crates/wasi-nn/src/wit.rs
+index 32e668e..805d5df 100644
+--- a/crates/wasi-nn/src/wit.rs
++++ b/crates/wasi-nn/src/wit.rs
+@@ -389,6 +389,7 @@ impl FromStr for generated::graph::GraphEncoding {
+         match s.to_lowercase().as_str() {
+             "openvino" => Ok(generated::graph::GraphEncoding::Openvino),
+             "onnx" => Ok(generated::graph::GraphEncoding::Onnx),
++            "ggml" => Ok(generated::graph::GraphEncoding::Ggml),
+             "pytorch" => Ok(generated::graph::GraphEncoding::Pytorch),
+             "tensorflow" => Ok(generated::graph::GraphEncoding::Tensorflow),
+             "tensorflowlite" => Ok(generated::graph::GraphEncoding::Tensorflowlite),
