@@ -9,7 +9,7 @@ import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { $$, esc, hlJson, fmtDur, statusCls, copyText, showToast, lsGet, lsSet } from "../../js/core/util.js";
 import { APP_DOMAIN, DEPLOYMENTS_ADDRESS } from "../../js/core/config.js";
 import { Enclave } from "../../js/core/api.js";
-import { pad32, encUint, DEP_SEL, waitReceipt } from "../../js/core/chain.js";
+import { pad32, encUint, DEP_SEL, depPrices6, rate6Of, waitReceipt } from "../../js/core/chain.js";
 import { authenticate, connectWallet, refreshWallet, saveSession, ensureBaseChain, sendTx } from "../../js/core/wallet.js";
 import { slugOfRef } from "../../js/core/catalog.js";
 import { vspecOf, verifyEnclaveInBrowser } from "../../js/core/verify.js";
@@ -244,10 +244,13 @@ class Deployments extends EnclaveElement {
     if (!box.hidden){ box.hidden = true; box.innerHTML = ""; return; }
     const d = (this._list || []).find(x => x.id === id) || {};
     const r = d.resources || {};
-    // the deployment's own burn rate: the API's live number when present,
-    // else priced from its shares
-    const rate = parseFloat(d.ratePerSecondUsdc)
-      || shareRates(Math.round((r.gpuShare || 0) * 100), Math.round((r.cpuShare != null ? r.cpuShare : (r.share || 0)) * 100)).rate;
+    const gpuPct = Math.round((r.gpuShare || 0) * 100), cpuPct = Math.round((r.cpuShare != null ? r.cpuShare : (r.share || 0)) * 100);
+    // the deployment's own burn rate: the API's live number (the on-chain
+    // snapshot) when present; else the CONTRACT's prices; constants only
+    // until that read lands
+    let rate = parseFloat(d.ratePerSecondUsdc) || shareRates(gpuPct, cpuPct).rate;
+    if (!parseFloat(d.ratePerSecondUsdc))
+      depPrices6().then(pr => { rate = Number(rate6Of(pr, gpuPct * 10, cpuPct * 10)) / 1e6; if (box.isConnected && !box.hidden) upd(); }).catch(() => {});
     box.hidden = false;
     box.innerHTML = '<div class="ap-attbar">top up · ' + esc(id) + '</div>'
       + '<div class="enc-fund-body">'

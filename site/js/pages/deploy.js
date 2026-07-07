@@ -20,12 +20,13 @@ import { $, $$, esc, short, wait, fmtNum, fmtDur, hlJson, hlCode, copyText, show
 import { APP_DOMAIN, DEPLOYMENTS_ADDRESS, IPFS_UPLOAD_URL, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
 import { CARD_GB, NODE_VCPUS, NODE_RAM_GB, CARD_TFLOPS, NODE_GFLOPS, shareRates } from "../core/pricing.js";
-import { encCall, DEP_SEL, DEP_CREATED_TOPIC, APPROVAL, depGet, depRate6, waitReceipt } from "../core/chain.js";
+import { encCall, DEP_SEL, DEP_CREATED_TOPIC, APPROVAL, depGet, depRate6, depPrices6, rate6Of, waitReceipt } from "../core/chain.js";
 import { authenticate, connectWallet, refreshWallet, ensureBaseChain, sendTx, usdcBalanceOf, ethBalanceOf, openBuyModal } from "../core/wallet.js";
 import { STORE, loadCatalog, REF_CACHE, PORTS_CACHE, MINS_CACHE, looksFriendly, resolveAppRef, validPortsCsv } from "../core/catalog.js";
 
 /* component handles (assigned in initDeploy) */
 let fleetList = null, volPicker = null;
+let prices6 = null;   // the contract's live prices; estimates fall back to constants until read
 /* the My Apps panel lives on the dashboard now; resolve it at call time
    (present after the deploy flow navigates there, absent otherwise) */
 const depsPanel = () => document.querySelector("c-deployments");
@@ -127,7 +128,10 @@ function renderDeploy(){
     rate = 0; readout = "✕ CPU share (" + Math.round(cpuPct) + "%) can't exceed GPU share (" + Math.round(gpuPct) + "%) - a GPU app's CPU slice rides on its card's node";
   }
   else {
-    const g = shareRates(gpuPct, cpuPct); rate = g.rate;
+    const g = shareRates(gpuPct, cpuPct);
+    // money comes from the CONTRACT's prices + ceil math (cached read) —
+    // client constants drift; the hardware figures below stay client-side
+    rate = prices6 ? Number(rate6Of(prices6, g.gpuPct * 10, g.cpuPct * 10)) / 1e6 : g.rate;
     readout = (g.gpuPct > 0
       ? "→ " + g.gpuPct + "% of card ≈ " + g.vramGb.toFixed(0) + " GB VRAM / " + Math.round(g.tflops) + " TFLOPS · "
       : "→ CPU-only · ")
@@ -615,6 +619,7 @@ function initDeploy(){
   }
 
   renderDeploy();
+  depPrices6().then(p => { prices6 = p; renderDeploy(); }).catch(() => {});
   startAvailPoll();
   checkHealth();
   applyUseInDeploy();

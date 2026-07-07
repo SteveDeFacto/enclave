@@ -112,12 +112,25 @@ export async function depGet(id){
   });
   return Number(obj.createdAt) ? obj : null;
 }
-// The contract's exact per-second rate (6dp USDC) for two share dials in
-// 1/1000ths - mirrors _initScalars' ceil math so estimates match on-chain.
-export async function depRate6(gpuMilli, cpuMilli){
+// The contract's live full-card / full-node per-second prices (6dp USDC),
+// read once and cached: EVERY money estimate must come from these — the
+// operator sets them on-chain, so client constants drift (and the create's
+// ceil-to-1-micro-USDC floor makes small deployments cost more than the
+// linear formula suggests).
+let _prices6 = null;
+export async function depPrices6(){
+  if (_prices6) return _prices6;
   const [p, c] = await Promise.all([
     depCall("0x" + DEP_SEL.price), depCall("0x" + DEP_SEL.cpuPrice)]);
-  return (BigInt(p || "0x0") * BigInt(gpuMilli) + BigInt(c || "0x0") * BigInt(cpuMilli) + 999n) / 1000n;
+  _prices6 = { gpu: BigInt(p || "0x0"), cpu: BigInt(c || "0x0") };
+  return _prices6;
+}
+// The contract's exact per-second rate (6dp USDC) for two share dials in
+// 1/1000ths - mirrors create()'s ceil math so estimates match on-chain.
+export const rate6Of = (pr, gpuMilli, cpuMilli) =>
+  (pr.gpu * BigInt(gpuMilli) + pr.cpu * BigInt(cpuMilli) + 999n) / 1000n;
+export async function depRate6(gpuMilli, cpuMilli){
+  return rate6Of(await depPrices6(), gpuMilli, cpuMilli);
 }
 
 /* ---- minimal ABI codec (generic encode + struct-array decode), verified vs viem ---- */

@@ -12,7 +12,7 @@ import "../../components/app-card/app-card.js";
 import { $, $$, esc, short, blen, fmtDur, showToast, on } from "../core/util.js";
 import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, IPFS_UPLOAD_URL, MAX_WASM_MB, MAX_WASM_BYTES, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
-import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, waitReceipt } from "../core/chain.js";
+import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, rate6Of, waitReceipt } from "../core/chain.js";
 import { connectWallet, authenticate, ensureBaseChain, sendTx, usdcBalanceOf, openBuyModal } from "../core/wallet.js";
 import { STORE, loadCatalog, selIdx, appVerified, validPortsCsv, REF_CACHE, PORTS_CACHE, MINS_CACHE } from "../core/catalog.js";
 import { minPctsOf, shareRates } from "../core/pricing.js";
@@ -77,14 +77,17 @@ function closeQuick(){
 function quickDeploy(app, v){
   closeQuick();
   const mins = minPctsOf(v);
-  const { rate } = shareRates(mins.gpuPct, mins.cpuPct);
+  // constants first paint; the CONTRACT's live prices (incl. its ceil-to-a-
+  // micro-USDC floor) replace them the moment the cached read lands — the
+  // rate shown here must match what the deployment actually burns
+  let rate = shareRates(mins.gpuPct, mins.cpuPct).rate;
   const perHr = (rate * 3600).toFixed(2);
   const host = document.createElement("div");
   host.id = "quickDeploy"; host.className = "qd-overlay";
   host.innerHTML =
     '<div class="qd-card" role="dialog" aria-modal="true" aria-label="Deploy ' + esc(app.name || app.slug) + '">' +
       '<div class="qd-h">Deploy <b>' + esc(app.name || app.slug) + '</b> <span class="qd-ver">' + esc(v.version) + '</span></div>' +
-      '<p class="qd-sub">Runs in its own confidential enclave at <b>$' + perHr + '/hr</b>. Fund it from your wallet — it runs until the time you bought is used up, and you can top up or stop it whenever you like.</p>' +
+      '<p class="qd-sub">Runs in its own confidential enclave at <b class="qd-rate">$' + perHr + '/hr</b>. Fund it from your wallet — it runs until the time you bought is used up, and you can top up or stop it whenever you like.</p>' +
       '<div class="qd-bal"><span>Your wallet</span><b class="qd-balv">…</b><button class="qd-buy" type="button" hidden>Buy USDC →</button><button class="qd-connect btn btn-sm" type="button" hidden>Connect wallet</button></div>' +
       '<label class="qd-lbl" for="qdAmt">Amount to fund (USDC)</label>' +
       '<input class="qd-amt" id="qdAmt" type="number" value="5" min="0.01" step="any" inputmode="decimal" />' +
@@ -113,6 +116,11 @@ function quickDeploy(app, v){
     go.disabled = !(usd >= 0.01) || shortOnFunds;
   };
   amt.addEventListener("input", est);
+  depPrices6().then(pr => {
+    rate = Number(rate6Of(pr, mins.gpuPct * 10, mins.cpuPct * 10)) / 1e6;
+    const rEl = host.querySelector(".qd-rate"); if (rEl) rEl.textContent = "$" + (rate * 3600).toFixed(2) + "/hr";
+    est();
+  }).catch(() => {});
   const loadBal = async () => {
     if (!Enclave.address || !Enclave.provider){ balv.textContent = "not connected"; conn.hidden = false; return; }
     conn.hidden = true;
