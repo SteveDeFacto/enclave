@@ -133,9 +133,13 @@ async function main() {
   const wallet = createWalletClient({ account, chain: net.chain, transport: http(rpc) });
 
   const h = await wallet.writeContract({ address: book, abi, functionName: "setMany",
-    args: [diff.map(([k]) => stringToHex(k, { size: 32 })), diff.map(([, v]) => v)] });
+    args: [diff.map(([k]) => stringToHex(k, { size: 32 })), diff.map(([, v]) => v)],
+    // Explicit gas: don't trust a load-balanced RPC's estimate (a lagging
+    // backend once estimated the seed as a codeless call — out-of-gas revert).
+    gas: 100_000n + 80_000n * BigInt(diff.length) });
   const r = await pub.waitForTransactionReceipt({ hash: h });
   output.write(`  setMany ${r.status} ${net.explorer}/tx/${h}\n`);
+  if (r.status !== "success") die(`setMany REVERTED — the book is unchanged: ${net.explorer}/tx/${h}`);
   output.write("  enclaves/site/relays follow within one poll (≤5 min); no redeploys needed.\n");
 }
 

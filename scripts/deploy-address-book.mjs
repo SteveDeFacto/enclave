@@ -194,14 +194,21 @@ async function main() {
   if (rcpt.status !== "success" || !rcpt.contractAddress) die(`deploy tx did not succeed (status=${rcpt.status})`);
   const addr = getAddress(rcpt.contractAddress);
 
+  let seedFailed = false;
   if (seed.length) {
     console.log(`Seeding ${seed.length} entries (one setMany tx)...`);
     const h2 = await wallet.writeContract({
       address: addr, abi, functionName: "setMany",
       args: [seed.map((e) => stringToHex(e.key, { size: 32 })), seed.map((e) => e.value)],
+      // Explicit gas: a load-balanced public RPC may estimate against a backend
+      // that has not seen the deploy yet — a call to a codeless address
+      // estimates ~21k and the seed then dies out-of-gas (2026-07-07 mainnet
+      // deploy). Unused gas is refunded, so a generous limit costs nothing.
+      gas: 100_000n + 80_000n * BigInt(seed.length),
     });
     const r2 = await pub.waitForTransactionReceipt({ hash: h2 });
     console.log(`  seed ${r2.status} ${net.explorer}/tx/${h2}`);
+    seedFailed = r2.status !== "success";
   }
 
   console.log("\n=======================  DEPLOYED  ============================");
@@ -211,6 +218,12 @@ async function main() {
 
   if (!NO_WRITE_CONFIG) writeEverywhere(addr);
   else console.log("(--no-write-config: bake ADDRESS_BOOK_ADDRESS into the configs/site/cli yourself)");
+
+  if (seedFailed) {
+    console.log("\n*** SEED TX REVERTED — the book is deployed but EMPTY (readers keep their");
+    console.log("*** baked fallbacks, so nothing breaks). Seed it before relying on it:");
+    console.log("***   node scripts/update-address-book.mjs");
+  }
 
   console.log("\nNext:");
   console.log("  1. Commit + push: the site resolves addresses from the book on its next deploy,");
