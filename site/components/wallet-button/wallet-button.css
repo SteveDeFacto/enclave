@@ -10,6 +10,10 @@ c-wallet-button{display:contents;}
 #walletBtn .lock{font-size:.62rem;color:var(--amber);border:1px solid var(--amber-dim);border-radius:4px;padding:.05em .3em;}
 .wallet-mount{position:relative;display:inline-block;}
 .nav-inner .wallet-mount{margin-left:auto;}  /* sit at the right of the header */
+/* under 880px the nav links are in-flow (see header.css): an auto margin
+   would swallow the free space and jam the links against the brand — let
+   the bar's space-between spread brand | links | wallet evenly instead */
+@media (max-width:880px){.nav-inner .wallet-mount{margin-left:0;}}
 .wallet-pop{position:absolute;top:calc(100% + 10px);left:0;z-index:60;width:300px;background:#0b1119;border:1px solid var(--line);border-radius:12px;box-shadow:0 30px 60px -28px rgba(0,0,0,.9);padding:14px;font-family:var(--font-mono);}
 .nav-inner .wallet-pop{left:auto;right:0;}  /* drop down aligned to the header's right edge */
 .wp-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line-soft);font-size:.78rem;}
@@ -42,3 +46,10 @@ c-wallet-button{display:contents;}
 .wp-amt.on{border-color:var(--jade);color:var(--jade);}
 .wp-dot-iris{background:linear-gradient(135deg,var(--iris),var(--jade));}
 @media(max-width:760px){.wallet-pop{left:0;right:auto;width:min(300px,84vw);}}
+/* mobile header: the account button spans the bar (see header.css for the
+   centered brand row); the popover centers under it */
+@media(max-width:640px){
+  .nav-inner .wallet-mount{width:100%;}
+  .nav-inner #walletBtn{width:100%;justify-content:center;}
+  .nav-inner .wallet-pop{left:50%;right:auto;transform:translateX(-50%);}
+}

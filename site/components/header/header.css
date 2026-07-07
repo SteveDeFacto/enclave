@@ -24,8 +24,16 @@ header.nav .brand svg.nm{width:auto;height:20px;}
 .menu-btn{display:none;}
 
 /* ---------- responsive ---------- */
+/* the absolutely-centered links ignore flex layout and overlap the brand
+   once the bar tightens (~750px) — go in-flow so space-between keeps
+   brand | links | wallet apart, and slim the tabs to buy room down to 641px */
+@media (max-width:880px){
+  .nav-links{position:static;transform:none;gap:2px;}
+  .nav-links a{padding:.5em .45em;font-size:.78rem;}
+}
 @media (max-width:640px){
   .nav-inner{height:auto;min-height:64px;padding-top:10px;padding-bottom:12px;}
+  .nav-inner .brand{width:100%;justify-content:center;}   /* own centered row; wallet + tab rows follow (.brand alone would hit the footer's too) */
   .nav-links{display:none;}
   .menu-btn{display:inline-flex;}
 }
@@ -33,5 +41,6 @@ header.nav .brand svg.nm{width:auto;height:20px;}
 /* ---------- active tab + mobile tab row (was runtime-injected) ---------- */
 .nav-links a[data-view]{position:relative;} .nav-links a.active{color:var(--jade);background:var(--surface);}
 .nav-links a.active::after{content:'';position:absolute;left:.7em;right:.7em;bottom:-1px;height:2px;background:var(--jade);border-radius:2px;}
+@media (max-width:880px){.nav-links a.active::after{left:.45em;right:.45em;}}
 @media(max-width:640px){.nav-inner{flex-wrap:wrap;row-gap:9px;justify-content:space-between;}.nav-links{display:flex !important;position:static;transform:none;left:auto;order:3;width:100%;justify-content:center;gap:4px;border-top:1px solid var(--line-soft);padding-top:9px;}.nav-links a{flex:1;text-align:center;padding:.55em .4em;font-size:.8rem;}}
 .nav-inner{position:relative;}
