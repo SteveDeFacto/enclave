@@ -5,7 +5,9 @@
    ============================================================ */
 
 *{box-sizing:border-box;}
-html{scroll-behavior:smooth;scroll-padding-top:80px;-webkit-text-size-adjust:100%;}
+/* the canvas itself is dark (html background + color-scheme), so nothing
+   white can flash through between paints or under transition snapshots */
+html{background:var(--bg);color-scheme:dark;scroll-behavior:smooth;scroll-padding-top:80px;-webkit-text-size-adjust:100%;}
 [hidden]{display:none !important;}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto;}}
 
@@ -13,9 +15,18 @@ html{scroll-behavior:smooth;scroll-padding-top:80px;-webkit-text-size-adjust:100
    Page navigations snapshot-morph instead of hard-reloading; the header
    carries its own view-transition-name (see components/header), so being
    identical on every page it appears to never reload. Browsers without
-   support just navigate normally. */
+   support just navigate normally.
+
+   NOT a plain crossfade: fading both snapshots at once double-exposes the
+   content and reads as a blink. Instead the old page holds perfectly still
+   while the new one settles in over it (fade + a 6px rise). mix-blend-mode
+   must come back to normal - the UA's plus-lighter math only works when
+   both sides animate, and over a static old frame it over-brightens. */
 @view-transition{navigation:auto;}
-::view-transition-old(root),::view-transition-new(root){animation-duration:.16s;}
+::view-transition-image-pair(root){isolation:auto;}
+::view-transition-old(root){animation:none;mix-blend-mode:normal;}
+::view-transition-new(root){animation:vt-enter .28s var(--ease) both;mix-blend-mode:normal;}
+@keyframes vt-enter{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
 @media (prefers-reduced-motion:reduce){
   ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none !important;}
 }
