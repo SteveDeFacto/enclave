@@ -52,4 +52,6 @@ table.params td.pname{font-family:var(--font-mono);color:var(--text);white-space
 .doc .tbl{overflow-x:auto;margin:14px 0;border:1px solid var(--line-soft);border-radius:var(--radius-sm);}
 .doc table.params td{color:var(--text-muted);font-size:.86rem;line-height:1.55;}
 .doc table.params td.pname{color:var(--text);}
-@media(max-width:960px){.docs-layout{grid-template-columns:1fr;}.docs-side{position:static;max-height:none;}.docs-nav{max-height:260px;}}
+/* single-column: the chapter nav would stack above the guide as a scroll
+   box — not useful there, hide it (the guide reads top-to-bottom) */
+@media(max-width:960px){.docs-layout{grid-template-columns:1fr;}.docs-side{display:none;}}
