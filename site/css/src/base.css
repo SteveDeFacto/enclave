@@ -27,8 +27,17 @@ html{background:var(--bg);color-scheme:dark;scroll-behavior:smooth;scroll-paddin
 ::view-transition-old(root){animation:none;mix-blend-mode:normal;}
 ::view-transition-new(root){animation:vt-enter .28s var(--ease) both;mix-blend-mode:normal;}
 @keyframes vt-enter{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+
+/* Fallback for navigations where Chromium SKIPS the view transition
+   (extensions with content scripts — MetaMask — force that): the previous
+   page flags it via pageswap (inline head script) and this plays the same
+   settle-in on the content only, so the static header holds still. */
+html.soft-enter body > section,
+html.soft-enter body > c-footer{animation:vt-enter .28s var(--ease) both;}
+
 @media (prefers-reduced-motion:reduce){
   ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none !important;}
+  html.soft-enter body > section,html.soft-enter body > c-footer{animation:none !important;}
 }
 body{
   margin:0;background:var(--bg);color:var(--text);

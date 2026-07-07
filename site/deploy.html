@@ -8,6 +8,19 @@
 <title>Deploy · Enclave</title>
 <meta name="description" content="Build a deployment: pick a Wasm app, connect your wallet, and provision a real confidential enclave on Base — the same public REST API, driven from your browser." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 9v14L16 30 4 23V9z' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 7.333 24 12v8L16 24.667 8 20v-8z' fill='none' stroke='%232FE6A8' stroke-width='1.4' opacity='.55'/%3E%3Ccircle cx='16' cy='12.55' r='2.45' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 15v6.6M16 21.6h2M16 19.4h1.5' fill='none' stroke='%232FE6A8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
+<script>
+/* Cross-document view transitions are skipped by Chromium when extensions
+   inject content scripts (MetaMask et al): the old page sees pageswap with
+   no viewTransition. Flag it, and the NEXT page (this script runs pre-paint)
+   plays the same settle-in itself (html.soft-enter, see base.css) — content
+   only, the static header stays put. */
+(function(){
+  try { if (sessionStorage.getItem("nan_novt")) { sessionStorage.removeItem("nan_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}
+  addEventListener("pageswap", function(e){
+    try { if (!e.viewTransition && e.activation) sessionStorage.setItem("nan_novt", "1"); } catch(e){}
+  });
+})();
+</script>
 <link rel="stylesheet" href="css/site.css" />
 <script type="module" blocking="render" src="js/pages/deploy.js"></script>
 </head>

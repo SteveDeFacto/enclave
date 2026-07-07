@@ -19,6 +19,19 @@
   if (page) location.replace(page + (h === "deploy" || h === "apps" || h === "develop" ? "" : "#" + h));
 })();
 </script>
+<script>
+/* Cross-document view transitions are skipped by Chromium when extensions
+   inject content scripts (MetaMask et al): the old page sees pageswap with
+   no viewTransition. Flag it, and the NEXT page (this script runs pre-paint)
+   plays the same settle-in itself (html.soft-enter, see base.css) — content
+   only, the static header stays put. */
+(function(){
+  try { if (sessionStorage.getItem("nan_novt")) { sessionStorage.removeItem("nan_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}
+  addEventListener("pageswap", function(e){
+    try { if (!e.viewTransition && e.activation) sessionStorage.setItem("nan_novt", "1"); } catch(e){}
+  });
+})();
+</script>
 <link rel="stylesheet" href="css/site.css" />
 <script type="module" blocking="render" src="js/pages/overview.js"></script>
 </head>
