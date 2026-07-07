@@ -75,9 +75,29 @@ const result = await build({
   metafile: true,
 });
 
-console.log("[build] copy pages + static files");
-for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "buy.html", "openapi.json"])
-  fs.copyFileSync(path.join(SITE, f), path.join(DIST, f));
+console.log("[build] copy pages + static files (+ modulepreload for each page's chunks)");
+/* the page scripts are render-blocking (head), so preloading their hashed
+   chunk imports shortens the time before first paint */
+const outs = result.metafile.outputs;
+const chunksOf = (outFile, seen = new Set()) => {
+  for (const imp of (outs[outFile]?.imports || [])) {
+    if (imp.kind !== "import-statement" || seen.has(imp.path)) continue;
+    seen.add(imp.path); chunksOf(imp.path, seen);
+  }
+  return [...seen];
+};
+const PAGE_HTML = { overview: "index.html", deploy: "deploy.html", apps: "apps.html", develop: "develop.html" };
+const preloads = {};
+for (const [outFile, o] of Object.entries(outs)) {
+  const page = o.entryPoint && /js[\\/]pages[\\/](\w+)\.js$/.exec(o.entryPoint)?.[1];
+  if (page) preloads[PAGE_HTML[page]] = chunksOf(outFile)
+    .map(c => `<link rel="modulepreload" href="${path.relative(DIST, path.resolve(ROOT, c)).replace(/\\/g, "/")}" />`).join("\n");
+}
+for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "buy.html", "openapi.json"]) {
+  let s = fs.readFileSync(path.join(SITE, f), "utf8");
+  if (preloads[f]) s = s.replace('<script type="module" blocking="render"', preloads[f] + '\n<script type="module" blocking="render"');
+  fs.writeFileSync(path.join(DIST, f), s);
+}
 for (const d of ["assets", "privy"])
   fs.cpSync(path.join(SITE, d), path.join(DIST, d), { recursive: true });
 
