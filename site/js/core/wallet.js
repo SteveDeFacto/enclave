@@ -431,13 +431,17 @@ export async function restoreSession(){
   if (!s || !s.address) return;
   if (s.token){ const exp = jwtExp(s.token); if (exp && exp * 1000 <= Date.now()) s.token = null; }  // drop an expired token
   // paint the header button IMMEDIATELY from the cached session (email for Privy
-  // users) - the real restore below can take seconds and the button said
-  // "Sign in" the whole time. If restore fails, the finally-refresh resets it.
+  // users) - the real restore below can take seconds (wallet discovery + the
+  // extension round-trip) and the button said "Sign in" the whole time. Render
+  // the EXACT final connected look, so the later refreshWallet repaint is
+  // pixel-identical and the header stays still through view transitions. In
+  // production the page's inline wallet-paint script (scripts/build-site.mjs)
+  // already did this during parse - don't repaint over it.
   const early = $("#walletBtn");
-  if (early && s.address){
+  if (early && s.address && !early.dataset.painted){
     const who = s.email ? (s.email.length > 24 ? s.email.slice(0, 21) + "…" : s.email) : short(s.address);
     early.classList.add("connected");
-    early.innerHTML = '<span class="wdot"></span>' + esc(who) + ' <span class="lock">restoring…</span>';
+    early.innerHTML = '<span class="wdot"></span>' + esc(who) + (s.token ? "" : ' <span class="lock">unlocked</span>');
   }
   try {
   let chosen = null;
