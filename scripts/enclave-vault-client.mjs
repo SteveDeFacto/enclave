@@ -83,7 +83,7 @@ const ABI = [
 const ROLE = { 0: "None", 1: "Reader", 2: "Writer" };
 
 // chain-state deployment->runner resolution (mirrors the vault app + console;
-// same defaults as scripts/enclave-discover.mjs / site/index.html)
+// same defaults as scripts/enclave-discover.mjs / site/js/core/config.js)
 const DEPLOYMENTS_ADDRESS = process.env.DEPLOYMENTS_ADDRESS || "0x81037A2081bc000F12B8aA771bede0d36742ec4b";
 const REGISTRY_ADDRESS    = process.env.REGISTRY_ADDRESS    || "0x13deE63b80353a15C6E03D54240EE463B420353F";
 const DEPLOYMENTS_ABI = [

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// catalog-status.mjs — read APP_CATALOG_* out of site/index.html and report what
+// catalog-status.mjs — read APP_CATALOG_* out of site/js/core/config.js and report what
 // the site points at: whether an address is wired, and WHICH revision of
 // EnclaveAppCatalog lives there (detected by function selectors in the bytecode).
 //
@@ -10,7 +10,7 @@ import path from "node:path";
 import url from "node:url";
 
 const REPO = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
-const SITE = path.join(REPO, "site", "index.html");
+const SITE = path.join(REPO, "site", "js", "core", "config.js");
 
 const SEL_PUBLISH_SHARES = "adbf439a"; // publishVersion(...,uint32[4] res,string ports) -> current (exact resources incl. compute -> derived shares)
 const SEL_SET_APPROVAL  = "a67613fa"; // setApproval(bytes32,uint256,uint8)      -> approval-gated deploys, memMb-only resources
@@ -43,7 +43,7 @@ async function main() {
   const chain = grab(html, "APP_CATALOG_CHAIN", false);
   const rpcUrl = grab(html, "APP_CATALOG_RPC", true);
 
-  console.log("From site/index.html:");
+  console.log("From site/js/core/config.js:");
   console.log(`  APP_CATALOG_ADDRESS  ${addr ?? "(not found)"}`);
   console.log(`  APP_CATALOG_CHAIN    ${chain ?? "(not found)"}`);
   console.log(`  APP_CATALOG_RPC      ${rpcUrl ?? "(not found)"}\n`);

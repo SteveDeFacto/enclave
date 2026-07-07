@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // deploy-app-catalog.mjs - compile + deploy contracts/EnclaveAppCatalog.sol to Base,
-// print the address, and (optionally) write it into site/index.html as the
+// print the address, and (optionally) write it into site/js/core/config.js as the
 // APP_CATALOG_ADDRESS the store reads from.
 //
 // EnclaveAppCatalog has no constructor args: the deployer EOA becomes `owner` (the
@@ -13,14 +13,14 @@
 //   NETWORK=base DEPLOYER_PRIVATE_KEY=0x... node scripts/deploy-app-catalog.mjs    # -> Base MAINNET, auto-wires the site
 //
 // On a successful deploy it writes APP_CATALOG_ADDRESS / _CHAIN / _RPC into
-// site/index.html automatically (pass --no-write-config to skip).
+// site/js/core/config.js automatically (pass --no-write-config to skip).
 //
 // Env:
 //   DEPLOYER_PRIVATE_KEY  required. Pays gas, becomes contract owner.
 //   NETWORK               base-sepolia (default) | base
 //   RPC_URL               override the chain RPC.
 // Flags:
-//   --no-write-config     do NOT touch site/index.html (default is to wire it)
+//   --no-write-config     do NOT touch site/js/core/config.js (default is to wire it)
 //   --yes                 skip the interactive confirmation (CI)
 //   --dry-run             compile + show the plan, do NOT broadcast
 
@@ -39,7 +39,7 @@ const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..");
 const CONTRACT = path.join(REPO, "contracts", "EnclaveAppCatalog.sol");
 const ABI_OUT = path.join(REPO, "contracts", "EnclaveAppCatalog.abi.json");
-const SITE = path.join(REPO, "site", "index.html");
+const SITE = path.join(REPO, "site", "js", "core", "config.js");
 const CONFIG = path.join(REPO, "enclaves", "gpu", "tinfoil-config.yml");
 
 const args = new Set(process.argv.slice(2));
@@ -188,10 +188,10 @@ async function main() {
   console.log("===============================================================\n");
 
   if (!NO_WRITE_CONFIG) { writeSiteConfig(addr, net.chain.id, rpc); writeSupervisorConfig(addr, net.chain.id); }
-  else console.log("(--no-write-config: skipped wiring site/index.html + tinfoil-config.yml; set APP_CATALOG_ADDRESS manually)");
+  else console.log("(--no-write-config: skipped wiring site/js/core/config.js + tinfoil-config.yml; set APP_CATALOG_ADDRESS manually)");
 
   console.log("\nNext:");
-  console.log(`  1. site/index.html + tinfoil-config.yml now point at ${addr} on chain ${net.chain.id}.`);
+  console.log(`  1. site/js/core/config.js + tinfoil-config.yml now point at ${addr} on chain ${net.chain.id}.`);
   console.log("  2. Redeploy the site:  cd site && ./deploy.sh");
   console.log("  3. Rebuild+repin the supervisor so the enclave enforces approval:  ./scripts/release.sh enclave-supervisor");
   console.log("  4. Approve versions from the Apps tab with the deployer wallet (it is the catalog owner).");

@@ -177,15 +177,15 @@ function writeDeploymentsAddress(addr) {
   // The deploy console creates + funds deployments against this contract
   // directly from the browser - keep its constant in lockstep (same pattern
   // as deploy-app-catalog.mjs and the site's APP_CATALOG_ADDRESS).
-  const SITE = path.join(REPO, "site", "index.html");
+  const SITE = path.join(REPO, "site", "js", "core", "config.js");
   if (fs.existsSync(SITE)) {
     const sre = /(const DEPLOYMENTS_ADDRESS = )"0x[0-9a-fA-F]{40}"/;
     let html = fs.readFileSync(SITE, "utf8");
     if (sre.test(html)) {
       fs.writeFileSync(SITE, html.replace(sre, `$1"${addr}"`));
-      console.log(`Wrote DEPLOYMENTS_ADDRESS="${addr}" into site/index.html`);
+      console.log(`Wrote DEPLOYMENTS_ADDRESS="${addr}" into site/js/core/config.js`);
     } else {
-      console.log(`No DEPLOYMENTS_ADDRESS const in site/index.html; update it by hand: ${addr}`);
+      console.log(`No DEPLOYMENTS_ADDRESS const in site/js/core/config.js; update it by hand: ${addr}`);
     }
   }
 }
