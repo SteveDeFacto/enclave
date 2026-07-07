@@ -233,6 +233,12 @@
   },
   {
     "anonymous": false,
+    "inputs": [],
+    "name": "ImportsSealed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
     "inputs": [
       {
         "indexed": false,
@@ -772,6 +778,124 @@
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "id",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "owner",
+            "type": "address"
+          },
+          {
+            "internalType": "string",
+            "name": "appRef",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "ports",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "sshPubKey",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "configCid",
+            "type": "string"
+          },
+          {
+            "internalType": "uint16",
+            "name": "gpuMilli",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint16",
+            "name": "cpuMilli",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint32",
+            "name": "appPort",
+            "type": "uint32"
+          },
+          {
+            "internalType": "bool",
+            "name": "isPublic",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint64",
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint256",
+            "name": "rate",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "balance6",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "spent6",
+            "type": "uint256"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "runner",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "runnerOperator",
+            "type": "address"
+          },
+          {
+            "internalType": "uint64",
+            "name": "leaseUntil",
+            "type": "uint64"
+          }
+        ],
+        "internalType": "struct EnclaveDeployments.Deployment[]",
+        "name": "items",
+        "type": "tuple[]"
+      }
+    ],
+    "name": "importDeployments",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "importsSealed",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "leaseSec",
     "outputs": [
@@ -858,6 +982,13 @@
       }
     ],
     "name": "renew",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "sealImports",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

@@ -81,6 +81,12 @@
   },
   {
     "anonymous": false,
+    "inputs": [],
+    "name": "ImportsSealed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
     "inputs": [
       {
         "indexed": true,
@@ -666,6 +672,154 @@
   {
     "inputs": [
       {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "appId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "publisher",
+            "type": "address"
+          },
+          {
+            "internalType": "string",
+            "name": "slug",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "description",
+            "type": "string"
+          },
+          {
+            "internalType": "uint32",
+            "name": "versionCount",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "updatedAt",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "active",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct EnclaveAppCatalog.App[]",
+        "name": "items",
+        "type": "tuple[]"
+      }
+    ],
+    "name": "importApps",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "appId",
+        "type": "bytes32"
+      },
+      {
+        "components": [
+          {
+            "internalType": "string",
+            "name": "cid",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "version",
+            "type": "string"
+          },
+          {
+            "internalType": "uint32",
+            "name": "vramMb",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "gpuGflops",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "memMb",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "cpuGflops",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "verified",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "yanked",
+            "type": "bool"
+          },
+          {
+            "internalType": "string",
+            "name": "ports",
+            "type": "string"
+          },
+          {
+            "internalType": "uint8",
+            "name": "approval",
+            "type": "uint8"
+          }
+        ],
+        "internalType": "struct EnclaveAppCatalog.Version[]",
+        "name": "items",
+        "type": "tuple[]"
+      }
+    ],
+    "name": "importVersions",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "importsSealed",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "bytes32",
         "name": "appId",
         "type": "bytes32"
@@ -746,6 +900,13 @@
         "type": "uint256"
       }
     ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "sealImports",
+    "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
   },

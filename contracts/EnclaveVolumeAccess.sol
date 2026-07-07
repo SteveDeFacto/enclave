@@ -60,6 +60,8 @@ contract EnclaveVolumeAccess {
     address public operator; // the enclave operator EOA (auto-grant writer; the existing runner key)
 
     mapping(bytes32 => Volume) private _vol;
+    bytes32[] private _volIds;   // enumeration (created + imported) — the first revision had none,
+                                 // which made migrating volumes an event-log archaeology exercise
 
     event VolumeCreated(bytes32 indexed volId, address indexed owner, string name);
     event Registered(bytes32 indexed volId, address indexed member, bytes32 pubkey);
@@ -93,6 +95,7 @@ contract EnclaveVolumeAccess {
         v.exists = true;
         v.owner = msg.sender;
         v.createdAt = uint64(block.timestamp);
+        _volIds.push(volId);
         emit VolumeCreated(volId, msg.sender, name);
     }
 
@@ -166,6 +169,69 @@ contract EnclaveVolumeAccess {
         emit OwnerTransferred(volId, newOwner);
     }
 
+    // ----- one-time migration (admin-gated, permanently sealable) ----------
+
+    /// @notice While true, the admin may still import volumes/members from a
+    ///         previous EnclaveVolumeAccess. Everything here is public and
+    ///         sealed-to-member anyway (see the contract notice), so imports
+    ///         move no secrets — but treat ACL entries as admin-attested until
+    ///         `importsSealed`.
+    bool public importsSealed;
+    event ImportsSealed();
+
+    /// @notice Migrate volume shells verbatim (ids are keccak256(deployer, name),
+    ///         preserved as-is; createVolume can never collide with them because
+    ///         it requires !exists). The name is embedded in the id and not
+    ///         stored, so the replayed VolumeCreated carries an empty one.
+    function importVolumes(bytes32[] calldata volIds, address[] calldata owners_, uint64[] calldata createdAts) external {
+        require(msg.sender == admin, "!admin");
+        require(!importsSealed, "sealed");
+        require(volIds.length == owners_.length && volIds.length == createdAts.length, "len");
+        for (uint256 i = 0; i < volIds.length; i++) {
+            Volume storage v = _vol[volIds[i]];
+            require(!v.exists, "exists");
+            require(owners_[i] != address(0), "zero owner");
+            v.exists = true;
+            v.owner = owners_[i];
+            v.createdAt = createdAts[i];
+            _volIds.push(volIds[i]);
+            emit VolumeCreated(volIds[i], owners_[i], "");
+        }
+    }
+
+    /// @notice Migrate one volume's member roll (chunkable). sealedVEKs are safe
+    ///         to replay: each is sealed to its member's wallet-derived pubkey,
+    ///         so this moves ciphertext between public places.
+    function importMembers(bytes32 volId, address[] calldata addrs, bytes32[] calldata pubkeys,
+                           uint8[] calldata roles, uint64[] calldata updatedAts, bytes[] calldata sealedVEKs) external {
+        require(msg.sender == admin, "!admin");
+        require(!importsSealed, "sealed");
+        Volume storage v = _vol[volId];
+        require(v.exists, "no volume");
+        require(addrs.length == pubkeys.length && addrs.length == roles.length
+             && addrs.length == updatedAts.length && addrs.length == sealedVEKs.length, "len");
+        for (uint256 i = 0; i < addrs.length; i++) {
+            Member storage m = v.members[addrs[i]];
+            require(!m.registered, "member exists");
+            require(roles[i] <= uint8(Role.Writer), "bad role");
+            v.memberList.push(addrs[i]);
+            m.registered = true;
+            m.pubkey = pubkeys[i];
+            m.role = Role(roles[i]);
+            m.updatedAt = updatedAts[i];
+            m.sealedVEK = sealedVEKs[i];
+            emit Registered(volId, addrs[i], pubkeys[i]);
+            if (Role(roles[i]) != Role.None) emit Granted(volId, addrs[i], Role(roles[i]));
+        }
+    }
+
+    /// @notice Permanently close the import window (there is no re-open).
+    function sealImports() external {
+        require(msg.sender == admin, "!admin");
+        importsSealed = true;
+        emit ImportsSealed();
+    }
+
     // ----- admin (operator rotation only; no custody, no key access) -------
 
     function setOperator(address o) external {
@@ -206,6 +272,9 @@ contract EnclaveVolumeAccess {
     function isAuthorized(bytes32 volId, address member) external view returns (bool) {
         return _vol[volId].members[member].role != Role.None;
     }
+
+    function volCount() external view returns (uint256) { return _volIds.length; }
+    function volIdAt(uint256 i) external view returns (bytes32) { return _volIds[i]; }
 
     function memberCount(bytes32 volId) external view returns (uint256) {
         return _vol[volId].memberList.length;

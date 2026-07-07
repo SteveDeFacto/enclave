@@ -13,8 +13,9 @@ import { fileURLToPath } from "node:url";
 import { encodeFunctionData, encodeDeployData, encodeAbiParameters, stringToHex, toFunctionSelector } from "viem";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { encCall, encAddr } = await import(path.join(REPO, "site/js/core/chain.js"));
+const { encCall, encAddr, decodeStructArray, DEP_SCHEMA, APP_SCHEMA, VER_SCHEMA } = await import(path.join(REPO, "site/js/core/chain.js"));
 const { CONTRACTS } = await import(path.join(REPO, "site/js/gen/contract-artifacts.js"));
+const { encCallX } = await import(path.join(REPO, "site/components/admin-console/migrate.js"));
 const ABI = (name) => JSON.parse(fs.readFileSync(path.join(REPO, "contracts", name + ".abi.json"), "utf8"));
 
 /* mirrors of the console's local helpers (admin-console.js is a custom
@@ -98,6 +99,68 @@ test("decodeBook round-trips a viem-encoded all() result (skipping retired keys)
   eq(got.registry, REG);
   eq(got["custom-key_1"], A2);
   assert.deepEqual(decodeBook("0x"), {});
+});
+
+/* ---- migration codec: the import functions take the EXACT structs the
+   getters return; one schema drives decode AND encode. Pin both directions
+   against viem. ---- */
+
+const DEP_ROW = {
+  id: "0x" + "ab".repeat(32), owner: A1, appRef: "ipfs://bafyExample", ports: "tcp:15565,udp:9053",
+  sshPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 example", configCid: "bafyConfig",
+  gpuMilli: 250, cpuMilli: 100, appPort: 8080, isPublic: true, active: true, createdAt: 1751900000,
+  rate: 417, balance6: 1500000, spent6: 250000,
+  runner: "0x" + "0".repeat(64), runnerOperator: ZERO, leaseUntil: 0,
+};
+const APP_ROW = {
+  appId: "0x" + "cd".repeat(32), publisher: A2, slug: "hello-world", name: "Hello World",
+  description: "answers Hello World! — quotes \"and\" unicode ✓", versionCount: 2, createdAt: 1751000000, updatedAt: 1751900000, active: true,
+};
+const VER_ROW = {
+  cid: "bafybeibvdyyo3dd6jkg6oklnlsxrxvotfihctbp4sqrqcoavecsnmktgg4", version: "1.0.0",
+  vramMb: 0, gpuGflops: 0, memMb: 256, cpuGflops: 100, createdAt: 1751000001,
+  verified: true, yanked: false, ports: "", approval: 1,
+};
+const asTuple = (schema, o) => schema.map((f) => o[f.k]);
+
+test("import calls (tuple[] args) encode like viem", () => {
+  const depAbi = ABI("EnclaveDeployments"), catAbi = ABI("EnclaveAppCatalog");
+  eq(encCallX(S("EnclaveDeployments").importDeployments, [{ t: "tuple[]", schema: DEP_SCHEMA, v: [DEP_ROW, { ...DEP_ROW, id: "0x" + "ef".repeat(32), appRef: "hello" }] }]),
+    encodeFunctionData({ abi: depAbi, functionName: "importDeployments",
+      args: [[asTuple(DEP_SCHEMA, DEP_ROW), asTuple(DEP_SCHEMA, { ...DEP_ROW, id: "0x" + "ef".repeat(32), appRef: "hello" })]] }));
+  eq(encCallX(S("EnclaveAppCatalog").importApps, [{ t: "tuple[]", schema: APP_SCHEMA, v: [APP_ROW] }]),
+    encodeFunctionData({ abi: catAbi, functionName: "importApps", args: [[asTuple(APP_SCHEMA, APP_ROW)]] }));
+  eq(encCallX(S("EnclaveAppCatalog").importVersions, [{ t: "bytes32", v: APP_ROW.appId }, { t: "tuple[]", schema: VER_SCHEMA, v: [VER_ROW, { ...VER_ROW, version: "1.0.1", cid: "bafyOther" }] }]),
+    encodeFunctionData({ abi: catAbi, functionName: "importVersions",
+      args: [APP_ROW.appId, [asTuple(VER_SCHEMA, VER_ROW), asTuple(VER_SCHEMA, { ...VER_ROW, version: "1.0.1", cid: "bafyOther" })]] }));
+});
+
+test("volume import calls (primitive + bytes[] arrays) encode like viem", () => {
+  const volAbi = ABI("EnclaveVolumeAccess");
+  const volId = "0x" + "11".repeat(32), pub = "0x" + "22".repeat(32);
+  const sealed = "0x" + "ab".repeat(104);
+  eq(encCallX(S("EnclaveVolumeAccess").importVolumes, [
+      { t: "bytes32[]", v: [volId] }, { t: "addr[]", v: [A1] }, { t: "uint[]", v: [1751000000] }]),
+    encodeFunctionData({ abi: volAbi, functionName: "importVolumes", args: [[volId], [A1], [1751000000n]] }));
+  eq(encCallX(S("EnclaveVolumeAccess").importMembers, [
+      { t: "bytes32", v: volId }, { t: "addr[]", v: [A1, A2] }, { t: "bytes32[]", v: [pub, pub] },
+      { t: "uint[]", v: [2, 1] }, { t: "uint[]", v: [1751000001, 1751000002] }, { t: "bytes[]", v: [sealed, "0x"] }]),
+    encodeFunctionData({ abi: volAbi, functionName: "importMembers",
+      args: [volId, [A1, A2], [pub, pub], [2, 1], [1751000001n, 1751000002n], [sealed, "0x"]] }));
+});
+
+test("migration round-trip: decode a getPage result, re-encode it for import, byte-equal to viem", () => {
+  // what the SOURCE contract returns from getPage(...)
+  const depAbi = ABI("EnclaveDeployments");
+  const rows = [DEP_ROW, { ...DEP_ROW, id: "0x" + "ef".repeat(32), sshPubKey: "", ports: "", isPublic: false, balance6: 0 }];
+  const encodedReturn = encodeAbiParameters(
+    depAbi.find((f) => f.name === "getPage").outputs, [rows.map((r) => asTuple(DEP_SCHEMA, r))]);
+  // the console decodes it with the schema...
+  const decoded = decodeStructArray(encodedReturn, DEP_SCHEMA);
+  assert.equal(decoded.length, 2);
+  // ...and replays it verbatim into importDeployments
+  eq(encCallX(S("EnclaveDeployments").importDeployments, [{ t: "tuple[]", schema: DEP_SCHEMA, v: decoded }]),
+    encodeFunctionData({ abi: depAbi, functionName: "importDeployments", args: [rows.map((r) => asTuple(DEP_SCHEMA, r))] }));
 });
 
 test("artifacts stay in sync with contracts/*.sol (regenerate check)", () => {

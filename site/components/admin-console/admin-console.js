@@ -22,6 +22,7 @@ import { baseRpc, waitReceipt, encCall, encAddr, hexBig } from "../../js/core/ch
 import { ADDRESS_BOOK_ADDRESS, USDC_BASE } from "../../js/core/config.js";
 import { esc, on, short, showToast } from "../../js/core/util.js";
 import { CONTRACTS } from "../../js/gen/contract-artifacts.js";
+import { MIG_KINDS, importState, sealTx } from "./migrate.js";
 
 const EXPLORER = "https://basescan.org";
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -108,6 +109,7 @@ class AdminConsole extends EnclaveElement {
     this._note = this.querySelector("#acNote");
     this._body.addEventListener("click", (e) => this._onClick(e));
     this._body.addEventListener("input", (e) => this._onInput(e));
+    this._body.addEventListener("change", (e) => { if (e.target.id === "migKind") this._migPrefill(); });
     this.refresh();
   }
 
@@ -272,6 +274,25 @@ class AdminConsole extends EnclaveElement {
         <div class="ac-cards">${cards}</div><div class="ac-status" hidden></div></section>`);
     }
 
+    /* -- migrate -- */
+    {
+      parts.push(`<section class="ac-panel"><h3>Migrate data</h3>
+        <p class="ac-sub">Move a contract's ENTIRE state into a freshly deployed import-capable revision: read the source, replay everything through the target's owner-gated import functions in batches, verify the copy field-by-field, then permanently seal the imports. The plan is a delta — re-clicking Migrate resumes an interrupted run and picks up records created on the source since the last pass (do one last pass right before pointing the book, then seal). Targets deployed before 2026-07-07 have no import surface and are rejected.</p>
+        <div class="ac-mig-ctl">
+          <select class="ac-in ac-in-key" id="migKind">${Object.entries(MIG_KINDS).map(([k, m]) => `<option value="${k}">${esc(m.label)}</option>`).join("")}</select>
+          <input class="ac-in" id="migSource" placeholder="source 0x…" spellcheck="false" autocomplete="off" />
+          <input class="ac-in" id="migTarget" placeholder="target 0x… (the new deploy)" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="ac-mig-actions">
+          <button class="btn btn-sm" data-act="mig-read">Read source</button>
+          <button class="btn btn-primary btn-sm" data-act="mig-run" disabled>Migrate</button>
+          <button class="btn btn-sm" data-act="mig-verify" disabled>Verify</button>
+          <button class="btn btn-sm ac-danger-btn" data-act="mig-seal" disabled>Seal target imports</button>
+        </div>
+        <div class="ac-mig-log" id="migLog" hidden></div>
+        <div class="ac-status" hidden></div></section>`);
+    }
+
     /* -- danger zone -- */
     {
       const rows = [
@@ -297,7 +318,34 @@ class AdminConsole extends EnclaveElement {
     this._body.innerHTML = parts.join("");
     this._body.hidden = false;
     this._paintSigner();
+    this._migPrefill();
     this._gate();
+  }
+
+  /* reset the migration flow: prefill the source from the book for the chosen
+     kind, clear cached reads, disable the downstream buttons */
+  _migPrefill() {
+    const kindSel = this._body && this._body.querySelector("#migKind");
+    if (!kindSel) return;
+    const m = MIG_KINDS[kindSel.value];
+    this._body.querySelector("#migSource").value = this.S.book.entries[m.bookKey] || "";
+    this._mig = { kind: kindSel.value, data: null };
+    for (const a of ["mig-run", "mig-verify", "mig-seal"]) {
+      const b = this._body.querySelector(`[data-act="${a}"]`);
+      b.disabled = true;
+      if (a === "mig-seal") { delete b.dataset.armed; b.textContent = "Seal target imports"; }
+    }
+    const log = this._body.querySelector("#migLog");
+    log.hidden = true; log.innerHTML = "";
+  }
+
+  _migLog(cls, txt) {
+    const log = this._body.querySelector("#migLog");
+    log.hidden = false;
+    const d = document.createElement("div");
+    d.className = cls; d.textContent = txt;
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
   }
 
   /* disable every gated button whose data-owner doesn't match the wallet */
@@ -423,6 +471,87 @@ class AdminConsole extends EnclaveElement {
         } finally { btn.disabled = false; }
         return;
       }
+      /* migration */
+      if (act.startsWith("mig-")) {
+        const M = this._mig, m = MIG_KINDS[M.kind];
+        const src = val("migSource"), tgt = val("migTarget");
+        const log = (cls, txt) => this._migLog(cls, txt);
+        const enable = (a, on2) => { this._body.querySelector(`[data-act="${a}"]`).disabled = !on2; };
+
+        if (act === "mig-read") {
+          if (!need(ADDR_RE.test(src), "enter the source contract address")) return;
+          btn.disabled = true;
+          try {
+            log("p", `reading ${m.label} from ${src}…`);
+            M.data = await m.read(src);
+            M.source = src;
+            log("ok", `source holds ${m.counts(M.data)}`);
+            enable("mig-run", true); enable("mig-verify", true);
+          } catch (err) { log("err", "read failed: " + friendly(err)); }
+          finally { btn.disabled = false; }
+          return;
+        }
+
+        if (!need(M.data && M.source === src, "read the source first (re-read if you changed the address)")) return;
+        if (!need(ADDR_RE.test(tgt), "enter the target contract address (the new deploy)")) return;
+        if (!need(lc(tgt) !== lc(src), "source and target are the same contract")) return;
+
+        if (act === "mig-run") {
+          btn.disabled = true;
+          try {
+            const st = await importState(tgt, m.contractName);
+            if (!need(st.capable, "target has no import surface — deploy a fresh " + m.contractName + " from the card above")) return;
+            if (!need(!st.sealed, "target's imports are permanently sealed — deploy a fresh target")) return;
+            log("p", "reading the target to plan the delta…");
+            const after = await m.read(tgt);
+            const txs = m.plan(M.data, after);
+            if (!txs.length) { log("ok", "nothing to import — target already holds everything. Verify, then seal."); return; }
+            log("p", `${txs.length} import transaction${txs.length === 1 ? "" : "s"} to send`);
+            await this._connect();
+            for (let i = 0; i < txs.length; i++) {
+              log("p", `[${i + 1}/${txs.length}] ${txs[i].label} — confirm in your wallet…`);
+              const hash = await sendTx(tgt, txs[i].dataHex);
+              log("p", `  sent ${hash.slice(0, 14)}… waiting…`);
+              await waitReceipt(hash, 90);
+              log("ok", `  ✓ ${txs[i].label}`);
+            }
+            log("ok", "migration pass complete — run Verify next (Migrate again later to pick up new source records).");
+          } catch (err) { log("err", friendly(err) + " — fix and click Migrate again; the delta plan resumes where it stopped."); }
+          finally { btn.disabled = false; }
+          return;
+        }
+
+        if (act === "mig-verify") {
+          btn.disabled = true;
+          try {
+            log("p", "verifying: re-reading the target and diffing field-by-field…");
+            const r = await m.verify(M.data, tgt);
+            if (r.bad.length) {
+              log("err", `${r.ok}/${r.total} match; mismatched: ${r.bad.slice(0, 10).join(", ")}${r.bad.length > 10 ? " …" : ""}`);
+            } else {
+              log("ok", `all ${r.total} records match the source exactly`);
+              enable("mig-seal", true);
+            }
+          } catch (err) { log("err", "verify failed: " + friendly(err)); }
+          finally { btn.disabled = false; }
+          return;
+        }
+
+        if (act === "mig-seal") {
+          if (!btn.dataset.armed) { btn.dataset.armed = "1"; btn.textContent = "Click again to PERMANENTLY seal"; return; }
+          delete btn.dataset.armed; btn.textContent = "Seal target imports";
+          btn.disabled = true;
+          try {
+            await this._connect();
+            log("p", "sealImports — confirm in your wallet…");
+            const hash = await sendTx(tgt, sealTx(m.contractName));
+            await waitReceipt(hash);
+            log("ok", "imports permanently sealed ✓ — now point the book: " + m.bookKey + " → " + tgt + " (Address book panel above), and refresh the repo fallbacks when convenient.");
+          } catch (err) { log("err", friendly(err)); btn.disabled = false; }
+          return;
+        }
+      }
+
       if (act.startsWith("book-point:")) {
         const [, key, addr] = act.split(":");
         return void this._tx(S.book.addr, encCall(CONTRACTS.EnclaveAddressBook.sel.set, [{ t: "bytes32", v: encKey(key) }, { t: "addr", v: addr }]),

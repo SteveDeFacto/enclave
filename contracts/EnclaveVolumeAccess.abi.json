@@ -50,6 +50,12 @@
   },
   {
     "anonymous": false,
+    "inputs": [],
+    "name": "ImportsSealed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
     "inputs": [
       {
         "indexed": true,
@@ -334,6 +340,80 @@
         "type": "bytes32"
       },
       {
+        "internalType": "address[]",
+        "name": "addrs",
+        "type": "address[]"
+      },
+      {
+        "internalType": "bytes32[]",
+        "name": "pubkeys",
+        "type": "bytes32[]"
+      },
+      {
+        "internalType": "uint8[]",
+        "name": "roles",
+        "type": "uint8[]"
+      },
+      {
+        "internalType": "uint64[]",
+        "name": "updatedAts",
+        "type": "uint64[]"
+      },
+      {
+        "internalType": "bytes[]",
+        "name": "sealedVEKs",
+        "type": "bytes[]"
+      }
+    ],
+    "name": "importMembers",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32[]",
+        "name": "volIds",
+        "type": "bytes32[]"
+      },
+      {
+        "internalType": "address[]",
+        "name": "owners_",
+        "type": "address[]"
+      },
+      {
+        "internalType": "uint64[]",
+        "name": "createdAts",
+        "type": "uint64[]"
+      }
+    ],
+    "name": "importVolumes",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "importsSealed",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "volId",
+        "type": "bytes32"
+      },
+      {
         "internalType": "address",
         "name": "member",
         "type": "address"
@@ -443,6 +523,13 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "sealImports",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",
@@ -484,6 +571,38 @@
     "name": "transferVolumeOwner",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "volCount",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "i",
+        "type": "uint256"
+      }
+    ],
+    "name": "volIdAt",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {

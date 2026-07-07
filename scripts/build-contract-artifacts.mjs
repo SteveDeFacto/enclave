@@ -23,7 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
 import solc from "solc";
-import { toFunctionSelector } from "viem";
+import { toFunctionSelector, toEventSelector } from "viem";
 
 const REPO = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(REPO, "site", "js", "gen", "contract-artifacts.js");
@@ -71,11 +71,14 @@ for (const def of DEFS) {
     if (sel[f.name]) throw new Error(`${def.name}.${f.name} is overloaded - selector map needs qualified names`);
     sel[f.name] = toFunctionSelector(f).slice(2);   // bare 8-hex, the site's convention (chain.js SEL maps)
   }
+  const evt = {};
+  for (const e of abi) if (e.type === "event") evt[e.name] = toEventSelector(e);
   const ctorAbi = abi.find((f) => f.type === "constructor");
   artifacts[def.name] = {
     bookKey: def.bookKey,
     ctor: (ctorAbi ? ctorAbi.inputs : []).map((i) => ({ name: i.name.replace(/^_/, ""), type: i.type })),
     sel,
+    evt,
     bytecode,
   };
   console.log(`  ${def.name.padEnd(21)} ${(bytecode.length / 2 - 1).toString().padStart(6)} bytes · ${Object.keys(sel).length} fns${def.viaIR ? " · viaIR" : ""}`);

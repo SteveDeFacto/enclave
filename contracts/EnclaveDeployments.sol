@@ -205,7 +205,10 @@ contract EnclaveDeployments {
         require(bytes(sshPubKey).length <= MAX_SSHKEY, "sshPubKey length");
         require(bytes(configCid).length <= MAX_CFG, "configCid length");
 
-        id = keccak256(abi.encodePacked(msg.sender, _nonces[msg.sender]++));
+        // ids are creator-salted hashes; the loop guards the one collision path
+        // that exists — a fresh contract's nonce restarting at 0 while imported
+        // records already carry this creator's old (sender, nonce) ids.
+        do { id = keccak256(abi.encodePacked(msg.sender, _nonces[msg.sender]++)); } while (_exists[id]);
         _exists[id] = true;
         _ids.push(id);
 
@@ -367,6 +370,52 @@ contract EnclaveDeployments {
         d.balance6 -= burned;
         d.spent6 += burned;
         until = from + uint64(secs);
+    }
+
+    // ========================================================================
+    // one-time migration (owner-gated, permanently sealable)
+    // ========================================================================
+
+    /// @notice While true, the owner may still import records from a previous
+    ///         EnclaveDeployments. Anyone auditing this contract should treat
+    ///         records as owner-attested until `importsSealed` — after sealing,
+    ///         every new record can only come from the permissionless paths.
+    bool public importsSealed;
+    event ImportsSealed();
+
+    /// @notice Migrate records verbatim from a previous EnclaveDeployments (the
+    ///         admin console reads them via getPage and replays them here).
+    ///         balance6/spent6 are ACCOUNTING numbers (nothing is custodied, so
+    ///         there are no funds to move); rate keeps each deployment's original
+    ///         snapshot. Leases do NOT survive migration: runner fields reset and
+    ///         the fleet re-claims funded work items on this contract as soon as
+    ///         the address book points here.
+    /// @dev Owner-trusted input (bounds were enforced by the source contract's
+    ///      create()); ids are unforgeable creator-salted hashes preserved
+    ///      verbatim, and create() skips over any imported id.
+    function importDeployments(Deployment[] calldata items) external {
+        require(msg.sender == owner, "!owner");
+        require(!importsSealed, "sealed");
+        for (uint256 i = 0; i < items.length; i++) {
+            bytes32 id = items[i].id;
+            require(id != bytes32(0), "id=0");
+            require(!_exists[id], "exists");
+            _exists[id] = true;
+            _ids.push(id);
+            _deployments[id] = items[i];
+            Deployment storage d = _deployments[id];
+            d.runner = bytes32(0);
+            d.runnerOperator = address(0);
+            d.leaseUntil = 0;
+            emit Created(id, d.owner, d.appRef, d.gpuMilli, d.cpuMilli, d.rate);
+        }
+    }
+
+    /// @notice Permanently close the import window (there is no re-open).
+    function sealImports() external {
+        require(msg.sender == owner, "!owner");
+        importsSealed = true;
+        emit ImportsSealed();
     }
 
     // ========================================================================

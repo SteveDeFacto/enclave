@@ -73,6 +73,21 @@
 
 .ac-danger-btn { border-color: var(--danger-deep); color: var(--danger); }
 
+.ac-mig-ctl { display: grid; grid-template-columns: minmax(130px, auto) 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.ac-mig-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.ac-mig-log {
+  margin-top: 12px; padding: 10px 12px; max-height: 280px; overflow-y: auto;
+  border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--bg-1);
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6;
+}
+.ac-mig-log .p { color: var(--text-muted); }
+.ac-mig-log .ok { color: var(--jade); }
+.ac-mig-log .err { color: var(--danger); }
+
+@media (max-width: 760px) {
+  .ac-mig-ctl { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 760px) {
   .ac-row, .ac-row-new { grid-template-columns: 1fr; gap: 6px; }
   .ac-live { display: none; }

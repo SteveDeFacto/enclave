@@ -269,6 +269,66 @@ contract EnclaveAppCatalog {
         emit OwnerChanged(o);
     }
 
+    // ----- one-time migration (owner-gated, permanently sealable) -----------
+
+    /// @notice While true, the owner may still import lineages from a previous
+    ///         EnclaveAppCatalog. Treat records as owner-attested until
+    ///         `importsSealed`; after sealing, only the permissionless
+    ///         publisher paths can add anything.
+    bool public importsSealed;
+    event ImportsSealed();
+
+    /// @notice Migrate app lineages verbatim from a previous catalog (the admin
+    ///         console reads getAppsPage and replays them here). Publishers keep
+    ///         structural ownership: appId must equal keccak256(publisher, slug),
+    ///         so the original publisher — and only they — can keep releasing to
+    ///         the imported lineage.
+    function importApps(App[] calldata items) external {
+        require(msg.sender == owner, "!owner");
+        require(!importsSealed, "sealed");
+        for (uint256 i = 0; i < items.length; i++) {
+            bytes32 appId = items[i].appId;
+            require(appId == appIdOf(items[i].publisher, items[i].slug), "appId mismatch");
+            require(!_exists[appId], "exists");
+            _exists[appId] = true;
+            _appIds.push(appId);
+            _apps[appId] = items[i];
+            emit AppCreated(appId, items[i].publisher, items[i].slug, items[i].name);
+        }
+    }
+
+    /// @notice Migrate one app's release history, in order, appending to whatever
+    ///         is already imported (chunkable). Replays the same invariants
+    ///         publishVersion enforces — per-app version-label uniqueness and
+    ///         global CID ownership — so the migrated catalog can't hold state
+    ///         the permissionless path couldn't have produced (timestamps,
+    ///         verified flags and approval rulings carry over verbatim).
+    function importVersions(bytes32 appId, Version[] calldata items) external {
+        require(msg.sender == owner, "!owner");
+        require(!importsSealed, "sealed");
+        require(_exists[appId], "unknown app");
+        Version[] storage vs = _versions[appId];
+        for (uint256 i = 0; i < items.length; i++) {
+            bytes32 vk = keccak256(abi.encodePacked(appId, items[i].version));
+            require(!_verUsed[vk], "version exists");
+            _verUsed[vk] = true;
+            bytes32 cidKey = keccak256(bytes(items[i].cid));
+            CidRef storage r = _cidRefs[cidKey];
+            require(r.index1 == 0 || r.appId == appId, "cid listed by another app");
+            vs.push(items[i]);
+            _cidRefs[cidKey] = CidRef({ appId: appId, index1: uint32(vs.length) });
+            emit VersionPublished(appId, vs.length - 1, items[i].version, items[i].cid);
+        }
+        _apps[appId].versionCount = uint32(vs.length);   // keep the counter honest across chunks
+    }
+
+    /// @notice Permanently close the import window (there is no re-open).
+    function sealImports() external {
+        require(msg.sender == owner, "!owner");
+        importsSealed = true;
+        emit ImportsSealed();
+    }
+
     // ----- reads (off-chain discovery) -------------------------------------
     function appCount() external view returns (uint256) { return _appIds.length; }
     function appIdAt(uint256 i) external view returns (bytes32) { return _appIds[i]; }
