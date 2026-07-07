@@ -98,7 +98,6 @@ function apiServer() {
       if (!authed) return json(401, { error: "auth" });
       const [, id, sub] = dep;
       if (sub === "/logs") return json(200, "hello from the app\n", "text/plain");
-      if (sub === "/unlock") return json(200, { id, volume: JSON.parse(body).name, status: "running" });
       if (req.method === "DELETE") return S.apiDeployment ? json(200, { id, status: "terminated", ranSeconds: 42 }) : json(404, { error: "not_found" });
       if (!sub) return S.apiDeployment && S.claimed ? json(200, S.apiDeployment) : json(404, { error: "not_found" });
     }
@@ -325,14 +324,6 @@ test("fund: tops up an existing deployment with USDC", async () => {
   const fund = S.txs.find((t) => t.functionName === "fundWithAuthorization");
   assert.equal(fund.args[2], 5_000000n);
   assert.match(r.out, /balance \$2\.00/);                   // stub balance readback
-});
-
-test("unlock --no-verify: passphrase from stdin, never argv", async () => {
-  const r = await run(["unlock", ID, "--vol", "data", "--no-verify"], { input: "hunter2\n" });
-  assert.equal(r.code, 0, r.err);
-  const call = S.apiCalls.findLast((c) => c.path === `/v1/deployments/${ID}/unlock`);
-  assert.deepEqual(JSON.parse(call.body), { name: "data", passphrase: "hunter2" });
-  assert.match(r.out, /unlocked/);
 });
 
 test("stop: setActive(false) on-chain, then DELETE", async () => {

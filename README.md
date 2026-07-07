@@ -7,7 +7,7 @@
 - **REST API:** https://api.enclave.host/v1 — CORS-enabled, drive it from a browser
 - **Deployed apps:** `https://<id>.app.enclave.host`, TLS terminated in-enclave
 
-There are no accounts and no KYC: an Ethereum wallet is the identity (email sign-in gets an embedded wallet). The project was formerly named **NaN**; the rename to **Enclave** is complete across code and contracts, with only wire/disk format constants (`NANVOL2`, the vault key-derivation strings) and a few live infrastructure names (the `nan.host` legacy domain, the Tinfoil org hostname) keeping the old token.
+There are no accounts and no KYC: an Ethereum wallet is the identity (email sign-in gets an embedded wallet). The project was formerly named **NaN**; the rename to **Enclave** is complete across code and contracts, with only a few live infrastructure names (the `nan.host` legacy domain, the Tinfoil org hostname) keeping the old token.
 
 ## How it works
 
@@ -16,7 +16,7 @@ There are no accounts and no KYC: an Ethereum wallet is the identity (email sign
 3. **Enclaves claim the work.** Each enclave self-registers in `EnclaveRegistry`, polls for funded work it can serve, claims it, and runs the app in a wasmtime sandbox: per-tenant process isolation, a private RAM-backed `/data`, no network beyond the served HTTP socket unless the app declares firewall ports.
 4. **Every layer attests.** Tinfoil measures the container image (with a Sigstore transparency-log record tying it to this repo's release), the enclave proves the measurement in its attestation quote, and TLS keys never leave it. The site and CLI verify the full chain client-side before connecting.
 
-Beyond plain web apps: GPU inference via `wasi-nn` (ONNX on an MPS-capped slice of an H200), attested read-only **model volumes** mounted at `/models`, **encrypted volumes** whose key only the deployer holds (decrypted in-RAM after attestation), raw TCP/UDP services behind an SNI relay, per-deployment dedicated IPv6 (inbound and outbound), and a **platform model tier** — an 8×GPU vLLM flavor serving large models over an attested OpenAI-compatible API.
+Beyond plain web apps: GPU inference via `wasi-nn` (ONNX on an MPS-capped slice of an H200), attested read-only **model volumes** mounted at `/models` (Tinfoil Modelwrap — the attestation commits to the exact weight bytes), raw TCP/UDP services behind an SNI relay, per-deployment dedicated IPv6 (inbound and outbound), and a **platform model tier** — an 8×GPU vLLM flavor serving large models over an attested OpenAI-compatible API.
 
 ## Repository layout
 

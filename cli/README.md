@@ -50,8 +50,7 @@ NTFS the file is only as private as your user profile.
   the money can land on that deployment's balance and nowhere else.
 - **Attestation**: `enclave attest` runs Tinfoil's verifier *locally* (hardware
   quote → vendor root, Sigstore code provenance, measurement match, TLS
-  binding) and exits non-zero on FAIL. `enclave unlock` refuses to send a
-  volume passphrase until that check passes.
+  binding) and exits non-zero on FAIL.
 - **No hidden traffic**: any command run with `-x` prints every REST call and
   transaction before it is sent, ready to replay with `curl`.
 

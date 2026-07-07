@@ -64,7 +64,6 @@ const ENTRIES = [
   { key: "deployments",  env: "DEPLOYMENTS_ADDRESS" },
   { key: "appCatalog",   env: "APP_CATALOG_ADDRESS" },
   { key: "enclavePay",   env: "FORWARDER_ADDRESS" },
-  { key: "volumeAccess", env: "VOLUME_ACCESS_ADDRESS" },
 ];
 
 function die(msg) { console.error(`\nERROR: ${msg}\n`); process.exit(1); }

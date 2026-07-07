@@ -370,385 +370,18 @@ def _model_volumes() -> dict:
 # guest mount point for an attached volume: /models/<name> (read-only; the
 # underlying dm-verity/EROFS mount is physically read-only anyway)
 VOL_GUEST_ROOT = os.environ.get("VOL_GUEST_ROOT", "/models")
-# guest mount point for a decrypted USER-HELD-KEY volume: /enc/<name>
-ENC_GUEST_ROOT = os.environ.get("ENC_GUEST_ROOT", "/enc")
-# ciphertext staging + decrypted-plaintext root. Both default under the
-# enclave's /tmp, which IS the CVM's already-encrypted, ephemeral, host-invisible
-# ramdisk (same backing as the /data scratch above - "the enclave blocks mounts",
-# so there is no separate host disk to leak to). So the decrypted plaintext lives
-# ONLY in the CVM's encrypted RAM: never persisted, never host-visible, gone on
-# teardown. (Ciphertext staging is on the same store but would be safe anywhere -
-# it's encrypted.)
-ENC_CIPHER_DIR = pathlib.Path(os.environ.get("ENC_CIPHER_DIR", "/tmp/enclave-enc-cipher"))
-ENC_PLAIN_ROOT = pathlib.Path(os.environ.get("ENC_PLAIN_ROOT", "/tmp/enclave-enc-plain"))
-ENC_MAX_BYTES  = int(os.environ.get("ENC_MAX_BYTES", str(8 * 1024 * 1024 * 1024)))  # ciphertext cap
-_ENC_CIPHERS   = {"aes-256-ctr", "aes-256-cbc"}   # allowlist (must match enclave-volume.sh)
-# enclave-vault (wallet-gated) volume format: NANVOL1 || nonce(24) || XChaCha20-
-# Poly1305(tar). Must match scripts/enclave-vault.mjs — the protocol's source of
-# truth. The key is a 32-byte VEK delivered sealed-to-this-enclave via the
-# supervisor's /unlock-sealed (never a passphrase, never plaintext off-enclave).
-_VAULT_MAGIC   = b"NANVOL1"
-# NANVOL2 = the LARGE tier: a block-encrypted cipherdir (per-file blobs of
-# 4MiB XChaCha20-Poly1305 blocks + a VEK-sealed manifest; see enclave-vault.mjs
-# packBlocks). NOTHING is staged or decrypted whole: the ciphertext stays on
-# its (read-only, dm-verity) attached volume and blocks are decrypted ON
-# DEMAND into a bounded LRU when a tenant reads them - gocryptfs semantics in
-# pure userspace, because the enclave grants no FUSE/loop/dm privileges and
-# never will. Tenants read over the manager's loopback data plane
-# (GET /enc/<vid>/<name>/<path>, Range honored, per-deployment bearer token
-# from the ENCLAVE_ENC_HTTP env) - wasmtime serve already grants guests outbound
-# HTTP (-Shttp), so no new capability is involved.
-_NANVOL2_TAG   = 16                            # per-block Poly1305 tag
-ENC_CACHE_MB   = int(os.environ.get("ENC_CACHE_MB", "256"))   # plaintext block LRU budget
 
 
-def _prepare_enc_volumes(vid: str, specs: list) -> list:
-    """Fetch + stage each encrypted volume's CIPHERTEXT (we can't decrypt yet -
-    the key arrives post-attestation via /unlock). Returns normalized specs with
-    the local ciphertext path. Raises ValueError on a bad spec / fetch."""
-    out = []
-    seen = set()
-    ENC_CIPHER_DIR.mkdir(parents=True, exist_ok=True)
-    for s in specs:
-        if not isinstance(s, dict):
-            raise ValueError("encVolumes entries must be objects")
-        name = str(s.get("name") or "").strip()
-        src  = str(s.get("source") or "").strip()
-        sha  = str(s.get("sha256") or "").strip().lower()
-        cipher = str(s.get("cipher") or "aes-256-ctr").strip().lower()
-        try:
-            iters = int(s.get("iter") or 600000)
-        except (TypeError, ValueError):
-            raise ValueError(f"encVolume '{name}': iter must be an integer")
-        if not _VOL_NAME_RE.match(name):
-            raise ValueError(f"encVolume name '{name}' invalid ([a-z0-9._-])")
-        if name in seen:
-            raise ValueError(f"duplicate encVolume name '{name}'")
-        seen.add(name)
-        if not re.fullmatch(r"[0-9a-f]{64}", sha):
-            raise ValueError(f"encVolume '{name}': sha256 must be the 64-hex plaintext hash")
-        # A `vault` object marks a WALLET-GATED volume (enclave-vault format): the key
-        # is a VEK unsealed by the supervisor after an on-chain EnclaveVolumeAccess
-        # check, not a deployer passphrase. vault.owner + vault.volume identify
-        # the on-chain ACL entry (volId = keccak256(abi.encode(owner, volume)));
-        # owner may be empty — the supervisor defaults it to the deployment owner.
-        vault = s.get("vault")
-        if vault is not None:
-            if not isinstance(vault, dict):
-                raise ValueError(f"encVolume '{name}': vault must be an object")
-            v_owner = str(vault.get("owner") or "").strip()
-            if v_owner and not re.fullmatch(r"0x[0-9a-fA-F]{40}", v_owner):
-                raise ValueError(f"encVolume '{name}': vault.owner must be a 0x address")
-            v_vol = str(vault.get("volume") or name).strip()
-            if not v_vol or len(v_vol) > 128:
-                raise ValueError(f"encVolume '{name}': vault.volume must be 1-128 chars")
-            vault = {"owner": v_owner, "volume": v_vol,
-                     "autoGrant": bool(vault.get("autoGrant", True))}
-        elif cipher not in _ENC_CIPHERS:
-            raise ValueError(f"encVolume '{name}': unsupported cipher '{cipher}'")
-        # LARGE tier (format nanvol2): the ciphertext is a block-encrypted
-        # cipherdir riding an ATTACHED (Modelwrap) volume - source volume://
-        # <attachedName>[/subdir]. Nothing is fetched or staged; unlock only
-        # decrypts the manifest, and tenant reads decrypt blocks on demand.
-        fmt = str(s.get("format") or "").strip().lower()
-        if fmt == "nanvol2":
-            if vault is None:
-                raise ValueError(f"encVolume '{name}': nanvol2 volumes are wallet-gated - a vault object is required")
-            m = re.fullmatch(r"volume://([a-z0-9._-]+)(/.*)?", src)
-            if not m:
-                raise ValueError(f"encVolume '{name}': nanvol2 source must be volume://<attachedVolume>[/subdir]")
-            have = _model_volumes()
-            if m.group(1) not in have:
-                raise ValueError(f"encVolume '{name}': attached volume '{m.group(1)}' not on this enclave "
-                                 f"(available: {', '.join(sorted(have)) or 'none'})")
-            root = pathlib.Path(have[m.group(1)]["path"] + (m.group(2) or ""))
-            if ".." in (m.group(2) or ""):
-                raise ValueError(f"encVolume '{name}': bad subdir")
-            if not (root / "manifest.nvm").is_file():
-                raise ValueError(f"encVolume '{name}': no NANVOL2 cipherdir at {src} (manifest.nvm missing)")
-            out.append({"name": name, "format": "nanvol2", "cipher_dir": str(root),
-                        "sha256": sha, "vault": vault, "unlocked": False, "plain_dir": None})
-            continue
-        elif fmt:
-            raise ValueError(f"encVolume '{name}': unknown format '{fmt}'")
-        cpath = ENC_CIPHER_DIR / f"{vid}-{name}.enc"
-        if src.startswith("ipfs://"):
-            cid = src[len("ipfs://"):].split("/", 1)[0].split("?", 1)[0].strip()
-            if ipfs_fetch is None:
-                raise ValueError("encVolume source is ipfs:// but ipfs_fetch is unavailable")
-            data = ipfs_fetch.fetch_verified(cid, IPFS_GATEWAY, ENC_MAX_BYTES, IPFS_TIMEOUT)
-        elif src.startswith(("http://", "https://")):
-            import urllib.request
-            with urllib.request.urlopen(src, timeout=IPFS_TIMEOUT) as r:
-                data = r.read(ENC_MAX_BYTES + 1)
-            if len(data) > ENC_MAX_BYTES:
-                raise ValueError(f"encVolume '{name}': ciphertext exceeds {ENC_MAX_BYTES} bytes")
-        else:
-            raise ValueError(f"encVolume '{name}': source must be ipfs:// or http(s)://")
-        cpath.write_bytes(data)
-        out.append({"name": name, "cipher_path": str(cpath), "sha256": sha,
-                    "cipher": cipher, "iter": iters, "vault": vault,
-                    "unlocked": False, "plain_dir": None})
-    return out
 
 
-def _decrypt_enc_volume(spec: dict, passphrase: str) -> str:
-    """Decrypt one staged encrypted volume IN MEMORY with the deployer's
-    passphrase, verify the plaintext hash, and extract the tar into a per-volume
-    tmpfs dir. Returns the plaintext dir. Raises ValueError on wrong key / tamper.
-    The passphrase is passed to openssl via stdin (never argv/env/disk)."""
-    import subprocess as _sp, hashlib as _hl, tempfile as _tf
-    ENC_PLAIN_ROOT.mkdir(parents=True, exist_ok=True)
-    # decrypt to a temp file on the (tmpfs) plaintext root, hash it, then extract
-    with _tf.NamedTemporaryFile(dir=str(ENC_PLAIN_ROOT), suffix=".tar", delete=False) as tf:
-        plain_tar = tf.name
-    try:
-        p = _sp.run(["openssl", "enc", "-d", "-" + spec["cipher"], "-pbkdf2",
-                     "-iter", str(spec["iter"]), "-pass", "stdin",
-                     "-in", spec["cipher_path"], "-out", plain_tar],
-                    input=(passphrase + "\n").encode(), capture_output=True)
-        if p.returncode != 0:
-            raise ValueError("decrypt failed (wrong passphrase or corrupt ciphertext)")
-        h = _hl.sha256()
-        with open(plain_tar, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
-        if h.hexdigest() != spec["sha256"]:
-            raise ValueError("plaintext hash mismatch (wrong passphrase or tampered volume)")
-        dest = ENC_PLAIN_ROOT / (pathlib.Path(spec["cipher_path"]).stem)
-        dest.mkdir(parents=True, exist_ok=True)
-        rc = _sp.run(["tar", "-xf", plain_tar, "-C", str(dest)], capture_output=True)
-        if rc.returncode != 0:
-            raise ValueError("extract failed: " + rc.stderr.decode(errors="replace")[:200])
-        return str(dest)
-    finally:
-        try: os.remove(plain_tar)   # the decrypted tar is transient; the extracted tree is what mounts
-        except OSError: pass
 
 
-def _pycrypto():
-    """pycryptodome, from either packaging of it: pip wheels ship the `Crypto`
-    namespace, while Debian/Ubuntu's python3-pycryptodome ships `Cryptodome`
-    (the live smoke caught every manager image failing on `Crypto` despite a
-    clean apt install). Returns (ChaCha20_Poly1305, HKDF, SHA256); raises the
-    caller-facing ValueError when neither namespace is present."""
-    try:
-        try:
-            from Crypto.Cipher import ChaCha20_Poly1305
-            from Crypto.Protocol.KDF import HKDF
-            from Crypto.Hash import SHA256
-        except ImportError:
-            from Cryptodome.Cipher import ChaCha20_Poly1305
-            from Cryptodome.Protocol.KDF import HKDF
-            from Cryptodome.Hash import SHA256
-    except ImportError:
-        raise ValueError("vault volumes need pycryptodome in the manager image (python3-pycryptodome)")
-    return ChaCha20_Poly1305, HKDF, SHA256
 
 
-def _decrypt_vault_volume(spec: dict, vek_hex: str, verify_only: bool = False) -> str:
-    """Decrypt one staged enclave-vault volume (NANVOL1 / XChaCha20-Poly1305) with a
-    32-byte VEK, streaming ciphertext -> plaintext so peak RAM is one chunk, not
-    2x the volume. The AEAD tag AND the plaintext sha256 are both verified
-    BEFORE anything is extracted (decrypt-then-verify; the plaintext file is
-    discarded on any mismatch). verify_only skips extraction and writes nothing
-    — used to re-verify a VEK against the staged ciphertext (auto-grant re-arm)
-    without touching the running tenant. Returns the plaintext dir ("" when
-    verify_only). Raises ValueError on wrong key / tamper / bad format."""
-    ChaCha20_Poly1305, _, _ = _pycrypto()
-    import hashlib as _hl, tempfile as _tf, subprocess as _sp
-    try:
-        key = bytes.fromhex(vek_hex.lower().removeprefix("0x"))
-    except ValueError:
-        raise ValueError("vek must be hex")
-    if len(key) != 32:
-        raise ValueError("vek must be 32 bytes")
-    hdr = len(_VAULT_MAGIC) + 24                     # magic || nonce(24); trailing 16 = Poly1305 tag
-    size = os.path.getsize(spec["cipher_path"])
-    if size < hdr + 16:
-        raise ValueError("not a enclave-vault volume (too short)")
-    plain_tar = None
-    try:
-        with open(spec["cipher_path"], "rb") as f:
-            if f.read(len(_VAULT_MAGIC)) != _VAULT_MAGIC:
-                raise ValueError("not a enclave-vault volume (bad header)")
-            cipher = ChaCha20_Poly1305.new(key=key, nonce=f.read(24))  # 24B nonce = XChaCha20
-            h = _hl.sha256()
-            out = None
-            if not verify_only:
-                ENC_PLAIN_ROOT.mkdir(parents=True, exist_ok=True)
-                with _tf.NamedTemporaryFile(dir=str(ENC_PLAIN_ROOT), suffix=".tar", delete=False) as tf:
-                    plain_tar = tf.name
-                out = open(plain_tar, "wb")
-            try:
-                left = size - hdr - 16
-                while left > 0:
-                    buf = f.read(min(1 << 20, left))
-                    if not buf:
-                        raise ValueError("truncated ciphertext")
-                    left -= len(buf)
-                    chunk = cipher.decrypt(buf)
-                    h.update(chunk)
-                    if out:
-                        out.write(chunk)
-            finally:
-                if out:
-                    out.close()
-            try:
-                cipher.verify(f.read(16))
-            except ValueError:
-                raise ValueError("decrypt failed (wrong key or corrupt ciphertext)")
-        if h.hexdigest() != spec["sha256"]:
-            raise ValueError("plaintext hash mismatch (wrong key or tampered volume)")
-        if verify_only:
-            return ""
-        dest = ENC_PLAIN_ROOT / (pathlib.Path(spec["cipher_path"]).stem)
-        dest.mkdir(parents=True, exist_ok=True)
-        rc = _sp.run(["tar", "-xf", plain_tar, "-C", str(dest)], capture_output=True)
-        if rc.returncode != 0:
-            raise ValueError("extract failed: " + rc.stderr.decode(errors="replace")[:200])
-        return str(dest)
-    finally:
-        if plain_tar:
-            try: os.remove(plain_tar)
-            except OSError: pass
 
 
-def _open_nanvol2(spec: dict, vek_hex: str) -> None:
-    """Unlock a NANVOL2 (block-encrypted cipherdir) volume: decrypt ONLY the
-    manifest with the VEK, verify its plaintext sha256 against the config pin,
-    and arm the on-demand block reader (spec['_reader'], RAM only - _public
-    strips underscore keys). Idempotent; ~KBs of work regardless of volume
-    size. Raises ValueError on wrong key / tamper / pin mismatch."""
-    ChaCha20_Poly1305, _, _ = _pycrypto()
-    import hashlib as _hl
-    try:
-        key = bytes.fromhex(vek_hex.lower().removeprefix("0x"))
-    except ValueError:
-        raise ValueError("vek must be hex")
-    if len(key) != 32:
-        raise ValueError("vek must be 32 bytes")
-    blob = (pathlib.Path(spec["cipher_dir"]) / "manifest.nvm").read_bytes()
-    hdr = len(_VAULT_MAGIC) + 24
-    if len(blob) < hdr + 16 or blob[:len(_VAULT_MAGIC)] != _VAULT_MAGIC:
-        raise ValueError("manifest.nvm is not a enclave-vault blob")
-    c = ChaCha20_Poly1305.new(key=key, nonce=blob[len(_VAULT_MAGIC):hdr])
-    plain = c.decrypt(blob[hdr:-16])
-    try:
-        c.verify(blob[-16:])
-    except ValueError:
-        raise ValueError("manifest decrypt failed (wrong key or corrupt cipherdir)")
-    if _hl.sha256(plain).hexdigest() != spec["sha256"]:
-        raise ValueError("manifest hash mismatch (config pins a different volume version)")
-    man = json.loads(plain)
-    if int(man.get("version") or 0) != 1 or not isinstance(man.get("files"), list):
-        raise ValueError("unsupported nanvol2 manifest")
-    spec["_reader"] = {"block_size": int(man["blockSize"]),
-                       "pack_id": bytes.fromhex(man["packId"]),
-                       "vek": key,
-                       "files": {f["p"]: {"s": int(f["s"]), "b": f["b"]} for f in man["files"]},
-                       "keys": {}}   # blob -> derived file key (lazy)
 
 
-def _nanvol2_file_key(reader: dict, blob: str) -> bytes:
-    """fileKey = HKDF-SHA256(VEK, salt=packId, info='nan-vault/file/v1:'+blob).
-    Must match enclave-vault.mjs blockFileKey (@noble hkdf; interop-tested)."""
-    k = reader["keys"].get(blob)
-    if k is None:
-        _, HKDF, SHA256 = _pycrypto()
-        k = HKDF(reader["vek"], 32, reader["pack_id"], SHA256,
-                 context=("nan-vault/file/v1:" + blob).encode())
-        reader["keys"][blob] = k
-    return k
-
-
-# Bounded LRU of decrypted plaintext blocks, shared across volumes; the ONLY
-# place large-tier plaintext ever exists (CVM RAM, evicted under pressure,
-# purged on teardown). Keyed (vid, volume, blob, blockIndex).
-_BLOCK_CACHE = collections.OrderedDict()
-_BLOCK_CACHE_BYTES = 0
-_block_lock = threading.Lock()
-
-def _block_cache_get(key):
-    with _block_lock:
-        v = _BLOCK_CACHE.get(key)
-        if v is not None:
-            _BLOCK_CACHE.move_to_end(key)
-        return v
-
-def _block_cache_put(key, plain: bytes):
-    global _BLOCK_CACHE_BYTES
-    with _block_lock:
-        if key in _BLOCK_CACHE:
-            return
-        _BLOCK_CACHE[key] = plain
-        _BLOCK_CACHE_BYTES += len(plain)
-        while _BLOCK_CACHE_BYTES > ENC_CACHE_MB * 1024 * 1024 and _BLOCK_CACHE:
-            _, old = _BLOCK_CACHE.popitem(last=False)   # evict least-recently-used
-            _BLOCK_CACHE_BYTES -= len(old)
-
-def _block_cache_purge(vid: str):
-    global _BLOCK_CACHE_BYTES
-    with _block_lock:
-        for k in [k for k in _BLOCK_CACHE if k[0] == vid]:
-            _BLOCK_CACHE_BYTES -= len(_BLOCK_CACHE.pop(k))
-
-
-def _nanvol2_read(vid: str, spec: dict, path: str, start: int, end: int):
-    """Yield plaintext byte ranges [start, end) of one file in an unlocked
-    NANVOL2 volume, decrypting (and LRU-caching) only the touched blocks. Each
-    block's AEAD tag is verified before any of its bytes are served. Raises
-    KeyError (no such file) / ValueError (tamper)."""
-    ChaCha20_Poly1305, _, _ = _pycrypto()
-    reader = spec["_reader"]
-    f = reader["files"][path]
-    bs = reader["block_size"]
-    end = min(end, f["s"])
-    if start >= end:
-        return
-    key = _nanvol2_file_key(reader, f["b"])
-    blob_path = pathlib.Path(spec["cipher_dir"]) / f["b"]
-    with open(blob_path, "rb") as fh:
-        for idx in range(start // bs, (end - 1) // bs + 1):
-            ck = (vid, spec["name"], f["b"], idx)
-            plain = _block_cache_get(ck)
-            if plain is None:
-                fh.seek(idx * (bs + _NANVOL2_TAG))
-                block = fh.read(bs + _NANVOL2_TAG)
-                if len(block) < _NANVOL2_TAG:
-                    raise ValueError("truncated block")
-                nonce = idx.to_bytes(8, "little") + bytes(16)   # LE64(index) || zeros
-                c = ChaCha20_Poly1305.new(key=key, nonce=nonce)
-                plain = c.decrypt(block[:-_NANVOL2_TAG])
-                try:
-                    c.verify(block[-_NANVOL2_TAG:])
-                except ValueError:
-                    raise ValueError(f"block {idx} failed authentication (tampered ciphertext)")
-                _block_cache_put(ck, plain)
-            lo = max(start, idx * bs) - idx * bs
-            hi = min(end, (idx + 1) * bs) - idx * bs
-            yield plain[lo:hi]
-
-
-_VAULT_FS = None   # does this wasmtime carry the enclave-vault WASI-fs shim (-S vault)?
-
-def _vault_fs_supported() -> bool:
-    """Probe (once) whether the wasmtime toolchain has the enclave-vault WASI-fs
-    shim: `-S vault=<guest>::<skeleton>::<cipherdir>` mounts a NANVOL2 volume
-    as a normal read-only guest directory, the wasmtime HOST decrypting blocks
-    on demand (wasmtime-vault-fs.patch). When present, large-tier volumes are
-    served transparently at /enc/<name> like small-tier ones; the loopback
-    data plane remains as the fallback for older toolchains."""
-    global _VAULT_FS
-    if _VAULT_FS is None:
-        try:
-            r = subprocess.run([WASMTIME, "run", "-S", "help"],
-                               capture_output=True, text=True, timeout=10)
-            _VAULT_FS = "vault=" in (r.stdout or "") + (r.stderr or "")
-        except Exception:
-            _VAULT_FS = False
-        print(f"[vault-fs] wasmtime -S vault support: {_VAULT_FS}", flush=True)
-    return _VAULT_FS
 
 
 _EGRESS_FS = None   # does this wasmtime carry the transparent-egress shim (-S egress)?
@@ -794,23 +427,6 @@ def _parse_egress_url(url: str):
         return None
 
 
-def _build_vault_skeleton(vid: str, spec: dict) -> None:
-    """Materialize the SKELETON tree for a nanvol2 volume: the manifest's
-    directory structure with each file a SPARSE placeholder truncated to its
-    plaintext size (tmpfs; zero pages until written, and nothing ever writes).
-    wasmtime preopens this tree, so every metadata operation (stat, readdir,
-    open, inode identity) is real - only content reads route to decryption."""
-    reader = spec["_reader"]
-    skel = ENC_PLAIN_ROOT / f"{vid}-{spec['name']}-skel"
-    for path, f in reader["files"].items():
-        parts = path.split("/")
-        if not path or path.startswith("/") or ".." in parts or "." in parts:
-            raise ValueError(f"vault manifest path unsafe: {path!r}")
-        p = skel.joinpath(*parts)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "wb") as fh:
-            fh.truncate(f["s"])
-    spec["skel_dir"] = str(skel)
 
 
 def _nn_tenant_env(gpu_share: float, pinned: bool) -> dict:
@@ -1461,8 +1077,7 @@ def _alloc_ports(pspec) -> dict:
 
 
 def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdir=None,
-               nn=False, enclave_config=None, vol_mounts=None, enc_mounts=None, enc_http=None,
-               vault_flags=None, vault_names=None, egress=None, egress_transparent=None):
+               nn=False, enclave_config=None, vol_mounts=None, egress=None, egress_transparent=None):
     """The wasmtime invocation for a ports spec. Returns (cmd, host_port, wait_ports).
 
     serve mode: `wasmtime serve` owns the one HTTP listener; no sockets granted.
@@ -1512,25 +1127,6 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
         vol_args += ["--dir", f"{host_path}::{VOL_GUEST_ROOT}/{name}"]
     if vol_mounts:
         vol_args += ["--env", "ENCLAVE_MODELS=" + ",".join(vol_mounts.keys())]
-    # decrypted user-held-key volumes: preopen each at /enc/<name>. The plaintext
-    # lives only on the enclave's tmpfs (encrypted RAM); the guest reads it like
-    # any dir. ENCLAVE_ENC lists them so the app can find them without probing.
-    enc_mounts = enc_mounts or {}
-    for name, host_path in enc_mounts.items():
-        vol_args += ["--dir", f"{host_path}::{ENC_GUEST_ROOT}/{name}"]
-    # enclave-vault WASI-fs shim mounts (large tier, transparent): `-S vault=...`
-    # preopens the sparse skeleton at /enc/<name>; the wasmtime host decrypts
-    # blocks on demand. These count as /enc mounts for ENCLAVE_ENC discovery.
-    vol_args += list(vault_flags or [])
-    enc_names = list(enc_mounts.keys()) + list(vault_names or [])
-    if enc_names:
-        vol_args += ["--env", "ENCLAVE_ENC=" + ",".join(enc_names)]
-    # LARGE-tier volumes WITHOUT the shim have no dir to preopen - the guest
-    # reads them over the manager's loopback data plane (Range honored). The
-    # env maps each volume to its URL + this deployment's bearer token; guests
-    # already hold outbound HTTP (`serve` grants -Shttp; `run` grants sockets).
-    if enc_http:
-        vol_args += ["--env", "ENCLAVE_ENC_HTTP=" + json.dumps(enc_http)]
     # enclave transparent egress (phase 2): `-S egress=<host>:<port>` makes the
     # patched wasmtime funnel ALL guest outbound through the loopback SOCKS front
     # (credential in $ENCLAVE_EGRESS_CRED, set host-side by _spawn_and_wait), so an
@@ -1672,47 +1268,9 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
             vol_mounts[name] = have[name]["path"]
     rec["volumes"] = list(vol_mounts.keys())
 
-    # encrypted volumes (user-held key): the config may name ciphertext blobs the
-    # enclave must decrypt IN MEMORY with a passphrase the DEPLOYER sends AFTER
-    # verifying attestation (POST /vms/:id/unlock). Fetch the ciphertext now; hold
-    # the tenant in awaiting_unlock and defer the spawn until every volume is
-    # unlocked. The host/operator never see the key or the plaintext.
-    enc_specs = []
-    if enclave_config:
-        try:
-            ev = json.loads(enclave_config).get("encVolumes")
-            if isinstance(ev, list):
-                enc_specs = ev
-        except Exception:
-            pass
     ctx = {"pspec": pspec, "wasm": wasm, "port": port, "port_map": port_map, "fsdir": fsdir,
            "nn": nn, "enclave_config": enclave_config, "vol_mounts": vol_mounts, "gpu_share": gpu_share,
            "log_path": log_path, "egress": egress}
-    if enc_specs:
-        try:
-            rec["_encVolumes"] = _prepare_enc_volumes(vid, enc_specs)
-        except ValueError as e:
-            rec["status"], rec["error"] = "failed", "encVolume: " + str(e)
-            return rec
-        except Exception as e:
-            rec["status"], rec["error"] = "failed", f"encVolume fetch failed: {e}"
-            return rec
-        rec["_spawn_ctx"] = ctx
-        # public entries carry the vault metadata (owner/volume/autoGrant) so the
-        # supervisor can compute the on-chain volId and gate unlock-sealed —
-        # config parsing stays HERE, in one place.
-        rec["encVolumes"] = [{"name": s["name"], "locked": True,
-                              **({"format": s["format"]} if s.get("format") else {}),
-                              **({"vault": s["vault"]} if s.get("vault") is not None else {})}
-                             for s in rec["_encVolumes"]]
-        # large-tier volumes are read over the manager's loopback data plane;
-        # the per-deployment bearer token gates it (underscore = never public,
-        # and rec never touches disk here - handed to the guest env only).
-        if any(s.get("format") == "nanvol2" for s in rec["_encVolumes"]):
-            import secrets as _secrets
-            rec["_encToken"] = _secrets.token_urlsafe(24)
-        rec["status"] = "awaiting_unlock"   # POST /vms/:id/unlock {name, passphrase|vek} to proceed
-        return rec
     return _spawn_and_wait(rec, ctx)
 
 
@@ -1728,7 +1286,7 @@ def _spawn_and_wait(rec, ctx):
     # per-deployment socks5h URL rides `egress`) AND this toolchain carries the
     # -S egress shim, make it TRANSPARENT — the endpoint goes on the wasmtime
     # cmdline and the SOCKS credential into the process env (guest-invisible,
-    # same delivery as the vault VEKs). On older toolchains _egress_supported()
+    # host-process-env only, never the guest). On older toolchains _egress_supported()
     # is False and we fall back to phase-1: the guest-visible ENCLAVE_EGRESS only,
     # with raw -Sinherit-network still granted in run mode.
     egress_transparent, egress_env = None, {}
@@ -1737,29 +1295,11 @@ def _spawn_and_wait(rec, ctx):
         if parsed:
             egress_transparent = parsed["endpoint"]
             egress_env["ENCLAVE_EGRESS_CRED"] = parsed["cred"]
-    enc_mounts = {s["name"]: s["plain_dir"] for s in rec.get("_encVolumes", []) if s.get("plain_dir")}
-    # Large-tier (nanvol2) volumes, two delivery modes: with the enclave-vault
-    # WASI-fs shim in the toolchain, each mounts TRANSPARENTLY at /enc/<name>
-    # (wasmtime preopens the sparse skeleton and decrypts blocks on demand;
-    # the VEK rides the process env, host-side only). Otherwise the tenant
-    # reads it over the loopback data plane (ENCLAVE_ENC_HTTP).
-    vault_flags, vault_env, vault_names, enc_http = [], {}, [], {}
-    for s in rec.get("_encVolumes", []):
-        if s.get("format") != "nanvol2" or not s.get("unlocked"):
-            continue
-        if s.get("skel_dir") and _vault_fs_supported():
-            vault_env[f"ENCLAVE_VAULT_KEY_{len(vault_names)}"] = s["_reader"]["vek"].hex()
-            vault_flags += ["-S", f"vault={ENC_GUEST_ROOT}/{s['name']}::{s['skel_dir']}::{s['cipher_dir']}"]
-            vault_names.append(s["name"])
-        else:
-            enc_http[s["name"]] = {"url": f"http://{HOST_IP}:{PORT}/enc/{rec['id']}/{s['name']}",
-                                   "token": rec.get("_encToken", "")}
     # `-W max-memory-size` caps the guest's linear memory (the only RAM a tenant
     # can grow) - the real per-app memory ceiling, enforced by the runtime.
     mem_bytes = max(rec["mem_mb"], 1) * 1024 * 1024
     cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir, nn,
-                                            enclave_config, vol_mounts, enc_mounts, enc_http,
-                                            vault_flags, vault_names, egress, egress_transparent)
+                                            enclave_config, vol_mounts, egress, egress_transparent)
     rec["hostPort"] = host_port
     rec["endpoint"] = f"http://{HOST_IP}:{host_port}" if host_port else None
     # GPU tenants: the wasmtime process itself is the CUDA process (ORT holds the
@@ -1768,14 +1308,9 @@ def _spawn_and_wait(rec, ctx):
     if nn:
         env = _nn_tenant_env(gpu_share, pinned=_NN_PROBE.get("mode") != "nopin")
         rec["mpsPct"] = max(1, round(gpu_share * 100))
-    if vault_env:
-        # VEKs for the WASI-fs shim: wasmtime PROCESS env only - guests never
-        # see host env (no -Sinherit-env), and the cmdline carries no keys.
-        env = env if env is not None else dict(os.environ)
-        env.update(vault_env)
     if egress_env:
         # SOCKS credential for transparent egress: wasmtime PROCESS env only
-        # (guest-invisible, same rationale as the vault VEKs — no -Sinherit-env,
+        # (guest-invisible — no -Sinherit-env,
         # and the token never touches the cmdline or a log line).
         env = env if env is not None else dict(os.environ)
         env.update(egress_env)
@@ -1815,71 +1350,6 @@ def _spawn_and_wait(rec, ctx):
     return rec
 
 
-def unlock_enc_volume(vid: str, name: str, passphrase: str = None, vek: str = None) -> dict:
-    """Deliver the key for ONE encrypted volume: decrypt it in-enclave, and once
-    every volume is unlocked, spawn the held tenant. Returns the public record.
-    Passphrase volumes take {passphrase}; wallet-gated vault volumes take {vek}
-    (the supervisor unseals it after the on-chain EnclaveVolumeAccess check). The
-    key is used and dropped here - never stored on rec/disk."""
-    with _lock:
-        rec = _apps.get(vid)
-    if not rec:
-        return {"error": "unknown deployment", "code": 404}
-    specs = rec.get("_encVolumes") or []
-    spec = next((s for s in specs if s["name"] == name), None)
-    if not spec:
-        return {"error": f"no encrypted volume named '{name}'", "code": 404}
-    is_vault = spec.get("vault") is not None
-    if is_vault and not vek:
-        return {"error": f"volume '{name}' is wallet-gated: deliver the VEK sealed to this "
-                         "enclave via unlock-sealed, not a passphrase", "code": 400}
-    if not is_vault and not passphrase:
-        return {"error": f"volume '{name}' takes a passphrase, not a VEK", "code": 400}
-    is_blocks = spec.get("format") == "nanvol2"
-    if spec.get("unlocked") and is_vault:
-        # Already serving: re-VERIFY the delivered VEK against the staged
-        # ciphertext (AEAD tag + plaintext hash; nothing written, nothing
-        # respawned). The supervisor uses this to re-arm auto-grant after a
-        # restart dropped its in-RAM VEK - it must never seal an unverified
-        # key to members. (nanvol2: re-opening the manifest IS that check.)
-        try:
-            if is_blocks:
-                _open_nanvol2(spec, vek)
-            else:
-                _decrypt_vault_volume(spec, vek, verify_only=True)
-        except ValueError as e:
-            return {"error": str(e), "code": 400}
-        except Exception as e:
-            return {"error": f"verify error: {e}", "code": 500}
-        out = _public(rec)
-        out["vekVerified"] = True
-        return out
-    if rec.get("status") != "awaiting_unlock":
-        return {"error": f"deployment is not awaiting unlock (status {rec.get('status')})", "code": 409}
-    if not spec.get("unlocked"):
-        try:
-            if is_blocks:
-                _open_nanvol2(spec, vek)   # manifest only; blocks decrypt on demand
-                if _vault_fs_supported():
-                    _build_vault_skeleton(vid, spec)   # sparse tree the shim preopens
-            else:
-                spec["plain_dir"] = (_decrypt_vault_volume(spec, vek) if is_vault
-                                     else _decrypt_enc_volume(spec, passphrase))
-        except ValueError as e:
-            return {"error": str(e), "code": 400}
-        except Exception as e:
-            return {"error": f"decrypt error: {e}", "code": 500}
-        spec["unlocked"] = True
-    for e in rec.get("encVolumes", []):
-        if e["name"] == name:
-            e["locked"] = False
-    remaining = [s["name"] for s in specs if not s.get("unlocked")]
-    if not remaining:
-        _spawn_and_wait(rec, rec["_spawn_ctx"])   # every volume decrypted -> start the app
-    out = _public(rec)
-    if is_vault:
-        out["vekVerified"] = True   # a successful decrypt IS the verification (tag + hash)
-    return out
 
 
 # --- firewall enforcement: audit what each app actually bound ---------------- #
@@ -2022,19 +1492,6 @@ def _rm_fsdir(rec):
         shutil.rmtree(d, ignore_errors=True)   # ephemeral scratch: nothing to preserve
 
 
-def _rm_enc(rec):
-    # wipe decrypted plaintext + staged ciphertext for this deployment. The
-    # store is the ephemeral encrypted ramdisk (gone on teardown anyway), but
-    # remove it promptly so a long-lived enclave doesn't accumulate plaintext.
-    for s in rec.get("_encVolumes", []) or []:
-        for k in ("plain_dir", "cipher_path", "skel_dir"):
-            p = s.get(k)
-            if not p:
-                continue
-            try:
-                shutil.rmtree(p, ignore_errors=True) if os.path.isdir(p) else os.remove(p)
-            except OSError:
-                pass
 
 
 def teardown(vid: str) -> bool:
@@ -2044,8 +1501,6 @@ def teardown(vid: str) -> bool:
         return False
     _kill(rec)
     _rm_fsdir(rec)
-    _rm_enc(rec)
-    _block_cache_purge(vid)   # large-tier plaintext blocks: gone with the tenant
     return True
 
 
@@ -2102,84 +1557,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             tok = m.group(1) if m else ""
         return hmac.compare_digest(tok, VMMGR_TOKEN)
 
-    def _serve_enc(self, head=False):
-        """Tenant data plane for LARGE-tier (nanvol2) volumes:
-             GET /enc/<vid>/<volume>           -> JSON file listing
-             GET /enc/<vid>/<volume>/<path>    -> file bytes (Range honored)
-        Auth = the deployment's own bearer token (ENCLAVE_ENC_HTTP env in the guest);
-        every failure is the same 404 so the endpoint is no oracle for foreign
-        vids/volumes/paths. Blocks decrypt on demand; only touched blocks ever
-        exist as plaintext, in the bounded LRU."""
-        m = re.match(r"^/enc/([^/?]+)/([^/?]+)(?:/([^?]*))?(?:\?(.*))?$", self.path)
-        if not m:
-            return self._json(404, {"error": "not found"})
-        vid, name = m.group(1), m.group(2)
-        fpath = urllib.parse.unquote(m.group(3) or "")
-        with _lock:
-            rec = _apps.get(vid)
-        spec = next((s for s in (rec.get("_encVolumes") or []) if s["name"] == name), None) if rec else None
-        want = (rec or {}).get("_encToken") or ""
-        got = ""
-        am = re.match(r"^Bearer\s+(\S+)$", self.headers.get("Authorization") or "")
-        if am:
-            got = am.group(1)
-        else:
-            got = (urllib.parse.parse_qs(m.group(4) or "").get("t") or [""])[0]
-        if not (rec and spec and want and hmac.compare_digest(got, want)):
-            return self._json(404, {"error": "not found"})
-        reader = spec.get("_reader")
-        if spec.get("format") != "nanvol2" or not spec.get("unlocked") or not reader:
-            return self._json(409, {"error": "volume is not unlocked on this enclave yet"})
-        if not fpath:   # listing (from the decrypted manifest; nothing touches blocks)
-            return self._json(200, {"volume": name, "blockSize": reader["block_size"],
-                                    "files": [{"path": p, "size": f["s"]}
-                                              for p, f in reader["files"].items()]})
-        f = reader["files"].get(fpath)
-        if f is None:
-            return self._json(404, {"error": "no such file"})
-        size, start, end = f["s"], 0, f["s"]
-        rng = self.headers.get("Range")
-        if rng:
-            rm = re.fullmatch(r"bytes=(\d*)-(\d*)", rng.strip())
-            if not rm or (not rm.group(1) and not rm.group(2)):
-                rng = None                              # unparseable -> whole file (per RFC: ignore)
-            elif rm.group(1):
-                start = int(rm.group(1))
-                end = min(size, int(rm.group(2)) + 1) if rm.group(2) else size
-            else:
-                start, end = max(0, size - int(rm.group(2))), size
-            if rng and (start >= end or start >= max(size, 1)):
-                self.send_response(416)
-                self.send_header("Content-Range", f"bytes */{size}")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-        self.send_response(206 if rng else 200)
-        self.send_header("Content-Type", "application/octet-stream")
-        self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Content-Length", str(end - start))
-        if rng:
-            self.send_header("Content-Range", f"bytes {start}-{end - 1}/{size}")
-        self.end_headers()
-        if head:
-            return
-        try:
-            for chunk in _nanvol2_read(vid, spec, fpath, start, end):
-                self.wfile.write(chunk)
-        except ValueError as e:
-            # tamper detected mid-stream: headers are gone; break the connection
-            # (short body != Content-Length) rather than serve unverified bytes
-            print(f"[enc] {vid}/{name}/{fpath}: {e}", flush=True)
-            self.close_connection = True
 
-    def do_HEAD(self):
-        if self.path.startswith("/enc/"):
-            return self._serve_enc(head=True)
-        return self._json(404, {"error": "not found"})
 
     def do_GET(self):
-        if self.path.startswith("/enc/"):
-            return self._serve_enc()
         if self.path == "/health":
             return self._json(200, {"ok": True, "runtime": "wasmtime",
                                     "version": _wasmtime_version(), "mock": MOCK,
@@ -2263,29 +1643,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(422, {"error": str(e)})
             except Exception as e:
                 return self._json(502, {"error": f"prefetch failed: {e}"})
-        # Encrypted-volume key delivery: POST /vms/<vid>/unlock with {name,
-        # passphrase} (deployer-held key) or {name, vek} (wallet-gated vault:
-        # the supervisor unsealed the VEK after the on-chain ACL check). Either
-        # way the key arrives owner/member-auth'd over the attested in-enclave
-        # TLS; we decrypt IN MEMORY and, once every volume is unlocked, spawn
-        # the held tenant. Keys are never logged, stored on the record, or
-        # written to disk.
-        mu = re.match(r"^/vms/([^/?]+)/unlock$", self.path)
-        if mu:
-            b = self._body()
-            name = str(b.get("name") or "").strip()
-            passphrase = b.get("passphrase")
-            vek = b.get("vek")
-            if not isinstance(passphrase, str) or passphrase == "":
-                passphrase = None
-            if not isinstance(vek, str) or vek == "":
-                vek = None
-            if not name or (passphrase is None and vek is None):
-                return self._json(400, {"error": "unlock needs {name, passphrase} or {name, vek}"})
-            r = unlock_enc_volume(mu.group(1), name, passphrase, vek)
-            del passphrase, vek
-            code = r.pop("code", 200) if isinstance(r, dict) else 200
-            return self._json(code if code != 200 else 200, r)
         if self.path != "/vms":
             return self._json(404, {"error": "not found"})
         b = self._body()
@@ -2361,11 +1718,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not isinstance(req_vols, list):
             return self._json(400, {"error": "volumes must be a list of volume names"})
         rec = launch(app_ref, b.get("name", ""), cpu_share, gpu_share, mem_mb, pspec, storage_mb, config_cid, req_vols, egress)
-        # awaiting_unlock is a SUCCESSFUL provision that's waiting for the
-        # deployer's encrypted-volume key (POST /vms/:id/unlock) - NOT a failure.
-        # The supervisor must keep the tenant + lease and surface the state, not
-        # release it (which would loop the deployment through enclaves unrun).
-        code = 201 if rec["status"] in ("starting", "running", "awaiting_unlock") else 500
+        code = 201 if rec["status"] in ("starting", "running") else 500
         return self._json(code, _public(rec))
 
     def do_DELETE(self):

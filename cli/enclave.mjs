@@ -669,24 +669,6 @@ async function cmdAttest(rest) {
   if (!result.pass) exit(1);
 }
 
-async function cmdUnlock(rest) {
-  const account = loadKey();
-  const f = flags(rest, { val: ["--vol"], bool: ["--no-verify"] });
-  if (!f._[0] || !f.vol) throw new Error("usage: enclave unlock <id> --vol <name> [--no-verify]");
-  const id = await resolveId(f._[0], account);
-  if (f["no-verify"]) {
-    say("skipping attestation verification (--no-verify) — you are trusting the operator");
-  } else {
-    const { origin, repo, result } = await attestDeployment(account, id);
-    printVerdict(result, origin, repo);
-    if (!result.pass) throw new Error("attestation FAILED — refusing to send the passphrase (override with --no-verify)");
-  }
-  const passphrase = await promptSecret(`passphrase for volume "${f.vol}" (hidden): `);
-  if (!passphrase) throw new Error("empty passphrase");
-  const r = await api("POST", `/v1/deployments/${id}/unlock`, { auth: account, body: { name: f.vol, passphrase } });
-  if (opt.json) return jout(r);
-  say(`volume "${f.vol}" unlocked — deployment status: ${r.status}`);
-}
 
 async function cmdStop(rest) {
   const account = loadKey();
@@ -962,7 +944,6 @@ deployments
   logs <id> [-f] [--tail N]  the app's stdout/stderr (-f polls)
   fund <id> --usdc 5|--eth 0.002   top up runtime by the second
   attest [<id>]              fetch attestation + verify it LOCALLY; nonzero exit on FAIL
-  unlock <id> --vol NAME     verify attestation, then stream a volume passphrase
   stop <id>                  setActive(false) on-chain + DELETE the instance
 
 catalog
@@ -983,7 +964,7 @@ ENCLAVE_KEY overrides the key file. Auth is SIWE; keys never leave this machine.
 const COMMANDS = {
   key: cmdKey, whoami: cmdWhoami, deploy: cmdDeploy, ls: cmdLs, list: cmdLs,
   status: cmdStatus, logs: cmdLogs, fund: cmdFund, attest: cmdAttest,
-  unlock: cmdUnlock, stop: cmdStop, publish: cmdPublish, apps: cmdApps,
+  stop: cmdStop, publish: cmdPublish, apps: cmdApps,
   pricing: cmdPricing, availability: cmdAvailability, gpu: cmdGpu, account: cmdAccount,
 };
 
@@ -1000,7 +981,7 @@ async function resolveAddressBook() {
       sleep(4000).then(() => { throw new Error("timeout"); }),
     ]);
     const map = { registry: "REGISTRY_ADDRESS", deployments: "DEPLOYMENTS_ADDRESS",
-                  appCatalog: "APP_CATALOG_ADDRESS", enclavePay: "FORWARDER_ADDRESS", volumeAccess: "VOLUME_ACCESS_ADDRESS" };
+                  appCatalog: "APP_CATALOG_ADDRESS", enclavePay: "FORWARDER_ADDRESS" };
     keys.forEach((kh, i) => {
       let k = ""; for (let b = 2; b < kh.length; b += 2) { const c = parseInt(kh.slice(b, b + 2), 16); if (!c) break; k += String.fromCharCode(c); }
       const name = map[k], v = values[i];

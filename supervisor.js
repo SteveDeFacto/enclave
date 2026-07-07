@@ -35,9 +35,6 @@ import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { SignJWT, jwtVerify } from "jose";
 import { Verifier } from "@tinfoilsh/verifier";
-// enclave-vault: the wallet-gated encrypted-volume protocol (single source of truth
-// shared with the client CLI and the browser app; see scripts/enclave-vault.mjs)
-import { seal as vaultSeal, unseal as vaultUnseal, newIdentity as vaultNewIdentity } from "./scripts/enclave-vault.mjs";
 // dedicated-IP egress: the outbound half of the per-deployment address (see egress.js)
 import { createEgress } from "./egress.js";
 // contract addresses: LIVE BINDINGS owned by addressbook.js — seeded from the
@@ -45,7 +42,7 @@ import { createEgress } from "./egress.js";
 // ADDRESS_BOOK_ADDRESS is set, and re-polled so contract redeploys reach a
 // RUNNING enclave without a new release.
 import { initAddressBook, REGISTRY_ADDRESS, DEPLOYMENTS_ADDRESS, APP_CATALOG_ADDRESS,
-         FORWARDER_ADDRESS, VOLUME_ACCESS_ADDRESS } from "./addressbook.js";
+         FORWARDER_ADDRESS } from "./addressbook.js";
 
 // Resolve the book BEFORE anything below derives state from the addresses
 // (top-level await; a no-op without ADDRESS_BOOK_ADDRESS, baked env on failure).
@@ -723,8 +720,7 @@ async function spawnContainer({ deploymentId, gpuShare, cpuShare, image, appPort
     console.log(`[spawn-vm] ${deploymentId} image=${ref} cpuShare=${c} gpuShare=${g} `
               + `vm=${r.body.id} hostPort=${r.body.hostPort} status=${r.body.status}`);
     // The VM boots asynchronously; the data path 502s until its server is up.
-    // status carries the manager's state - "awaiting_unlock" means the tenant is
-    // provisioned but held for its encrypted-volume key (not yet spawned).
+    // status carries the manager's state.
     return { internalPort: r.body.hostPort || 0, sshPort: 0, vmId: r.body.id, hostPort: r.body.hostPort,
              portMap: r.body.portMap || {}, status: r.body.status };   // logical "tcp:5432" -> actual loopback bind
   }
@@ -742,10 +738,6 @@ async function spawnContainer({ deploymentId, gpuShare, cpuShare, image, appPort
 }
 
 async function stopContainer(rec) {
-  // key hygiene: a stopped deployment's vault VEKs have no reason to stay in
-  // RAM (a future runner gets them re-delivered through unlock-sealed anyway)
-  for (const [volId, held] of _heldVaults)
-    if (held.depId === rec.id) { held.vek.fill(0); _heldVaults.delete(volId); }
   if (PROVISION_BACKEND === "vm") {
     if (rec._vmId)
       await vmReq("DELETE", `/vms/${encodeURIComponent(rec._vmId)}`)
@@ -1183,11 +1175,6 @@ app.use("/x/:id", async (req, res) => {
     if (!addr) return fail(res, 401, "unauthorized", "Missing or invalid token.");
     if (rec.owner !== addr) return fail(res, 403, "forbidden", "Not your deployment.");
   }
-  if (rec.status === "awaiting_unlock")
-    return fail(res, 425, "awaiting_unlock", "This deployment has an encrypted volume that isn't unlocked on this enclave yet. "
-      + "Verify the enclave attestation, then deliver the key: POST the passphrase to /v1/deployments/" + rec.id + "/unlock, "
-      + "or for a wallet-gated volume POST the sealed VEK to /v1/deployments/" + rec.id + "/unlock-sealed (any on-chain-authorized wallet). "
-      + "(After a failover the key must be re-delivered - it was never stored.)");
   if (rec.status !== "running") return fail(res, 409, "not_running", `Deployment is ${rec.status}.`);
 
   // vm backend: proxy to the app's loopback port on the app manager, on shared
@@ -1838,16 +1825,6 @@ async function provisionTenant(rec) {
     rec._port = sp.internalPort; rec._sshPort = sp.sshPort;
     if (sp.vmId) { rec._vmId = sp.vmId; rec._vmHostPort = sp.hostPort; }
     if (sp.portMap) rec.portMap = sp.portMap;   // logical -> actual (public: clients see their mapping)
-    // Provisioned-but-locked: the tenant carries encrypted volumes whose key the
-    // deployer hasn't delivered to THIS enclave yet (a fresh claim, or a failover
-    // - the key lived only in the previous runner's RAM and is gone). Hold in
-    // awaiting_unlock: keep the lease, wait for POST /v1/deployments/:id/unlock.
-    // The app is NOT running, but this is a success (don't release the lease).
-    if (sp.status === "awaiting_unlock") {
-      rec.status = "awaiting_unlock"; rec.paused = false; rec.pauseReason = null; rec._lastTickAt = Date.now();
-      console.log(`[provision] ${rec.id} awaiting encrypted-volume unlock (key not yet delivered to this enclave)`);
-      return true;
-    }
     if (!rec.startedAt) rec.startedAt = Date.now();
     rec.status = "running"; rec.paused = false; rec.pauseReason = null; rec._lastTickAt = Date.now();
     return true;
@@ -2152,243 +2129,6 @@ app.delete("/v1/deployments/:id", authed, async (req, res) => {
              note: "Pay-per-deploy: no balance is held, so unused funded time is forfeit on early stop." });
 });
 
-// Unlock an encrypted volume (user-held key). The deployer sends the passphrase
-// HERE, after verifying the enclave attestation - the TLS terminates in-enclave
-// (the key is in the CPU-signed attestation), so the host and the operator can
-// forward TCP but cannot read this body. Owner-only. We hand the passphrase to
-// the app manager, which decrypts the volume IN MEMORY and starts the held app;
-// the passphrase is never persisted or logged anywhere in this path.
-app.post("/v1/deployments/:id/unlock", authed, async (req, res) => {
-  const rec = deployments.get(req.params.id);
-  if (!rec || rec.owner !== req.address) return fail(res, 404, "not_found", "No such deployment.");
-  if (PROVISION_BACKEND !== "vm" || !rec._vmId) return fail(res, 409, "no_instance", "No app instance to unlock.");
-  const name = String((req.body && req.body.name) || "").trim();
-  const passphrase = req.body && req.body.passphrase;
-  if (!name || typeof passphrase !== "string" || passphrase === "")
-    return fail(res, 422, "invalid_spec", "Provide { name, passphrase } for the encrypted volume.");
-  try {
-    const r = await vmReq("POST", `/vms/${encodeURIComponent(rec._vmId)}/unlock`, { name, passphrase }, SPAWN_TIMEOUT_MS);
-    if (r.status >= 400) return fail(res, r.status, "unlock_failed", (r.body && r.body.error) || `HTTP ${r.status}`);
-    // The last volume's unlock spawns the app -> the manager reports "running".
-    // Transition the deployment and start its clock from THIS moment (the app
-    // wasn't running while locked, so no back-charge for the awaiting window).
-    if (r.body && r.body.status === "running" && rec.status !== "running") {
-      rec.status = "running"; rec.paused = false; rec.pauseReason = null;
-      if (!rec.startedAt) rec.startedAt = Date.now();
-      rec._lastTickAt = Date.now();
-      // the app was just spawned on unlock: pick up its forwarded port + mapping
-      if (r.body.hostPort) { rec._vmHostPort = r.body.hostPort; rec._port = r.body.hostPort; }
-      if (r.body.portMap) rec.portMap = r.body.portMap;
-    }
-    saveStateSoon();
-    res.json({ id: rec.id, volume: name, encVolumes: (r.body && r.body.encVolumes) || null,
-               status: (r.body && r.body.status) || rec.status });
-  } catch (e) {
-    fail(res, 502, "unlock_error", "Could not deliver the key: " + (e.shortMessage || e.message));
-  }
-});
-
-// ============================================================================
-// Wallet-gated encrypted volumes (enclave-vault) - the enclave side (Phase 3).
-//
-// A vault volume's key is a 32-byte VEK held by an on-chain ACL of wallets
-// (contracts/EnclaveVolumeAccess.sol), not by a lone deployer passphrase. Any
-// AUTHORIZED wallet unlocks: it unseals its own sealedVEK from the contract,
-// verifies THIS enclave's attestation, re-seals the VEK to the enclave's
-// per-boot X25519 identity below, and POSTs it to /unlock-sealed. We check the
-// ACL on-chain, unseal, and hand the VEK to the app manager, which decrypts
-// in-RAM (scripts/enclave-vault.mjs is the protocol both sides implement). Neither
-// the operator nor Tinfoil ever holds a decryptable key: the identity secret
-// lives only in CVM memory, and the sealed blob rode the attested TLS.
-// ============================================================================
-// (VOLUME_ACCESS_ADDRESS is a live binding from ./addressbook.js)
-const VAULT_POLL_SEC = parseInt(process.env.VAULT_POLL_SEC || "15", 10);   // auto-grant sweep cadence
-
-// Per-boot enclave vault identity: generated in-process, RAM only, never
-// persisted or logged. A restart mints a new one - by design (see the FAILOVER
-// note in EnclaveVolumeAccess.sol): a key sealed to a dead enclave must be dead too.
-const _vaultId = vaultNewIdentity();
-const _vaultPubHex = "0x" + Buffer.from(_vaultId.publicKey).toString("hex");
-
-// VEKs this enclave currently holds, for auto-granting self-registered members.
-// KEYED OFF the deployment records on purpose: serializeState() persists recs
-// to disk, and a VEK must never touch disk. Lost on restart (re-arm by POSTing
-// unlock-sealed again - the manager re-verifies against the staged ciphertext).
-const _heldVaults = new Map();   // volId -> { vek:Uint8Array, owner, volume, name, depId, autoGrant }
-// (volId:member:pubkey) triples this process auto-granted already. Guards the
-// sweep from UNDOING an owner's revoke(): a revoked member still has a pubkey
-// + no role, which looks exactly like a fresh registrant on-chain, so without
-// this we would re-grant them within one sweep. Keying by pubkey keeps honest
-// key ROTATION auto-grantable (new pubkey = new triple). In-RAM: after a
-// restart one spurious re-grant of a previously revoked member is possible -
-// under open enrollment (autoGrant) revocation is only a speed bump anyway;
-// real revocation is volume ROTATION (Phase 5). Curated volumes should set
-// vault.autoGrant=false and grant by owner signature only.
-const _vaultGranted = new Set();
-
-const VOLUME_ACCESS_ABI = [
-  { type: "function", name: "isAuthorized", stateMutability: "view",
-    inputs: [{ name: "volId", type: "bytes32" }, { name: "member", type: "address" }],
-    outputs: [{ type: "bool" }] },
-  { type: "function", name: "memberCount", stateMutability: "view",
-    inputs: [{ name: "volId", type: "bytes32" }], outputs: [{ type: "uint256" }] },
-  { type: "function", name: "getMemberPage", stateMutability: "view",
-    inputs: [{ name: "volId", type: "bytes32" }, { name: "start", type: "uint256" }, { name: "n", type: "uint256" }],
-    outputs: [{ name: "addrs", type: "address[]" }, { name: "roles", type: "uint8[]" }, { name: "pubs", type: "bytes32[]" }] },
-  { type: "function", name: "operator", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
-  { type: "function", name: "grant", stateMutability: "nonpayable",
-    inputs: [{ name: "volId", type: "bytes32" }, { name: "member", type: "address" },
-             { name: "role", type: "uint8" }, { name: "sealedVEK", type: "bytes" }], outputs: [] },
-];
-// volId = keccak256(abi.encode(owner, name)) - MUST match EnclaveVolumeAccess.volumeId
-// (abi.encode, not encodePacked) and the client CLI's volIdOf; all three
-// implementations are pinned to the same canonical vectors.
-const vaultVolId = (owner, volume) =>
-  keccak256(encodeAbiParameters([{ type: "address" }, { type: "string" }], [getAddress(owner), volume]));
-const readVaultACL = (functionName, args) => chainClient.readContract({
-  address: getAddress(VOLUME_ACCESS_ADDRESS), abi: VOLUME_ACCESS_ABI, functionName, args });
-
-// The enclave's vault public key. Public and unauthenticated ON PURPOSE - its
-// trust comes from the transport: fetch it over TLS you have VERIFIED against
-// the attestation (the TLS key is generated in-enclave and bound to the
-// CPU-signed quote), and you know the matching secret lives only in this CVM.
-const vaultPubkeyPayload = () => ({
-  pubkey: _vaultPubHex, scheme: "enclave-vault/v1 (x25519 sealed box, xchacha20-poly1305)",
-  contract: VOLUME_ACCESS_ADDRESS || null, chainId: CHAIN_ID,
-  note: "Per-boot key: seal the VEK to it only AFTER verifying this enclave's attestation "
-      + "(tinfoil-cli / @tinfoilsh/verifier). Re-fetch on unseal_failed - it rotates on restart." });
-app.get("/v1/vault-pubkey", (req, res) => res.json(vaultPubkeyPayload()));
-// Deployment-scoped alias: same key, but the /v1/deployments/:id/* shape lets
-// the fleet gateway route it to the enclave that RUNS the deployment - the bare
-// path above, sent through the gateway, can land on ANY enclave, and a VEK
-// sealed to enclave A is garbage to enclave B. Direct (non-gateway) callers can
-// use either. No auth: the pubkey is public; the ACL gates unlock-sealed.
-app.get("/v1/deployments/:id/vault-pubkey", (req, res) => {
-  if (!deployments.get(req.params.id)) return fail(res, 404, "not_found", "No such deployment.");
-  res.json(vaultPubkeyPayload());
-});
-
-// Unlock a wallet-gated volume. Authed as ANY wallet (not owner-only): the
-// on-chain ACL is the gate. Body: { name, sealed } where sealed = the VEK
-// sealed to THIS enclave's vault pubkey (hex; 104 bytes = ephPub||nonce||box).
-// Also re-arms auto-grant on an already-running deployment: the manager then
-// re-VERIFIES the VEK against the staged ciphertext instead of respawning.
-app.post("/v1/deployments/:id/unlock-sealed", authed, async (req, res) => {
-  const rec = deployments.get(req.params.id);
-  if (!rec) return fail(res, 404, "not_found", "No such deployment.");
-  if (PROVISION_BACKEND !== "vm" || !rec._vmId) return fail(res, 409, "no_instance", "No app instance to unlock.");
-  if (!VOLUME_ACCESS_ADDRESS)
-    return fail(res, 503, "vault_unavailable", "This enclave has no VOLUME_ACCESS_ADDRESS configured, so wallet-gated volumes cannot be unlocked here.");
-  const name = String((req.body && req.body.name) || "").trim();
-  const sealedHex = String((req.body && req.body.sealed) || "").trim().replace(/^0x/, "");
-  if (!name || !/^[0-9a-fA-F]{208}$/.test(sealedHex))
-    return fail(res, 422, "invalid_spec", "Provide { name, sealed }: sealed = the 104-byte VEK sealed to this enclave's vault pubkey (GET /v1/vault-pubkey), hex.");
-  try {
-    // the manager owns config parsing; read the volume's vault metadata from it
-    const vm = await vmReq("GET", `/vms/${encodeURIComponent(rec._vmId)}`);
-    const entry = ((vm.body && vm.body.encVolumes) || []).find((e) => e.name === name);
-    if (!entry) return fail(res, 404, "no_such_volume", `No encrypted volume named '${name}' on this deployment.`);
-    if (!entry.vault)
-      return fail(res, 409, "not_vault", `Volume '${name}' is passphrase-encrypted - use POST /v1/deployments/${rec.id}/unlock.`);
-    const owner = entry.vault.owner || rec.owner;   // empty owner in the config = the deployment owner
-    const volume = entry.vault.volume || name;
-    const volId = vaultVolId(owner, volume);
-    const member = getAddress(req.address);
-    if (!(await readVaultACL("isAuthorized", [volId, member])))
-      return fail(res, 403, "not_authorized", `${member} holds no access to volume '${volume}' (volId ${volId}) on EnclaveVolumeAccess. `
-        + "Register your pubkey via the contract's register(), then a writer (the owner, or this enclave once unlocked) must grant you.");
-    let vek;
-    try { vek = vaultUnseal(Buffer.from(sealedHex, "hex"), _vaultId.secretKey); } catch {}
-    if (!vek || vek.length !== 32)
-      return fail(res, 400, "unseal_failed", "Could not unseal the VEK. Was it sealed to THIS enclave's CURRENT vault pubkey? "
-        + "Re-fetch GET /v1/vault-pubkey (it rotates on enclave restart) and re-seal.");
-    const r = await vmReq("POST", `/vms/${encodeURIComponent(rec._vmId)}/unlock`,
-                          { name, vek: Buffer.from(vek).toString("hex") }, SPAWN_TIMEOUT_MS);
-    if (r.status >= 400) return fail(res, r.status, "unlock_failed", (r.body && r.body.error) || `HTTP ${r.status}`);
-    // The manager verified the VEK (AEAD tag + plaintext hash) - only now is it
-    // safe to hold for auto-granting self-registered members.
-    if (r.body && r.body.vekVerified && entry.vault.autoGrant !== false) {
-      _heldVaults.set(volId, { vek, owner, volume, name, depId: rec.id, autoGrant: true });
-      sweepVaultGrants().catch(() => {});   // grant anyone who registered while locked
-    }
-    // last volume unlocked -> the manager spawned the app (same as /unlock)
-    if (r.body && r.body.status === "running" && rec.status !== "running") {
-      rec.status = "running"; rec.paused = false; rec.pauseReason = null;
-      if (!rec.startedAt) rec.startedAt = Date.now();
-      rec._lastTickAt = Date.now();
-      if (r.body.hostPort) { rec._vmHostPort = r.body.hostPort; rec._port = r.body.hostPort; }
-      if (r.body.portMap) rec.portMap = r.body.portMap;
-    }
-    saveStateSoon();
-    res.json({ id: rec.id, volume: name, volId, member, encVolumes: (r.body && r.body.encVolumes) || null,
-               status: (r.body && r.body.status) || rec.status,
-               autoGrant: entry.vault.autoGrant !== false && !!(r.body && r.body.vekVerified) });
-  } catch (e) {
-    fail(res, 502, "unlock_error", "Could not deliver the key: " + (e.shortMessage || e.message));
-  }
-});
-
-// Auto-grant: while this enclave holds a volume's VEK, any wallet that
-// self-registers on EnclaveVolumeAccess gets the VEK sealed to its pubkey and a
-// Reader grant, signed by the operator EOA ("written to by the deployer of the
-// wasm app or by the enclave itself"). Implemented as a STATE poll, not an
-// event scan: registered-with-no-role on-chain IS the work queue, so a missed
-// beat self-heals on a later sweep (the tail cursor below is only an RPC-cost
-// optimization; the periodic full pass restores strict correctness).
-let _vaultSweeping = false, _vaultOperatorOk = null;
-const _vaultSweepCursor = new Map();   // volId -> { cursor: bigint, n: sweeps }
-async function sweepVaultGrants() {
-  if (_vaultSweeping || !_heldVaults.size || !VOLUME_ACCESS_ADDRESS) return;
-  if (!REGISTRY_PK) return;   // no operator EOA on this enclave - owner grants only
-  _vaultSweeping = true;
-  try {
-    if (_vaultOperatorOk == null) {   // one-time: are we THE operator the contract trusts?
-      const op = await readVaultACL("operator", []);
-      _vaultOperatorOk = getAddress(op) === getAddress(claimSigner().account.address);
-      if (!_vaultOperatorOk)
-        console.warn(`[vault] EnclaveVolumeAccess operator is ${op}, not this enclave's EOA - auto-grant disabled (owner grants still work)`);
-    }
-    if (!_vaultOperatorOk) return;
-    for (const [volId, held] of _heldVaults) {
-      if (!held.autoGrant) continue;
-      // memberList is append-only, so normal sweeps scan only the TAIL past the
-      // last cursor (a griefer registering thousands of wallets costs THEM gas,
-      // not us a full rescan every 15s). A periodic full pass catches the two
-      // in-place changes a tail scan misses: pubkey rotations and grant txs
-      // that failed and need a retry.
-      const st = _vaultSweepCursor.get(volId) || { cursor: 0n, n: 0 };
-      const full = st.n++ % 20 === 0;
-      const count = await readVaultACL("memberCount", [volId]);
-      for (let start = full ? 0n : st.cursor; start < count; start += 100n) {
-        const [addrs, roles, pubs] = await readVaultACL("getMemberPage", [volId, start, 100n]);
-        for (let i = 0; i < addrs.length; i++) {
-          const pub = pubs[i];
-          if (Number(roles[i]) !== 0 || !pub || /^0x0{64}$/.test(pub)) continue;   // granted already / no pubkey
-          const key = `${volId}:${addrs[i].toLowerCase()}:${pub}`;
-          if (_vaultGranted.has(key)) continue;   // we granted this key before - a role of None now means REVOKED
-          const sealed = "0x" + Buffer.from(vaultSeal(held.vek, Buffer.from(pub.slice(2), "hex"))).toString("hex");
-          try {
-            const rcpt = await sendOperatorTx(VOLUME_ACCESS_ADDRESS, VOLUME_ACCESS_ABI, "grant", [volId, addrs[i], 1, sealed]).receipt;
-            if (rcpt && rcpt.status && rcpt.status !== "success") throw new Error(`grant tx ${rcpt.status}`);
-            _vaultGranted.add(key);
-            console.log(`[vault] auto-granted Reader on '${held.volume}' (${volId.slice(0, 10)}…) to ${addrs[i]}`);
-          } catch (e) {
-            console.warn(`[vault] grant ${addrs[i]} on ${volId.slice(0, 10)}… failed: ${e.shortMessage || e.message}`);
-          }
-        }
-      }
-      st.cursor = count;
-      _vaultSweepCursor.set(volId, st);
-    }
-  } catch (e) { console.warn(`[vault] sweep error: ${e.shortMessage || e.message}`); }
-  finally { _vaultSweeping = false; }
-}
-function startVaultWatcher() {
-  if (!VOLUME_ACCESS_ADDRESS) { console.warn("[vault] VOLUME_ACCESS_ADDRESS unset - wallet-gated volumes disabled on this enclave"); return; }
-  console.log(`[vault] enclave vault pubkey ${_vaultPubHex} (per-boot); ACL ${VOLUME_ACCESS_ADDRESS}; auto-grant sweep every ${VAULT_POLL_SEC}s`);
-  const t = setInterval(() => sweepVaultGrants().catch(() => {}), VAULT_POLL_SEC * 1000);
-  if (t.unref) t.unref();
-}
 
 // Top-up instructions: just call EnclavePay.pay(deploymentRef, amount) again to extend.
 app.post("/v1/deployments/:id/topup", authed, (req, res) => {
@@ -2886,11 +2626,7 @@ async function renewLeases() {
 async function auditClaims(ledgerById) {
   const me = claimSigner().account.address.toLowerCase();
   for (const rec of [...deployments.values()]) {
-    // awaiting_unlock is audited too: if its lease lapses (unrenewed - a locked
-    // deployment doesn't renew) and another enclave claims it, this one must
-    // tear down and free the slice it reserved, not hold capacity for an app
-    // that will never run here without the (now-gone) key.
-    if (!rec._onchain || !["running", "claimed", "awaiting_unlock"].includes(rec.status)) continue;
+    if (!rec._onchain || !["running", "claimed"].includes(rec.status)) continue;
     // the tick already paged the whole ledger once - one read serves the audit
     // AND the sweep (per-record re-reads were what blew the RPC rate budget)
     const d = ledgerById.get(rec.id.toLowerCase());
@@ -3293,6 +3029,3 @@ startBillingTicker();
 // contracts/DEPLOYMENTS.md). Requires registry advertising + DEPLOYMENTS_ADDRESS.
 startClaimLoop();
 
-// wallet-gated encrypted volumes: announce the per-boot vault identity and
-// auto-grant self-registered members of any volume whose VEK we hold.
-startVaultWatcher();

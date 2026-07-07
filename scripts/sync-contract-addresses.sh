@@ -20,7 +20,6 @@ ADDRESSBOOK="$(from_cfg ADDRESS_BOOK_ADDRESS)"
 REGISTRY="$(from_cfg REGISTRY_ADDRESS)"
 DEPLOYMENTS="$(from_cfg DEPLOYMENTS_ADDRESS)"
 FORWARDER="$(from_cfg FORWARDER_ADDRESS)"
-VOLACCESS="$(from_cfg VOLUME_ACCESS_ADDRESS)"
 CATALOG="$(grep -oE "APP_CATALOG_ADDRESS = \"$ADDR\"" "$SITE" | grep -oE "$ADDR" || true)"
 
 set_key() { # $1=file $2=env key $3=address — only where the file already carries the key
@@ -36,7 +35,6 @@ for f in "$GPU" "$CPU" "$REPO/cli/enclave.mjs"; do
   set_key "$f" REGISTRY_ADDRESS      "$REGISTRY"
   set_key "$f" DEPLOYMENTS_ADDRESS   "$DEPLOYMENTS"
   set_key "$f" FORWARDER_ADDRESS     "$FORWARDER"
-  set_key "$f" VOLUME_ACCESS_ADDRESS "$VOLACCESS"
   set_key "$f" APP_CATALOG_ADDRESS   "$CATALOG"
 done
-echo "[sync] registry=${REGISTRY:-?} deployments=${DEPLOYMENTS:-?} enclavepay=${FORWARDER:-?} volume-access=${VOLACCESS:-?} catalog=${CATALOG:-?}"
+echo "[sync] registry=${REGISTRY:-?} deployments=${DEPLOYMENTS:-?} enclavepay=${FORWARDER:-?} catalog=${CATALOG:-?}"

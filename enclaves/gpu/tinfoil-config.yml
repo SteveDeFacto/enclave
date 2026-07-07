@@ -117,12 +117,6 @@ containers:
       # prerequisite, as is PROVISION_BACKEND=vm (claims run catalog wasm apps).
       - CLAIM_ENABLED: "1"
       - DEPLOYMENTS_ADDRESS: "0x267f7F792CA84482698b2f6774B028522247B6CD"                          # set by scripts/deploy-deployments.mjs
-      # Wallet-gated encrypted volumes (contracts/EnclaveVolumeAccess.sol): the ACL
-      # the enclave checks before accepting a sealed VEK (unlock-sealed) and
-      # writes auto-grants to (via REGISTRY_PRIVATE_KEY, the contract operator).
-      # Empty = vault volumes disabled on this enclave (passphrase volumes still work).
-      - VOLUME_ACCESS_ADDRESS: "0xF999Fa0Ae829A3B762FBA2875788bc8920F3E8Eb"                                                                  # set by scripts/deploy-volume-access.mjs (hand-deployed)
-      # - VAULT_POLL_SEC: "15"                           # optional: auto-grant sweep cadence
       # - CLAIM_POLL_SEC: "60"                           # optional: queue sweep / lease audit cadence
       # - RENEW_MARGIN_SEC: "300"                        # optional: renew when less lease than this remains
       # - CPU_CLAIM_GRACE_SEC: "120"                     # optional: how long CPU-only work waits for a CPU enclave before we bid on it
@@ -221,6 +215,10 @@ containers:
       - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
       # each app's memory cap is its deployment's cpuShare × NODE_RAM_GB
       # (>= the mem_mb its specs declare); WASM_APP_MIN_MEM_MB (64) is the floor
+      # friendly name -> mount for each Modelwrap image mounted under volumes:
+      # (the manager advertises these in /availability; llm-chat loads from
+      # /models/qwen2.5-0.5b inside the guest)
+      - MODEL_VOLUMES: "qwen2.5-0.5b:/models-src/qwen2.5-0.5b"
     # SECRET doubles as the manager's control-plane token (VMMGR_TOKEN): tenants
     # hold outbound HTTP to loopback, so the control API on :8091 must reject
     # calls that don't carry it (the supervisor sends X-Vmmgr-Token). The tenant
@@ -230,14 +228,11 @@ containers:
     volumes:
       - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # join the MPS daemon (SM%/VRAM caps)
       # --- attached model volumes (Tinfoil Modelwrap) -----------------------
-      # Mount the enclave's model images into the manager so deployments can
+      # The enclave's model images, mounted into the manager so deployments can
       # attach them by name (mounted read-only into the guest at /models/<name>).
-      # Uncomment + add a `models:` block below, then map each mount here:
-      #   - /tinfoil/mpk/mpk-<root_hash>:/models-src/<name>:ro
-      # and set MODEL_VOLUMES so the manager advertises the friendly name:
-      #   env: - MODEL_VOLUMES: "qwen2.5-0.5b:/models-src/qwen2.5-0.5b"
-      # (MODEL_VOLUME_ROOT defaults to /tinfoil/mpk; mounting the specific
-      #  images the manager should expose keeps advertisement explicit.)
+      # Each maps a /tinfoil/mpk/mpk-<root_hash> image (from the `models:` block
+      # below) to a friendly name that MODEL_VOLUMES advertises.
+      - /tinfoil/mpk/mpk-REPLACE_WITH_HASH_FROM_MODELS_TAB:/models-src/qwen2.5-0.5b:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
       interval: 15s
@@ -246,15 +241,16 @@ containers:
       start_period: 60s
 
 # --- attested model weights (Tinfoil Modelwrap) -----------------------------
-# Declare read-only model volumes here; each becomes a dm-verity image whose
-# root hash is part of the enclave measurement (the attestation commits to the
-# exact bytes). Generate the `mpk` value in the Tinfoil Models tab. Deployments
+# Read-only model volumes; each becomes a dm-verity image whose root hash is
+# part of the enclave measurement (the attestation commits to the exact bytes).
+# Generate the `mpk` value in the Tinfoil Models tab from the pinned repo, then
+# paste it here AND into the wasm-manager volume mount above. Deployments
 # attach these by name (via the console volume picker or their configCid JSON
 # `volumes` field); the wasm-manager mounts each into the guest at /models/<name>.
-# models:
-#   - name: "qwen2.5-0.5b"
-#     repo: "onnx-community/Qwen2.5-0.5B-Instruct@cc5cc01a65cc3ff17bdb73a7de33d879f62599b0"
-#     mpk: "<hash from the Models tab>"
+models:
+  - name: "qwen2.5-0.5b"
+    repo: "onnx-community/Qwen2.5-0.5B-Instruct@cc5cc01a65cc3ff17bdb73a7de33d879f62599b0"
+    mpk: "REPLACE_WITH_HASH_FROM_MODELS_TAB"
 
 # Single ingress → supervisor. Only these paths are reachable from outside.
 shim:
