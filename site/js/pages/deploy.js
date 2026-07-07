@@ -2,8 +2,8 @@
    Deploy page — the console form (two dials, request preview)
    and the on-chain create+fund flow. Validation and dry runs
    render inline; a REAL deploy soft-navigates to the dashboard
-   and streams its narrative into the run log there (js/core/
-   runlog — the <c-terminal> on dashboard.html follows it live).
+   and streams its narrative into the run log (js/core/runlog —
+   <c-deployments>' live strip and row Output panels follow it).
    <c-fleet-list> / <c-volume-picker> show live capacity.
    ============================================================ */
 import "../../components/header/header.js";
@@ -432,6 +432,7 @@ async function runDeploy(){
     runlog.line("warn", "[x] " + (e.message || String(e)));
     if (e.status === 0) runlog.line("dimln", "    set a reachable API endpoint on the deploy console, then retry.");
   } finally {
+    runlog.endRun();
     btn.disabled = false; btn.textContent = lbl;
     refreshWallet();
   }

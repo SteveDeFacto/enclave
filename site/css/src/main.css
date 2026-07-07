@@ -72,7 +72,6 @@
 @import "../../components/flow/flow.css" layer(components);
 @import "../../components/attest-chain/attest-chain.css" layer(components);
 @import "../../components/live-verify/live-verify.css" layer(components);
-@import "../../components/terminal/terminal.css" layer(components);
 @import "../../components/fleet-list/fleet-list.css" layer(components);
 @import "../../components/volume-picker/volume-picker.css" layer(components);
 @import "../../components/deployments/deployments.css" layer(components);

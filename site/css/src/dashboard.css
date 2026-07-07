@@ -1,13 +1,9 @@
 /* ============================================================
-   Dashboard page — the signed-in view: the run-log terminal in
-   its own frame over the <c-deployments> panel (which carries
-   its own .enclaves styles).
-   ============================================================ */
-.dash-term{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);overflow:hidden;display:flex;flex-direction:column;}
-.dash-term .term{max-height:420px;}
+   Dashboard page. The deployments panel (live strip + per-row
+   Output panels) carries its own styles in the component CSS.
 
-/* inline pre-flight feedback on the deploy console (validation, dry runs) —
-   the full run output streams on the dashboard */
+   Inline pre-flight feedback on the deploy console (validation,
+   dry runs) — the full run output streams on the dashboard: */
 .deploy-note{margin-top:10px;padding:10px 14px;border:1px solid var(--line-soft);border-radius:var(--radius-sm);background:var(--bg-1);font-family:var(--font-mono);font-size:.76rem;line-height:1.7;}
 .deploy-note .ln{display:block;white-space:pre-wrap;}
 .deploy-note .p{color:var(--jade);}

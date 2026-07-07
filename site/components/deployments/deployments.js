@@ -13,6 +13,7 @@ import { pad32, encUint, DEP_SEL, waitReceipt } from "../../js/core/chain.js";
 import { authenticate, refreshWallet, saveSession, ensureBaseChain, sendTx } from "../../js/core/wallet.js";
 import { slugOfRef } from "../../js/core/catalog.js";
 import { vspecOf, verifyEnclaveInBrowser } from "../../js/core/verify.js";
+import { runlog, paintLine } from "../../js/core/runlog.js";
 
 // The app's reachable URL. Through the gateway each deployment gets its OWN
 // origin: a per-deployment subdomain (<id>.app.enclave.host, the base36 part of
@@ -63,18 +64,59 @@ class Deployments extends EnclaveElement {
   renderedCallback() {
     if (this._wired) return;
     this._wired = true;
+    this._logPolls = {};                       // open Output panels' log timers, by id
     this.querySelector(".enc-refresh").addEventListener("click", () => this.refresh({ spinner: true }));
-    // document-level listener must be removable: the soft-nav router mounts a
+    // document-level listeners must be removable: the soft-nav router mounts a
     // fresh instance per visit, and detached ones must not keep refreshing
     this._onAuth = (e) => this.refresh({ spinner: !!(e.detail && e.detail.spinner) });
     document.addEventListener("enclave:auth", this._onAuth);
+    this._onLog = (e) => this._onRunlog(e.detail || {});
+    document.addEventListener("enclave:runlog", this._onLog);
+    const x = this.querySelector(".enc-live-x");
+    if (x) x.addEventListener("click", () => { const s = this.querySelector(".enc-live"); if (s) s.hidden = true; });
+    // arriving mid-deploy (soft-nav away and back): replay the live run
+    const live = runlog.current();
+    if (live) { this._showLive(live); live.lines.forEach(l => paintLine(this.querySelector(".enc-live-out"), l[0], l[1])); }
     this.refresh();
   }
   disconnectedCallback() {
     super.disconnectedCallback();
     this._stopPoll();
+    Object.keys(this._logPolls || {}).forEach(id => this._stopLogPoll(id));
     if (this._onAuth) document.removeEventListener("enclave:auth", this._onAuth);
-    this._wired = false; this._onAuth = null;
+    if (this._onLog) document.removeEventListener("enclave:runlog", this._onLog);
+    this._wired = false; this._onAuth = null; this._onLog = null;
+  }
+
+  /* ---- the live-deploy strip: a run streaming with no row to live in ---- */
+  _showLive(run) {
+    this._liveRun = run;
+    const s = this.querySelector(".enc-live"), out = this.querySelector(".enc-live-out"), lbl = this.querySelector(".enc-live-lbl");
+    if (!s) return;
+    s.hidden = false; if (out) out.innerHTML = "";
+    if (lbl) lbl.textContent = run.id || run.label || "";
+  }
+  _onRunlog(d) {
+    const s = this.querySelector(".enc-live");
+    if (d.type === "start") this._showLive(d.run);
+    else if (d.type === "id") {
+      const lbl = this.querySelector(".enc-live-lbl"); if (lbl && this._liveRun === d.run) lbl.textContent = d.run.id;
+    }
+    else if (d.type === "line") {
+      if (this._liveRun === d.run) paintLine(this.querySelector(".enc-live-out"), d.cls, d.txt);
+      // a row's open Output panel for this deployment follows the narrative too
+      if (d.run.id) { const nar = this._openNar(d.run.id); if (nar) paintLine(nar.box, d.cls, d.txt, nar.scroller); }
+    }
+    else if (d.type === "end") {
+      // the row (with its Output panel) carries the history from here; keep
+      // the strip only for runs that died before an id existed
+      if (d.run.id && s) { s.hidden = true; this._liveRun = null; }
+    }
+  }
+  _openNar(id) {
+    const row = this.querySelector('.enc-out[data-id="' + id + '"]:not([hidden])');
+    if (!row) return null;
+    return { box: row.querySelector(".enc-out-nar"), scroller: row.querySelector(".enc-out-term") };
   }
 
   async refresh(opts) {
@@ -130,6 +172,7 @@ class Deployments extends EnclaveElement {
           '<span class="enc-meta">' + esc(encTier(d)) + ((d.image && d.image.reference) ? ' · <span class="dim">' + esc(slugOfRef(d.image.reference) || shortImg(d.image.reference)) + '</span>' : '') + '</span>' +
           '<span class="enc-spend">' + bud + '</span>' +
           '<span class="enc-acts">' +
+            '<button class="btn btn-sm enc-outbtn" data-id="' + esc(d.id) + '">Output</button>' +
             '<button class="btn btn-sm enc-verify" data-id="' + esc(d.id) + '">Verify</button>' +
             (live ? '<button class="btn btn-sm danger enc-kill" data-id="' + esc(d.id) + '">Terminate</button>' : '') +
           '</span>' +
@@ -138,13 +181,66 @@ class Deployments extends EnclaveElement {
         (ep ? '<button class="enc-ep" data-ep="' + esc(ep) + '">' + esc(ep) + ' ⧉</button>'
               + (d.public && st === "running" ? '<a class="enc-open" href="' + esc(ep) + '/" target="_blank" rel="noopener">open ↗</a>' : '') : '') +
         depIp6Row(d) +
+        '<div class="enc-out" data-id="' + esc(d.id) + '" hidden></div>' +
         '<div class="enc-att" hidden></div>' +
       '</div>';
     }).join("");
     $$(".enc-id", body).forEach(b => b.addEventListener("click", () => copyText(b.dataset.copy)));
     $$(".enc-ep", body).forEach(b => b.addEventListener("click", () => copyText(b.dataset.ep)));
+    $$(".enc-outbtn", body).forEach(b => b.addEventListener("click", () => this._output(b.dataset.id, b)));
     $$(".enc-verify", body).forEach(b => b.addEventListener("click", () => this._verify(b.dataset.id, b)));
     $$(".enc-kill", body).forEach(b => b.addEventListener("click", () => this._kill(b.dataset.id, b)));
+    // a just-deployed row opens its Output panel so the narrative continues in place
+    if (highlight) {
+      const b = body.querySelector('.enc-outbtn[data-id="' + highlight + '"]');
+      if (b && runlog.runFor(highlight)) this._output(highlight, b);
+    }
+  }
+
+  /* ---- per-row Output panel: recorded deploy narrative + live app logs ---- */
+  _output(id, btn) {
+    const row = btn.closest(".enc-row"), box = row && row.querySelector(".enc-out"); if (!box) return;
+    if (!box.hidden) { box.hidden = true; box.innerHTML = ""; this._stopLogPoll(id); return; }
+    box.hidden = false;
+    box.innerHTML = '<div class="ap-attbar">output · ' + esc(id) + '</div>'
+      + '<div class="term enc-out-term">'
+      +   '<div class="enc-out-nar"></div>'
+      +   '<div class="enc-out-logs"><span class="ln dimln">// fetching app logs…</span></div>'
+      + '</div>';
+    const nar = box.querySelector(".enc-out-nar"), scroller = box.querySelector(".enc-out-term");
+    const run = runlog.runFor(id);
+    if (run) {
+      paintLine(nar, "dimln", "// deploy narrative · " + run.label + " (recorded in this browser)", scroller);
+      run.lines.forEach(l => paintLine(nar, l[0], l[1], scroller));
+    }
+    this._fetchLogs(id, box);
+    this._logPolls[id] = setInterval(() => {
+      if (box.hidden || !box.isConnected) { this._stopLogPoll(id); return; }
+      this._fetchLogs(id, box);
+    }, 5000);
+  }
+  _stopLogPoll(id) {
+    if (this._logPolls && this._logPolls[id]) { clearInterval(this._logPolls[id]); delete this._logPolls[id]; }
+  }
+  async _fetchLogs(id, box) {
+    const el = box.querySelector(".enc-out-logs"), scroller = box.querySelector(".enc-out-term");
+    if (!el) return;
+    try {
+      const text = await Enclave.logs(id, { tail: 200 });
+      if (box.hidden || !el.isConnected) return;
+      const lines = String(text == null ? "" : text).split("\n");
+      while (lines.length && lines[lines.length - 1] === "") lines.pop();
+      // wholesale replace each poll; keep the reader's place unless they're tailing
+      const follow = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
+      const keep = scroller.scrollTop;
+      el.innerHTML = '<span class="ln dimln">// app logs (stdout/stderr from the enclave · tail 200 · refreshes while open)</span>';
+      if (!lines.length) el.insertAdjacentHTML("beforeend", '<span class="ln dimln">// (no output yet)</span>');
+      for (const ln of lines) { const s = document.createElement("span"); s.className = "ln logln"; s.textContent = ln; el.appendChild(s); }
+      scroller.scrollTop = follow ? scroller.scrollHeight : keep;
+    } catch (e) {
+      if (el.isConnected && !box.hidden)
+        el.innerHTML = '<span class="ln warn">// logs unavailable: ' + esc(e.message || String(e)) + '</span>';
+    }
   }
 
   async _verify(id, btn) {
@@ -204,7 +300,7 @@ class Deployments extends EnclaveElement {
     if (this._poll) return;
     this._poll = setInterval(() => {
       if (!Enclave.authed()){ this._stopPoll(); return; }
-      if (this.querySelector(".enc-att:not([hidden])")) return;   // don't clobber an open attestation view
+      if (this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden])")) return;   // don't clobber an open attestation/output view
       this.refresh();
     }, 10000);
   }

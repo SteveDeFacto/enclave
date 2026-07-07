@@ -6,5 +6,10 @@
       <button class="btn btn-sm enc-refresh" type="button">↻ refresh</button>
     </div>
   </div>
+  <!-- shows only while a deploy is streaming and its row doesn't exist yet -->
+  <div class="enc-live" hidden>
+    <div class="enc-live-bar"><span class="elb-k">deploying</span><span class="enc-live-lbl"></span><button class="enc-live-x" type="button" title="dismiss">✕</button></div>
+    <div class="term enc-live-out"></div>
+  </div>
   <div class="enc-body"></div>
 </div>
