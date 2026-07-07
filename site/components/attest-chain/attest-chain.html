@@ -1,5 +1,11 @@
 <div class="attest-wrap">
-  <div class="chain"></div>
+  <div class="chain">
+    <div class="link active"><div class="lk-h"><span class="lk-n">01</span><span class="lk-t">Hardware root of trust</span></div><p class="lk-d">Intel TDX and the NVIDIA GPU hold keys fused at manufacture. Enclave can't extract or forge them. The silicon vendor is the root of trust, not the operator.</p></div>
+    <div class="link"><div class="lk-h"><span class="lk-n">02</span><span class="lk-t">The VM measures itself</span></div><p class="lk-d">On boot the CPU emits a DCAP quote over MRTD + RTMR0–3, binding the firmware, the kernel, and the exact enclave image, including the Wasm app catalog baked into it. Change one byte and the quote changes.</p></div>
+    <div class="link"><div class="lk-h"><span class="lk-n">03</span><span class="lk-t">The GPU attests too</span></div><p class="lk-d">With confidential computing on, the H200 signs an attestation report over your nonce, proving CC mode, driver, and vBIOS before any data reaches VRAM. Check it against NVIDIA's NRAS or nvtrust.</p></div>
+    <div class="link"><div class="lk-h"><span class="lk-n">04</span><span class="lk-t">TLS is born inside</span></div><p class="lk-d">The enclave generates its TLS keypair in sealed memory and folds the public-key hash into the quote's report_data. The private key never leaves the boundary, so nobody can sit in the middle.</p></div>
+    <div class="link"><div class="lk-h"><span class="lk-n">05</span><span class="lk-t">Your browser verifies</span></div><p class="lk-d">Tinfoil's open-source verifier runs the whole chain client-side: hardware report against the vendor root, Sigstore provenance of the release, measurement comparison, TLS binding. The API's verification.selfCheck is the enclave running these same steps on itself: a labeled diagnostic, because trust only counts when YOUR client computes it. Try it live below.</p></div>
+  </div>
   <div class="attest-side">
     <div class="as-h"><span>GET /v1/deployments/{id}/attestation</span></div>
     <div class="code" style="border:0;border-radius:0;"><div class="codebar"><span class="fn attest-fn">attestation.json</span><button class="copybtn" type="button">⧉ copy</button></div><pre><code class="attest-out"></code></pre></div>

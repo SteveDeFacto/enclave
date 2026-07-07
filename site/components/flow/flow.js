@@ -1,18 +1,20 @@
 /* ============================================================
    <c-flow> — the "Five calls, start to finish" lifecycle
-   stepper. The steps are data here; each HTTP step's detail pane
-   (request/response examples) renders live from openapi.json.
+   stepper. The step buttons live in the TEMPLATE (prerendered at
+   build time); this class holds each step's method+path and
+   renders the detail pane live from openapi.json on hydration.
    ============================================================ */
 import { NanElement, register } from "../../js/lib/nan-element.js";
 import { esc, hlJson, hlCode } from "../../js/core/util.js";
 import { loadSpec, getSpec, bodyExample, responseExample } from "../../js/core/spec.js";
 
+/* method+path per step button, in template order */
 const STEPS = [
-  { t: "Sign in with your wallet", d: "Prove control of your address, with no email and no password.", method: "POST", path: "/auth/login" },
-  { t: "Create a deployment",      d: "One create() tx on Deployments from your wallet: app CID + two shares in 1/1000ths (the app's specs set the minimums). You own the on-chain record; it survives enclave updates.", method: "TX", path: "Deployments.create()" },
-  { t: "Fund runtime",             d: "fundWithAuthorization (EIP-3009 USDC) or fundEth on Deployments credits the deployment's on-chain balance; enclaves claim funded work and serve it under leases. Fund again any time to extend.", method: "POST", path: "/claim-hint" },
-  { t: "Verify the enclave",       d: "Pull the TDX quote + GPU report and check them yourself.", method: "GET",  path: "/deployments/{id}/attestation" },
-  { t: "Stop (or let it expire)",  d: "Tear down and release the share. No held balance to reclaim.", method: "DELETE", path: "/deployments/{id}" }
+  { method: "POST",   path: "/auth/login" },
+  { method: "TX",     path: "NanDeployments.create()" },
+  { method: "POST",   path: "/claim-hint" },
+  { method: "GET",    path: "/deployments/{id}/attestation" },
+  { method: "DELETE", path: "/deployments/{id}" },
 ];
 
 class Flow extends NanElement {
@@ -46,20 +48,13 @@ class Flow extends NanElement {
     if (this._wired) return;
     this._wired = true;
     const wrap = this.querySelector(".steps");
-    loadSpec().then(() => {
-      STEPS.forEach((s, i) => {
-        const el = document.createElement("button");
-        el.className = "step" + (i === 0 ? " active" : ""); el.type = "button"; el.setAttribute("role", "tab");
-        el.innerHTML = '<span class="num">' + (i + 1) + '</span><div><div class="st-t">' + esc(s.t)
-          + '</div><div class="st-d">' + esc(s.d) + "</div></div>";
-        el.addEventListener("click", () => {
-          wrap.querySelectorAll(".step").forEach(x => x.classList.remove("active"));
-          el.classList.add("active"); this.detail(i);
-        });
-        wrap.appendChild(el);
+    wrap.querySelectorAll(".step").forEach((el, i) => {
+      el.addEventListener("click", () => {
+        wrap.querySelectorAll(".step").forEach(x => x.classList.remove("active"));
+        el.classList.add("active"); this.detail(i);
       });
-      this.detail(0);
-    }, e => console.warn("[c-flow] spec load failed:", e));
+    });
+    loadSpec().then(() => this.detail(0), e => console.warn("[c-flow] spec load failed:", e));
   }
 }
 register("c-flow", Flow);

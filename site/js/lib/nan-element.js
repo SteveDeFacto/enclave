@@ -128,7 +128,10 @@ export class NanElement extends HTMLElement {
 
   _renderNow() {
     try {
-      const tpl = this.render();
+      // data-ssr = build-time prerendered (scripts/build-site.mjs baked the
+      // template into the page HTML): HYDRATE - leave the DOM as-is and only
+      // run renderedCallback (wiring, async fills). LWC's SSR+hydrate model.
+      const tpl = this.hasAttribute("data-ssr") ? null : this.render();
       if (tpl != null) {
         this.root.innerHTML = tpl;
         const slot = this.root.querySelector("slot");

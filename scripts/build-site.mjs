@@ -75,7 +75,49 @@ const result = await build({
   metafile: true,
 });
 
-console.log("[build] copy pages + static files (+ modulepreload for each page's chunks)");
+/* ---- build-time prerender ("SSR") ----
+   Expand every <c-*> element in the page HTML using its component template:
+   {attr} bindings substituted, <slot> replaced by the authored children,
+   nested components expanded recursively, and the host marked data-ssr so
+   NanElement HYDRATES (wires events, fills async data) instead of
+   re-rendering. Result: the header and all static chrome are plain HTML —
+   visible at first paint even before (or without) any JavaScript. */
+const TPL = {};
+for (const n of fs.readdirSync(path.join(SITE, "components"))) {
+  const f = path.join(SITE, "components", n, n + ".html");
+  if (fs.existsSync(f)) TPL[n] = fs.readFileSync(f, "utf8").trim();
+}
+function bake(html) {
+  let pos = 0, guard = 0;
+  while (guard++ < 2000) {
+    const idx = html.indexOf("<c-", pos);
+    if (idx === -1) break;
+    const tagEnd = html.indexOf(">", idx);
+    const open = html.slice(idx, tagEnd + 1);
+    const name = /^<c-([a-z-]+)/.exec(open)[1];
+    const attrStr = open.slice(3 + name.length, -1);
+    if (attrStr.includes("data-ssr") || !TPL[name]) { pos = idx + 3; continue; }
+    const close = "</c-" + name + ">";
+    const end = html.indexOf(close, tagEnd + 1);
+    if (end === -1) throw new Error("unclosed <c-" + name + ">");
+    const inner = html.slice(tagEnd + 1, end);
+    const attrs = {};
+    for (const m of attrStr.matchAll(/([a-z-]+)(?:="([^"]*)")?/g)) attrs[m[1]] = m[2] ?? "";
+    let out = TPL[name];
+    for (const [k, v] of Object.entries(attrs)) out = out.split("{" + k + "}").join(v);
+    out = out.replace("<slot></slot>", inner.trim());
+    if (name === "header" && attrs.current)   // the active-tab class the component toggles at runtime
+      out = out.replace(`data-view="${attrs.current}"`, `data-view="${attrs.current}" class="active"`);
+    html = html.slice(0, idx) + `<c-${name}${attrStr} data-ssr>` + out + close + html.slice(end + close.length);
+    // don't advance: re-scan from here so components nested inside the
+    // expansion (e.g. <c-wallet-button> in the header) get baked too
+    pos = idx;
+  }
+  if (guard >= 2000) throw new Error("bake(): runaway expansion");
+  return html;
+}
+
+console.log("[build] copy pages (components prerendered) + static files");
 /* the page scripts are render-blocking (head), so preloading their hashed
    chunk imports shortens the time before first paint */
 const outs = result.metafile.outputs;
@@ -95,7 +137,14 @@ for (const [outFile, o] of Object.entries(outs)) {
 }
 for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "buy.html", "openapi.json"]) {
   let s = fs.readFileSync(path.join(SITE, f), "utf8");
-  if (preloads[f]) s = s.replace('<script type="module" blocking="render"', preloads[f] + '\n<script type="module" blocking="render"');
+  if (f.endsWith(".html") && f !== "buy.html") {
+    s = bake(s);
+    // components are prerendered, so first paint is already the final layout:
+    // rendering must NOT wait for the script (that wait was visible on cold,
+    // slow fetches — a header-less page until JS arrived)
+    s = s.replace(' blocking="render"', "");
+  }
+  if (preloads[f]) s = s.replace('<script type="module" src="js/pages/', preloads[f] + '\n<script type="module" src="js/pages/');
   fs.writeFileSync(path.join(DIST, f), s);
 }
 for (const d of ["assets", "privy"])

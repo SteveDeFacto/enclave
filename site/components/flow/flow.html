@@ -1,4 +1,10 @@
 <div class="flow">
-  <div class="steps" role="tablist" aria-label="Lifecycle steps"></div>
+  <div class="steps" role="tablist" aria-label="Lifecycle steps">
+    <button class="step active" type="button" role="tab"><span class="num">1</span><div><div class="st-t">Sign in with your wallet</div><div class="st-d">Prove control of your address, with no email and no password.</div></div></button>
+    <button class="step" type="button" role="tab"><span class="num">2</span><div><div class="st-t">Create a deployment</div><div class="st-d">One create() tx on NanDeployments from your wallet: app CID + two shares in 1/1000ths (the app's specs set the minimums). You own the on-chain record; it survives enclave updates.</div></div></button>
+    <button class="step" type="button" role="tab"><span class="num">3</span><div><div class="st-t">Fund runtime</div><div class="st-d">fundWithAuthorization (EIP-3009 USDC) or fundEth on NanDeployments credits the deployment's on-chain balance; enclaves claim funded work and serve it under leases. Fund again any time to extend.</div></div></button>
+    <button class="step" type="button" role="tab"><span class="num">4</span><div><div class="st-t">Verify the enclave</div><div class="st-d">Pull the TDX quote + GPU report and check them yourself.</div></div></button>
+    <button class="step" type="button" role="tab"><span class="num">5</span><div><div class="st-t">Stop (or let it expire)</div><div class="st-d">Tear down and release the share. No held balance to reclaim.</div></div></button>
+  </div>
   <div class="flow-detail"></div>
 </div>
