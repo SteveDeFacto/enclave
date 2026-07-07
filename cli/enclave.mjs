@@ -8,10 +8,10 @@
 // the exact API traffic and transactions, ready to replay with curl.
 //
 //   enclave key new | import         bring a wallet (or ENCLAVE_KEY env)
-//   enclave deploy hello:1 --fund 2  create + fund + wait until live
+//   enclave deploy hello-world:1 --fund 2  create + fund + wait until live
 //   enclave ls | status | logs -f    watch it run
 //   enclave attest <id>              verify the enclave BEFORE you send data
-//   enclave publish app.wasm --slug hello   pin to IPFS + cut a catalog version
+//   enclave publish app.wasm --slug hello-world   pin to IPFS + cut a catalog version
 //
 // State lives in ~/.config/enclave/ (key: chmod 600; cached bearer tokens).
 // Nothing else touches your machine; the key never leaves it — API calls sign
@@ -718,7 +718,7 @@ async function cmdDeploy(rest) {
 
   // shares: fractions of one GPU card / one node (1 = the whole thing). When
   // omitted, use the app's minimum on the fleet's hardware (same formula the
-  // runners enforce) so `enclave deploy hello:1 --fund 2` just works.
+  // runners enforce) so `enclave deploy hello-world:1 --fund 2` just works.
   let pricing = null;
   try { pricing = await api("GET", "/v1/pricing"); } catch {}
   const mins = ver ? minShares(ver, pricing) : { gpuMilli: 0, cpuMilli: 50 };

@@ -143,7 +143,7 @@ browser --(publishVersion tx)---------> EnclaveAppCatalog   one Base tx; publish
 
 - **Attested, baked-in catalog** (`wasm/apps/catalog.json`) — curated apps compiled
   into the measured wasm-manager image. What the enclave runs today is exactly what
-  attestation measured. Deploys reference these by id (e.g. `hello`).
+  attestation measured. Deploys reference these by id (e.g. `hello-world`).
 - **On-chain community catalog** (`EnclaveAppCatalog`) — open discovery. Anyone
   publishes; each entry is a `wasi:http` component addressed by its **IPFS CID**.
   This is *discovery*, not custody or attestation: the catalog stores the CID (a
@@ -153,7 +153,7 @@ browser --(publishVersion tx)---------> EnclaveAppCatalog   one Base tx; publish
 **Run-by-CID (implemented).** Uploaded apps deploy, not just browse — once the
 catalog owner **approves** the version (see the trust model below; unapproved CIDs
 get `403 not_approved` from the API). `image.reference` accepts:
-- a baked-in catalog id (`hello`),
+- a baked-in catalog id (`hello-world`),
 - `ipfs://<cid>`, or
 - a human-friendly `slug:version` (or `<publisher>/slug:version` to disambiguate) —
   the **browser** resolves that against the on-chain catalog to the app's CID (unique
@@ -212,7 +212,7 @@ Manager env: `IPFS_GATEWAY` (default `https://ipfs.enclave.host`), `WASM_MAX_BYT
   resolves deployability in one `cidStatus(cid)` eth_call (listed + app active +
   not yanked + Approved) against `APP_CATALOG_ADDRESS` from the enclave config,
   and **fails closed**: no catalog configured or RPC unreachable ⇒ no catalog-app
-  deploys. Baked-in catalog ids (e.g. `hello`) are exempt — they ship inside the
+  deploys. Baked-in catalog ids (e.g. `hello-world`) are exempt — they ship inside the
   attested wasm-manager image. The site's Apps tab shows the per-version status
   badge and gives the owner wallet approve/reject buttons.
 

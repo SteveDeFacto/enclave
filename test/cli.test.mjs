@@ -125,8 +125,8 @@ function rpcServer() {
       count: () => [1n],
       secondsFundable: () => [333333n],
       appCount: () => [1n],
-      getAppsPage: () => [Number(args[0]) === 0 ? [{ appId: APP_ID, publisher: OWNER, slug: "hello",
-        name: "Hello", description: "first app", versionCount: 1, createdAt: 1n, updatedAt: 1n, active: true }] : []],
+      getAppsPage: () => [Number(args[0]) === 0 ? [{ appId: APP_ID, publisher: OWNER, slug: "hello-world",
+        name: "Hello World", description: "first app", versionCount: 1, createdAt: 1n, updatedAt: 1n, active: true }] : []],
       getVersionsPage: () => [Number(args[1]) === 0 ? [version] : []],
       numVersions: () => [S.numVersions],
       appIdOf: () => [APP_ID],
@@ -259,7 +259,7 @@ test("deploy: create tx -> Created id, EIP-3009 fund bound to id, claim-hint, wa
   S.claimed = false; S.txs.length = 0;
   S.apiDeployment = { id: ID, status: "running", image: { reference: "ipfs://" + CID },
                       resources: { gpuShare: 0, cpuShare: 0.01 }, timeRemainingSec: 3600, public: true };
-  const r = await run(["deploy", "hello:1", "--fund", "2"]);
+  const r = await run(["deploy", "hello-world:1", "--fund", "2"]);
   assert.equal(r.code, 0, r.err);
 
   const create = S.txs.find((t) => t.functionName === "create");
@@ -341,12 +341,12 @@ test("publish: validates the component, pins, cuts a catalog version", async () 
   const wasm = path.join(confDir, "app.wasm");
   // minimal component preamble: \0asm, version 13, layer 1 (a component)
   fs.writeFileSync(wasm, Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00]));
-  const r = await run(["publish", wasm, "--slug", "hello"]);
+  const r = await run(["publish", wasm, "--slug", "hello-world"]);
   assert.equal(r.code, 0, r.err);
   const pv = S.txs.find((t) => t.functionName === "publishVersion");
   const [slug, name, , version, cid, res, ports] = pv.args;
-  assert.equal(slug, "hello");
-  assert.equal(name, "hello");
+  assert.equal(slug, "hello-world");
+  assert.equal(name, "hello-world");
   assert.equal(version, "1");                               // numVersions=0 -> "1"
   assert.equal(cid, CID);
   assert.deepEqual([...res], [0, 0, 256, 10]);              // default resource spec
@@ -357,7 +357,7 @@ test("publish: validates the component, pins, cuts a catalog version", async () 
 test("publish rejects a core wasm module (layer 0)", async () => {
   const wasm = path.join(confDir, "core.wasm");
   fs.writeFileSync(wasm, Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
-  const r = await run(["publish", wasm, "--slug", "hello"]);
+  const r = await run(["publish", wasm, "--slug", "hello-world"]);
   assert.equal(r.code, 1);
   assert.match(r.err, /core wasm module, not a component/);
 });
@@ -365,7 +365,7 @@ test("publish rejects a core wasm module (layer 0)", async () => {
 test("apps: lists the catalog with approval state", async () => {
   const r = await run(["apps"]);
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /hello:1/);
+  assert.match(r.out, /hello-world:1/);
   assert.match(r.out, /approved/);
 });
 

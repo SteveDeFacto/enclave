@@ -60,7 +60,7 @@ overridden per deployment via `ENCLAVE_CONFIG` (configCid) or `?contract=`.
 ## Publish
 
 Pure `wasi:http`, no GPU, no ports beyond the served app, minimal memory —
-publish like `hello`. Pairs with the always-on unlock agent:
+publish like `hello-world`. Pairs with the always-on unlock agent:
 `node scripts/enclave-vault-client.mjs watch --id 0x… --owner 0x… --name <vol>`
 (re-delivers the sealed VEK on failover/restart; detects fresh enclave boots
 by their per-boot vault pubkey).

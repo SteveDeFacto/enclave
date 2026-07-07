@@ -7,8 +7,8 @@ or `enclave help`.
 
 ```
 enclave key new                      # bring a wallet; fund it with USDC on Base
-enclave publish app.wasm --slug hello
-enclave deploy hello:1 --fund 2      # create + fund $2 + wait for live; prints the URL
+enclave publish app.wasm --slug hello-world
+enclave deploy hello-world:1 --fund 2  # create + fund $2 + wait for live; prints the URL
 enclave attest 0x3xk9…               # verify the enclave locally BEFORE sending data
 enclave logs 0x3xk9… -f
 ```

@@ -12,17 +12,17 @@ warn(){ printf '  \033[33mWARN\033[0m %s\n' "$1"; }
 sec(){  printf '\n== %s ==\n' "$1"; }
 
 sec "wasm backend files present"
-for f in wasm/wasm_manager.py wasm/Dockerfile.wasm wasm/apps/catalog.json wasm/apps/hello.wasm; do
+for f in wasm/wasm_manager.py wasm/Dockerfile.wasm wasm/apps/catalog.json wasm/apps/hello-world.wasm; do
   [ -f "$f" ] && ok "$f" || bad "$f MISSING"
 done
-if [ -f wasm/apps/hello.wasm ]; then
-  magic=$(head -c4 wasm/apps/hello.wasm 2>/dev/null | od -An -tx1 | tr -d ' \n')
-  [ "$magic" = "0061736d" ] && ok "hello.wasm has valid wasm magic" \
-    || bad "hello.wasm is not a wasm module (magic=$magic; empty or wrong file?)"
+if [ -f wasm/apps/hello-world.wasm ]; then
+  magic=$(head -c4 wasm/apps/hello-world.wasm 2>/dev/null | od -An -tx1 | tr -d ' \n')
+  [ "$magic" = "0061736d" ] && ok "hello-world.wasm has valid wasm magic" \
+    || bad "hello-world.wasm is not a wasm module (magic=$magic; empty or wrong file?)"
 fi
 if [ -f wasm/apps/catalog.json ]; then
   if command -v python3 >/dev/null && python3 -c "import json,sys;json.load(open('wasm/apps/catalog.json'))" 2>/dev/null; then
-    grep -q '"hello"' wasm/apps/catalog.json && ok "catalog.json valid + lists hello" || warn "catalog.json valid but no hello entry"
+    grep -q '"hello-world"' wasm/apps/catalog.json && ok "catalog.json valid + lists hello-world" || warn "catalog.json valid but no hello-world entry"
   else bad "catalog.json is not valid JSON"; fi
 fi
 

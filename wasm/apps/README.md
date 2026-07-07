@@ -20,7 +20,7 @@ First-party apps to publish (see each directory for source):
 
 | app | artifact | publish specs (exact, GFLOPS = 1/1000 TFLOPS) |
 |---|---|---|
-| `hello` | `hello.wasm` (committed) | vram 0 / gpu 0 / mem 128 MB / cpu ~10 GFLOPS |
+| `hello-world` | `hello-world.wasm` (committed) | vram 0 / gpu 0 / mem 128 MB / cpu ~10 GFLOPS |
 | `nn-demo` | `nn-demo.wasm` (committed) | vram 1024 MB / gpu 10 / mem 128 MB / cpu 10 / storage 64 MB |
 | `llm-chat` | release asset `llm-chat-v0.1.1` (123MB, past git's file limit) | vram 1024 MB / gpu 10 / mem 512 MB / cpu 10 / storage 0 |
 
@@ -195,7 +195,7 @@ bootstrap tensors; patch parts 3+4) and the per-process session cache (part
 5 — without it every request re-initializes the 117MB session, which under
 CC is slow enough to trip the proxy and wedge the tenant).
 
-## Building the sample `hello.wasm`
+## Building the sample `hello-world.wasm`
 
 Requires the Rust toolchain and `cargo-component`:
 
@@ -204,14 +204,14 @@ rustup target add wasm32-wasip2
 cargo install cargo-component
 
 # in a scratch crate:
-cargo component new hello --lib && cd hello
+cargo component new hello-world --lib && cd hello-world
 ```
 
 Set `wit/world.wit`:
 
 ```wit
-package enclave:hello;
-world hello { export wasi:http/incoming-handler@0.2.0; }
+package enclave:hello-world;
+world hello-world { export wasi:http/incoming-handler@0.2.0; }
 ```
 
 `src/lib.rs`:
@@ -226,7 +226,7 @@ impl wasi::exports::http::incoming_handler::Guest for Component {
         let body = resp.body().unwrap();
         ResponseOutparam::set(out, Ok(resp));
         let stream = body.write().unwrap();
-        stream.blocking_write_and_flush(b"enclave-wasm-ok\n").unwrap();
+        stream.blocking_write_and_flush(b"Hello World!\n").unwrap();
         drop(stream);
         OutgoingBody::finish(body, None).unwrap();
     }
@@ -238,7 +238,7 @@ site) and deploy it by CID:
 
 ```bash
 cargo component build --release --target wasm32-wasip2
-# artifact: target/wasm32-wasip2/release/hello.wasm
+# artifact: target/wasm32-wasip2/release/hello_world.wasm
 ```
 
 (Exact WASI binding APIs shift between `wasi` crate versions; pin the crate
@@ -248,8 +248,8 @@ handler signature. The shape above is the stable wasi:http/proxy pattern.)
 ## Verifying an app locally
 
 ```bash
-wasmtime serve --addr 127.0.0.1:8080 apps/hello.wasm
-curl 127.0.0.1:8080/    # -> enclave-wasm-ok
+wasmtime serve -S cli --addr 127.0.0.1:8080 apps/hello-world.wasm
+curl 127.0.0.1:8080/    # -> Hello World!
 ```
 
 If that works locally, it works in the enclave; the manager runs the identical

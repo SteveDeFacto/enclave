@@ -92,7 +92,7 @@
           </ul>
           <p>And one catalog every app reference points at:</p>
           <ul>
-            <li><b>The on-chain app store</b>: the <a href="apps.html">Apps</a> tab: anyone publishes, bytes live on IPFS addressed by CID, listings live in the <code>EnclaveAppCatalog</code> contract on Base. First-party samples (<code>hello</code>, <code>nn-demo</code>, <code>llm-chat</code>) are published there too - the enclave image ships no deployable apps, so every deploy resolves to a CID the enclave fetches and hash-verifies. <a href="#docs-publish">Chapter 04 →</a></li>
+            <li><b>The on-chain app store</b>: the <a href="apps.html">Apps</a> tab: anyone publishes, bytes live on IPFS addressed by CID, listings live in the <code>EnclaveAppCatalog</code> contract on Base. First-party samples (<code>hello-world</code>, <code>nn-demo</code>, <code>llm-chat</code>) are published there too - the enclave image ships no deployable apps, so every deploy resolves to a CID the enclave fetches and hash-verifies. <a href="#docs-publish">Chapter 04 →</a></li>
           </ul>
           <div class="doc-note">
             <span class="nt">The contract</span>
@@ -116,7 +116,7 @@ wasmtime --version</code></pre></c-code>
         <!-- 03 ------------------------------------------------------------ -->
         <article class="doc" id="docs-hello">
           <h3><span class="n">03</span>Hello, enclave</h3>
-          <p>Five steps from nothing to a running app: scaffold, declare the world, write the handler, build, run. The result is byte-for-byte the kind of component the platform's own <code>hello</code> sample is.</p>
+          <p>Five steps from nothing to a running app: scaffold, declare the world, write the handler, build, run. The result is byte-for-byte the kind of component the platform's own <code>hello-world</code> sample is.</p>
 
           <h4>Step 1: scaffold a component crate</h4>
           <c-code fn="terminal"><pre><code>cargo component new hello --lib &amp;&amp; cd hello
