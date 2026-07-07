@@ -188,6 +188,28 @@ const memCmp = (a, b) => a.role === b.role && a.pubkey.toLowerCase() === b.pubke
 
 const chunked = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
 
+/* Fold the planned import calls into multicall(bytes[]) transactions so a
+   whole migration usually rides ONE wallet confirmation. Greedy packing by
+   rough per-call gas estimates against a per-tx budget (well under Base's
+   block limit; the wallet still estimates the real number before signing).
+   Inner auth is untouched — multicall delegatecalls self, msg.sender holds. */
+const GAS_BUDGET = 15_000_000;
+function packPlan(contractName, txs) {
+  if (txs.length <= 1) return txs;
+  const sel = CONTRACTS[contractName].sel;
+  const groups = [[]];
+  let used = 0;
+  for (const t of txs) {
+    const g = t.gas || 1_000_000;
+    if (groups[groups.length - 1].length && used + g > GAS_BUDGET) { groups.push([]); used = 0; }
+    groups[groups.length - 1].push(t); used += g;
+  }
+  return groups.map((g) => g.length === 1 ? g[0] : {
+    label: `multicall · ${g.length} calls (${g.map((t) => t.label.split(" ·")[0]).filter((v, i, a) => a.indexOf(v) === i).join(", ")})`,
+    dataHex: encCallX(sel.multicall, [{ t: "bytes[]", v: g.map((t) => t.dataHex) }]),
+  });
+}
+
 export const MIG_KINDS = {
   deployments: {
     label: "Deployments", contractName: "EnclaveDeployments", bookKey: "deployments",
@@ -200,10 +222,11 @@ export const MIG_KINDS = {
       const sel = CONTRACTS.EnclaveDeployments.sel;
       const have = new Set(after.map((d) => d.id.toLowerCase()));
       const todo = data.filter((d) => !have.has(d.id.toLowerCase())).map(depClean);
-      return chunked(todo, CHUNK.deployments).map((c, i) => ({
+      return packPlan("EnclaveDeployments", chunked(todo, CHUNK.deployments).map((c, i) => ({
         label: `importDeployments · batch ${i + 1} (${c.length})`,
+        gas: 120_000 + 450_000 * c.length,
         dataHex: encCallX(sel.importDeployments, [{ t: "tuple[]", schema: DEP_SCHEMA, v: c }]),
-      }));
+      })));
     },
     async verify(data, target) {
       const after = await readDeployments(target);
@@ -223,6 +246,7 @@ export const MIG_KINDS = {
       const newApps = data.filter((a) => !have[a.appId.toLowerCase()]);
       const txs = chunked(newApps, CHUNK.apps).map((c, i) => ({
         label: `importApps · batch ${i + 1} (${c.length})`,
+        gas: 100_000 + 250_000 * c.length,
         dataHex: encCallX(sel.importApps, [{ t: "tuple[]", schema: APP_SCHEMA, v: c }]),
       }));
       for (const a of data) {
@@ -230,9 +254,10 @@ export const MIG_KINDS = {
         const done = have[a.appId.toLowerCase()] ? have[a.appId.toLowerCase()].versions.length : 0;
         for (const [i, c] of chunked(a.versions.slice(done), CHUNK.versions).entries())
           txs.push({ label: `importVersions · ${a.slug} (${c.length}${done || i ? ", cont." : ""})`,
+            gas: 100_000 + 300_000 * c.length,
             dataHex: encCallX(sel.importVersions, [{ t: "bytes32", v: a.appId }, { t: "tuple[]", schema: VER_SCHEMA, v: c }]) });
       }
-      return txs;
+      return packPlan("EnclaveAppCatalog", txs);
     },
     async verify(data, target) {
       const after = await readCatalog(target);
@@ -257,6 +282,7 @@ export const MIG_KINDS = {
       const newVols = data.filter((v) => !have[v.volId.toLowerCase()]);
       const txs = chunked(newVols, CHUNK.volumes).map((c, i) => ({
         label: `importVolumes · batch ${i + 1} (${c.length})`,
+        gas: 80_000 + 100_000 * c.length,
         dataHex: encCallX(sel.importVolumes, [
           { t: "bytes32[]", v: c.map((v) => v.volId) },
           { t: "addr[]", v: c.map((v) => v.owner) },
@@ -268,6 +294,7 @@ export const MIG_KINDS = {
         const todo = v.members.filter((m) => !doneAddrs.has(m.addr.toLowerCase()));
         for (const [i, c] of chunked(todo, CHUNK.members).entries())
           txs.push({ label: `importMembers · ${v.volId.slice(0, 10)}… (${c.length}${i ? ", cont." : ""})`,
+            gas: 80_000 + 180_000 * c.length,
             dataHex: encCallX(sel.importMembers, [
               { t: "bytes32", v: v.volId },
               { t: "addr[]", v: c.map((m) => m.addr) },
@@ -276,7 +303,7 @@ export const MIG_KINDS = {
               { t: "uint[]", v: c.map((m) => m.updatedAt) },
               { t: "bytes[]", v: c.map((m) => m.sealedVEK) }]) });
       }
-      return txs;
+      return packPlan("EnclaveVolumeAccess", txs);
     },
     async verify(data, target) {
       const after = await readVolumes(target);

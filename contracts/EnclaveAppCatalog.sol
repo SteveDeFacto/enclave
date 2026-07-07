@@ -329,6 +329,22 @@ contract EnclaveAppCatalog {
         emit ImportsSealed();
     }
 
+    /// @notice Batch several calls to THIS contract into one transaction
+    ///         (delegatecall to self: msg.sender is preserved, so every inner
+    ///         call keeps its own auth check). Atomic. Lets a whole migration
+    ///         (importApps + every importVersions) ride one confirmation.
+    function multicall(bytes[] calldata calls) external returns (bytes[] memory results) {
+        results = new bytes[](calls.length);
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool ok, bytes memory ret) = address(this).delegatecall(calls[i]);
+            if (!ok) {
+                if (ret.length == 0) revert("multicall failed");
+                assembly { revert(add(ret, 32), mload(ret)) }
+            }
+            results[i] = ret;
+        }
+    }
+
     // ----- reads (off-chain discovery) -------------------------------------
     function appCount() external view returns (uint256) { return _appIds.length; }
     function appIdAt(uint256 i) external view returns (bytes32) { return _appIds[i]; }

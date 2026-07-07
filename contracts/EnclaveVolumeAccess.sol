@@ -232,6 +232,22 @@ contract EnclaveVolumeAccess {
         emit ImportsSealed();
     }
 
+    /// @notice Batch several calls to THIS contract into one transaction
+    ///         (delegatecall to self: msg.sender is preserved, so every inner
+    ///         call keeps its own auth check). Atomic. Lets a whole migration
+    ///         (importVolumes + every importMembers) ride one confirmation.
+    function multicall(bytes[] calldata calls) external returns (bytes[] memory results) {
+        results = new bytes[](calls.length);
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool ok, bytes memory ret) = address(this).delegatecall(calls[i]);
+            if (!ok) {
+                if (ret.length == 0) revert("multicall failed");
+                assembly { revert(add(ret, 32), mload(ret)) }
+            }
+            results[i] = ret;
+        }
+    }
+
     // ----- admin (operator rotation only; no custody, no key access) -------
 
     function setOperator(address o) external {

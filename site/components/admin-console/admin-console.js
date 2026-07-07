@@ -277,7 +277,7 @@ class AdminConsole extends EnclaveElement {
     /* -- migrate -- */
     {
       parts.push(`<section class="ac-panel"><h3>Migrate data</h3>
-        <p class="ac-sub">Move a contract's ENTIRE state into a freshly deployed import-capable revision: read the source, replay everything through the target's owner-gated import functions in batches, verify the copy field-by-field, then permanently seal the imports. The plan is a delta — re-clicking Migrate resumes an interrupted run and picks up records created on the source since the last pass (do one last pass right before pointing the book, then seal). Targets deployed before 2026-07-07 have no import surface and are rejected.</p>
+        <p class="ac-sub">Move a contract's ENTIRE state into a freshly deployed import-capable revision: read the source, replay everything through the target's owner-gated import functions — packed via <code>multicall</code>, so the whole migration is typically <b>one wallet confirmation</b> — verify the copy field-by-field, then permanently seal the imports. The plan is a delta: re-clicking Migrate resumes an interrupted run and picks up records created on the source since the last pass (do one last pass right before pointing the book, then seal). Targets deployed before 2026-07-07 have no import surface and are rejected.</p>
         <div class="ac-mig-ctl">
           <select class="ac-in ac-in-key" id="migKind">${Object.entries(MIG_KINDS).map(([k, m]) => `<option value="${k}">${esc(m.label)}</option>`).join("")}</select>
           <input class="ac-in" id="migSource" placeholder="source 0x…" spellcheck="false" autocomplete="off" />

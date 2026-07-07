@@ -418,6 +418,24 @@ contract EnclaveDeployments {
         emit ImportsSealed();
     }
 
+    /// @notice Batch several calls to THIS contract into one transaction
+    ///         (delegatecall to self: msg.sender is preserved, so every inner
+    ///         call keeps its own auth check). Atomic — any inner revert
+    ///         bubbles up and undoes the lot. Lets a whole migration ride one
+    ///         wallet confirmation. Non-payable, so msg.value can't be
+    ///         double-counted across inner calls.
+    function multicall(bytes[] calldata calls) external returns (bytes[] memory results) {
+        results = new bytes[](calls.length);
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool ok, bytes memory ret) = address(this).delegatecall(calls[i]);
+            if (!ok) {
+                if (ret.length == 0) revert("multicall failed");
+                assembly { revert(add(ret, 32), mload(ret)) }
+            }
+            results[i] = ret;
+        }
+    }
+
     // ========================================================================
     // admin (pricing + parameters; no custody, no access to balances)
     // ========================================================================

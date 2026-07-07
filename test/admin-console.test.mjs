@@ -149,6 +149,14 @@ test("volume import calls (primitive + bytes[] arrays) encode like viem", () => 
       args: [volId, [A1, A2], [pub, pub], [2, 1], [1751000001n, 1751000002n], [sealed, "0x"]] }));
 });
 
+test("multicall wrapping encodes like viem", () => {
+  const catAbi = ABI("EnclaveAppCatalog");
+  const inner1 = encCallX(S("EnclaveAppCatalog").importApps, [{ t: "tuple[]", schema: APP_SCHEMA, v: [APP_ROW] }]);
+  const inner2 = encCallX(S("EnclaveAppCatalog").importVersions, [{ t: "bytes32", v: APP_ROW.appId }, { t: "tuple[]", schema: VER_SCHEMA, v: [VER_ROW] }]);
+  eq(encCallX(S("EnclaveAppCatalog").multicall, [{ t: "bytes[]", v: [inner1, inner2] }]),
+    encodeFunctionData({ abi: catAbi, functionName: "multicall", args: [[inner1, inner2]] }));
+});
+
 test("migration round-trip: decode a getPage result, re-encode it for import, byte-equal to viem", () => {
   // what the SOURCE contract returns from getPage(...)
   const depAbi = ABI("EnclaveDeployments");
