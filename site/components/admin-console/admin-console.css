@@ -1,0 +1,79 @@
+/* <c-admin-console> — operator console (admin.html). Dense, monospace-leaning
+   control panels; reuses the site's tokens and .btn vocabulary. */
+.ac { display: flex; flex-direction: column; gap: 18px; margin-top: 8px; }
+
+.ac-signer {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); font-size: 13.5px;
+}
+.ac-signer .ac-who { color: var(--text-muted); }
+.ac-signer .ac-who b { color: var(--text); font-weight: 600; }
+.ac-signer .ac-refresh { margin-left: auto; }
+.ac-chip {
+  font-family: var(--font-mono); font-size: 11.5px; padding: 2px 8px;
+  border-radius: 999px; border: 1px solid var(--line);
+}
+.ac-chip.ok { color: var(--jade); border-color: var(--jade-dim); }
+.ac-chip.no { color: var(--text-dim); }
+
+.ac-note { color: var(--text-muted); font-size: 14px; padding: 4px 2px; }
+
+.ac-panel {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); padding: 18px 20px;
+}
+.ac-panel h3 { margin: 0 0 6px; font-size: 16px; }
+.ac-panel h3 a { font-family: var(--font-mono); font-size: 12.5px; margin-left: 4px; }
+.ac-sub { color: var(--text-muted); font-size: 13px; line-height: 1.55; margin: 0 0 12px; }
+.ac-sub code, .ac-lbl code { font-family: var(--font-mono); font-size: 12px; color: var(--jade-2); }
+.warn { color: var(--amber); }
+.dim { color: var(--text-dim); }
+
+.ac-addr { font-family: var(--font-mono); font-size: 12px; word-break: break-all; }
+
+.ac-row {
+  display: grid; grid-template-columns: minmax(150px, 0.9fr) minmax(180px, 1.2fr) minmax(160px, 1fr) minmax(70px, auto) auto;
+  gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line-soft);
+  font-size: 13px;
+}
+.ac-row:first-of-type { border-top: 0; }
+.ac-lbl { color: var(--text-muted); }
+.ac-hint { display: block; color: var(--text-dim); font-size: 11px; font-family: var(--font-mono); }
+.ac-cur { min-width: 0; }
+.ac-live { font-family: var(--font-mono); font-size: 11.5px; color: var(--jade-2); white-space: nowrap; }
+
+.ac-in {
+  width: 100%; min-width: 0; padding: 7px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line); background: var(--bg-1); color: var(--text);
+  font-family: var(--font-mono); font-size: 12px;
+}
+.ac-in:focus { outline: none; border-color: var(--jade-dim); }
+.ac-in-key { max-width: 200px; }
+.ac-row-new { grid-template-columns: minmax(150px, 0.9fr) 0 minmax(160px, 1fr) minmax(70px, auto) auto; }
+
+.ac-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.ac-card {
+  border: 1px solid var(--line-soft); border-radius: var(--radius-sm);
+  background: var(--bg-1); padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
+}
+.ac-card h4 { margin: 0; font-size: 14px; }
+.ac-card h4 .ac-hint { font-weight: 400; }
+.ac-ctor-l { display: block; width: 100%; font-size: 12px; color: var(--text-muted); }
+.ac-ctor-l .ac-hint { display: inline; margin-left: 4px; }
+.ac-ctor { margin-top: 3px; }
+.ac-deploy-out { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.ac-deployed { font-size: 12.5px; }
+
+.ac-status { font-family: var(--font-mono); font-size: 12px; margin-top: 10px; word-break: break-word; }
+.ac-status.p { color: var(--text-muted); }
+.ac-status.ok { color: var(--jade); }
+.ac-status.err { color: var(--danger); }
+
+.ac-danger-btn { border-color: var(--danger-deep); color: var(--danger); }
+
+@media (max-width: 760px) {
+  .ac-row, .ac-row-new { grid-template-columns: 1fr; gap: 6px; }
+  .ac-live { display: none; }
+}

@@ -223,6 +223,7 @@ function run(cliArgs, { input } = {}) {
              ENCLAVE_API_BASE: `http://127.0.0.1:${apiPort}`,
              ENCLAVE_RPC: `http://127.0.0.1:${rpcPort}`,
              ENCLAVE_IPFS_UPLOAD: `http://127.0.0.1:${ipfsPort}/add-wasm`,
+             ENCLAVE_ADDRESS_BOOK: "",   // opt out of the on-chain address book: the double must stay offline (and the 4s resolve cap × every invocation would blow the suite timeout)
              XDG_CONFIG_HOME: confDir },
     });
     let out = "", err = "";

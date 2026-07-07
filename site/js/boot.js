@@ -24,6 +24,7 @@ const PAGES = {
   apps:      () => import("./pages/apps.js"),      // also hosts #publish and #deploy (deploy.js is its lazy chunk)
   develop:   () => import("./pages/develop.js"),
   dashboard: () => import("./pages/dashboard.js"), // signed-in view: run log + My Apps
+  admin:     () => import("./pages/admin.js"),     // operator console — deliberately absent from the nav
 };
 const pageOf = (pathname) => {
   const base = pathname.split("/").pop() || "index.html";
@@ -135,6 +136,7 @@ const initial = pageOf(location.pathname) || "overview";
 bootPage(initial);
 setTimeout(() => {
   for (const p of Object.keys(PAGES)) {
+    if (p === "admin") continue;                 // nobody navigates there by accident — don't warm it
     const path = p === "overview" ? "index.html" : p + ".html";
     if (pageOf(location.pathname) !== p)
       fetchPage(new URL(path, location.href)).catch(() => {});
