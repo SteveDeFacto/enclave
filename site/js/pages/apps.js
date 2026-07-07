@@ -9,13 +9,13 @@ import "../../components/footer/footer.js";
 import "../../components/toast/toast.js";
 import "../../components/section-head/section-head.js";
 import "../../components/app-card/app-card.js";
-import { $, $$, esc, short, blen, showToast, on } from "../core/util.js";
-import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, IPFS_UPLOAD_URL, MAX_WASM_MB, MAX_WASM_BYTES, BASE_CHAIN } from "../core/config.js";
+import { $, $$, esc, short, blen, fmtDur, showToast, on } from "../core/util.js";
+import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, IPFS_UPLOAD_URL, MAX_WASM_MB, MAX_WASM_BYTES, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
 import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, waitReceipt } from "../core/chain.js";
-import { connectWallet, ensureBaseChain, sendTx } from "../core/wallet.js";
+import { connectWallet, authenticate, ensureBaseChain, sendTx, usdcBalanceOf, openBuyModal } from "../core/wallet.js";
 import { STORE, loadCatalog, selIdx, appVerified, validPortsCsv, REF_CACHE, PORTS_CACHE, MINS_CACHE } from "../core/catalog.js";
-import { minPctsOf } from "../core/pricing.js";
+import { minPctsOf, shareRates } from "../core/pricing.js";
 import { navigate } from "../boot.js";
 
 /* ---- render: filter + sort the catalog into <c-app-card>s ---- */
@@ -63,6 +63,82 @@ function useInDeploy(app, v){
   // same page, new search: the router re-fetches + swaps <main>, and boot()'s
   // applyView lands on the deploy view with ?app= in place
   navigate("apps.html?app=" + encodeURIComponent(friendly) + "#deploy", { push: true });
+}
+
+/* ---- quick deploy: the store card's one-decision modal. Wallet balance,
+   an amount, the runtime it buys at the app's MINIMUM shares — then the
+   shared deployOnChain flow (public endpoint, catalog ports, USDC).
+   "Advanced settings" is the full console (useInDeploy). ---- */
+let qdEsc = null;
+function closeQuick(){
+  const host = $("#quickDeploy"); if (host) host.remove();
+  if (qdEsc){ document.removeEventListener("keydown", qdEsc); qdEsc = null; }
+}
+function quickDeploy(app, v){
+  closeQuick();
+  const mins = minPctsOf(v);
+  const { rate } = shareRates(mins.gpuPct, mins.cpuPct);
+  const perHr = (rate * 3600).toFixed(2);
+  const host = document.createElement("div");
+  host.id = "quickDeploy"; host.className = "qd-overlay";
+  host.innerHTML =
+    '<div class="qd-card" role="dialog" aria-modal="true" aria-label="Deploy ' + esc(app.name || app.slug) + '">' +
+      '<div class="qd-h">Deploy <b>' + esc(app.name || app.slug) + '</b> <span class="qd-ver">' + esc(v.version) + '</span></div>' +
+      '<p class="qd-sub">Runs in its own confidential enclave at <b>$' + perHr + '/hr</b>. Fund it from your wallet — it runs until the time you bought is used up, and you can top up or stop it whenever you like.</p>' +
+      '<div class="qd-bal"><span>Your wallet</span><b class="qd-balv">…</b><button class="qd-buy" type="button" hidden>Buy USDC →</button><button class="qd-connect btn btn-sm" type="button" hidden>Connect wallet</button></div>' +
+      '<label class="qd-lbl" for="qdAmt">Amount to fund (USDC)</label>' +
+      '<input class="qd-amt" id="qdAmt" type="number" value="5" min="0.01" step="any" inputmode="decimal" />' +
+      '<div class="qd-est">buys ≈ <b class="qd-estv"></b> of runtime</div>' +
+      '<div class="qd-note" hidden></div>' +
+      '<div class="qd-actions">' +
+        '<button class="btn btn-primary qd-go" type="button">▸ Deploy</button>' +
+        '<button class="btn qd-adv" type="button" title="Pick shares, open ports, app config, and payment options on the full console">Advanced settings →</button>' +
+        '<button class="btn qd-cancel" type="button">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(host);
+  qdEsc = (e) => { if (e.key === "Escape") closeQuick(); };
+  document.addEventListener("keydown", qdEsc);
+  host.addEventListener("click", (e) => { if (e.target === host) closeQuick(); });
+  const amt = host.querySelector(".qd-amt"), estv = host.querySelector(".qd-estv"), note = host.querySelector(".qd-note");
+  const go = host.querySelector(".qd-go"), balv = host.querySelector(".qd-balv");
+  const buy = host.querySelector(".qd-buy"), conn = host.querySelector(".qd-connect");
+  let bal = null;
+  const est = () => {
+    const usd = parseFloat(amt.value) || 0;
+    estv.textContent = (usd > 0 && rate > 0) ? fmtDur(usd / rate) : "–";
+    const shortOnFunds = bal != null && usd > bal;
+    note.hidden = !shortOnFunds;
+    if (shortOnFunds) note.textContent = "That’s more than your wallet holds ($" + bal.toFixed(2) + " USDC).";
+    go.disabled = !(usd >= 0.01) || shortOnFunds;
+  };
+  amt.addEventListener("input", est);
+  const loadBal = async () => {
+    if (!Enclave.address || !Enclave.provider){ balv.textContent = "not connected"; conn.hidden = false; return; }
+    conn.hidden = true;
+    try { bal = await usdcBalanceOf(Enclave.address); balv.textContent = bal.toFixed(2) + " USDC"; } catch(e){}
+    if (buy) buy.hidden = !(Enclave.walletRdns === PRIVY_RDNS);
+    est();
+  };
+  conn.addEventListener("click", async () => {
+    conn.disabled = true;
+    try { if (!Enclave.token) await authenticate(); else await connectWallet(); }
+    catch(e){ showToast(e.message || String(e)); }
+    conn.disabled = false; loadBal();
+  });
+  if (buy) buy.addEventListener("click", () => openBuyModal());
+  host.querySelector(".qd-cancel").addEventListener("click", closeQuick);
+  host.querySelector(".qd-adv").addEventListener("click", () => { closeQuick(); useInDeploy(app, v); });
+  go.addEventListener("click", async () => {
+    const usd = parseFloat(amt.value) || 0; if (!(usd >= 0.01)) return;
+    closeQuick();
+    // the flow lives in the deploy chunk; it navigates to the dashboard and
+    // narrates into the run log (deployOnChain never throws)
+    const m = await import("./deploy.js");
+    m.deployOnChain({ reference: "ipfs://" + v.cid, gpuMilli: mins.gpuPct * 10, cpuMilli: mins.cpuPct * 10,
+      ports: v.ports || "", isPublic: true, configCid: "", volumes: [], fundUsd: usd, asset: "USDC" });
+  });
+  est(); loadBal();
 }
 
 /* ---- write side: IPFS upload + publish/verify/yank/delist txs ---- */
@@ -365,7 +441,7 @@ function initStore(){
   // wallet-tx / navigation actions the cards bubble up (data down, events up)
   grid.addEventListener("card-action", (e) => {
     const { app, act, idx, verified } = e.detail;
-    if (act === "deploy") useInDeploy(app, app.versions[idx]);
+    if (act === "deploy") quickDeploy(app, app.versions[idx]);
     else if (act === "delist"){ if (confirm("Delist this whole app? It stays on-chain but is hidden from the store - you (and the catalog owner) still see it here, with a relist button.")) setActiveTx(app.slug, false); }
     else if (act === "relist") setActiveTx(app.slug, true);
     else if (act === "newver") prefillPublish(app);

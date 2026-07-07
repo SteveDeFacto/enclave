@@ -184,7 +184,7 @@ function usdToWei(usd, ethUsd){
          allowance left behind.
    ETH:  payEth(ref) with msg.value: ONE transaction; the enclave credits the wei
          as USDC-equivalent at its live Chainlink ETH/USD read when the event lands. */
-async function payForRuntime(pay, fundUsdc){
+async function payForRuntime(pay, fundUsdc, asset){
   // Two receivers, one shape: the EnclavePay forwarder (legacy container flavor,
   // off-chain clock) or the EnclaveDeployments ledger (pay.contract - the credit
   // lands in the deployment's on-chain balance6, so ANY enclave can serve it).
@@ -195,7 +195,7 @@ async function payForRuntime(pay, fundUsdc){
   const amt6 = usdc6(fundUsdc);                       // cent-rounded 6dp USDC
   if (amt6 <= 0n) throw new EnclaveError("Fund at least $0.01 (USDC).", 0);
   const usd = (Number(amt6) / 1e6).toFixed(2);        // e.g. "10.00", what actually gets signed/paid
-  if (dep.asset === "ETH"){
+  if (asset === "ETH"){
     if (!ledger && !pay.payEthMethod) throw new EnclaveError("This enclave doesn't accept ETH yet (older release); pay in USDC.", 0);
     if (!pay.ethUsd) throw new EnclaveError("No ETH/USD quote available right now; fund in USDC instead.", 0);
     const wei = usdToWei(Number(amt6) / 1e6, pay.ethUsd);
@@ -287,10 +287,8 @@ async function runDeploy(){
   // updates and crashes - runners hold expiring leases and re-claim work.
   const gpuMilli = dep.gpuEnclave ? Math.round(Math.max(0, Math.min(100, dep.gpuPct))) * 10 : 0;
   const cpuMilli = Math.round(Math.max(1, Math.min(100, dep.cpuPct))) * 10;
-  const fwCsv = ($("#cfgPorts") && $("#cfgPorts").value || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
-  const portsCsv = (fwCsv.length && !(fwCsv.length === 1 && fwCsv[0] === "http")) ? fwCsv.join(",") : "";
-  const httpEntry = fwCsv.find(x => /^http:\d+$/.test(x));
-  const appPort = httpEntry ? parseInt(httpEntry.split(":")[1], 10) : 8080;
+  const ports = ($("#cfgPorts") && $("#cfgPorts").value || "");
+  const { portsCsv, appPort } = portsSpec(ports);
   let configCid = ($("#cfgConfig") && $("#cfgConfig").value || "").trim();
   const volNames = [...dep.volumes];
 
@@ -309,6 +307,33 @@ async function runDeploy(){
   }
 
   btn.disabled = true; const lbl = btn.textContent; btn.textContent = "working…";
+  try {
+    await deployOnChain({ reference: rref.reference, gpuMilli, cpuMilli, ports,
+      isPublic: dep.public, configCid, volumes: volNames, fundUsd: fund, asset: dep.asset });
+  } finally {
+    btn.disabled = false; btn.textContent = lbl;
+  }
+}
+
+/* logical "open ports" csv -> the create() call's portsCsv + appPort */
+function portsSpec(raw){
+  const fwCsv = String(raw || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
+  const portsCsv = (fwCsv.length && !(fwCsv.length === 1 && fwCsv[0] === "http")) ? fwCsv.join(",") : "";
+  const httpEntry = fwCsv.find(x => /^http:\d+$/.test(x));
+  return { portsCsv, appPort: httpEntry ? parseInt(httpEntry.split(":")[1], 10) : 8080 };
+}
+
+/* The on-chain deploy flow, shared by the console form above and the store's
+   quick-deploy modal (apps.js imports this): soft-navigate to the dashboard,
+   then create -> fund -> claim-hint -> watch, narrating into the run log the
+   whole way. spec: { reference, gpuMilli, cpuMilli, ports (csv), isPublic,
+   configCid, volumes, fundUsd, asset } */
+export async function deployOnChain(spec){
+  const fund = spec.fundUsd;
+  const volNames = spec.volumes || [];
+  let configCid = spec.configCid || "";
+  const { portsCsv, appPort } = portsSpec(spec.ports);
+  const asset = spec.asset || "USDC";
   try {
     // the run log lives on the dashboard: get there BEFORE the first wallet
     // step so the whole narrative streams where the user is looking (the
@@ -332,7 +357,7 @@ async function runDeploy(){
     // rate estimate straight from the contract (same ceil math as create) -
     // best-effort with a hard cap so a slow RPC can never stall the deploy
     let rate6 = 0n;
-    try { rate6 = await Promise.race([depRate6(gpuMilli, cpuMilli), wait(6000).then(() => 0n)]); } catch(e){}
+    try { rate6 = await Promise.race([depRate6(spec.gpuMilli, spec.cpuMilli), wait(6000).then(() => 0n)]); } catch(e){}
     if (rate6 > 0n){
       const rate = Number(rate6) / 1e6;
       runlog.line("info", "    " + fund + " USDC ≈ " + fmtDur(fund / rate) + " of runtime at $" + (rate * 3600).toFixed(2) + "/hr");
@@ -358,8 +383,8 @@ async function runDeploy(){
     runlog.line("p", "$ EnclaveDeployments.create(…)  (wallet · one tx · you own the record)");
     runlog.line("info", "[*] confirm the create transaction in your wallet…");
     const cdata = encCall(DEP_SEL.create, [
-      { t: "str", v: rref.reference }, { t: "uint", v: gpuMilli }, { t: "uint", v: cpuMilli },
-      { t: "uint", v: appPort }, { t: "str", v: portsCsv }, { t: "bool", v: dep.public },
+      { t: "str", v: spec.reference }, { t: "uint", v: spec.gpuMilli }, { t: "uint", v: spec.cpuMilli },
+      { t: "uint", v: appPort }, { t: "str", v: portsCsv }, { t: "bool", v: !!spec.isPublic },
       { t: "str", v: "" }, { t: "str", v: configCid },
     ]);
     const chash = await sendTx(DEPLOYMENTS_ADDRESS, cdata);
@@ -379,7 +404,7 @@ async function runDeploy(){
         contract: DEPLOYMENTS_ADDRESS, deploymentRef: id,
         usdcDomain: pricing && pricing.usdcDomain, usdc: (pricing && pricing.usdc) || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         ethUsd: pricing && pricing.ethUsd,
-      }, fund);
+      }, fund, asset);
     } catch(e){
       const rejected = (e && e.code === 4001) || /reject|denied|declin|cancell/i.test(e && e.message || "");
       runlog.line("warn", rejected ? "[x] funding rejected in wallet." : "[x] funding failed: " + (e.message || e));
@@ -433,7 +458,6 @@ async function runDeploy(){
     if (e.status === 0) runlog.line("dimln", "    set a reachable API endpoint on the deploy console, then retry.");
   } finally {
     runlog.endRun();
-    btn.disabled = false; btn.textContent = lbl;
     refreshWallet();
   }
 }

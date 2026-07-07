@@ -67,7 +67,7 @@ class AppCard extends EnclaveElement {
         + Number(v.memMb) + ' MB RAM' + (Number(v.cpuGflops) > 0 ? ' / ' + Number(v.cpuGflops) + ' GFLOPS CPU' : '')
         + ') set the minimum deploy shares">min '
         + (m.gpuPct > 0 ? m.gpuPct + '% GPU · ' : 'CPU-only · ') + m.cpuPct + '% CPU</span>'
-      + (v.ports ? '<span class="vlbl" title="firewall config: ports this version may bind">⛨ ' + esc(v.ports) + '</span>' : '')
+      + (v.ports ? '<span class="vlbl" title="open ports: ports this version may bind">⛨ ' + esc(v.ports) + '</span>' : '')
       + (v.yanked ? '<span class="vyank">yanked</span>' : '');
 
     this.querySelector(".app-cid code").textContent = v.cid;
@@ -75,7 +75,7 @@ class AppCard extends EnclaveElement {
     this.querySelector(".app-actions").innerHTML =
       '<button class="btn btn-primary btn-sm" data-act="deploy" type="button"'
         + (!app.active ? ' disabled title="Delisted: the enclave refuses its CIDs; relist first"'
-           : v.approval === APPROVAL.approved ? '' : ' disabled title="Deploys unlock once the catalog owner approves this version"') + '>Use in Deploy →</button>'
+           : v.approval === APPROVAL.approved ? '' : ' disabled title="Deploys unlock once the catalog owner approves this version"') + '>Deploy →</button>'
       + '<a class="btn btn-sm" href="' + gw + '" target="_blank" rel="noopener">fetch .wasm</a>'
       + (isPub ? '<button class="btn btn-sm" data-act="newver" type="button" title="Open the publish form pre-filled from this version (new file/CID required)">add version</button>' : '')
       + (isPub && !app.active ? '<button class="btn btn-sm" data-act="relist" type="button">relist</button>' : '')
