@@ -22,8 +22,17 @@ const CAT_ABI = JSON.parse(fs.readFileSync(path.join(REPO, "contracts", "Enclave
 
 const PK = "0x" + "11".repeat(32);
 const OWNER = privateKeyToAccount(PK).address;
-const DEPLOYMENTS = "0x81037A2081bc000F12B8aA771bede0d36742ec4b".toLowerCase();
-const CATALOG = "0x17071414BD19fDFdA8E58559d2CcFb99b2c8d0FC".toLowerCase();
+// The stub chain answers at whatever addresses the CLI currently ships —
+// read them from its DEFAULTS so scripts/sync-contract-addresses.sh (contract
+// redeploys) can never desync these tests again.
+const CLI_SRC = fs.readFileSync(CLI, "utf8");
+const cliDefault = (key) => {
+  const m = CLI_SRC.match(new RegExp(key + String.raw`:\s*"(0x[0-9a-fA-F]{40})"`));
+  if (!m) throw new Error(`no ${key} default in cli/enclave.mjs`);
+  return m[1].toLowerCase();
+};
+const DEPLOYMENTS = cliDefault("DEPLOYMENTS_ADDRESS");
+const CATALOG = cliDefault("APP_CATALOG_ADDRESS");
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".toLowerCase();
 const DEP_CREATED_TOPIC = "0x3b201eb11e77934b296f908775fc0a82679683fd83a1232579f1014bcf7d3239";
 const ID = "0x" + "ab".repeat(32);                     // the id the stub chain mints

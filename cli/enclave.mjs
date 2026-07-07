@@ -46,6 +46,7 @@ const DEFAULTS = {
   DEPLOYMENTS_ADDRESS: "0x267f7F792CA84482698b2f6774B028522247B6CD",
   APP_CATALOG_ADDRESS: "0x21F2798A51F5970dD43A5D8fAdA48b1b8D59cc67",
   REGISTRY_ADDRESS: "0xCB65f487eba6564D57FfB860cF9aE701584cB4a2",
+  ADDRESS_BOOK_ADDRESS: "",     // EnclaveAddressBook; written by scripts/deploy-address-book.mjs — when set, the CLI resolves the addresses above from it at start ("" = baked only)
   USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   ipfsUpload: env.ENCLAVE_IPFS_UPLOAD || "https://ipfs.enclave.host/add-wasm",
   appDomain: "app.enclave.host",
@@ -986,11 +987,35 @@ const COMMANDS = {
   pricing: cmdPricing, availability: cmdAvailability, gpu: cmdGpu, account: cmdAccount,
 };
 
+// Resolve the platform's contract addresses from the on-chain address book
+// before dispatch (one eth_call, hard 4s cap; baked DEFAULTS on any failure so
+// offline use and tests never block; ENCLAVE_ADDRESS_BOOK="" opts out).
+async function resolveAddressBook() {
+  const book = env.ENCLAVE_ADDRESS_BOOK !== undefined ? env.ENCLAVE_ADDRESS_BOOK : DEFAULTS.ADDRESS_BOOK_ADDRESS;
+  if (!book) return;
+  try {
+    const abi = [{ type: "function", name: "all", stateMutability: "view", inputs: [], outputs: [{ type: "bytes32[]" }, { type: "address[]" }] }];
+    const [keys, values] = await Promise.race([
+      pub().readContract({ address: book, abi, functionName: "all" }),
+      sleep(4000).then(() => { throw new Error("timeout"); }),
+    ]);
+    const map = { registry: "REGISTRY_ADDRESS", deployments: "DEPLOYMENTS_ADDRESS",
+                  appCatalog: "APP_CATALOG_ADDRESS", enclavePay: "FORWARDER_ADDRESS", volumeAccess: "VOLUME_ACCESS_ADDRESS" };
+    keys.forEach((kh, i) => {
+      let k = ""; for (let b = 2; b < kh.length; b += 2) { const c = parseInt(kh.slice(b, b + 2), 16); if (!c) break; k += String.fromCharCode(c); }
+      const name = map[k], v = values[i];
+      if (name && DEFAULTS[name] !== undefined && !/^0x0{40}$/i.test(v)) DEFAULTS[name] = v;
+    });
+    trace("address book " + book + " resolved");
+  } catch (e) { trace("address book unresolved (" + (e?.shortMessage || e?.message) + "); baked defaults in effect"); }
+}
+
 const cmd = args.shift();
 if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") { say(HELP); exit(0); }
 if (cmd === "version" || cmd === "--version") { say(VERSION); exit(0); }
 if (!COMMANDS[cmd]) die(`unknown command "${cmd}" — run: enclave help`);
 try {
+  await resolveAddressBook();
   await COMMANDS[cmd](args);
 } catch (e) {
   die(e?.message || String(e));

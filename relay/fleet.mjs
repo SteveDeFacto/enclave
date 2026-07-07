@@ -35,11 +35,19 @@ export function fleetConfig(env = process.env) {
   return {
     staticList,
     registryAddress: (env.REGISTRY_ADDRESS || "").trim(),
+    addressBook: (env.ADDRESS_BOOK_ADDRESS || "").trim(),
     baseRpc: env.BASE_RPC || DEFAULTS.baseRpc,
     registryPollSec: parseInt(env.REGISTRY_POLL_SEC || "", 10) || DEFAULTS.registryPollSec,
     staleAfterSec: parseInt(env.STALE_AFTER_SEC || "", 10) || DEFAULTS.staleAfterSec,
   };
 }
+
+const BOOK_ABI = [
+  { type: "function", name: "addr", stateMutability: "view",
+    inputs: [{ type: "bytes32" }], outputs: [{ type: "address" }] },
+];
+// "registry" as ascii-right-padded bytes32 (the EnclaveAddressBook key)
+const BOOK_KEY_REGISTRY = "0x7265676973747279000000000000000000000000000000000000000000000000";
 
 const ABI = [
   { type: "function", name: "count", stateMutability: "view", inputs: [],
@@ -67,17 +75,33 @@ export function createFleet(cfg, log = () => {}) {
   }
 
   let client = null;
+  let registryAddress = cfg.registryAddress;   // env fallback; the book (below) overrides
   async function readRegistry() {
     if (!client) {
       const { createPublicClient, http } = await import("viem");
       const { base } = await import("viem/chains");
       client = createPublicClient({ chain: base, transport: http(cfg.baseRpc) });
     }
+    // ADDRESS_BOOK_ADDRESS set: resolve the registry from the on-chain book
+    // each cycle, so a registry redeploy reaches the relay boxes with one
+    // owner tx instead of hand-editing /etc/nan-relay/*.env (the drift that
+    // broke egress on 2026-07-07). Failure falls back to the last known.
+    if (cfg.addressBook) {
+      try {
+        const a = await client.readContract({ address: cfg.addressBook, abi: BOOK_ABI,
+          functionName: "addr", args: [BOOK_KEY_REGISTRY] });
+        if (a && !/^0x0{40}$/i.test(a) && a.toLowerCase() !== registryAddress.toLowerCase()) {
+          log(`address book: registry ${registryAddress || "(unset)"} -> ${a}`);
+          registryAddress = a;
+        }
+      } catch (e) { /* keep the current registry address; next cycle retries */ }
+    }
+    if (!registryAddress) throw new Error("no registry address (book unresolved and REGISTRY_ADDRESS unset)");
     const total = Number(await client.readContract({
-      address: cfg.registryAddress, abi: ABI, functionName: "count" }));
+      address: registryAddress, abi: ABI, functionName: "count" }));
     const rows = [];
     for (let start = 0; start < total; start += 50)
-      rows.push(...await client.readContract({ address: cfg.registryAddress, abi: ABI,
+      rows.push(...await client.readContract({ address: registryAddress, abi: ABI,
         functionName: "getPage", args: [BigInt(start), 50n] }));
     const now = Math.floor(Date.now() / 1000);
     return rows
@@ -100,7 +124,7 @@ export function createFleet(cfg, log = () => {}) {
   return {
     origins: () => origins,
     async start() {
-      log(`on-chain fleet: EnclaveRegistry ${cfg.registryAddress}`);
+      log(`on-chain fleet: ${cfg.addressBook ? "EnclaveAddressBook " + cfg.addressBook + " -> registry" : "EnclaveRegistry " + cfg.registryAddress}`);
       await refresh();
       setInterval(refresh, cfg.registryPollSec * 1000);
     },

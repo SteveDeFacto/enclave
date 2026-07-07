@@ -16,6 +16,7 @@ SITE="$REPO/site/js/core/config.js"
 ADDR='0x[0-9a-fA-F]{40}'
 
 from_cfg() { grep -oE "$1: \"$ADDR\"" "$GPU" | head -1 | grep -oE "$ADDR" || true; }
+ADDRESSBOOK="$(from_cfg ADDRESS_BOOK_ADDRESS)"
 REGISTRY="$(from_cfg REGISTRY_ADDRESS)"
 DEPLOYMENTS="$(from_cfg DEPLOYMENTS_ADDRESS)"
 FORWARDER="$(from_cfg FORWARDER_ADDRESS)"
@@ -31,6 +32,7 @@ set_key() { # $1=file $2=env key $3=address — only where the file already carr
 # KEY: "0x…" shape the yaml uses — one regex serves both.
 for f in "$GPU" "$CPU" "$REPO/cli/enclave.mjs"; do
   [ -f "$f" ] || continue
+  set_key "$f" ADDRESS_BOOK_ADDRESS  "$ADDRESSBOOK"
   set_key "$f" REGISTRY_ADDRESS      "$REGISTRY"
   set_key "$f" DEPLOYMENTS_ADDRESS   "$DEPLOYMENTS"
   set_key "$f" FORWARDER_ADDRESS     "$FORWARDER"

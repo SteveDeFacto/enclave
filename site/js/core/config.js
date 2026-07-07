@@ -21,10 +21,35 @@ export const PRIVY_APP_ID = "cmr8u8m5y00cf0djiqotqm7ag";
 export const PRIVY_CLIENT_ID = "client-WY6b9c219SjvhdjLGYDriJ9xjSrbV7c4joihKRQPRm3QN";   // web app client, registered for enclave.host
 export const PRIVY_RDNS = "io.privy.embedded";
 
-/* ---- on-chain contracts (Base) ---- */
-export const APP_CATALOG_ADDRESS = "0x21F2798A51F5970dD43A5D8fAdA48b1b8D59cc67"; // EnclaveAppCatalog on Base; written automatically by scripts/deploy-app-catalog.mjs
-export const DEPLOYMENTS_ADDRESS = "0x267f7F792CA84482698b2f6774B028522247B6CD"; // EnclaveDeployments on Base; written automatically by scripts/deploy-deployments.mjs
+/* ---- on-chain contracts (Base) ----
+   The baked addresses are FALLBACKS for first paint: when
+   ADDRESS_BOOK_ADDRESS is set, js/core/addressbook.js resolves the live
+   values from the on-chain EnclaveAddressBook and reassigns these bindings
+   (`let` exports — importers see the update), so contract redeploys reach
+   the site without a rebuild. The last resolve is cached in sessionStorage
+   and applied synchronously below, so repeat visits never paint stale
+   addresses even for a frame. */
+export const ADDRESS_BOOK_ADDRESS = ""; // EnclaveAddressBook on Base; written by scripts/deploy-address-book.mjs ("" = baked addresses only)
+export let APP_CATALOG_ADDRESS = "0x21F2798A51F5970dD43A5D8fAdA48b1b8D59cc67"; // EnclaveAppCatalog on Base; written automatically by scripts/deploy-app-catalog.mjs
+export let DEPLOYMENTS_ADDRESS = "0x267f7F792CA84482698b2f6774B028522247B6CD"; // EnclaveDeployments on Base; written automatically by scripts/deploy-deployments.mjs
 export const APP_CATALOG_CHAIN   = 8453;                        // Base mainnet (kept in sync by the deploy script; 84532 = Base Sepolia)
+
+/* apply an address-book map ({appCatalog, deployments}) onto the live
+   bindings; returns which names changed. Called by js/core/addressbook.js. */
+export function __applyAddresses(map){
+  const ok = (a) => /^0x[0-9a-fA-F]{40}$/.test(a || "");
+  const changed = [];
+  if (map && ok(map.appCatalog) && map.appCatalog.toLowerCase() !== APP_CATALOG_ADDRESS.toLowerCase()){
+    APP_CATALOG_ADDRESS = map.appCatalog; changed.push("APP_CATALOG_ADDRESS");
+  }
+  if (map && ok(map.deployments) && map.deployments.toLowerCase() !== DEPLOYMENTS_ADDRESS.toLowerCase()){
+    DEPLOYMENTS_ADDRESS = map.deployments; changed.push("DEPLOYMENTS_ADDRESS");
+  }
+  return changed;
+}
+if (ADDRESS_BOOK_ADDRESS){
+  try { __applyAddresses(JSON.parse(sessionStorage.getItem("enclave_addrbook") || "null")); } catch(e){}
+}
 export const APP_CATALOG_RPC     = "https://mainnet.base.org";  // preferred read endpoint (CORS-enabled; browsing needs no wallet)
 /* Failover pool: reads are stateless, and every public Base RPC rate-limits by
    IP - the official mainnet.base.org hard enough that one catalog load can

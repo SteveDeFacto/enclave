@@ -17,6 +17,8 @@
    keep working — every page stays a complete document.
    ============================================================ */
 
+import "./core/addressbook.js";   // resolve contract addresses from the on-chain book (no-op until one is configured)
+
 const PAGES = {
   overview:  () => import("./pages/overview.js"),
   apps:      () => import("./pages/apps.js"),      // also hosts #publish and #deploy (deploy.js is its lazy chunk)

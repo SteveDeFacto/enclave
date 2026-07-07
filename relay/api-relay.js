@@ -40,7 +40,8 @@
 import http from "node:http";
 import https from "node:https";
 
-const REGISTRY_ADDRESS  = (process.env.REGISTRY_ADDRESS || "").trim();
+let   REGISTRY_ADDRESS  = (process.env.REGISTRY_ADDRESS || "").trim();   // env fallback; the address book (below) overrides
+const ADDRESS_BOOK      = (process.env.ADDRESS_BOOK_ADDRESS || "").trim();
 const BASE_RPC          = process.env.BASE_RPC || "https://mainnet.base.org";
 const STATIC_ENCLAVES   = (process.env.ENCLAVES || "").split(",").map((s) => s.trim().replace(/\/+$/, "")).filter(Boolean);
 const PORT              = parseInt(process.env.API_RELAY_PORT || "8100", 10);
@@ -56,8 +57,8 @@ const STALE_AFTER_SEC   = parseInt(process.env.STALE_AFTER_SEC || "3600", 10);
 const APP_DOMAINS       = (process.env.APP_DOMAIN || "").toLowerCase().split(",")
   .map(s => s.trim().replace(/^\.+|\.+$/g, "")).filter(Boolean);
 
-if (!REGISTRY_ADDRESS && !STATIC_ENCLAVES.length) {
-  console.error("fatal: set REGISTRY_ADDRESS (on-chain discovery) or ENCLAVES (static list)");
+if (!REGISTRY_ADDRESS && !ADDRESS_BOOK && !STATIC_ENCLAVES.length) {
+  console.error("fatal: set ADDRESS_BOOK_ADDRESS or REGISTRY_ADDRESS (on-chain discovery) or ENCLAVES (static list)");
   process.exit(1);
 }
 
@@ -82,10 +83,26 @@ async function chain() {
   }
   return _client;
 }
+// "registry" as ascii-right-padded bytes32 (the EnclaveAddressBook key)
+const BOOK_ABI = [{ type: "function", name: "addr", stateMutability: "view",
+  inputs: [{ type: "bytes32" }], outputs: [{ type: "address" }] }];
+const BOOK_KEY_REGISTRY = "0x7265676973747279000000000000000000000000000000000000000000000000";
 async function readRegistry() {
   if (STATIC_ENCLAVES.length)
     return STATIC_ENCLAVES.map((endpoint) => ({ endpoint, repo: null, lastSeen: null }));
   const c = await chain();
+  // resolve the registry from the on-chain address book each cycle, so a
+  // registry redeploy reaches this box with one owner tx (no env edits)
+  if (ADDRESS_BOOK) {
+    try {
+      const a = await c.readContract({ address: ADDRESS_BOOK, abi: BOOK_ABI, functionName: "addr", args: [BOOK_KEY_REGISTRY] });
+      if (a && !/^0x0{40}$/i.test(a) && a.toLowerCase() !== REGISTRY_ADDRESS.toLowerCase()) {
+        console.log(`[api-relay] address book: registry ${REGISTRY_ADDRESS || "(unset)"} -> ${a}`);
+        REGISTRY_ADDRESS = a;
+      }
+    } catch (e) { /* keep the current registry; next poll retries */ }
+  }
+  if (!REGISTRY_ADDRESS) throw new Error("no registry address (book unresolved and REGISTRY_ADDRESS unset)");
   const total = Number(await c.readContract({ address: REGISTRY_ADDRESS, abi: ABI, functionName: "count" }));
   const out = [];
   for (let start = 0; start < total; start += 50)

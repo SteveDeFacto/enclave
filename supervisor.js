@@ -40,6 +40,16 @@ import { Verifier } from "@tinfoilsh/verifier";
 import { seal as vaultSeal, unseal as vaultUnseal, newIdentity as vaultNewIdentity } from "./scripts/enclave-vault.mjs";
 // dedicated-IP egress: the outbound half of the per-deployment address (see egress.js)
 import { createEgress } from "./egress.js";
+// contract addresses: LIVE BINDINGS owned by addressbook.js — seeded from the
+// baked env, overridden from the on-chain EnclaveAddressBook when
+// ADDRESS_BOOK_ADDRESS is set, and re-polled so contract redeploys reach a
+// RUNNING enclave without a new release.
+import { initAddressBook, REGISTRY_ADDRESS, DEPLOYMENTS_ADDRESS, APP_CATALOG_ADDRESS,
+         FORWARDER_ADDRESS, VOLUME_ACCESS_ADDRESS } from "./addressbook.js";
+
+// Resolve the book BEFORE anything below derives state from the addresses
+// (top-level await; a no-op without ADDRESS_BOOK_ADDRESS, baked env on failure).
+await initAddressBook();
 
 // ----------------------------------------------------------------------------
 // config
@@ -54,14 +64,14 @@ const CORS_ORIGINS   = (process.env.CORS_ORIGINS || "https://enclave.host").spli
 // --- pay-per-deploy (no custody): users pay the EnclavePay forwarder; the supervisor
 //     WATCHES it for Paid events and converts each payment to runtime. No held
 //     balance, no escrow contract, no key in the enclave that can move funds.
-const FORWARDER_ADDRESS  = process.env.FORWARDER_ADDRESS || "";   // EnclavePay contract (watch-only)
+//     (FORWARDER_ADDRESS is a live binding from ./addressbook.js)
 const USDC_ADDRESS       = process.env.USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // USDC on Base
 // --- app approval: EnclaveAppCatalog (read-only) is the deploy gate for ALL apps
 //     (the image ships no deployable apps of its own). Only the catalog's owner
 //     (the EOA that deployed it) can approve/reject a version, by signing a
 //     setApproval transaction; an ipfs://<cid> deploy is refused until its
 //     version is Approved. Empty = nothing can deploy at all (fail closed).
-const APP_CATALOG_ADDRESS = process.env.APP_CATALOG_ADDRESS || "";
+//     (APP_CATALOG_ADDRESS is a live binding from ./addressbook.js)
 const PAYMENT_WINDOW_SEC = parseInt(process.env.PAYMENT_WINDOW_SEC || "600", 10); // unpaid awaiting_payment TTL
 const GRACE_SEC          = parseInt(process.env.GRACE_SEC || "90", 10);           // post-expiry grace before teardown
 const PAY_POLL_SEC       = parseInt(process.env.PAY_POLL_SEC || "12", 10);        // Base log poll interval
@@ -166,7 +176,7 @@ async function vmHealth(timeoutMs = 3000) {
 // any RPC and connect DIRECTLY, verifying attestation themselves. Entirely
 // opt-in: if REGISTRY_ENABLED isn't set, the enclave just doesn't advertise.
 const REGISTRY_ENABLED  = /^(1|true|on)$/i.test(process.env.REGISTRY_ENABLED || "");
-const REGISTRY_ADDRESS  = process.env.REGISTRY_ADDRESS || "";
+// (REGISTRY_ADDRESS is a live binding from ./addressbook.js)
 const REGISTRY_PK       = process.env.REGISTRY_PRIVATE_KEY || "";        // operator key (enclave secret); needs a little Base ETH for gas
 const ENCLAVE_REPO      = process.env.ENCLAVE_REPO || "";                // e.g. "SteveDeFacto/enclave" - what callers attest against; MUST match GitHub's canonical casing (Sigstore compares it verbatim)
 const ENCLAVE_MEASUREMENT = process.env.ENCLAVE_MEASUREMENT || ("0x" + "0".repeat(64)); // optional cross-check
@@ -2191,7 +2201,7 @@ app.post("/v1/deployments/:id/unlock", authed, async (req, res) => {
 // the operator nor Tinfoil ever holds a decryptable key: the identity secret
 // lives only in CVM memory, and the sealed blob rode the attested TLS.
 // ============================================================================
-const VOLUME_ACCESS_ADDRESS = process.env.VOLUME_ACCESS_ADDRESS || "";
+// (VOLUME_ACCESS_ADDRESS is a live binding from ./addressbook.js)
 const VAULT_POLL_SEC = parseInt(process.env.VAULT_POLL_SEC || "15", 10);   // auto-grant sweep cadence
 
 // Per-boot enclave vault identity: generated in-process, RAM only, never
@@ -2710,7 +2720,7 @@ server.on("upgrade", async (req, socket, head) => {
 // deployment up — at-most-one-runner is enforced by the contract, not by us.
 // Signing uses REGISTRY_PRIVATE_KEY: claims are gated to the operator of our
 // registry entry, so advertising (registerOnChain) is a hard prerequisite.
-const DEPLOYMENTS_ADDRESS = process.env.DEPLOYMENTS_ADDRESS || "";
+// (DEPLOYMENTS_ADDRESS is a live binding from ./addressbook.js)
 const CLAIM_ENABLED    = /^(1|true|on)$/i.test(process.env.CLAIM_ENABLED || "");
 const CLAIM_POLL_SEC   = parseInt(process.env.CLAIM_POLL_SEC || "60", 10);    // sweep + audit + renew cadence
 const RENEW_MARGIN_SEC = parseInt(process.env.RENEW_MARGIN_SEC || "300", 10); // renew when less lease than this remains

@@ -16,6 +16,7 @@ COPY scripts/enclave-vault.mjs ./scripts/enclave-vault.mjs
 # dedicated-IP egress: the enclave-side SOCKS front + its SSRF classifier
 # (net-guard.mjs is also symlinked into relay/ and shipped to the relay box).
 COPY egress.js ./
+COPY addressbook.js ./
 COPY net-guard.mjs ./
 # If you add the spawn implementation in its own files, COPY them here too.
 ENV PORT=8080

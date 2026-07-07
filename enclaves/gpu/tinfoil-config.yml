@@ -106,6 +106,7 @@ containers:
       # hostname callers actually reach (the attested origin), registered lazily on
       # the first external request. (Pin it with PUBLIC_URL only if you must.)
       - REGISTRY_ENABLED: "1"
+      - ADDRESS_BOOK_ADDRESS: ""                                                            # set by scripts/deploy-address-book.mjs; "" = baked addresses only; when set the supervisor resolves + polls the contract addresses below from the on-chain EnclaveAddressBook
       - REGISTRY_ADDRESS: "0xCB65f487eba6564D57FfB860cF9aE701584cB4a2"                             # set by scripts/deploy-registry.mjs
       # - REGISTRY_HEARTBEAT_SEC: "900"                  # optional, default 15 min
       # Portable deployments (contracts/DEPLOYMENTS.md): with CLAIM_ENABLED the
