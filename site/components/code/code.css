@@ -1,0 +1,6 @@
+/* ============================================================
+   <c-code> — reuses the global .code / .codebar / .copybtn
+   chrome (those classes also style code blocks that other
+   components generate from data, so they stay in base.css).
+   ============================================================ */
+c-code{display:contents;}

@@ -1,0 +1,37 @@
+/* ============================================================
+   <c-header> — nav bar, active-tab state, mobile nav.
+   Internal order matters: base rules → responsive overrides →
+   the (formerly runtime-injected) active-tab/mobile rules.
+   Wallet styles live with <c-wallet-button>.
+   ============================================================ */
+c-header{display:contents;}
+
+/* ---------- nav ---------- */
+header.nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
+  background:rgba(7,10,15,.72);border-bottom:1px solid var(--line-soft);
+  view-transition-name:site-header;}   /* identical across pages → visually persistent through navigations */
+.nav-inner{display:flex;align-items:center;justify-content:space-between;height:64px;position:relative;}
+.brand{display:flex;align-items:center;gap:.7em;font-family:var(--font-mono);font-weight:600;letter-spacing:.04em;}
+.brand svg{width:30px;height:30px;flex:none;}
+header.nav .brand svg{width:40px;height:40px;}
+header.nav .brand svg.nm{width:auto;height:20px;}
+.brand svg.nm{width:auto;height:12px;display:block;flex:none;}
+.brand .sub{color:var(--text-dim);font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;border-left:1px solid var(--line);padding-left:.7em;margin-left:.2em;}
+.nav-links{display:flex;align-items:center;gap:6px;position:absolute;left:50%;transform:translateX(-50%);}
+.nav-links a{font-family:var(--font-mono);font-size:.82rem;color:var(--text-muted);padding:.5em .7em;border-radius:7px;transition:.15s;}
+.nav-links a:hover{color:var(--text);background:var(--surface);}
+.nav-cta{display:flex;align-items:center;gap:10px;}
+.menu-btn{display:none;}
+
+/* ---------- responsive ---------- */
+@media (max-width:640px){
+  .nav-inner{height:auto;min-height:64px;padding-top:10px;padding-bottom:12px;}
+  .nav-links{display:none;}
+  .menu-btn{display:inline-flex;}
+}
+
+/* ---------- active tab + mobile tab row (was runtime-injected) ---------- */
+.nav-links a[data-view]{position:relative;} .nav-links a.active{color:var(--jade);background:var(--surface);}
+.nav-links a.active::after{content:'';position:absolute;left:.7em;right:.7em;bottom:-1px;height:2px;background:var(--jade);border-radius:2px;}
+@media(max-width:640px){.nav-inner{flex-wrap:wrap;row-gap:9px;justify-content:space-between;}.nav-links{display:flex !important;position:static;transform:none;left:auto;order:3;width:100%;justify-content:center;gap:4px;border-top:1px solid var(--line-soft);padding-top:9px;}.nav-links a{flex:1;text-align:center;padding:.55em .4em;font-size:.8rem;}}
+.nav-inner{position:relative;}

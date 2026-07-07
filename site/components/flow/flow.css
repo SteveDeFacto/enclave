@@ -1,0 +1,19 @@
+/* ============================================================
+   <c-flow> — how-it-works stepper
+   ============================================================ */
+c-flow{display:contents;}
+
+.flow{display:grid;grid-template-columns:300px 1fr;gap:30px;align-items:start;}
+.steps{display:flex;flex-direction:column;gap:8px;}
+.step{display:flex;gap:14px;align-items:flex-start;padding:14px;border:1px solid var(--line-soft);border-radius:var(--radius-sm);background:var(--surface);cursor:pointer;transition:.18s var(--ease);text-align:left;width:100%;font-family:inherit;color:inherit;}
+.step:hover{border-color:var(--line);}
+.step.active{border-color:rgba(47,230,168,.5);background:linear-gradient(180deg,rgba(47,230,168,.07),transparent);}
+.step .num{font-family:var(--font-mono);font-size:.8rem;color:var(--text-dim);border:1px solid var(--line);width:30px;height:30px;border-radius:8px;display:grid;place-items:center;flex:none;}
+.step.active .num{color:var(--jade);border-color:rgba(47,230,168,.5);}
+.step .st-t{font-family:var(--font-mono);font-size:.92rem;}
+.step .st-d{font-size:.82rem;color:var(--text-muted);margin-top:2px;}
+.flow-detail{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);overflow:hidden;min-height:340px;}
+
+@media (max-width:1000px){
+  .flow{grid-template-columns:1fr;}
+}

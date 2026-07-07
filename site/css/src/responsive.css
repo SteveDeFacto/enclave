@@ -1,0 +1,13 @@
+/* ---------- responsive ---------- */
+@media (max-width:1000px){
+  .hero-grid{grid-template-columns:1fr;gap:34px;}
+  .cards{grid-template-columns:repeat(2,1fr);}
+  .console{grid-template-columns:1fr;}
+  .cfg{border-right:0;border-bottom:1px solid var(--line);}
+}
+@media (max-width:640px){
+  .cards{grid-template-columns:1fr;}
+  section{padding:60px 0;}
+  .hero{padding:48px 0 20px;}
+  .console-tabs{overflow:auto;}
+}

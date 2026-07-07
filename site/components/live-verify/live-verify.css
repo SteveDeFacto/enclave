@@ -1,0 +1,21 @@
+/* ============================================================
+   <c-live-verify> — live in-browser verification widget
+   ============================================================ */
+c-live-verify{display:contents;}
+
+.lv{margin-top:26px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0B121A);padding:20px 22px;}
+.lv-h{display:flex;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap;}
+.lv-txt{max-width:660px;}
+.lv-txt h4{margin:0 0 6px;font-family:var(--font-mono);font-size:.98rem;}
+.lv-txt p{margin:0;color:var(--text-muted);font-size:.86rem;}
+.lv-steps{list-style:none;margin:18px 0 0;padding:0;display:flex;flex-direction:column;gap:7px;font-family:var(--font-mono);font-size:.8rem;}
+.lv-steps li{display:flex;gap:.6em;align-items:baseline;color:var(--text-muted);}
+.lv-steps li .st{flex:none;width:1.2em;text-align:center;}
+.lv-steps li.ok{color:var(--text);} .lv-steps li.ok .st{color:var(--jade);}
+.lv-steps li.bad{color:var(--amber);} .lv-steps li.bad .st{color:var(--amber);}
+.lv-steps li .err{color:var(--amber);opacity:.9;}
+.lv-verdict{margin-top:16px;font-family:var(--font-mono);font-size:.9rem;color:var(--text-muted);}
+.lv-verdict.ok{color:var(--jade);} .lv-verdict.bad{color:var(--amber);}
+.lv-meta{margin-top:10px;font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);word-break:break-all;display:flex;flex-direction:column;gap:4px;}
+.lv-note{margin:14px 0 0;font-size:.74rem;color:var(--text-dim);font-family:var(--font-mono);}
+.lv-note a{color:var(--jade-2);}

@@ -1,0 +1,15 @@
+<div class="lv">
+  <div class="lv-h">
+    <div class="lv-txt">
+      <h4>Don't take this page's word for it: run the check now</h4>
+      <p>Your browser loads Tinfoil's open-source verifier (<code>@tinfoilsh/verifier</code>), fetches the enclave's attestation over your own connection, validates the AMD SEV-SNP report up to AMD's root key, verifies the release's Sigstore code provenance, and compares the two measurements. Exactly what the API's <code>verify</code> field tells every client to do.</p>
+    </div>
+    <button class="btn btn-primary lv-run" type="button">Verify enclave <span class="arr">→</span></button>
+  </div>
+  <div class="lv-body" hidden>
+    <ul class="lv-steps"></ul>
+    <div class="lv-verdict"></div>
+    <div class="lv-meta"></div>
+  </div>
+  <p class="lv-note">The verifier module loads from esm.sh; Sigstore bundles and AMD KDS certificates come through Tinfoil's CORS proxies. Fully independent path: <code class="lv-cli">tinfoil attestation verify -e &lt;enclave-host&gt; -r &lt;repo&gt;</code>, via <a href="https://github.com/tinfoilsh/tinfoil-cli" target="_blank" rel="noopener">tinfoil-cli</a>.</p>
+</div>

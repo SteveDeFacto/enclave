@@ -8,7 +8,9 @@
   "scripts": {
     "start": "node supervisor.js",
     "dev": "node --watch supervisor.js",
-    "test": "node --test --test-timeout=15000 test/*.test.mjs"
+    "test": "node --test --test-timeout=15000 test/*.test.mjs",
+    "build:site": "tailwindcss -i site/css/src/main.css -o site/css/site.css --minify",
+    "watch:site": "tailwindcss -i site/css/src/main.css -o site/css/site.css --watch"
   },
   "engines": {
     "node": ">=20"
@@ -26,7 +28,9 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "esbuild": "^0.28.1"
+    "@tailwindcss/cli": "^4.3.2",
+    "esbuild": "^0.28.1",
+    "tailwindcss": "^4.3.2"
   },
   "allowScripts": {
     "esbuild@0.28.1": true

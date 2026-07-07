@@ -1,0 +1,18 @@
+/* ============================================================
+   <c-terminal> — terminal sim
+   ============================================================ */
+c-terminal{display:contents;}
+
+.term{font-family:var(--font-mono);font-size:.8rem;padding:16px;line-height:1.7;color:#B9C6D6;min-height:300px;flex:1;overflow-y:auto;}
+.term-bar{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line-soft);background:var(--bg-1);}
+.term-bar .tb-k{font-family:var(--font-mono);font-size:.64rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);}
+.term-bar select{background:var(--surface);border:1px solid var(--line);color:var(--text);font-family:var(--font-mono);font-size:.74rem;padding:4px 8px;border-radius:7px;max-width:340px;}
+.term-bar select:focus{outline:none;border-color:var(--jade-dim);}
+.term .ln{display:block;white-space:pre-wrap;}
+.term .p{color:var(--jade);}
+.term .ok{color:var(--jade);}
+.term .warn{color:var(--amber);}
+.term .info{color:var(--iris);}
+.term .dimln{color:var(--text-dim);}
+.cursorblink::after{content:"▋";color:var(--jade);animation:blink 1s steps(2) infinite;}
+@keyframes blink{50%{opacity:0;}}

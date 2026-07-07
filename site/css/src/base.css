@@ -1,0 +1,114 @@
+/* ============================================================
+   Base — resets, typography, buttons, code blocks, section
+   scaffolding (shared by every page). Header, footer, and toast
+   styles live with their components (components/*).
+   ============================================================ */
+
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;scroll-padding-top:80px;-webkit-text-size-adjust:100%;}
+[hidden]{display:none !important;}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto;}}
+
+/* ---------- cross-document view transitions ----------
+   Page navigations snapshot-morph instead of hard-reloading; the header
+   carries its own view-transition-name (see components/header), so being
+   identical on every page it appears to never reload. Browsers without
+   support just navigate normally. */
+@view-transition{navigation:auto;}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.16s;}
+@media (prefers-reduced-motion:reduce){
+  ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none !important;}
+}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font-family:var(--font-sans);font-size:16px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  overflow-x:hidden;
+}
+/* faint silicon substrate */
+body::before{
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(1100px 600px at 78% -8%, rgba(47,230,168,.07), transparent 60%),
+    radial-gradient(900px 500px at 8% 8%, rgba(143,162,255,.05), transparent 55%),
+    linear-gradient(transparent 0 95%, rgba(255,255,255,.018) 95%) 0 0/100% 26px,
+    linear-gradient(90deg, transparent 0 95%, rgba(255,255,255,.018) 95%) 0 0/26px 100%;
+}
+a{color:inherit;text-decoration:none;}
+img{max-width:100%;display:block;}
+::selection{background:rgba(47,230,168,.28);color:#fff;}
+:focus-visible{outline:2px solid var(--jade);outline-offset:2px;border-radius:4px;}
+
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px;position:relative;z-index:1;}
+.mono{font-family:var(--font-mono);}
+.eyebrow{
+  font-family:var(--font-mono);font-size:.72rem;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--jade);display:inline-flex;align-items:center;gap:.6em;
+}
+.eyebrow::before{content:"";width:22px;height:1px;background:linear-gradient(90deg,var(--jade),transparent);}
+.muted{color:var(--text-muted);}
+.dim{color:var(--text-dim);}
+
+/* ---------- buttons ---------- */
+.btn{
+  font-family:var(--font-mono);font-size:.86rem;letter-spacing:.02em;
+  display:inline-flex;align-items:center;gap:.55em;cursor:pointer;
+  padding:.74em 1.15em;border-radius:var(--radius-sm);border:1px solid var(--line);
+  background:var(--surface);color:var(--text);transition:.18s var(--ease);
+  text-decoration:none;white-space:nowrap;
+}
+.btn:hover{border-color:#33465c;background:var(--surface-2);transform:translateY(-1px);}
+.btn .arr{transition:transform .18s var(--ease);}
+.btn:hover .arr{transform:translateX(3px);}
+.btn-primary{
+  background:linear-gradient(180deg, rgba(47,230,168,.16), rgba(47,230,168,.06));
+  border-color:rgba(47,230,168,.4);color:var(--jade-2);
+  box-shadow:0 0 0 1px rgba(47,230,168,.06), 0 10px 30px -12px rgba(47,230,168,.45);
+}
+.btn-primary:hover{border-color:var(--jade);background:linear-gradient(180deg, rgba(47,230,168,.24), rgba(47,230,168,.1));}
+.btn-ghost{background:transparent;}
+.btn-sm{padding:.5em .8em;font-size:.78rem;}
+
+/* ---------- section scaffolding ---------- */
+section{padding:84px 0;position:relative;}
+.divider{height:1px;background:linear-gradient(90deg,var(--line),transparent);}
+
+/* ---------- code block ---------- */
+.code{font-family:var(--font-mono);font-size:.82rem;line-height:1.65;background:#080C12;border:1px solid var(--line-soft);border-radius:var(--radius-sm);overflow:auto;}
+.code .codebar{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid var(--line-soft);background:var(--bg-1);position:sticky;top:0;}
+.code .codebar .fn{color:var(--text-dim);font-size:.72rem;display:flex;align-items:center;gap:.6em;}
+.code pre{margin:0;padding:14px 16px;white-space:pre;}
+.code code{color:#C7D3E2;}
+.tok-key{color:var(--iris);}
+.tok-str{color:var(--jade-2);}
+.tok-num{color:var(--amber-2);}
+.tok-punc{color:var(--text-dim);}
+.tok-com{color:#4B5A6E;font-style:italic;}
+.tok-bool{color:var(--amber);}
+.tok-meth{color:var(--jade);font-weight:600;}
+.copybtn{font-family:var(--font-mono);font-size:.7rem;color:var(--text-muted);border:1px solid var(--line);background:var(--surface);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;display:inline-flex;gap:.4em;align-items:center;}
+.copybtn:hover{color:var(--text);border-color:#33465c;}
+.copybtn.ok{color:var(--jade);border-color:rgba(47,230,168,.4);}
+.runbtn{font-family:var(--font-mono);font-size:.7rem;color:var(--jade);border:1px solid var(--jade-dim);background:var(--jade-deep);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;margin-right:6px;}
+.runbtn:hover{border-color:var(--jade);background:rgba(47,230,168,.16);} .runbtn:disabled{opacity:.5;cursor:default;}
+
+
+/* ---------- method tags + block labels (api reference, lifecycle stepper) ---------- */
+.mtag{font-size:.6rem;font-weight:700;letter-spacing:.04em;padding:.18em .42em;border-radius:5px;flex:none;width:46px;text-align:center;}
+.m-get{color:var(--m-get);background:rgba(47,230,168,.12);border:1px solid rgba(47,230,168,.3);}
+.m-post{color:var(--m-post);background:rgba(126,156,255,.12);border:1px solid rgba(126,156,255,.3);}
+.m-patch{color:var(--m-patch);background:rgba(255,145,77,.12);border:1px solid rgba(255,145,77,.3);}
+.m-delete{color:var(--m-delete);background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.3);}
+.op-path{font-family:var(--font-mono);font-size:.9rem;color:var(--text);}
+.block-lbl{font-family:var(--font-mono);font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-dim);margin:20px 0 10px;display:flex;align-items:center;gap:10px;}
+.block-lbl::after{content:"";flex:1;height:1px;background:var(--line-soft);}
+.block-lbl:first-child{margin-top:0;}
+
+/* ---------- status badges (deployments panel, fleet list, volume picker) ---------- */
+.ap-badge{font-family:var(--font-mono);font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;padding:.2em .6em;border-radius:5px;border:1px solid var(--line);}
+.ap-badge.ok{color:var(--jade);border-color:rgba(47,230,168,.45);background:rgba(47,230,168,.08);}
+.ap-badge.info{color:var(--iris);border-color:rgba(143,162,255,.4);background:rgba(143,162,255,.07);}
+.ap-badge.warn{color:var(--amber);border-color:var(--amber-dim);background:rgba(255,145,77,.08);}
+.ap-badge.ep-public{background:var(--jade-deep);color:var(--jade);border:1px solid var(--jade-dim);}
+.ap-badge.ep-private{background:transparent;color:var(--text-dim);border:1px solid var(--line);}
+.btn[disabled]{opacity:.45;cursor:not-allowed;pointer-events:none;}

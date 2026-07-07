@@ -1,0 +1,79 @@
+/* ============================================================
+   Enclave stylesheet entry — compiled by Tailwind CSS v4:
+     npm run build:site   →  site/css/site.css
+   Tailwind is imported WITHOUT preflight (the design predates it
+   and styles every element it uses); utilities layer last so a
+   utility class on markup always wins over component CSS.
+   ============================================================ */
+@layer theme, base, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+
+/* class scanning: only the site's own markup + scripts */
+@source "../../*.html";
+@source "../../js/**/*.js";
+@source "../../components";
+
+/* Design tokens (tokens.css :root is the source of truth) exposed to
+   Tailwind so utilities like text-jade / bg-surface / font-mono resolve
+   to the same custom properties the hand-written CSS uses. */
+@theme inline {
+  --color-*: initial;
+  --color-bg: var(--bg);
+  --color-bg-1: var(--bg-1);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-ink: var(--text);
+  --color-ink-muted: var(--text-muted);
+  --color-ink-dim: var(--text-dim);
+  --color-jade: var(--jade);
+  --color-jade-2: var(--jade-2);
+  --color-jade-dim: var(--jade-dim);
+  --color-jade-deep: var(--jade-deep);
+  --color-amber: var(--amber);
+  --color-amber-2: var(--amber-2);
+  --color-amber-deep: var(--amber-deep);
+  --color-iris: var(--iris);
+  --color-iris-deep: var(--iris-deep);
+  --color-danger: var(--danger);
+  --color-danger-deep: var(--danger-deep);
+  --color-white: #fff;
+  --color-black: #000;
+  --font-mono: var(--font-mono);
+  --font-sans: var(--font-sans);
+  --radius-card: var(--radius);
+  --radius-card-sm: var(--radius-sm);
+}
+
+/* Site CSS, layered under `components` so Tailwind utilities override it.
+   Order matters: responsive.css carries same-specificity overrides of the
+   page files, and each component bundle's .css (LWC-style folder trios,
+   unscoped as in LWC light DOM) is stitched in last. */
+@import "./tokens.css" layer(base);
+@import "./base.css" layer(components);
+@import "./overview.css" layer(components);
+@import "./deploy.css" layer(components);
+@import "./apps.css" layer(components);
+@import "./develop.css" layer(components);
+@import "./responsive.css" layer(components);
+@import "../../components/header/header.css" layer(components);
+@import "../../components/wallet-button/wallet-button.css" layer(components);
+@import "../../components/footer/footer.css" layer(components);
+@import "../../components/toast/toast.css" layer(components);
+@import "../../components/section-head/section-head.css" layer(components);
+@import "../../components/code/code.css" layer(components);
+@import "../../components/enclave-panel/enclave-panel.css" layer(components);
+@import "../../components/ticker/ticker.css" layer(components);
+@import "../../components/flow/flow.css" layer(components);
+@import "../../components/attest-chain/attest-chain.css" layer(components);
+@import "../../components/live-verify/live-verify.css" layer(components);
+@import "../../components/terminal/terminal.css" layer(components);
+@import "../../components/fleet-list/fleet-list.css" layer(components);
+@import "../../components/volume-picker/volume-picker.css" layer(components);
+@import "../../components/deployments/deployments.css" layer(components);
+@import "../../components/app-card/app-card.css" layer(components);
+@import "../../components/api-reference/api-reference.css" layer(components);

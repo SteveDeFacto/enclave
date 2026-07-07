@@ -1,0 +1,38 @@
+/* ============================================================
+   Enclave design tokens
+   mono = product voice · jade = verified · amber = compute
+   ============================================================ */
+:root{
+  --bg:#070A0F;
+  --bg-1:#0B0F16;
+  --surface:#0F1620;
+  --surface-2:#131C28;
+  --surface-3:#172230;
+  --line:#1E2937;
+  --line-soft:#16202C;
+  --text:#E7EEF6;
+  --text-muted:#93A1B5;
+  --text-dim:#5E6E83;
+  --jade:#2FE6A8;
+  --jade-2:#5FF0C0;
+  --jade-dim:#1C9C74;
+  --jade-deep:#0E3A2C;
+  --jade-glow:rgba(47,230,168,.14);
+  --amber:#FF914D;
+  --amber-2:#FFB07A;
+  --amber-deep:#3A2014;
+  --iris:#8FA2FF;
+  --iris-deep:#1A2150;
+  --danger:#FF6B6B;
+  --danger-deep:#3A1717;
+  --m-get:#2FE6A8;
+  --m-post:#7E9CFF;
+  --m-patch:#FF914D;
+  --m-delete:#FF6B6B;
+  --font-mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code","Fira Code",Menlo,Consolas,"Liberation Mono",monospace;
+  --font-sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --maxw:1200px;
+  --radius:14px;
+  --radius-sm:9px;
+  --ease:cubic-bezier(.2,.7,.2,1);
+}

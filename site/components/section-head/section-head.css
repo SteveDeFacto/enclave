@@ -1,0 +1,10 @@
+/* ============================================================
+   <c-section-head>
+   ============================================================ */
+c-section-head{display:contents;}
+
+.sec-head{max-width:62ch;margin-bottom:42px;}
+.sec-head h2{font-family:var(--font-mono);font-weight:600;font-size:clamp(1.7rem,3vw,2.5rem);letter-spacing:-.01em;margin:.7rem 0 .5rem;line-height:1.1;}
+.sec-head p{color:var(--text-muted);font-size:1.05rem;margin:0;}
+
+c-section-head[flush] .sec-head{margin-bottom:0;}

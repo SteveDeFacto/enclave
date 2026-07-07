@@ -1,0 +1,52 @@
+/* ============================================================
+   <c-wallet-button> — the wallet control: sign-in button,
+   account popover, and the fullscreen wallet chooser it portals
+   to <body> (the header's backdrop-filter would otherwise become
+   the containing block for the fixed overlay, pinning it to the
+   bar — see the git history for that bug).
+
+   Owns the wallet lifecycle for whichever page mounts it: boots
+   EIP-6963 discovery, silently restores the previous session,
+   and repaints on every wallet/session change (wallet.js emits
+   `nan:wallet`; the button itself is repainted by refreshWallet).
+   ============================================================ */
+import { NanElement, register } from "../../js/lib/nan-element.js";
+import { Nan } from "../../js/core/api.js";
+import { Wallet, connectWallet, authenticate, refreshWallet, restoreSession, toggleWalletPop } from "../../js/core/wallet.js";
+import { $, showToast } from "../../js/core/util.js";
+
+class WalletButton extends NanElement {
+  static templateUrl = new URL("./wallet-button.html", import.meta.url);
+
+  renderedCallback() {
+    if (this._wired) return;
+    this._wired = true;
+
+    // fullscreen wallet chooser, portaled OUTSIDE the blurred header
+    if (!$("#walletPick")) {
+      const pick = document.createElement("div");
+      pick.className = "wallet-pick"; pick.id = "walletPick"; pick.hidden = true;
+      document.body.appendChild(pick);
+    }
+
+    const wb = this.querySelector("#walletBtn");
+    wb.addEventListener("click", async () => {
+      if (Nan.address){ toggleWalletPop(); return; }
+      const o = wb.innerHTML; wb.disabled = true; wb.innerHTML = "connecting…";
+      try { await connectWallet(); await authenticate(); }
+      catch(e){ showToast(e.message); }
+      finally { wb.disabled = false; if (!Nan.address) wb.innerHTML = o; }
+    });
+
+    document.addEventListener("click", (e) => {
+      const pop = this.querySelector("#walletPop"); if (!pop || pop.hidden) return;
+      if (e.target.closest("#walletPop") || e.target.closest("#walletBtn")) return;
+      pop.hidden = true; pop.innerHTML = "";
+    });
+
+    Wallet.init();
+    refreshWallet();
+    restoreSession();   // silently restore a prior wallet + sign-in across refreshes
+  }
+}
+register("c-wallet-button", WalletButton);

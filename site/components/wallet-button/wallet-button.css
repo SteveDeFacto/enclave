@@ -1,0 +1,44 @@
+/* ============================================================
+   <c-wallet-button> — button states, account popover, and the
+   fullscreen #walletPick overlay (portaled to <body>; also
+   reused by the deposit/buy modals in core/wallet.js).
+   ============================================================ */
+c-wallet-button{display:contents;}
+
+#walletBtn.connected{font-family:var(--font-mono);letter-spacing:.01em;display:inline-flex;align-items:center;gap:.5em;}
+#walletBtn .wdot{width:7px;height:7px;border-radius:50%;background:var(--jade);box-shadow:0 0 8px var(--jade);}
+#walletBtn .lock{font-size:.62rem;color:var(--amber);border:1px solid var(--amber-dim);border-radius:4px;padding:.05em .3em;}
+.wallet-mount{position:relative;display:inline-block;}
+.nav-inner .wallet-mount{margin-left:auto;}  /* sit at the right of the header */
+.wallet-pop{position:absolute;top:calc(100% + 10px);left:0;z-index:60;width:300px;background:#0b1119;border:1px solid var(--line);border-radius:12px;box-shadow:0 30px 60px -28px rgba(0,0,0,.9);padding:14px;font-family:var(--font-mono);}
+.nav-inner .wallet-pop{left:auto;right:0;}  /* drop down aligned to the header's right edge */
+.wp-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line-soft);font-size:.78rem;}
+.wp-k{color:var(--text-muted);} .wp-v{color:var(--text);} .wp-v .ok{color:var(--jade);}
+.wp-addr{background:none;border:0;color:var(--jade);cursor:pointer;font-family:inherit;font-size:.8rem;}
+.wp-mini{background:#101a24;border:1px solid var(--line);color:var(--iris);border-radius:6px;padding:.15em .5em;cursor:pointer;font-family:inherit;font-size:.7rem;}
+.wp-bal{margin:10px 0;font-size:.76rem;color:var(--text-muted);} .wp-bal .bl-h{color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;font-size:.62rem;margin-bottom:5px;}
+.wp-bal .bl{display:flex;justify-content:space-between;color:var(--text);padding:2px 0;} .wp-bal .bl.dim{color:var(--text-muted);}
+.wp-disc{width:100%;background:#16111a;border:1px solid #3a2230;color:#ff8a8a;border-radius:8px;padding:.55em;cursor:pointer;font-family:inherit;font-size:.76rem;margin-top:4px;}
+.wp-disc:hover{border-color:#ff6b6b;}
+.wallet-pick{position:fixed;inset:0;z-index:120;background:rgba(4,6,10,.74);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);}
+.wp-card{width:300px;background:#0c121b;border:1px solid var(--line);border-radius:14px;padding:16px;font-family:var(--font-mono);}
+.wp-h{font-size:.82rem;color:var(--text);margin-bottom:12px;}
+.wp-item{display:flex;align-items:center;gap:10px;width:100%;background:#0a0f17;border:1px solid var(--line);border-radius:9px;padding:.7em;margin-bottom:8px;cursor:pointer;color:var(--text);font-family:inherit;font-size:.82rem;}
+.wp-item:hover{border-color:rgba(47,230,168,.5);} .wp-item img{width:20px;height:20px;border-radius:5px;}
+.wp-dot{width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,var(--jade),var(--iris));}
+.wp-cancel{width:100%;background:none;border:1px solid var(--line);color:var(--text-muted);border-radius:8px;padding:.5em;cursor:pointer;font-family:inherit;font-size:.76rem;margin-top:2px;}
+.wp-note{font-size:.72rem;color:var(--text-muted);line-height:1.55;margin:0 0 10px;} .wp-note b{color:var(--text);}
+.wp-sub{color:var(--text-dim);font-size:.72em;}
+.wp-input{width:100%;box-sizing:border-box;background:#080C12;border:1px solid var(--line);color:var(--text);font-family:inherit;font-size:.85rem;padding:.6em .7em;border-radius:8px;margin-bottom:8px;letter-spacing:.03em;}
+.wp-input:focus{border-color:var(--jade);outline:none;box-shadow:0 0 0 3px rgba(47,230,168,.12);}
+.wp-go{justify-content:center;color:var(--jade);border-color:var(--jade-dim);}
+.wp-err{font-size:.72rem;color:#ff8a8a;margin:-2px 0 8px;}
+.wp-foot{font-size:.64rem;color:var(--text-dim);text-align:center;margin-top:10px;letter-spacing:.04em;}
+.wp-fund{display:flex;gap:8px;margin:2px 0 10px;}
+.wp-buy{color:var(--jade);border-color:var(--jade-dim);}
+.wp-addr-full{font-family:var(--font-mono);font-size:.72rem;word-break:break-all;background:#080C12;border:1px solid var(--line);border-radius:8px;padding:.6em .7em;margin:8px 0;color:var(--jade-2);user-select:all;}
+.wp-amts{display:flex;gap:6px;margin:10px 0;}
+.wp-amt{flex:1;background:#0a0f17;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:.5em 0;cursor:pointer;font-family:inherit;font-size:.82rem;}
+.wp-amt.on{border-color:var(--jade);color:var(--jade);}
+.wp-dot-iris{background:linear-gradient(135deg,var(--iris),var(--jade));}
+@media(max-width:760px){.wallet-pop{left:0;right:auto;width:min(300px,84vw);}}

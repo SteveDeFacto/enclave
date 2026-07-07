@@ -1,0 +1,25 @@
+/* ============================================================
+   <c-enclave-panel> — the enclave signature panel
+   ============================================================ */
+c-enclave-panel{display:contents;}
+
+.enclave{
+  position:relative;border:1px solid var(--line);border-radius:var(--radius);
+  background:linear-gradient(180deg,#0A111A,#080C12);overflow:hidden;
+  box-shadow:0 30px 80px -40px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.03);
+}
+.enclave::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 90% at 50% 0%, transparent 60%, rgba(0,0,0,.5));}
+.enclave-bar{display:flex;align-items:center;justify-content:space-between;
+  padding:11px 14px;border-bottom:1px solid var(--line-soft);font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);position:relative;z-index:2;}
+.enclave-bar .lbl{display:flex;align-items:center;gap:.6em;color:var(--text-muted);}
+.enclave-bar .seal{color:var(--jade);}
+.enclave-canvas{display:block;width:100%;height:330px;}
+.enclave-foot{position:relative;z-index:2;border-top:1px solid var(--line-soft);padding:10px 14px;font-family:var(--font-mono);font-size:.7rem;color:var(--text-dim);display:flex;justify-content:space-between;gap:10px;overflow:hidden;}
+.enclave-foot .k{color:var(--text-muted);}
+#measureHash{color:var(--jade);}
+.corner{position:absolute;width:12px;height:12px;border:1px solid var(--jade);opacity:.5;z-index:3;}
+.corner.tl{top:8px;left:8px;border-right:0;border-bottom:0;}
+.corner.tr{top:8px;right:8px;border-left:0;border-bottom:0;}
+.corner.bl{bottom:8px;left:8px;border-right:0;border-top:0;}
+.corner.br{bottom:8px;right:8px;border-left:0;border-top:0;}

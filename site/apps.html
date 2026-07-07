@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Apps · Enclave</title>
+<meta name="description" content="Browse and publish Wasm apps. Every app is a wasi:http component on IPFS, listed in the NanAppCatalog contract on Base — publishing is one transaction." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 9v14L16 30 4 23V9z' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 7.333 24 12v8L16 24.667 8 20v-8z' fill='none' stroke='%232FE6A8' stroke-width='1.4' opacity='.55'/%3E%3Ccircle cx='16' cy='12.55' r='2.45' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 15v6.6M16 21.6h2M16 19.4h1.5' fill='none' stroke='%232FE6A8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="css/site.css" />
+</head>
+<body>
+<c-header current="apps"></c-header>
+<section id="apps" data-view="apps" aria-label="Wasm app store">
+  <div class="wrap">
+    <c-section-head eyebrow="App store · on-chain catalog" heading="Browse and publish Wasm apps.">
+      <p>Every app here is a <b>wasi:http</b> component whose bytes live on <b>IPFS</b>, addressed by their <b>CID</b>. The catalog itself is a smart contract on <b>Base</b> (<span class="mono">NanAppCatalog</span>): anyone can publish, each listing is attributed on-chain to the publisher's wallet, and because a CID is a hash of the exact wasm you can pull it from any IPFS peer and verify the bytes yourself. Reading needs no wallet; publishing is one Base transaction.</p>
+      <div class="store-meta">
+        <a class="chip" id="catAddrLink" target="_blank" rel="noopener">contract <b id="catAddrShort">…</b></a>
+        <span class="chip">chain <b id="catChain">Base · 8453</b></span>
+        <span class="chip">code <b>IPFS · CID-addressed</b></span>
+      </div>
+    </c-section-head>
+
+    <div class="store-toolbar">
+      <div class="seg" id="storeFilter" role="group" aria-label="Filter apps">
+        <button data-filter="verified" type="button">Verified</button>
+        <button data-filter="all" class="on" type="button">All</button>
+      </div>
+      <input type="text" id="storeSearch" placeholder="search name, CID, publisher…" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Search apps" />
+      <span class="store-count" id="storeCount"></span>
+      <button class="btn btn-sm" id="storeRefresh" type="button">↻ refresh</button>
+      <button class="btn btn-primary btn-sm" id="storePublishBtn" type="button">+ Publish app</button>
+    </div>
+
+    <div class="store-grid" id="storeGrid"></div>
+
+    <div class="publish-panel" id="publishPanel" hidden>
+      <h4>Publish a Wasm app version</h4>
+      <p class="pub-sub">Add a <span class="mono">wasi:http</span> component release to the on-chain catalog. Its bytes go on IPFS; the CID and metadata go on Base. An app is keyed by <b>slug</b> in your wallet's namespace; publish the same slug again to cut a new <b>version</b>. Only you (<span class="mono">msg.sender</span>) can add versions, edit, or delist it. New to building components? The <a href="develop.html#docs">developer guide</a> takes you from an empty directory to a published app.</p>
+      <div class="pub-grid">
+        <div>
+          <label for="pubSlug">App slug <span class="dim">(stable id · a–z0–9-, ≤ 40)</span></label>
+          <input type="text" id="pubSlug" maxlength="40" placeholder="my-app" spellcheck="false" autocapitalize="off" autocomplete="off" />
+        </div>
+        <div>
+          <label for="pubVersion">Version <span class="dim">(label · e.g. 1.0.0)</span></label>
+          <input type="text" id="pubVersion" maxlength="32" value="1.0.0" placeholder="1.0.0" spellcheck="false" autocapitalize="off" autocomplete="off" />
+        </div>
+        <div class="full" id="pubFileRow">
+          <label for="pubFile">Wasm file <span class="dim">(.wasm component · ≤ 2 GB · uploaded &amp; pinned to IPFS)</span></label>
+          <input type="file" id="pubFile" accept=".wasm,application/wasm" />
+          <div class="hint" id="pubFileHint"></div>
+          <div id="pubUpBar" hidden><div></div></div>
+        </div>
+        <div class="full">
+          <label for="pubCid">IPFS CID <span class="dim">(auto-filled after upload, or paste one you've pinned)</span></label>
+          <input type="text" id="pubCid" placeholder="bafybei…" spellcheck="false" autocapitalize="off" autocomplete="off" />
+        </div>
+        <div>
+          <label for="pubName">Name <span class="dim">(display)</span></label>
+          <input type="text" id="pubName" maxlength="80" placeholder="My app" spellcheck="false" />
+        </div>
+        <div>
+          <label for="pubVram">VRAM <span class="dim">(min GB of one card · 0 = no VRAM need)</span></label>
+          <input type="number" id="pubVram" value="0" min="0" step="0.5" />
+        </div>
+        <div>
+          <label for="pubGpuT">GPU compute <span class="dim">(min TFLOPS · both GPU fields 0 = CPU-only app)</span></label>
+          <input type="number" id="pubGpuT" value="0" min="0" step="1" />
+        </div>
+        <div>
+          <label for="pubMem">Memory <span class="dim">(min MB of RAM · the runtime-enforced cap)</span></label>
+          <input type="number" id="pubMem" value="128" min="1" step="1" />
+        </div>
+        <div>
+          <label for="pubCpuG">CPU compute <span class="dim">(min GFLOPS · at least 1 - everything computes · a whole node ≈ 1000)</span></label>
+          <input type="number" id="pubCpuG" value="1" min="1" step="1" />
+        </div>
+        <div class="full">
+          <label for="pubPorts">Firewall ports <span class="dim">(optional · e.g. <b>http:8088, tcp:5432, udp:9053</b> · empty = standard web app · can change per version)</span></label>
+          <input type="text" id="pubPorts" maxlength="96" placeholder="empty = wasi:http web app on the standard endpoint" spellcheck="false" autocapitalize="off" autocomplete="off" />
+        </div>
+        <div class="full">
+          <label for="pubDesc">Description <span class="dim">(≤ 500 chars)</span></label>
+          <textarea id="pubDesc" maxlength="500" placeholder="What does it do?"></textarea>
+        </div>
+      </div>
+      <div class="pub-actions">
+        <button class="btn btn-primary btn-sm" id="pubSubmit" type="button">Publish to Base</button>
+        <button class="btn btn-sm" id="pubCancel" type="button">cancel</button>
+        <span class="pub-status" id="pubStatus"></span>
+      </div>
+    </div>
+  </div>
+</section>
+<c-footer></c-footer>
+<c-toast></c-toast>
+<script type="module" blocking="render" src="js/pages/apps.js"></script>
+</body>
+</html>

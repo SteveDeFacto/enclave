@@ -1,0 +1,98 @@
+/* ============================================================
+   Overview page — hero, enclave panel, ticker, principle cards,
+   isolation, pricing, lifecycle stepper, attestation chain
+   ============================================================ */
+
+/* ---------- hero ---------- */
+.hero{padding:78px 0 30px;}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center;}
+.hero h1{
+  font-family:var(--font-mono);font-weight:600;line-height:1.04;letter-spacing:-.02em;
+  font-size:clamp(2rem,4vw,2.8rem);margin:.5rem 0 .2rem;
+}
+.hero h1 .hl{color:var(--jade);}
+.hero h1 .am{color:var(--amber);}
+.hero .lede{font-size:clamp(1rem,1.6vw,1.18rem);color:var(--text-muted);max-width:42ch;margin:1.1rem 0 1.7rem;}
+.hero .lede b{color:var(--text);font-weight:600;}
+.hero-cta{display:flex;gap:12px;flex-wrap:wrap;}
+.hero-foot{margin-top:30px;display:flex;flex-wrap:wrap;gap:8px 22px;font-family:var(--font-mono);font-size:.76rem;color:var(--text-dim);}
+.hero-foot span{display:inline-flex;align-items:center;gap:.55em;}
+.hero-foot span::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--jade);opacity:.8;}
+.hero-foot span.soon::before{background:var(--amber);}
+
+/* ---------- principle cards ---------- */
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
+.card{border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0C131C);padding:22px;position:relative;overflow:hidden;transition:.2s var(--ease);}
+.card:hover{transform:translateY(-3px);border-color:#2b3a4d;}
+.card .ic{width:38px;height:38px;border-radius:9px;border:1px solid var(--line);display:grid;place-items:center;margin-bottom:16px;background:var(--bg-1);}
+.card .ic svg{width:20px;height:20px;}
+.card h3{font-family:var(--font-mono);font-size:1rem;margin:0 0 .4em;letter-spacing:.01em;}
+.card p{margin:0;color:var(--text-muted);font-size:.92rem;line-height:1.55;}
+.card .tag{position:absolute;top:16px;right:16px;font-family:var(--font-mono);font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);}
+.card > .tag:first-child + h3{margin-top:22px;} /* no icon above the heading: clear the absolutely-positioned tag */
+.card.jade .ic{border-color:rgba(47,230,168,.35);box-shadow:0 0 24px -10px var(--jade-glow);}
+.card.jade .ic svg{color:var(--jade);}
+.card.amber .ic svg{color:var(--amber);}
+.iso-mech{margin-top:28px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0C131C);padding:24px 26px;}
+.iso-mech h4{margin:0 0 14px;font-family:var(--font-mono);font-size:.86rem;color:var(--text);letter-spacing:.01em;}
+.iso-list{list-style:none;margin:0;padding:0;display:grid;gap:14px;}
+.iso-list li{position:relative;padding-left:24px;color:var(--text-muted);font-size:.92rem;line-height:1.6;}
+.iso-list li::before{content:"";position:absolute;left:0;top:.5em;width:9px;height:9px;border-radius:2px;background:var(--jade);box-shadow:0 0 14px -2px var(--jade-glow);}
+.iso-list b{color:var(--text);}
+.iso-honest{margin-top:22px;border:1px solid var(--amber);border-left-width:3px;border-radius:var(--radius);background:linear-gradient(180deg,var(--amber-deep),#0C131C);padding:20px 24px;}
+.iso-honest h4{margin:0 0 8px;font-family:var(--font-mono);font-size:.82rem;letter-spacing:.04em;text-transform:uppercase;color:var(--amber);}
+.iso-honest p{margin:0;color:var(--text-muted);font-size:.9rem;line-height:1.62;}
+.iso-honest b{color:var(--text);}
+/* isolation: two wide boundary cards + measured-claims grid */
+.iso-cards{grid-template-columns:1fr 1fr;gap:18px;}
+.iso-cards .card{padding:26px 28px;}
+.iso-cards .tag{position:static;display:inline-block;margin:0 0 12px;padding:.35em .75em;border:1px solid var(--line);border-radius:6px;background:var(--bg-1);}
+.iso-cards .tag:first-child + h3{margin-top:0;}
+.iso-cards .card.jade .tag{color:var(--jade);border-color:rgba(47,230,168,.35);}
+.iso-cards .card.iris .tag{color:var(--iris);border-color:rgba(143,162,255,.4);}
+.iso-cards h3{font-size:1.08rem;}
+.iso-cards .card p{font-size:.9rem;line-height:1.62;}
+.iso-mech h4 .sub{color:var(--text-dim);font-weight:400;}
+.iso-list{grid-template-columns:1fr 1fr;gap:20px 30px;}
+.iso-list li:last-child{grid-column:1 / -1;}
+.iso-list b{display:block;font-family:var(--font-mono);font-size:.84rem;margin-bottom:3px;}
+/* pricing: dial cards + formula strip */
+.price-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:30px;}
+.price-card{border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0C131C);padding:20px 22px;}
+.price-card .pc-t{display:block;font-family:var(--font-mono);font-size:.82rem;color:var(--text);margin-bottom:6px;}
+.price-card .pc-rate{display:block;font-family:var(--font-mono);font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;color:var(--jade);margin-bottom:10px;}
+.price-card p{margin:0;color:var(--text-muted);font-size:.84rem;line-height:1.6;}
+.price-card p b{color:var(--text);}
+.price-formula{display:flex;justify-content:center;margin:0 0 28px;}
+.price-formula code{font-family:var(--font-mono);font-size:.92rem;color:var(--jade-2);background:var(--bg-1);border:1px solid var(--line);border-radius:10px;padding:.7em 1.3em;text-align:center;}
+@media(max-width:1020px){.price-grid{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:640px){.price-grid{grid-template-columns:1fr;}.iso-cards{grid-template-columns:1fr;}.iso-list{grid-template-columns:1fr;}.iso-list li:last-child{grid-column:auto;}}
+.card.iris .ic svg{color:var(--iris);}
+
+/* ---------- pricing (legacy .plan cards - markup removed; .price-grid now defined above) ---------- */
+.plan{border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0B121A);padding:24px;position:relative;display:flex;flex-direction:column;}
+.plan.feature{border-color:rgba(47,230,168,.4);box-shadow:0 0 50px -24px var(--jade-glow);}
+.plan.soon{opacity:.72;}
+.plan .pl-tag{font-family:var(--font-mono);font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-dim);}
+.plan.feature .pl-tag{color:var(--jade);}
+.plan.soon .pl-tag{color:var(--amber);}
+.plan h3{font-family:var(--font-mono);font-size:1.3rem;margin:.5rem 0 .2rem;}
+.plan .price{font-family:var(--font-mono);font-size:2.1rem;color:var(--text);margin:.4rem 0 .1rem;letter-spacing:-.02em;}
+.plan .price small{font-size:.8rem;color:var(--text-dim);letter-spacing:0;}
+.plan .persec{font-family:var(--font-mono);font-size:.74rem;color:var(--text-muted);}
+.plan ul{list-style:none;padding:0;margin:18px 0 0;display:flex;flex-direction:column;gap:9px;}
+.plan li{font-size:.88rem;color:var(--text-muted);display:flex;gap:.6em;align-items:flex-start;}
+.plan li svg{width:15px;height:15px;color:var(--jade);flex:none;margin-top:3px;}
+.plan.soon li svg{color:var(--amber);}
+
+/* ---------- pricing example table (was runtime-injected) ---------- */
+.mig-table-wrap{max-width:760px;margin:0 auto;}
+.mig-scroll{overflow-x:auto;}
+.mig-table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:.82rem;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;}
+.mig-table th,.mig-table td{text-align:left;padding:11px 16px;border-bottom:1px solid var(--line-soft);}
+.mig-table thead th{font-size:.64rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);background:#0b1119;}
+.mig-table tbody td{color:var(--text);} .mig-table tbody td .mono{color:var(--jade-2);}
+.mig-table tbody tr:last-child td{border-bottom:0;} .mig-table tr.full td{background:rgba(47,230,168,.05);}
+.mig-table tbody tr:hover td{background:rgba(143,162,255,.05);}
+.mig-note{max-width:760px;margin:14px auto 0;font-size:.8rem;line-height:1.6;color:var(--text-muted);}
+@media(max-width:560px){.mig-table{font-size:.74rem;} .mig-table th,.mig-table td{padding:9px 10px;white-space:nowrap;}}

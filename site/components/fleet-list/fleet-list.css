@@ -1,0 +1,13 @@
+/* ============================================================
+   <c-fleet-list> — live enclaves capacity table
+   ============================================================ */
+c-fleet-list{display:contents;}
+
+.fleet-list{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#080c12;display:block;}
+.fleet-row{display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--line-soft);font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted);flex-wrap:wrap;}
+.fleet-row:last-child{border-bottom:0;}
+.fleet-name{color:var(--text);font-size:.76rem;}
+.fleet-pool{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;}
+.fleet-meter{display:inline-block;width:56px;height:5px;border-radius:3px;background:rgba(255,255,255,.07);overflow:hidden;}
+.fleet-meter b{display:block;height:100%;background:linear-gradient(90deg,var(--jade),var(--jade-2));border-radius:3px;}
+.fleet-empty{padding:10px 12px;font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted);}
