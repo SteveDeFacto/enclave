@@ -76,6 +76,7 @@ jobs:
       - name: Compile the enclave_llama shim against the pinned build
         run: |
           cc -shared -fPIC \
+            -Wl,-soname,libenclave_llama.so \
             -I /tmp/llama.cpp/include -I /tmp/llama.cpp/ggml/include \
             "$GITHUB_WORKSPACE/wasm/llama-shim/enclave_llama.c" \
             -L /tmp/llama.cpp/build/bin -lllama \

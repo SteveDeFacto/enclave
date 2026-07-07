@@ -2,8 +2,13 @@
  * PINNED llama.cpp checkout by the enclave-llamacpp toolchain workflow (and by
  * hand for local smokes):
  *
- *   cc -shared -fPIC -I<llama.cpp>/include -I<llama.cpp>/ggml/include \
+ *   cc -shared -fPIC -Wl,-soname,libenclave_llama.so \
+ *      -I<llama.cpp>/include -I<llama.cpp>/ggml/include \
  *      enclave_llama.c -L<llama.cpp>/build/bin -lllama -o libenclave_llama.so
+ *
+ * The -soname is load-bearing: the wasmtime binary NEEDs "libenclave_llama.so"
+ * by that bare name, and in the manager image it is resolved by ldconfig from
+ * /usr/local/lib - a soname-less lib is not reliably cached there.
  */
 #include "enclave_llama.h"
 #include "llama.h"
