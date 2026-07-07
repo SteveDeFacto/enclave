@@ -173,7 +173,7 @@ for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "buy.
   if (preloads[f]) s = s.replace('<script type="module" src="js/boot.js">', preloads[f] + '\n<script type="module" src="js/boot.js">');
   fs.writeFileSync(path.join(DIST, f), s);
 }
-for (const d of ["assets", "privy"])
+for (const d of ["assets", "privy", ".well-known"])
   fs.cpSync(path.join(SITE, d), path.join(DIST, d), { recursive: true });
 
 /* size report */
