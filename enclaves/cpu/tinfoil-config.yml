@@ -63,7 +63,7 @@ containers:
       # on-chain discovery: same registry; a CPU enclave advertises like any
       # other and callers learn it is CPU-only from its /availability.
       - REGISTRY_ENABLED: "1"
-      - ADDRESS_BOOK_ADDRESS: ""                                                            # set by scripts/deploy-address-book.mjs; "" = baked addresses only; when set the supervisor resolves + polls the contract addresses below from the on-chain EnclaveAddressBook
+      - ADDRESS_BOOK_ADDRESS: "0xab214342d5A490150A4A977063A2f88E21F80907"                                                            # set by scripts/deploy-address-book.mjs; "" = baked addresses only; when set the supervisor resolves + polls the contract addresses below from the on-chain EnclaveAddressBook
       - REGISTRY_ADDRESS: "0xCB65f487eba6564D57FfB860cF9aE701584cB4a2"
       # Portable deployments: the claim loop adopts ONLY CPU deployments
       # (EnclaveDeployments records created with gpu=false).

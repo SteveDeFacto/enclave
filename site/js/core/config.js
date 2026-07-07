@@ -29,7 +29,7 @@ export const PRIVY_RDNS = "io.privy.embedded";
    the site without a rebuild. The last resolve is cached in sessionStorage
    and applied synchronously below, so repeat visits never paint stale
    addresses even for a frame. */
-export const ADDRESS_BOOK_ADDRESS = ""; // EnclaveAddressBook on Base; written by scripts/deploy-address-book.mjs ("" = baked addresses only)
+export const ADDRESS_BOOK_ADDRESS = "0xab214342d5A490150A4A977063A2f88E21F80907"; // EnclaveAddressBook on Base; written by scripts/deploy-address-book.mjs ("" = baked addresses only)
 export let APP_CATALOG_ADDRESS = "0x21F2798A51F5970dD43A5D8fAdA48b1b8D59cc67"; // EnclaveAppCatalog on Base; written automatically by scripts/deploy-app-catalog.mjs
 export let DEPLOYMENTS_ADDRESS = "0x267f7F792CA84482698b2f6774B028522247B6CD"; // EnclaveDeployments on Base; written automatically by scripts/deploy-deployments.mjs
 export const APP_CATALOG_CHAIN   = 8453;                        // Base mainnet (kept in sync by the deploy script; 84532 = Base Sepolia)
