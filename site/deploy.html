@@ -22,10 +22,11 @@
 })();
 </script>
 <link rel="stylesheet" href="css/site.css" />
-<script type="module" blocking="render" src="js/pages/deploy.js"></script>
+<script type="module" blocking="render" src="js/boot.js"></script>
 </head>
 <body>
 <c-header current="deploy"></c-header>
+<main>
 <!-- ===================== DEPLOY CONSOLE ===================== -->
 <section id="deploy" data-view="deploy" aria-label="Deploy console">
   <div class="wrap">
@@ -123,6 +124,7 @@
     <c-deployments></c-deployments>
   </div>
 </section>
+</main>
 <c-footer></c-footer>
 <c-toast></c-toast>
 </body>

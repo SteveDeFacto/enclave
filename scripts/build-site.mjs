@@ -58,17 +58,17 @@ execFileSync("npx", ["@tailwindcss/cli", "-i", "site/css/src/main.css", "-o", "s
   { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"] });
 fs.copyFileSync(path.join(SITE, "css/site.css"), path.join(DIST, "css/site.css"));
 
-console.log("[build] esbuild pages (bundle + split + minify, templates inlined)");
+console.log("[build] esbuild (router entry + code-split pages, templates inlined)");
 const result = await build({
-  entryPoints: ["overview", "deploy", "apps", "develop"].map(p => path.join(SITE, "js/pages", p + ".js")),
+  entryPoints: [path.join(SITE, "js/boot.js")],   // the soft-nav router dynamic-imports each page module
   bundle: true,
-  splitting: true,                            // shared core+components -> common chunks
+  splitting: true,                            // each page + shared core/components -> chunks
   format: "esm",
   target: ["es2022"],
   minify: true,
   sourcemap: true,
   outdir: DIST,
-  outbase: SITE,                              // js/pages/<page>.js keeps its path: HTML needs no rewrite
+  outbase: SITE,                              // js/boot.js keeps its path: HTML needs no rewrite
   chunkNames: "js/chunks/[name]-[hash]",
   external: ["https://*"],                    // esm.sh dynamic imports (privy sdk, tinfoil verifier) stay runtime
   plugins: [inlineTemplates],
@@ -138,21 +138,27 @@ function bake(html) {
 }
 
 console.log("[build] copy pages (components prerendered) + static files");
-/* the page scripts are render-blocking (head), so preloading their hashed
-   chunk imports shortens the time before first paint */
+/* preload the module graph each page actually needs at load: the router
+   entry + its static chunks, plus that page's own code-split chunk (a
+   dynamic import esbuild can't see from the HTML) */
 const outs = result.metafile.outputs;
 const chunksOf = (outFile, seen = new Set()) => {
+  seen.add(outFile);
   for (const imp of (outs[outFile]?.imports || [])) {
     if (imp.kind !== "import-statement" || seen.has(imp.path)) continue;
-    seen.add(imp.path); chunksOf(imp.path, seen);
+    chunksOf(imp.path, seen);
   }
-  return [...seen];
+  return seen;
 };
+const bootOut = Object.keys(outs).find(f => outs[f].entryPoint && outs[f].entryPoint.endsWith("js/boot.js"));
 const PAGE_HTML = { overview: "index.html", deploy: "deploy.html", apps: "apps.html", develop: "develop.html" };
 const preloads = {};
 for (const [outFile, o] of Object.entries(outs)) {
   const page = o.entryPoint && /js[\\/]pages[\\/](\w+)\.js$/.exec(o.entryPoint)?.[1];
-  if (page) preloads[PAGE_HTML[page]] = chunksOf(outFile)
+  if (!page) continue;
+  const files = new Set([...chunksOf(bootOut), ...chunksOf(outFile)]);
+  files.delete(bootOut);                       // the <script src> itself needs no preload
+  preloads[PAGE_HTML[page]] = [...files]
     .map(c => `<link rel="modulepreload" href="${path.relative(DIST, path.resolve(ROOT, c)).replace(/\\/g, "/")}" />`).join("\n");
 }
 for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "buy.html", "openapi.json"]) {
@@ -164,7 +170,7 @@ for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "buy.
     // slow fetches — a header-less page until JS arrived)
     s = s.replace(' blocking="render"', "");
   }
-  if (preloads[f]) s = s.replace('<script type="module" src="js/pages/', preloads[f] + '\n<script type="module" src="js/pages/');
+  if (preloads[f]) s = s.replace('<script type="module" src="js/boot.js">', preloads[f] + '\n<script type="module" src="js/boot.js">');
   fs.writeFileSync(path.join(DIST, f), s);
 }
 for (const d of ["assets", "privy"])

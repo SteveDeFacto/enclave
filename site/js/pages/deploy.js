@@ -681,11 +681,16 @@ function initDeploy(){
   applyUseInDeploy();
 }
 
-// wallet/session signals from the shared chrome (<c-deployments> handles its own)
+// wallet/session signals from the shared chrome (<c-deployments> handles its
+// own). Subscribed once at module load; every callee null-guards its elements,
+// so it's inert while another page's <main> is mounted.
 on("nan:wallet", ({ authed }) => {
   const rh = $("#runHint");
   if (rh) rh.textContent = Nan.address ? (authed ? "ready to deploy" : "click Deploy to sign in") : "sign in to deploy";
   updatePayAssetUI();
 });
 
-initDeploy();
+/* called by the router every time this page's <main> is swapped in */
+export function boot() {
+  initDeploy();
+}

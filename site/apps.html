@@ -22,10 +22,11 @@
 })();
 </script>
 <link rel="stylesheet" href="css/site.css" />
-<script type="module" blocking="render" src="js/pages/apps.js"></script>
+<script type="module" blocking="render" src="js/boot.js"></script>
 </head>
 <body>
 <c-header current="apps"></c-header>
+<main>
 <section id="apps" data-view="apps" aria-label="Wasm app store">
   <div class="wrap">
     <c-section-head eyebrow="App store · on-chain catalog" heading="Browse and publish Wasm apps.">
@@ -109,6 +110,7 @@
     </div>
   </div>
 </section>
+</main>
 <c-footer></c-footer>
 <c-toast></c-toast>
 </body>

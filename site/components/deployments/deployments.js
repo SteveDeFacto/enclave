@@ -6,7 +6,7 @@
    Polls while authed; repaints on `nan:auth` sign-in/out edges.
    ============================================================ */
 import { NanElement, register } from "../../js/lib/nan-element.js";
-import { $$, esc, hlJson, fmtDur, statusCls, copyText, showToast, on } from "../../js/core/util.js";
+import { $$, esc, hlJson, fmtDur, statusCls, copyText, showToast } from "../../js/core/util.js";
 import { APP_DOMAIN, DEPLOYMENTS_ADDRESS } from "../../js/core/config.js";
 import { Nan } from "../../js/core/api.js";
 import { pad32, encUint, DEP_SEL, waitReceipt } from "../../js/core/chain.js";
@@ -64,10 +64,18 @@ class Deployments extends NanElement {
     if (this._wired) return;
     this._wired = true;
     this.querySelector(".enc-refresh").addEventListener("click", () => this.refresh({ spinner: true }));
-    on("nan:auth", ({ spinner }) => this.refresh({ spinner: !!spinner }));
+    // document-level listener must be removable: the soft-nav router mounts a
+    // fresh instance per visit, and detached ones must not keep refreshing
+    this._onAuth = (e) => this.refresh({ spinner: !!(e.detail && e.detail.spinner) });
+    document.addEventListener("nan:auth", this._onAuth);
     this.refresh();
   }
-  disconnectedCallback() { super.disconnectedCallback(); this._stopPoll(); }
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this._stopPoll();
+    if (this._onAuth) document.removeEventListener("nan:auth", this._onAuth);
+    this._wired = false; this._onAuth = null;
+  }
 
   async refresh(opts) {
     opts = opts || {};

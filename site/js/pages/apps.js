@@ -16,6 +16,7 @@ import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, waitRe
 import { connectWallet, ensureBaseChain, sendTx } from "../core/wallet.js";
 import { STORE, loadCatalog, selIdx, appVerified, validPortsCsv, REF_CACHE, PORTS_CACHE, MINS_CACHE } from "../core/catalog.js";
 import { minPctsOf } from "../core/pricing.js";
+import { navigate } from "../boot.js";
 
 /* ---- render: filter + sort the catalog into <c-app-card>s ---- */
 function renderApps(){
@@ -59,7 +60,7 @@ function useInDeploy(app, v){
     sessionStorage.setItem("nan_use_in_deploy", JSON.stringify({
       friendly, cid: v.cid, ports: v.ports || "", mins: MINS_CACHE[friendly] }));
   } catch(e){}
-  location.href = "deploy.html?app=" + encodeURIComponent(friendly);
+  navigate("deploy.html?app=" + encodeURIComponent(friendly), { push: true });
 }
 
 /* ---- write side: IPFS upload + publish/verify/yank/delist txs ---- */
@@ -353,7 +354,12 @@ on("nan:catalog", (d) => {
   renderApps();
 });
 on("nan:wallet", () => { if (STORE.loaded) renderApps(); });   // publisher/owner buttons follow the connected wallet
+// (both subscriptions are module-load-once; renderApps null-guards #storeGrid,
+// so they're inert while another page's <main> is mounted)
 
-initStore();
-renderApps();
-loadCatalog();
+/* called by the router every time this page's <main> is swapped in */
+export function boot() {
+  initStore();
+  renderApps();
+  loadCatalog();
+}
