@@ -14,6 +14,10 @@ class Ticker extends NanElement {
     if (!t || t.dataset.looped) return;
     t.dataset.looped = "1";
     t.innerHTML += t.innerHTML;
+    // constant speed regardless of how many facts the template holds:
+    // one loop = one content copy, at ~50 px/s
+    const copy = t.scrollWidth / 2;
+    if (copy > 0) t.style.animationDuration = Math.round(copy / 50) + "s";
   }
 }
 register("c-ticker", Ticker);
