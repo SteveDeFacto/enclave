@@ -262,7 +262,7 @@ async function runDeploy(){
   if (rref.error) return note([["warn", "[!] " + rref.error]]);
   if (rref.pending) return note([["warn", "[!] couldn’t reach the catalog to resolve " + raw + " — deploys need the on-chain listing; try again in a moment."]]);
   const fwErr = validPortsCsv($("#cfgPorts") ? $("#cfgPorts").value : "");
-  if (fwErr) return note([["warn", "[!] firewall: " + fwErr]]);
+  if (fwErr) return note([["warn", "[!] open ports: " + fwErr]]);
   // pre-flight the catalog gate BEFORE any wallet action: enclaves refuse
   // yanked / unapproved / unlisted versions deterministically, so paying for
   // one just parks USDC on an unclaimable deployment.
@@ -611,7 +611,7 @@ function applyUseInDeploy(){
     const fp = $("#cfgPorts"); if (fp) fp.value = ports || "";
     renderDeploy();
     showToast("Deploy set to " + friendly + " (min " + mins.gpuPct + "% GPU / " + mins.cpuPct + "% CPU)"
-            + (ports ? " · firewall " + ports : ""));
+            + (ports ? " · open ports " + ports : ""));
   };
   if (stash && stash.friendly === friendly && stash.cid){
     REF_CACHE[friendly] = "ipfs://" + stash.cid;

@@ -80,7 +80,7 @@
           <ul>
             <li><b>Filesystem</b>: a single private, writable <code>/data</code> directory (RAM-backed scratch, torn down with the deployment). Nothing else is visible, and paths that escape it (<code>/data/../..</code>) are refused by the runtime. <a href="#docs-data">Chapter 08 →</a></li>
             <li><b>Environment</b>: empty, except <code>ENCLAVE_PORTS</code> for service apps. No host env ever leaks in.</li>
-            <li><b>Network</b>: none by default beyond the HTTP socket the runtime serves for you. Declaring firewall ports switches the app to service mode with <code>wasi:sockets</code>. <a href="#docs-ports">Chapter 09 →</a></li>
+            <li><b>Network</b>: none by default beyond the HTTP socket the runtime serves for you. Declaring open ports switches the app to service mode with <code>wasi:sockets</code>. <a href="#docs-ports">Chapter 09 →</a></li>
             <li><b>GPU</b>: none by default. A deployment that buys a GPU share gets <code>wasi-nn</code> - ONNX inference through the enclave's runtime, on an MPS-capped slice of the H200. <a href="#docs-gpu">Chapter 12 →</a></li>
             <li><b>Memory</b>: the guest's linear memory is capped at the deployment's CPU share of the node's RAM (cpuShare × 64&nbsp;GB), enforced by the runtime - always at least the <code>memMb</code> the app's specs declare, since the specs floor the share.</li>
             <li><b>No host reach</b>: no processes, no exec, no SSH (a Wasm app isn't an OS; there's nothing to SSH into).</li>
@@ -88,7 +88,7 @@
           <p>Two kinds of app, one format:</p>
           <ul>
             <li><b>Web apps</b> (the default, and this guide's walkthrough): export the handler; the platform owns the listener and routes requests to you.</li>
-            <li><b>Service apps</b>: declare firewall ports (<code>http:N</code> / <code>tcp:N</code> / <code>udp:N</code>) and run as a long-lived command component that binds its own sockets: databases, IRC servers, DNS resolvers. <a href="#docs-ports">Chapter 09 →</a></li>
+            <li><b>Service apps</b>: declare open ports (<code>http:N</code> / <code>tcp:N</code> / <code>udp:N</code>) and run as a long-lived command component that binds its own sockets: databases, IRC servers, DNS resolvers. <a href="#docs-ports">Chapter 09 →</a></li>
           </ul>
           <p>And one catalog every app reference points at:</p>
           <ul>
@@ -184,7 +184,7 @@ wasmtime serve -Scli -Shttp -Sp3 \
             <li>Connect your wallet (header button) and hit <b>+ Publish app</b>.</li>
             <li>Pick a <b>slug</b>, your app's stable id, e.g. <code>my-hello</code> (a–z, 0–9, hyphens, ≤ 40 chars). Slugs live in <i>your wallet's namespace</i>: the on-chain app id is <code>keccak256(publisher, slug)</code>, so nobody can squat or write to your lineage. The slug doesn't have to match your crate name.</li>
             <li>Set a <b>version</b> label (e.g. <code>1.0.0</code>) and choose your <code>hello.wasm</code>. The file is validated (component check, ≤ 2 GB), uploaded, pinned to IPFS, and the <b>CID</b> field fills in (or paste a CID you pinned yourself).</li>
-            <li>Set the display name, a description, and the app's <b>exact minimum resources</b> on four axes: the VRAM (GB) and GPU compute (TFLOPS) it needs on one card (both 0 for CPU-only apps, which is most of them), and the RAM (MB - also the runtime-enforced memory cap; the Hello app is fine at 128) and CPU compute (GFLOPS, at least 1 - every app computes something - and note the unit: a whole 16-vCPU node is only ≈1000 GFLOPS ≈ 1 TFLOPS, so declaring "1000" claims the entire node and forces a 100% CPU share; most small apps want 1-50) it needs on the node. These specs set the MINIMUM shares on the deploy page's two dials (spec ÷ server spec, the larger of the memory and compute axes); deploys below them are refused. Only for service apps, add the <b>firewall ports</b> the version may bind (<a href="#docs-ports">chapter 09</a>). Leave ports empty for a standard web app.</li>
+            <li>Set the display name, a description, and the app's <b>exact minimum resources</b> on four axes: the VRAM (GB) and GPU compute (TFLOPS) it needs on one card (both 0 for CPU-only apps, which is most of them), and the RAM (MB - also the runtime-enforced memory cap; the Hello app is fine at 128) and CPU compute (GFLOPS, at least 1 - every app computes something - and note the unit: a whole 16-vCPU node is only ≈1000 GFLOPS ≈ 1 TFLOPS, so declaring "1000" claims the entire node and forces a 100% CPU share; most small apps want 1-50) it needs on the node. These specs set the MINIMUM shares on the deploy page's two dials (spec ÷ server spec, the larger of the memory and compute axes); deploys below them are refused. Only for service apps, add the <b>open ports</b> the version may bind (<a href="#docs-ports">chapter 09</a>). Leave ports empty for a standard web app.</li>
             <li><b>Publish to Base</b>: one transaction, signed by your wallet, attributed on-chain to you.</li>
           </ol>
           <h4>Versioning rules (enforced by the contract)</h4>
@@ -192,7 +192,7 @@ wasmtime serve -Scli -Shttp -Sp3 \
             <li>Versions are <b>append-only history</b>: you never edit a release, you publish the same slug again with a new version label and CID. <code>editApp</code> changes display metadata; <code>setActive</code> delists the app; <code>yankVersion</code> pulls a bad release (kept for history, hidden from browsing).</li>
             <li>A release's <b>CID belongs to its app forever</b>: no other app can ever list the same bytes, and yanking or delisting doesn't free it. The <i>same</i> app <b>can re-list its own CID</b> in a new version - that's the metadata fix (same bytes, corrected specs or ports; the <b>add version</b> button pre-fills it) - and the enclaves' deploy gate follows the <b>newest</b> listing of a CID, which starts Pending again (a metadata change is re-approved like any release). After the fix lands, yank the superseded version. Publishing a new version to a delisted slug automatically relists the app.</li>
             <li>A CID can be listed <b>once across the whole catalog</b>, so a CID maps unambiguously to one app version.</li>
-            <li>Each version carries its own firewall config; it can change from release to release.</li>
+            <li>Each version carries its own open-ports config; it can change from release to release.</li>
           </ul>
           <div class="doc-note warn">
             <span class="nt">Approval gates deploys</span>
@@ -210,8 +210,8 @@ wasmtime serve -Scli -Shttp -Sp3 \
               <tr><td class="pname">my-hello:1.0.0</td><td>A store app by slug and version (or <code>&lt;publisher&gt;/my-hello:1.0.0</code> to disambiguate). It resolves against the on-chain catalog to that version's exact <code>ipfs://&lt;cid&gt;</code>; the enclave fetches those bytes, verifies every block hashes to the CID (a tampering gateway fails the check), confirms it's a component, and runs it. The verified CID is folded into the attestation.</td></tr>
             </tbody>
           </table></div>
-          <p>Unlisted CIDs can't deploy: the catalog listing carries everything a deploy needs on-chain — the resource specs that floor the dials, the firewall ports, and the owner's approval of that exact CID. Built something new? Publish it first (<a href="#docs-publish">chapter 04</a>), then deploy the slug.</p>
-          <p>The easy path is the <a href="apps.html#deploy">Deploy console</a>: your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and firewall. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
+          <p>Unlisted CIDs can't deploy: the catalog listing carries everything a deploy needs on-chain — the resource specs that floor the dials, the open ports, and the owner's approval of that exact CID. Built something new? Publish it first (<a href="#docs-publish">chapter 04</a>), then deploy the slug.</p>
+          <p>The easy path is the <a href="apps.html#deploy">Deploy console</a>: your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and open ports. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
 
           <h4>Sign in: an Ethereum signature, no account</h4>
           <c-code fn="deploy.js · SIWE handshake"><pre><code>const API = "https://api.enclave.host/v1";
@@ -386,8 +386,8 @@ curl -X POST --data-binary 'round trip' 127.0.0.1:8080/echo</code></pre></c-code
 
         <!-- 09 ------------------------------------------------------------ -->
         <article class="doc" id="docs-ports">
-          <h3><span class="n">09</span>Service apps: the firewall &amp; ENCLAVE_PORTS</h3>
-          <p>Declaring firewall ports (on the version you publish, prefilled into the deploy request by <b>Use in Deploy</b>) changes how your app runs: instead of <code>wasmtime serve</code> calling your handler, the enclave launches it with <code>wasmtime run</code> as a <b>long-running command component</b> (a <code>main()</code>) granted <code>wasi:sockets</code>: it binds its declared ports itself, and may also make outbound TCP/UDP connections and DNS lookups. Rust's <code>std::net</code> on <code>wasm32-wasip2</code> maps straight onto it.</p>
+          <h3><span class="n">09</span>Service apps: open ports &amp; ENCLAVE_PORTS</h3>
+          <p>Declaring open ports (on the version you publish, prefilled into the deploy request by <b>Use in Deploy</b>) changes how your app runs: instead of <code>wasmtime serve</code> calling your handler, the enclave launches it with <code>wasmtime run</code> as a <b>long-running command component</b> (a <code>main()</code>) granted <code>wasi:sockets</code>: it binds its declared ports itself, and may also make outbound TCP/UDP connections and DNS lookups. Rust's <code>std::net</code> on <code>wasm32-wasip2</code> maps straight onto it.</p>
           <div class="tbl"><table class="params">
             <thead><tr><th>entry</th><th>meaning</th><th>reached at</th></tr></thead>
             <tbody>
@@ -440,7 +440,7 @@ wasmtime run -Scli -Sp3 -Stcp -Sudp -Sinherit-network -Sallow-ip-name-lookup \
   --env ENCLAVE_PORTS=tcp:7000=7000 \
   target/wasm32-wasip2/release/tcp-echo.wasm
 printf 'ping\n' | nc 127.0.0.1 7000              # → ping   (another terminal)</code></pre></c-code>
-          <p>Publish it with firewall ports <code>tcp:7000</code>, deploy, and reach it three ways:</p>
+          <p>Publish it with open ports <code>tcp:7000</code>, deploy, and reach it three ways:</p>
           <c-code fn="terminal · clients"><pre><code># 1. WebSocket bridge on the attested origin (private deployments: append ?token=&lt;bearer&gt;)
 websocat --binary tcp-listen:127.0.0.1:7000 \
   "wss://&lt;enclave-host&gt;/x/dep_3xK9f2Qa/tcp/7000"
@@ -588,7 +588,7 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
               <tr><td class="pname">app specs (vramMb/gpuGflops/memMb/cpuGflops)</td><td>exact MB + GFLOPS, per version</td><td>set the MINIMUM deploy shares (spec ÷ server spec, larger of memory/compute, ceil to %)</td></tr>
               <tr><td class="pname">memory cap</td><td>= memMb</td><td>exactly what you ask for, runtime-enforced; the CPU share is derived from it</td></tr>
               <tr><td class="pname">/data cap (storage_mb)</td><td>256 MB default · 0 = no /data</td><td>audit sweep kills on breach</td></tr>
-              <tr><td class="pname">firewall ports</td><td>≤ 8 entries · labels 1–19999</td><td>8080/8091 reserved · labels &lt; 1024 always remapped</td></tr>
+              <tr><td class="pname">open ports</td><td>≤ 8 entries · labels 1–19999</td><td>8080/8091 reserved · labels &lt; 1024 always remapped</td></tr>
               <tr><td class="pname">GPU/VRAM share</td><td>0–100% of one card</td><td>0 = CPU-only · VRAM+compute in proportion · floored at the app's minimum · × $6/hr</td></tr>
               <tr><td class="pname">CPU/RAM share</td><td>1–100% of the node</td><td>RAM+vCPU in proportion (sets the memory cap) · floored at the app's minimum · ≤ GPU share for GPU apps · × $1/hr</td></tr>
               <tr><td class="pname">readiness window</td><td>~20 s</td><td>first <code>http:</code>/<code>tcp:</code> port must accept, or the deploy fails</td></tr>

@@ -188,7 +188,7 @@ async function publishApp(){
     return pubStatus("GPU compute must be 0 or more TFLOPS (0 = CPU-only)", true);
   if (!(cpuGflops >= 1 && cpuGflops <= CAT_MAX.gflops))
     return pubStatus("CPU compute must be at least 1 GFLOPS - every app computes something", true);
-  if (blen(ports) > 96) return pubStatus("firewall config too long (≤ 96 bytes)", true);
+  if (blen(ports) > 96) return pubStatus("open-ports config too long (≤ 96 bytes)", true);
   const pErr = validPortsCsv(ports); if (pErr) return pubStatus(pErr, true);
   // Pre-flight against the loaded catalog. Both cases REVERT on-chain, which a
   // wallet surfaces as a gas-estimation hang and the form as a bare timeout -

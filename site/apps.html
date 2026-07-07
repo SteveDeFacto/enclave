@@ -100,7 +100,7 @@
           <input type="number" id="pubCpuG" value="1" min="1" step="1" />
         </div>
         <div class="full">
-          <label for="pubPorts">Firewall ports <span class="dim">(optional · e.g. <b>http:8088, tcp:5432, udp:9053</b> · empty = standard web app · can change per version)</span></label>
+          <label for="pubPorts">Open ports <span class="dim">(optional · e.g. <b>http:8088, tcp:5432, udp:9053</b> · empty = standard web app · can change per version)</span></label>
           <input type="text" id="pubPorts" maxlength="96" placeholder="empty = wasi:http web app on the standard endpoint" spellcheck="false" autocapitalize="off" autocomplete="off" />
         </div>
         <div class="full">
@@ -142,7 +142,7 @@
           <input type="text" id="cfgImage" value="" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="my-app:1.0.0" />
         </div>
         <div class="field">
-          <label for="cfgPorts">Firewall <span class="dim">(ports the app may bind · defaulted from the catalog by “Use in Deploy” · empty = standard web app)</span></label>
+          <label for="cfgPorts">Open ports <span class="dim">(the ports the app may bind · defaulted from the catalog by “Use in Deploy” · empty = standard web app)</span></label>
           <input type="text" id="cfgPorts" value="" placeholder="empty · or http:8088, tcp:5432, udp:9053" spellcheck="false" autocapitalize="off" autocomplete="off" />
         </div>
         <div class="field" id="volField" hidden>
