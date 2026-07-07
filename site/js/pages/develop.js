@@ -64,7 +64,11 @@ function gotoAnchor(id, smooth){
     if (el && el.scrollIntoView) el.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
   }
   else if (window.scrollTo) window.scrollTo({ top: 0, behavior: "auto" });   // pane anchors land at the top, tab bar in view
-  try { history.replaceState(null, "", "#" + (id || DEV_PANES[tab])); } catch(e){}
+  // the default Guide pane keeps the URL clean (develop.html, no #docs);
+  // other panes and deep anchors stay in the hash so they survive a reload
+  const frag = id || DEV_PANES[tab];
+  const clean = frag === DEV_PANES.guide || frag === "develop";
+  try { history.replaceState(null, "", clean ? location.pathname + location.search : "#" + frag); } catch(e){}
 }
 /* ============================================================
    boot — module-load-once listeners are guarded on #devTabs so
