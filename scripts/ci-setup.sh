@@ -18,7 +18,7 @@ set -euo pipefail
 say() { printf '\033[1;36m[ci-setup]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[ci-setup] WARNING:\033[0m %s\n' "$*" >&2; }
 
-REPO_SLUG="${REPO_SLUG:-SteveDeFacto/enclave}"
+REPO_SLUG="${REPO_SLUG:-EnclaveHost/enclave}"
 SITE_HOST="${SITE_HOST:-62.238.4.214}"
 RELAY_HOST="${RELAY_HOST:-46.62.128.36}"
 KEYFILE="${KEYFILE:-$HOME/.ssh/nan-ci-deploy}"

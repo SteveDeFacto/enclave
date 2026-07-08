@@ -175,7 +175,7 @@ async function vmHealth(timeoutMs = 3000) {
 const REGISTRY_ENABLED  = /^(1|true|on)$/i.test(process.env.REGISTRY_ENABLED || "");
 // (REGISTRY_ADDRESS is a live binding from ./addressbook.js)
 const REGISTRY_PK       = process.env.REGISTRY_PRIVATE_KEY || "";        // operator key (enclave secret); needs a little Base ETH for gas
-const ENCLAVE_REPO      = process.env.ENCLAVE_REPO || "";                // e.g. "SteveDeFacto/enclave" - what callers attest against; MUST match GitHub's canonical casing (Sigstore compares it verbatim)
+const ENCLAVE_REPO      = process.env.ENCLAVE_REPO || "";                // e.g. "EnclaveHost/enclave" - what callers attest against; MUST match GitHub's canonical casing (Sigstore compares it verbatim)
 const ENCLAVE_MEASUREMENT = process.env.ENCLAVE_MEASUREMENT || ("0x" + "0".repeat(64)); // optional cross-check
 const HEARTBEAT_SEC     = parseInt(process.env.REGISTRY_HEARTBEAT_SEC || "900", 10);
 // The endpoint we advertise is NOT configured — it is derived from the request

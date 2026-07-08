@@ -543,7 +543,7 @@ await c.ready();          // verifies the CPU TEE quote (Intel TDX on this fleet
                           // code provenance, compares measurements, pins TLS
 const res = await c.fetch("/x/dep_3xK9f2Qa/");   // provably served by attested code</code></pre></c-code>
           <c-code fn="terminal · independent paths"><pre><code># fully independent check with tinfoil-cli:
-tinfoil attestation verify -e &lt;enclave-host&gt; -r SteveDeFacto/enclave
+tinfoil attestation verify -e &lt;enclave-host&gt; -r EnclaveHost/enclave
 
 # the enclave's attestation (public), and your deployment's view of it (owner):
 curl https://&lt;enclave-host&gt;/v1/attestation
@@ -645,7 +645,7 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
 
           <h4>Install &amp; authenticate</h4>
           <c-code fn="install · any OS"><pre><code># needs node ≥ 20; npm puts the `enclave` command on your PATH
-git clone https://github.com/SteveDeFacto/enclave
+git clone https://github.com/EnclaveHost/enclave
 cd enclave/cli
 npm i
 npm i -g .

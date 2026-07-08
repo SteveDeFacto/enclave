@@ -94,8 +94,8 @@ containers:
       # whose Sigstore-signed release measurements verifiers compare the quote to.
       # MUST match the canonical GitHub casing exactly: Sigstore's policy check
       # compares it verbatim to the cert's GitHubWorkflowRepository claim, and
-      # "SteveDeFacto/Enclave" vs "SteveDeFacto/enclave" fails verification.
-      - ENCLAVE_REPO: "SteveDeFacto/enclave"
+      # "EnclaveHost/Enclave" vs "EnclaveHost/enclave" fails verification.
+      - ENCLAVE_REPO: "EnclaveHost/enclave"
       # on-chain discovery: with these set, the supervisor self-registers this
       # enclave in EnclaveRegistry and heartbeats every 15 min (registerOnChain in
       # supervisor.js), so callers discover enclaves from the chain with no

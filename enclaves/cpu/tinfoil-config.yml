@@ -59,7 +59,7 @@ containers:
       # on the same repo. NOTE: verifiers that fetch the repo's LATEST release
       # (tinfoil-cli default) will see the GPU flavor's measurement — point them
       # at the matching -cpu release explicitly.
-      - ENCLAVE_REPO: "SteveDeFacto/enclave"
+      - ENCLAVE_REPO: "EnclaveHost/enclave"
       # on-chain discovery: same registry; a CPU enclave advertises like any
       # other and callers learn it is CPU-only from its /availability.
       - REGISTRY_ENABLED: "1"

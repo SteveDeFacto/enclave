@@ -62,7 +62,7 @@ containers:
       - CHAIN_ID: "8453"
       - CORS_ORIGINS: "https://enclave.host"
       - BASE_RPC: "https://mainnet.base.org"
-      - ENCLAVE_REPO: "SteveDeFacto/enclave"
+      - ENCLAVE_REPO: "EnclaveHost/enclave"
       # --- platform model: proxy the OpenAI surface to the vLLM sidecar --------
       - PLATFORM_MODEL_URL: "http://127.0.0.1:8000"   # the vLLM container on loopback
       - PLATFORM_MODEL_NAME: "glm-5.2"

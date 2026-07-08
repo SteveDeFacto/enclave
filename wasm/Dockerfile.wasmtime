@@ -46,7 +46,7 @@ WORKDIR /src/wasmtime
 # so ORT_LIB_LOCATION is unchanged. Rebuild flow: run ort-toolchain.yml -> paste
 # ORT_URL/ORT_SHA256 here -> this commit triggers the enclave-wasmtime rebuild.
 ARG ORT_VERSION=1.22.0
-ARG ORT_URL=https://github.com/SteveDeFacto/enclave/releases/download/nan-onnxruntime-v1.22.0-nan1/nan-onnxruntime-linux-x64-gpu-1.22.0.tgz
+ARG ORT_URL=https://github.com/EnclaveHost/enclave/releases/download/nan-onnxruntime-v1.22.0-nan1/nan-onnxruntime-linux-x64-gpu-1.22.0.tgz
 ARG ORT_SHA256=3972e1591d6587c76ec54446b07e3af03ea4ffd5fbccb8f1414c0e252d87846b
 RUN curl -fsSL -o /tmp/ort.tgz "${ORT_URL}" \
  && echo "${ORT_SHA256}  /tmp/ort.tgz" | sha256sum -c - \
@@ -59,7 +59,7 @@ ENV ORT_LIB_LOCATION=/opt/onnxruntime-linux-x64-gpu-${ORT_VERSION}
 # pins the FFI boundary to pointers/scalars so llama.cpp bumps can't silently
 # break the Rust side. Rebuild flow: run llamacpp-toolchain.yml -> paste
 # ELL_URL/ELL_SHA256 here -> this commit triggers the enclave-wasmtime rebuild.
-ARG ELL_URL=https://github.com/SteveDeFacto/enclave/releases/download/enclave-llamacpp-bec4772f/enclave-llamacpp-bec4772f.tgz
+ARG ELL_URL=https://github.com/EnclaveHost/enclave/releases/download/enclave-llamacpp-bec4772f/enclave-llamacpp-bec4772f.tgz
 ARG ELL_SHA256=c0fde5a203327b6e2833cbc8f9498c141f516888ebe2e68e127c2c19a144f7f6
 RUN curl -fsSL -o /tmp/ell.tgz "${ELL_URL}" \
  && echo "${ELL_SHA256}  /tmp/ell.tgz" | sha256sum -c - \
