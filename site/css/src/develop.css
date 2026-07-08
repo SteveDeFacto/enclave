@@ -1,5 +1,5 @@
 /* ============================================================
-   Develop page — dev sub-tabs, guide, CLI, API reference
+   Develop page - dev sub-tabs, guide, CLI, API reference
    ============================================================ */
 
 /* ============================================================
@@ -15,7 +15,7 @@ table.params{width:100%;border-collapse:collapse;font-size:.84rem;}
 table.params th{text-align:left;font-family:var(--font-mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);padding:7px 10px;border-bottom:1px solid var(--line-soft);font-weight:500;}
 table.params td{padding:9px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top;}
 table.params td.pname{font-family:var(--font-mono);color:var(--text);white-space:nowrap;}
-/* troubleshooting: symptoms are long strings, not parameter names — nowrap
+/* troubleshooting: symptoms are long strings, not parameter names - nowrap
    would size the column to the longest one and cram cause→fix to a sliver */
 table.symptoms td.pname{white-space:normal;width:30%;}
 
@@ -56,5 +56,5 @@ table.symptoms td.pname{white-space:normal;width:30%;}
 .doc table.params td{color:var(--text-muted);font-size:.86rem;line-height:1.55;}
 .doc table.params td.pname{color:var(--text);}
 /* single-column: the chapter nav would stack above the guide as a scroll
-   box — not useful there, hide it (the guide reads top-to-bottom) */
+   box - not useful there, hide it (the guide reads top-to-bottom) */
 @media(max-width:960px){.docs-layout{grid-template-columns:1fr;}.docs-side{display:none;}}

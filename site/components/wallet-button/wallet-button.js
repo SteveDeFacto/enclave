@@ -1,9 +1,9 @@
 /* ============================================================
-   <c-wallet-button> — the wallet control: sign-in button,
+   <c-wallet-button> - the wallet control: sign-in button,
    account popover, and the fullscreen wallet chooser it portals
    to <body> (the header's backdrop-filter would otherwise become
    the containing block for the fixed overlay, pinning it to the
-   bar — see the git history for that bug).
+   bar - see the git history for that bug).
 
    Owns the wallet lifecycle for whichever page mounts it: boots
    EIP-6963 discovery, silently restores the previous session,

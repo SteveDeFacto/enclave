@@ -1,12 +1,12 @@
 /* ============================================================
-   <c-ticker> — facts marquee
+   <c-ticker> - facts marquee
    ============================================================ */
 c-ticker{display:contents;}
 
 .ticker{border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);background:var(--bg-1);overflow:hidden;margin-top:34px;}
 /* width:max-content is load-bearing: translateX(-50%) is relative to the
    track's own box, and a block-level flex container would size to the
-   viewport — the loop must wrap at exactly one content copy */
+   viewport - the loop must wrap at exactly one content copy */
 .ticker-track{display:flex;gap:0;white-space:nowrap;width:max-content;animation:scrollx 80s linear infinite;}
 .ticker:hover .ticker-track{animation-play-state:paused;}
 .ticker-track .it{font-family:var(--font-mono);font-size:.78rem;color:var(--text-muted);padding:13px 26px;display:inline-flex;align-items:center;gap:.7em;}

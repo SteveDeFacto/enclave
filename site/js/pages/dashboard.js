@@ -1,5 +1,5 @@
 /* ============================================================
-   Dashboard page — the signed-in view: <c-deployments> (the My
+   Dashboard page - the signed-in view: <c-deployments> (the My
    Apps panel) with per-run live-deploy strips and a per-row
    Output panel (deploy narrative + app logs). The component is
    self-wiring; the page module only makes sure it's registered

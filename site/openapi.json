@@ -335,7 +335,7 @@
         ],
         "operationId": "listDeployments",
         "summary": "List your deployments",
-        "description": "With a session token: your deployments, enriched by the enclaves' live view. Without one, pass ?owner=0x… — the gateway answers from the EnclaveDeployments ledger (public on-chain records; rows carry ledger:true), so a connected wallet needs no sign-in just to list.",
+        "description": "With a session token: your deployments, enriched by the enclaves' live view. Without one, pass ?owner=0x… - the gateway answers from the EnclaveDeployments ledger (public on-chain records; rows carry ledger:true), so a connected wallet needs no sign-in just to list.",
         "parameters": [
           { "name": "owner", "in": "query", "required": false,
             "schema": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },

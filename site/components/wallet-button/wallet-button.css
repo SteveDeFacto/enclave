@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-wallet-button> — button states, account popover, and the
+   <c-wallet-button> - button states, account popover, and the
    fullscreen #walletPick overlay (portaled to <body>; also
    reused by the deposit/buy modals in core/wallet.js).
    ============================================================ */
@@ -11,7 +11,7 @@ c-wallet-button{display:contents;}
 .wallet-mount{position:relative;display:inline-block;}
 .nav-inner .wallet-mount{margin-left:auto;}  /* sit at the right of the header */
 /* under 880px the nav links are in-flow (see header.css): an auto margin
-   would swallow the free space and jam the links against the brand — let
+   would swallow the free space and jam the links against the brand - let
    the bar's space-between spread brand | links | wallet evenly instead */
 @media (max-width:880px){.nav-inner .wallet-mount{margin-left:0;}}
 .wallet-pop{position:absolute;top:calc(100% + 10px);left:0;z-index:60;width:300px;background:#0b1119;border:1px solid var(--line);border-radius:12px;box-shadow:0 30px 60px -28px rgba(0,0,0,.9);padding:14px;font-family:var(--font-mono);}

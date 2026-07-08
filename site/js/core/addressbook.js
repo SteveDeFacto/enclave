@@ -1,5 +1,5 @@
 /* ============================================================
-   Address-book resolution — reads the on-chain EnclaveAddressBook
+   Address-book resolution - reads the on-chain EnclaveAddressBook
    (config.ADDRESS_BOOK_ADDRESS) and updates config.js's live
    address bindings, so contract redeploys reach the site without
    a rebuild. Resolves once at boot, caches to sessionStorage
@@ -7,7 +7,7 @@
    and re-polls every 5 minutes; changes emit `enclave:addresses`.
 
    Self-contained eth_call + ABI decode (config.js can't lean on
-   chain.js — chain.js imports config.js).
+   chain.js - chain.js imports config.js).
    ============================================================ */
 import { ADDRESS_BOOK_ADDRESS, APP_CATALOG_RPCS, __applyAddresses } from "./config.js";
 import { emit } from "./util.js";

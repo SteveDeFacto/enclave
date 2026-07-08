@@ -8,7 +8,7 @@
    the Apps page renders from it, and the Deploy page resolves
    slug:version references and pre-flights the deploy gate with it.
    Load progress is announced with `enclave:catalog` events (detail.type:
-   loading | loaded | error) — pages render, this module doesn't.
+   loading | loaded | error) - pages render, this module doesn't.
    ============================================================ */
 import { APP_CATALOG_ADDRESS } from "./config.js";
 import { catConfigured, appCount, catGetAppsPage, catGetVersions, catOwner, APPROVAL } from "./chain.js";
@@ -85,7 +85,7 @@ export const appVerified = (app) => { const i = defaultIdx(app); return i >= 0 &
 /* Resolve what the user typed into an `image.reference` the enclave understands.
    Humans type "[publisher/]slug:version"; we look it up in the on-chain catalog
    and hand the enclave the app's `ipfs://<cid>` (unique because version labels are
-   unique per app). Raw CIDs are NOT accepted as input — deploys need the app's
+   unique per app). Raw CIDs are NOT accepted as input - deploys need the app's
    on-chain metadata (specs, ports, approval), so unlisted bytes must be published
    first. Returns {reference, label?, error?, pending?}. */
 export const REF_CACHE = {};    // friendly "slug:version" -> "ipfs://<cid>" (filled by Use-in-Deploy + lookups)
@@ -97,8 +97,8 @@ export function resolveAppRef(input){
   input = (input || "").trim();
   if (!input) return { reference: "", error: "Pick an app: slug:version from the Apps catalog." };
   if (input.startsWith("ipfs://") || /^(baf[a-z0-9]{10,}|Qm[1-9A-HJ-NP-Za-km-z]{20,})$/.test(input))
-    return { reference: input, error: "Raw CIDs can’t deploy — the enclave needs the app’s on-chain specs and approval. Publish it to the catalog first, then deploy its slug:version." };
-  if (!looksFriendly(input)) return { reference: input, error: "Not a slug:version reference. Deploys come from the on-chain catalog — pick an app on the Apps page." };
+    return { reference: input, error: "Raw CIDs can’t deploy - the enclave needs the app’s on-chain specs and approval. Publish it to the catalog first, then deploy its slug:version." };
+  if (!looksFriendly(input)) return { reference: input, error: "Not a slug:version reference. Deploys come from the on-chain catalog - pick an app on the Apps page." };
   if (REF_CACHE[input]) return { reference: REF_CACHE[input], label: input };
   let pub = null, rest = input;
   const slash = input.indexOf("/");

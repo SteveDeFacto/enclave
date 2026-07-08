@@ -6,13 +6,13 @@
 <meta name="color-scheme" content="dark" />
 <meta name="theme-color" content="#070A0F" />
 <title>Apps · Enclave</title>
-<meta name="description" content="Browse and publish Wasm apps. Every app is a wasi:http component on IPFS, listed in the EnclaveAppCatalog contract on Base — publishing is one transaction." />
+<meta name="description" content="Browse and publish Wasm apps. Every app is a wasi:http component on IPFS, listed in the EnclaveAppCatalog contract on Base - publishing is one transaction." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 9v14L16 30 4 23V9z' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 7.333 24 12v8L16 24.667 8 20v-8z' fill='none' stroke='%232FE6A8' stroke-width='1.4' opacity='.55'/%3E%3Ccircle cx='16' cy='12.55' r='2.45' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 15v6.6M16 21.6h2M16 19.4h1.5' fill='none' stroke='%232FE6A8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
 <script>
 /* Cross-document view transitions are skipped by Chromium when extensions
    inject content scripts (MetaMask et al): the old page sees pageswap with
    no viewTransition. Flag it, and the NEXT page (this script runs pre-paint)
-   plays the same settle-in itself (html.soft-enter, see base.css) — content
+   plays the same settle-in itself (html.soft-enter, see base.css) - content
    only, the static header stays put. */
 (function(){
   try { if (sessionStorage.getItem("enclave_novt")) { sessionStorage.removeItem("enclave_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}
@@ -29,10 +29,10 @@
 <main>
 <section id="apps" data-view="apps" aria-label="Wasm app store">
   <!-- two hash-routed views: the store (default) and the publish page
-       (apps.html#publish) — apps.js toggles them; not a header tab -->
+       (apps.html#publish) - apps.js toggles them; not a header tab -->
   <div class="wrap" id="storeView">
-    <c-section-head eyebrow="App store" heading="Pick an app. Run it in seconds.">
-      <p>Browse ready-to-run apps and launch any of them on <b>private, confidential hardware</b> in a couple of clicks. Pay from your wallet for exactly the time you use — <b>no account, no setup, no subscription</b>. And everything here is open: an app's code and listing can't be swapped out from under you, and you can <b>verify what you're running</b> yourself, before it touches your data. Built something of your own? <a href="#publish">Publishing it</a> takes a minute.</p>
+    <c-section-head eyebrow="App store" heading="Simply pick an App and run it.">
+      <p>Browse ready-to-run apps and launch any of them on <b>private, confidential hardware</b> in a couple of clicks. Pay from your wallet for exactly the time you use - <b>no account, no setup, no subscription</b>. And everything here is open: an app's code and listing can't be swapped out from under you, and you can <b>verify what you're running</b> yourself, before it touches your data. Built something of your own? <a href="#publish">Publishing it</a> takes a minute.</p>
       <div class="store-meta">
         <a class="chip" id="catAddrLink" target="_blank" rel="noopener">contract <b id="catAddrShort">…</b></a>
         <span class="chip">chain <b id="catChain">Base · 8453</b></span>
@@ -108,7 +108,7 @@
           <textarea id="pubDesc" maxlength="500" placeholder="What does it do?"></textarea>
         </div>
         <div class="full">
-          <label for="pubConfig">App config <span class="dim">(optional · default/template JSON for deployments of THIS version — the deploy console pre-fills from it · immutable once published and covered by the version's approval, like ports · ≤ 4096 chars)</span></label>
+          <label for="pubConfig">App config <span class="dim">(optional · default/template JSON for deployments of THIS version - the deploy console pre-fills from it · immutable once published and covered by the version's approval, like ports · ≤ 4096 chars)</span></label>
           <textarea id="pubConfig" maxlength="4096" placeholder='empty · or JSON, e.g. {"backend":"ggml","model_volume":"qwen2.5-0.5b"}' spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
         </div>
       </div>
@@ -123,16 +123,16 @@
 
 <!-- ===================== DEPLOY CONSOLE =====================
      hash-routed sub-page of Apps (apps.html#deploy, usually with
-     ?app=slug:ver from an app card's “Use in deploy”) — replaces
+     ?app=slug:ver from an app card's “Use in deploy”) - replaces
      the store content; deliberately not a header tab -->
 <section id="deploy" data-view="deploy" aria-label="Deploy console" hidden>
   <div class="wrap">
     <c-section-head eyebrow="Deploy · live on Base" heading="Deploy an app.">
-      <p>Deploying is deliberately simple: pick an app from the <a href="apps">store</a>, set two dials — a GPU share and a CPU share — and fund it from your wallet. Hit <span class="mono">Deploy</span> and a confidential enclave claims the work, boots your app, and hands back its URL in seconds — the provisioning output and your running apps live on your <a href="dashboard">Dashboard</a>. No account, no servers, no lock-in: it's one call to the public REST API, shown here exactly as it goes out, and <span class="mono">Dry run</span> lets you inspect everything before spending anything. Building your own app? The <a href="develop#docs">developer guide</a> walks you through it.</p>
+      <p>Deploying is deliberately simple: pick an app from the <a href="apps">store</a>, set two dials - a GPU share and a CPU share - and fund it from your wallet. Hit <span class="mono">Deploy</span> and a confidential enclave claims the work, boots your app, and hands back its URL in seconds - the provisioning output and your running apps live on your <a href="dashboard">Dashboard</a>. No account, no servers, no lock-in: it's one call to the public REST API, shown here exactly as it goes out, and <span class="mono">Dry run</span> lets you inspect everything before spending anything. Building your own app? The <a href="develop#docs">developer guide</a> walks you through it.</p>
       <div class="endpoint-row">
         <label for="apiBase">API endpoint</label>
         <input type="text" id="apiBase" spellcheck="false" autocapitalize="off" autocomplete="off" readonly />
-        <span class="dim" aria-hidden="true">—</span>
+        <span class="dim" aria-hidden="true">·</span>
         <span class="ep-state" id="epState"></span>
       </div>
       <p class="dim" style="font-family:var(--font-mono);font-size:.7rem;margin:.2em 0 0;">Connect your wallet from the header. It's used only to sign in &amp; pay, with no account or KYC.</p>
@@ -142,7 +142,7 @@
       <div class="cfg">
         <h4>App</h4>
         <div class="field">
-          <label for="cfgImage">Wasm app <span class="dim">(<b>slug:version</b> from the <a href="apps">Apps</a> catalog — deploys need the app's on-chain listing)</span></label>
+          <label for="cfgImage">Wasm app <span class="dim">(<b>slug:version</b> from the <a href="apps">Apps</a> catalog - deploys need the app's on-chain listing)</span></label>
           <input type="text" id="cfgImage" value="" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="my-app:1.0.0" />
         </div>
         <div class="field">
@@ -155,7 +155,7 @@
         </div>
         <div class="field">
           <label for="cfgConfig">App config <span class="dim">(optional · JSON the app receives as ENCLAVE_CONFIG · the console pins it to IPFS at deploy and its CID rides the on-chain record · volumes picked above merge in · e.g. an API key, or a model for llm-chat)</span></label>
-          <textarea id="cfgConfig" rows="3" placeholder='empty · or JSON, e.g. {"backend":"ggml","model_volume":"qwen2.5-0.5b"} — pinned to IPFS for you at deploy' spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+          <textarea id="cfgConfig" rows="3" placeholder='empty · or JSON, e.g. {"backend":"ggml","model_volume":"qwen2.5-0.5b"} - pinned to IPFS for you at deploy' spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
         </div>
         <div class="field">
           <label>Access <span class="dim">(who can reach the app)</span></label>

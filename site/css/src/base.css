@@ -1,5 +1,5 @@
 /* ============================================================
-   Base — resets, typography, buttons, code blocks, section
+   Base - resets, typography, buttons, code blocks, section
    scaffolding (shared by every page). Header, footer, and toast
    styles live with their components (components/*).
    ============================================================ */
@@ -29,7 +29,7 @@ html{background:var(--bg);color-scheme:dark;scroll-behavior:smooth;scroll-paddin
 @keyframes vt-enter{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
 
 /* Fallback for full-document navigations where Chromium SKIPS the view
-   transition (extensions with content scripts — MetaMask — force that; the
+   transition (extensions with content scripts - MetaMask - force that; the
    soft-nav router avoids full navigations, so this only covers hard entries):
    the previous page flags it via pageswap (inline head script) and this plays
    the same settle-in on the content only, so the static header holds still. */
@@ -107,15 +107,15 @@ section{padding:84px 0;position:relative;}
 .tok-bool{color:var(--amber);}
 .tok-meth{color:var(--jade);font-weight:600;}
 /* explicit line-height: the ⧉/▶ symbols come from fallback fonts whose
-   line-height:normal differs from the mono font's — buttons would come out
+   line-height:normal differs from the mono font's - buttons would come out
    different heights side by side */
 .copybtn{font-family:var(--font-mono);font-size:.7rem;line-height:1.5;color:var(--text-muted);border:1px solid var(--line);background:var(--surface);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;display:inline-flex;gap:.4em;align-items:center;}
 .copybtn:hover{color:var(--text);border-color:#33465c;}
 .copybtn.ok{color:var(--jade);border-color:rgba(47,230,168,.4);}
 /* margin-left:auto: the codebar is space-between, which centers a THIRD child
-   (fn | run | copy) — the auto margin pulls run+copy into one right-side group.
+   (fn | run | copy) - the auto margin pulls run+copy into one right-side group.
    The ▶ lives in ::before (not the label text): as a raw glyph it comes from a
-   fallback/emoji font — oversized and off-baseline — and it would leak into the
+   fallback/emoji font - oversized and off-baseline - and it would leak into the
    textContent the run handler saves/restores around the "running…" state. */
 .runbtn{font-family:var(--font-mono);font-size:.7rem;line-height:1.5;color:var(--jade);border:1px solid var(--jade-dim);background:var(--jade-deep);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;margin-left:auto;margin-right:6px;display:inline-flex;align-items:center;gap:.45em;}
 .runbtn::before{content:"\25B6\FE0E";font-size:.62em;line-height:1;}

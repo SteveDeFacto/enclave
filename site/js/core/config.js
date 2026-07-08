@@ -1,5 +1,5 @@
 /* ============================================================
-   Site-wide configuration — endpoints, chains, contract
+   Site-wide configuration - endpoints, chains, contract
    addresses. One place to edit when anything is redeployed
    (scripts/sync-contract-addresses.sh rewrites the addresses).
    ============================================================ */
@@ -25,7 +25,7 @@ export const PRIVY_RDNS = "io.privy.embedded";
    The baked addresses are FALLBACKS for first paint: when
    ADDRESS_BOOK_ADDRESS is set, js/core/addressbook.js resolves the live
    values from the on-chain EnclaveAddressBook and reassigns these bindings
-   (`let` exports — importers see the update), so contract redeploys reach
+   (`let` exports - importers see the update), so contract redeploys reach
    the site without a rebuild. The last resolve is cached in sessionStorage
    and applied synchronously below, so repeat visits never paint stale
    addresses even for a frame. */

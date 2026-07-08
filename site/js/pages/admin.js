@@ -1,4 +1,4 @@
-/* admin.html — the operator console (hidden page: reachable by URL only).
+/* admin.html - the operator console (hidden page: reachable by URL only).
    The page itself is a blank shell: <c-admin-console> renders NOTHING unless
    the connected wallet is the address book's owner. */
 import "../../components/header/header.js";

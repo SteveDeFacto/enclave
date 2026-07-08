@@ -1,5 +1,5 @@
 /* ============================================================
-   Live client (Enclave) — the exact client the pages use; mirrors
+   Live client (Enclave) - the exact client the pages use; mirrors
    the published HTTP API. Base URL persists across pages via
    localStorage (the Deploy page exposes the field).
    ============================================================ */

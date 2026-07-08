@@ -1,4 +1,4 @@
-/* <c-admin-console> — operator console (admin.html). Dense, monospace-leaning
+/* <c-admin-console> - operator console (admin.html). Dense, monospace-leaning
    control panels; reuses the site's tokens and .btn vocabulary. */
 .ac { display: flex; flex-direction: column; gap: 18px; margin-top: 8px; }
 

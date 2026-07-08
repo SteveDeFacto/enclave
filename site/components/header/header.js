@@ -29,7 +29,7 @@ class Header extends EnclaveElement {
 register("c-header", Header);
 
 // session edges (connect / restore / sign-out) toggle the Dashboard tab on
-// the live header — the same DOM node across all soft navigations
+// the live header - the same DOM node across all soft navigations
 on("enclave:wallet", () => {
   const d = document.querySelector('c-header a[data-view="dashboard"]');
   if (d) d.hidden = !Enclave.address;

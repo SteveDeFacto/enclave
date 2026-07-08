@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-footer> — the shared site footer. The "OpenAPI spec"
+   <c-footer> - the shared site footer. The "OpenAPI spec"
    link downloads the same openapi.json the API reference and
    code samples render from.
    ============================================================ */

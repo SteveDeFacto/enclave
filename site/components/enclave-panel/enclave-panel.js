@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-enclave-panel> — the hero's sealed-enclave visual: a
+   <c-enclave-panel> - the hero's sealed-enclave visual: a
    particle canvas inside a dashed boundary, periodically swept
    by a "measurement" that rolls the fake rtmr3 hash.
    ============================================================ */

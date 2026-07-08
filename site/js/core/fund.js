@@ -1,5 +1,5 @@
 /* ============================================================
-   Funding — minimal ABI encoding for EnclavePay payWithAuthorization
+   Funding - minimal ABI encoding for EnclavePay payWithAuthorization
    + payEth and the EnclaveDeployments funding pair (no web3 lib).
    payForRuntime() pays for OR tops up a deployment; the deploy flow
    (js/pages/deploy.js) and the dashboard's per-row Top up both use it.
@@ -41,7 +41,7 @@ function usdToWei(usd, ethUsd){
          allowance left behind.
    ETH:  payEth(ref) with msg.value: ONE transaction; the enclave credits the wei
          as USDC-equivalent at its live Chainlink ETH/USD read when the event lands.
-   `log(cls, txt)` narrates progress — defaults to the run log (the deploy
+   `log(cls, txt)` narrates progress - defaults to the run log (the deploy
    flow); the dashboard's Top up passes its own inline sink. */
 export async function payForRuntime(pay, fundUsdc, asset, log){
   log = log || runlog.line;

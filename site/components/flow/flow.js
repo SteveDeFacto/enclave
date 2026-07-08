@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-flow> — the "Five calls, start to finish" lifecycle
+   <c-flow> - the "Five calls, start to finish" lifecycle
    stepper. The step buttons live in the TEMPLATE (prerendered at
    build time); this class holds each step's method+path and
    renders the detail pane live from openapi.json on hydration.

@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-header> — nav bar, active-tab state, mobile nav.
+   <c-header> - nav bar, active-tab state, mobile nav.
    Internal order matters: base rules → responsive overrides →
    the (formerly runtime-injected) active-tab/mobile rules.
    Wallet styles live with <c-wallet-button>.
@@ -25,7 +25,7 @@ header.nav .brand svg.nm{width:auto;height:20px;}
 
 /* ---------- responsive ---------- */
 /* the absolutely-centered links ignore flex layout and overlap the brand
-   once the bar tightens (~750px) — go in-flow so space-between keeps
+   once the bar tightens (~750px) - go in-flow so space-between keeps
    brand | links | wallet apart, and slim the tabs to buy room down to 641px */
 @media (max-width:880px){
   .nav-links{position:static;transform:none;gap:2px;}

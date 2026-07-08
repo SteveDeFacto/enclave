@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-api-reference> — the Swagger-style API reference,
+   <c-api-reference> - the Swagger-style API reference,
    rendered live from openapi.json: grouped operations, schema
    trees, request/response examples, runnable fetch()/cURL
    samples (the ▶ run button evaluates the displayed snippet

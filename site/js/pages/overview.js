@@ -1,5 +1,5 @@
 /* ============================================================
-   Overview page — pure composition: every dynamic piece is a
+   Overview page - pure composition: every dynamic piece is a
    component that hydrates itself whenever it (re)connects, so
    boot() has nothing page-specific to wire.
    ============================================================ */

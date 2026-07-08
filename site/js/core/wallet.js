@@ -1,5 +1,5 @@
 /* ============================================================
-   Wallet + auth — EIP-6963 discovery, Privy email fallback,
+   Wallet + auth - EIP-6963 discovery, Privy email fallback,
    SIWE sign-in, session persistence, the header wallet button
    and popover, deposits / card purchases.
 

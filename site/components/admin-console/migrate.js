@@ -11,7 +11,7 @@
    js/core/chain.js, extended here with dynamic arrays and tuple[]
    (the import functions take the EXACT structs the getters
    return, so one schema drives both the decode of the source and
-   the encode of the import — pinned against viem in
+   the encode of the import - pinned against viem in
    test/admin-console.test.mjs).
 
    No DOM in this module: it returns data + ready-to-send tx
@@ -45,7 +45,7 @@ export function encTupleArr(schema, rows) {
 
 /* encCall extended with array/tuple args:
    {t:"tuple[]", schema, v:[objs]} · {t:"str[]"|"bytes[]"|"uint[]"|"bool[]"|"addr[]"|"bytes32[]", v}
-   (any uintN[] uses "uint[]" — the width only matters to the selector, which
+   (any uintN[] uses "uint[]" - the width only matters to the selector, which
    comes from viem via the artifacts). Scalars as in chain.js encCall. */
 export function encCallX(selector, args) {
   let off = args.length * 32; const heads = [], tails = [];
@@ -209,7 +209,7 @@ const chunked = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i 
    whole migration usually rides ONE wallet confirmation. Greedy packing by
    rough per-call gas estimates against a per-tx budget (well under Base's
    block limit; the wallet still estimates the real number before signing).
-   Inner auth is untouched — multicall delegatecalls self, msg.sender holds. */
+   Inner auth is untouched - multicall delegatecalls self, msg.sender holds. */
 const GAS_BUDGET = 15_000_000;
 function packPlan(contractName, txs) {
   if (txs.length <= 1) return txs;

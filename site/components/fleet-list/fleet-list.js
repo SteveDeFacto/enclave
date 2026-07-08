@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-fleet-list> — per-enclave capacity rows (the relay's
+   <c-fleet-list> - per-enclave capacity rows (the relay's
    /enclaves table). Assign `.rows` (already sorted upstream) and
    it renders each box's two free pools.
    ============================================================ */

@@ -1,5 +1,5 @@
 /* ============================================================
-   Base chain access — hand-rolled ABI codec (verified vs viem),
+   Base chain access - hand-rolled ABI codec (verified vs viem),
    a rotating pool of public RPCs for reads, and the
    EnclaveDeployments / EnclaveAppCatalog contract surface.
    No web3 library loads on the site.
@@ -117,7 +117,7 @@ export async function depGet(id){
   return Number(obj.createdAt) ? obj : null;
 }
 // The contract's live full-card / full-node per-second prices (6dp USDC),
-// read once and cached: EVERY money estimate must come from these — the
+// read once and cached: EVERY money estimate must come from these - the
 // operator sets them on-chain, so client constants drift (and the create's
 // ceil-to-1-micro-USDC floor makes small deployments cost more than the
 // linear formula suggests).

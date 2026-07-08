@@ -13,7 +13,7 @@
 /* Cross-document view transitions are skipped by Chromium when extensions
    inject content scripts (MetaMask et al): the old page sees pageswap with
    no viewTransition. Flag it, and the NEXT page (this script runs pre-paint)
-   plays the same settle-in itself (html.soft-enter, see base.css) — content
+   plays the same settle-in itself (html.soft-enter, see base.css) - content
    only, the static header stays put. */
 (function(){
   try { if (sessionStorage.getItem("enclave_novt")) { sessionStorage.removeItem("enclave_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}

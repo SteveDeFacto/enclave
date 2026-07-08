@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-live-verify> — the "run the check now" widget: performs
+   <c-live-verify> - the "run the check now" widget: performs
    the full client-side enclave verification (core/verify.js) and
    renders each step's outcome + the verdict.
    ============================================================ */

@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-admin-console> — the operator console behind admin.html.
+   <c-admin-console> - the operator console behind admin.html.
 
    Replicates every governance transaction the terminal scripts
    perform (deploy-*.mjs, update-address-book.mjs, set-prices.mjs)
@@ -7,7 +7,7 @@
    lease setters, operator rotation, ownership handoffs), all
    signed by the connected wallet. Reads use the public RPC pool;
    a write is only ENABLED when the connected wallet matches that
-   contract's owner/admin read live from the chain — and the chain
+   contract's owner/admin read live from the chain - and the chain
    enforces it regardless.
 
    Contract bytecode + selectors come from js/gen/contract-artifacts.js
@@ -71,7 +71,7 @@ class AdminConsole extends EnclaveElement {
   }
 
   /* The page renders NOTHING unless the connected wallet is the address
-     book's owner — read live, fail closed (RPC trouble = locked; the next
+     book's owner - read live, fail closed (RPC trouble = locked; the next
      wallet event retries). This is presentation only: the real gate is every
      contract's own owner check, which the chain enforces on each write. */
   async _evaluate() {
@@ -100,7 +100,7 @@ class AdminConsole extends EnclaveElement {
       <div class="sec-head">
         <span class="eyebrow">Operator console</span>
         <h2>Platform governance, signed by your wallet.</h2>
-        <p>Every owner transaction the contract scripts run from a terminal — deploys, address-book updates, prices, payout and operator rotation — sent from this wallet instead of a pasted private key. Each contract's owner is checked live; the chain enforces it again on every write.</p>
+        <p>Every owner transaction the contract scripts run from a terminal - deploys, address-book updates, prices, payout and operator rotation - sent from this wallet instead of a pasted private key. Each contract's owner is checked live; the chain enforces it again on every write.</p>
       </div>
       <div class="ac-signer" id="acSigner"></div>
       <div class="ac-note" id="acNote">reading the platform contracts…</div>
@@ -118,7 +118,7 @@ class AdminConsole extends EnclaveElement {
     this._paintSigner();
     try {
       const S = this.S = { book: { addr: ADDRESS_BOOK_ADDRESS, owner: null, entries: {} } };
-      if (!S.book.addr) { this._note.textContent = "no ADDRESS_BOOK_ADDRESS is configured — deploy the book first (scripts/deploy-address-book.mjs)."; return; }
+      if (!S.book.addr) { this._note.textContent = "no ADDRESS_BOOK_ADDRESS is configured - deploy the book first (scripts/deploy-address-book.mjs)."; return; }
       const bookSel = CONTRACTS.EnclaveAddressBook.sel;
       const [allHex, bookOwner] = await Promise.all([call(S.book.addr, "0x" + bookSel.all), rdAddr(S.book.addr, bookSel.owner)]);
       S.book.owner = bookOwner;
@@ -140,7 +140,7 @@ class AdminConsole extends EnclaveElement {
       this._paint();
     } catch (e) {
       this._note.hidden = false;
-      this._note.textContent = "chain read failed: " + (e.message || e) + " — retry below.";
+      this._note.textContent = "chain read failed: " + (e.message || e) + " - retry below.";
       this._body.hidden = false;
       this._body.innerHTML = `<button class="btn btn-sm" data-act="refresh">Retry</button>`;
     }
@@ -206,7 +206,7 @@ class AdminConsole extends EnclaveElement {
         <button class="btn btn-sm" data-act="book-set-new" data-owner="${esc(S.book.owner)}">Add key</button>
       </div>`;
       parts.push(sec(`Address book · ${link(S.book.addr)}`,
-        `The platform's one on-chain root — enclaves, this site, the relays, and the CLI re-resolve every address from it within ≤5 min of a change. Owner ${mono(S.book.owner)}. Setting a key to the zero address retires it (readers keep their baked fallback).`,
+        `The platform's one on-chain root - enclaves, this site, the relays, and the CLI re-resolve every address from it within ≤5 min of a change. Owner ${mono(S.book.owner)}. Setting a key to the zero address retires it (readers keep their baked fallback).`,
         rows + custom));
     }
 
@@ -220,7 +220,7 @@ class AdminConsole extends EnclaveElement {
         this._row("Lease <code>setLeaseSec</code>", `${d.lease}s`, "dep-lease", { owner: d.owner, placeholder: String(d.lease), hint: "60…86400 s" }) +
         this._row("ETH/USD feed <code>setEthUsdFeed</code>", isZero(d.feed) ? `<span class="dim">disabled (0x0)</span>` : mono(d.feed), "dep-feed", { owner: d.owner, hint: "0x0 disables ETH funding" }) +
         this._row("Payout <code>setPayout</code>", mono(d.payout), "dep-payout", { owner: d.owner })));
-    } else parts.push(sec("EnclaveDeployments", `<span class="warn">not in the address book</span> — deploy one below, or set the <code>deployments</code> key.`, ""));
+    } else parts.push(sec("EnclaveDeployments", `<span class="warn">not in the address book</span> - deploy one below, or set the <code>deployments</code> key.`, ""));
 
     /* -- pay -- */
     if (S.pay) {
@@ -232,14 +232,14 @@ class AdminConsole extends EnclaveElement {
     /* -- volume access -- */
     if (S.vol) {
       parts.push(sec(`EnclaveVolumeAccess · ${link(S.vol.addr)}`,
-        `Admin ${mono(S.vol.admin)}. The operator is the enclave runner key that gets granted on volumes (rotate it if the runner key rotates). Per-volume grant/revoke stays in the vault client — it needs sealed keys, not just a signature.`,
+        `Admin ${mono(S.vol.admin)}. The operator is the enclave runner key that gets granted on volumes (rotate it if the runner key rotates). Per-volume grant/revoke stays in the vault client - it needs sealed keys, not just a signature.`,
         this._row("Operator <code>setOperator</code>", mono(S.vol.operator), "vol-op", { owner: S.vol.admin })));
     }
 
     /* -- catalog pointer -- */
     if (S.cat) {
       parts.push(sec(`EnclaveAppCatalog · ${link(S.cat.addr)}`,
-        `Owner ${mono(S.cat.owner)}. Moderation (approve / reject / verify / delist) already lives on the <a href="apps">Apps page</a> when you browse it with the owner wallet — it isn't duplicated here.`, ""));
+        `Owner ${mono(S.cat.owner)}. Moderation (approve / reject / verify / delist) already lives on the <a href="apps">Apps page</a> when you browse it with the owner wallet - it isn't duplicated here.`, ""));
     }
 
     /* -- deploy cards -- */
@@ -250,10 +250,10 @@ class AdminConsole extends EnclaveElement {
         EnclaveVolumeAccess: { operator: S.vol && S.vol.operator },
       };
       const notes = {
-        EnclaveAddressBook: `<span class="warn">redeploying the book replaces the ONE address baked into every component</span> — that path needs the config/site/CLI rebake + a release + a dashboard update. Use <code>scripts/deploy-address-book.mjs</code> instead unless you know exactly why.`,
-        EnclaveRegistry: `EnclaveDeployments pins the registry it trusts at construction — after a registry redeploy, redeploy EnclaveDeployments too (pointed at the new registry), then update both book keys.`,
-        EnclaveDeployments: `deploys with the source-default prices — adjust in the panel above after pointing the book. Existing deployments live on in the OLD contract; users top up there until they redeploy.`,
-        EnclaveVolumeAccess: `grants live per-volume inside the contract instance — a redeploy starts with no volumes and no grants.`,
+        EnclaveAddressBook: `<span class="warn">redeploying the book replaces the ONE address baked into every component</span> - that path needs the config/site/CLI rebake + a release + a dashboard update. Use <code>scripts/deploy-address-book.mjs</code> instead unless you know exactly why.`,
+        EnclaveRegistry: `EnclaveDeployments pins the registry it trusts at construction - after a registry redeploy, redeploy EnclaveDeployments too (pointed at the new registry), then update both book keys.`,
+        EnclaveDeployments: `deploys with the source-default prices - adjust in the panel above after pointing the book. Existing deployments live on in the OLD contract; users top up there until they redeploy.`,
+        EnclaveVolumeAccess: `grants live per-volume inside the contract instance - a redeploy starts with no volumes and no grants.`,
       };
       const cards = Object.keys(CONTRACTS).map((name) => {
         const c = CONTRACTS[name];
@@ -263,21 +263,21 @@ class AdminConsole extends EnclaveElement {
         return `<div class="ac-card" data-card="${esc(name)}">
           <h4>${esc(name)}<span class="ac-hint">${(c.bytecode.length / 2 - 1).toLocaleString()} bytes${c.bookKey ? ` · book key <code>${esc(c.bookKey)}</code>` : " · not a book entry"}</span></h4>
           ${notes[name] ? `<p class="ac-sub">${notes[name]}</p>` : ""}
-          ${inputs || `<p class="ac-sub dim">no constructor arguments — the deployer becomes ${name === "EnclaveVolumeAccess" ? "admin" : name === "EnclaveRegistry" ? "(no owner — open registration)" : "owner"}.</p>`}
+          ${inputs || `<p class="ac-sub dim">no constructor arguments - the deployer becomes ${name === "EnclaveVolumeAccess" ? "admin" : name === "EnclaveRegistry" ? "(no owner - open registration)" : "owner"}.</p>`}
           <button class="btn btn-primary btn-sm" data-act="deploy:${esc(name)}">Deploy ${esc(name)}</button>
           <div class="ac-deploy-out" hidden></div>
           <div class="ac-status" hidden></div>
         </div>`;
       }).join("");
       parts.push(`<section class="ac-panel"><h3>Deploy a contract</h3>
-        <p class="ac-sub">Compiled from <code>contracts/*.sol</code> at site build time with the deploy scripts' exact solc settings; the deploy is a raw creation transaction from your wallet. After it confirms, point the address book at the new contract in one click — the whole platform follows within a poll. Then refresh the repo's baked fallbacks when convenient: paste the new address into <code>enclaves/gpu/tinfoil-config.yml</code> (catalog: <code>site/js/core/config.js</code>), run <code>scripts/sync-contract-addresses.sh</code>, commit.</p>
+        <p class="ac-sub">Compiled from <code>contracts/*.sol</code> at site build time with the deploy scripts' exact solc settings; the deploy is a raw creation transaction from your wallet. After it confirms, point the address book at the new contract in one click - the whole platform follows within a poll. Then refresh the repo's baked fallbacks when convenient: paste the new address into <code>enclaves/gpu/tinfoil-config.yml</code> (catalog: <code>site/js/core/config.js</code>), run <code>scripts/sync-contract-addresses.sh</code>, commit.</p>
         <div class="ac-cards">${cards}</div><div class="ac-status" hidden></div></section>`);
     }
 
     /* -- migrate -- */
     {
       parts.push(`<section class="ac-panel"><h3>Migrate data</h3>
-        <p class="ac-sub">Move a contract's ENTIRE state into a freshly deployed import-capable revision: read the source, replay everything through the target's owner-gated import functions — packed via <code>multicall</code>, so the whole migration is typically <b>one wallet confirmation</b> — verify the copy field-by-field, then permanently seal the imports. The plan is a delta: re-clicking Migrate resumes an interrupted run and picks up records created on the source since the last pass (do one last pass right before pointing the book, then seal). Targets deployed before 2026-07-07 have no import surface and are rejected.</p>
+        <p class="ac-sub">Move a contract's ENTIRE state into a freshly deployed import-capable revision: read the source, replay everything through the target's owner-gated import functions - packed via <code>multicall</code>, so the whole migration is typically <b>one wallet confirmation</b> - verify the copy field-by-field, then permanently seal the imports. The plan is a delta: re-clicking Migrate resumes an interrupted run and picks up records created on the source since the last pass (do one last pass right before pointing the book, then seal). Targets deployed before 2026-07-07 have no import surface and are rejected.</p>
         <div class="ac-mig-ctl">
           <select class="ac-in ac-in-key" id="migKind">${Object.entries(MIG_KINDS).map(([k, m]) => `<option value="${k}">${esc(m.label)}</option>`).join("")}</select>
           <input class="ac-in" id="migSource" placeholder="source 0x…" spellcheck="false" autocomplete="off" />
@@ -310,7 +310,7 @@ class AdminConsole extends EnclaveElement {
         <input class="ac-in ac-in-key" id="cf-${r.act}" type="text" placeholder='type "TRANSFER"' spellcheck="false" />
         <button class="btn btn-sm ac-danger-btn" data-act="${r.act}" data-owner="${esc(r.cur)}">Transfer</button>
       </div>`).join("");
-      parts.push(sec(`<span class="warn">Danger zone — ownership handoffs</span>`,
+      parts.push(sec(`<span class="warn">Danger zone - ownership handoffs</span>`,
         `Every one of these is SINGLE-STEP: there is no accept from the new key, so a typo hands the platform to a stranger permanently. Type the address twice as carefully as you'd sign it.`,
         inner));
     }
@@ -431,7 +431,7 @@ class AdminConsole extends EnclaveElement {
         const r = this._ownRows[act];
         const v = val("in-" + act), cf = val("cf-" + act);
         if (!need(ADDR_RE.test(v) && !isZero(v), "enter the new owner address (0x…, non-zero)")) return;
-        if (!need(cf === "TRANSFER", 'type TRANSFER (exactly) to confirm — this handoff is single-step and irreversible')) return;
+        if (!need(cf === "TRANSFER", 'type TRANSFER (exactly) to confirm - this handoff is single-step and irreversible')) return;
         return void this._tx(r.to, encCall(r.sel, [{ t: "addr", v }]), `${r.label} ${r.fn} → ${short(v)}`, panelStatus, true);
       }
 
@@ -453,20 +453,20 @@ class AdminConsole extends EnclaveElement {
         btn.disabled = true;
         try {
           await this._connect();
-          this._status(status, "p", "deploying — confirm the creation transaction in your wallet…");
+          this._status(status, "p", "deploying - confirm the creation transaction in your wallet…");
           const data = c.bytecode + args.map(encAddr).join("");
           const hash = await Enclave.provider.request({ method: "eth_sendTransaction", params: [{ from: Enclave.address, data }] });
           this._status(status, "p", "sent " + hash.slice(0, 14) + "… waiting for confirmation…");
           const rcpt = await waitReceipt(hash, 90);
           const addr = rcpt.contractAddress;
-          if (!need(addr && ADDR_RE.test(addr), "confirmed, but the receipt carries no contract address — check the tx on basescan")) return;
+          if (!need(addr && ADDR_RE.test(addr), "confirmed, but the receipt carries no contract address - check the tx on basescan")) return;
           this._status(status, "ok", `deployed ✓`);
           out.hidden = false;
           out.innerHTML = `<div class="ac-deployed">${esc(name)} → ${mono(addr)} · <a href="${EXPLORER}/address/${esc(addr)}" target="_blank" rel="noopener">basescan</a></div>` +
             (c.bookKey
               ? `<button class="btn btn-primary btn-sm" data-act="book-point:${esc(c.bookKey)}:${esc(addr)}" data-owner="${esc(S.book.owner)}">Point the book: ${esc(c.bookKey)} → ${esc(short(addr))}</button>
                  <span class="ac-hint">one owner tx; enclaves, site, relays and CLI follow within ≤5 min</span>`
-              : `<p class="ac-sub warn">this is a NEW address book — bake its address into the configs/site/CLI (scripts/deploy-address-book.mjs does this) and ship a release before anything reads it.</p>`);
+              : `<p class="ac-sub warn">this is a NEW address book - bake its address into the configs/site/CLI (scripts/deploy-address-book.mjs does this) and ship a release before anything reads it.</p>`);
           this._gate();
         } finally { btn.disabled = false; }
         return;
@@ -500,23 +500,23 @@ class AdminConsole extends EnclaveElement {
           btn.disabled = true;
           try {
             const st = await importState(tgt, m.contractName);
-            if (!need(st.capable, "target has no import surface — deploy a fresh " + m.contractName + " from the card above")) return;
-            if (!need(!st.sealed, "target's imports are permanently sealed — deploy a fresh target")) return;
+            if (!need(st.capable, "target has no import surface - deploy a fresh " + m.contractName + " from the card above")) return;
+            if (!need(!st.sealed, "target's imports are permanently sealed - deploy a fresh target")) return;
             log("p", "reading the target to plan the delta…");
             const after = await m.read(tgt);
             const txs = m.plan(M.data, after);
-            if (!txs.length) { log("ok", "nothing to import — target already holds everything. Verify, then seal."); return; }
+            if (!txs.length) { log("ok", "nothing to import - target already holds everything. Verify, then seal."); return; }
             log("p", `${txs.length} import transaction${txs.length === 1 ? "" : "s"} to send`);
             await this._connect();
             for (let i = 0; i < txs.length; i++) {
-              log("p", `[${i + 1}/${txs.length}] ${txs[i].label} — confirm in your wallet…`);
+              log("p", `[${i + 1}/${txs.length}] ${txs[i].label} - confirm in your wallet…`);
               const hash = await sendTx(tgt, txs[i].dataHex);
               log("p", `  sent ${hash.slice(0, 14)}… waiting…`);
               await waitReceipt(hash, 90);
               log("ok", `  ✓ ${txs[i].label}`);
             }
-            log("ok", "migration pass complete — run Verify next (Migrate again later to pick up new source records).");
-          } catch (err) { log("err", friendly(err) + " — fix and click Migrate again; the delta plan resumes where it stopped."); }
+            log("ok", "migration pass complete - run Verify next (Migrate again later to pick up new source records).");
+          } catch (err) { log("err", friendly(err) + " - fix and click Migrate again; the delta plan resumes where it stopped."); }
           finally { btn.disabled = false; }
           return;
         }
@@ -543,10 +543,10 @@ class AdminConsole extends EnclaveElement {
           btn.disabled = true;
           try {
             await this._connect();
-            log("p", "sealImports — confirm in your wallet…");
+            log("p", "sealImports - confirm in your wallet…");
             const hash = await sendTx(tgt, sealTx(m.contractName));
             await waitReceipt(hash);
-            log("ok", "imports permanently sealed ✓ — now point the book: " + m.bookKey + " → " + tgt + " (Address book panel above), and refresh the repo fallbacks when convenient.");
+            log("ok", "imports permanently sealed ✓ - now point the book: " + m.bookKey + " → " + tgt + " (Address book panel above), and refresh the repo fallbacks when convenient.");
           } catch (err) { log("err", friendly(err)); btn.disabled = false; }
           return;
         }
@@ -570,15 +570,15 @@ class AdminConsole extends EnclaveElement {
   async _tx(to, data, label, statusEl, refreshAfter) {
     try {
       await this._connect();
-      this._status(statusEl, "p", label + " — confirm in your wallet…");
+      this._status(statusEl, "p", label + " - confirm in your wallet…");
       const hash = await sendTx(to, data);
       this._status(statusEl, "p", label + " · " + hash.slice(0, 14) + "… waiting for confirmation…");
       await waitReceipt(hash);
-      this._status(statusEl, "ok", label + " — confirmed ✓");
+      this._status(statusEl, "ok", label + " - confirmed ✓");
       showToast(label + " ✓");
       if (refreshAfter) setTimeout(() => this.refresh(), 1200);
     } catch (e) {
-      this._status(statusEl, "err", label + " — " + friendly(e));
+      this._status(statusEl, "err", label + " - " + friendly(e));
     }
   }
 

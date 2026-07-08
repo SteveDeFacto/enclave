@@ -1,8 +1,8 @@
 /* ============================================================
-   <c-volume-picker> — model volumes the fleet advertises
+   <c-volume-picker> - model volumes the fleet advertises
    (Modelwrap): union across enclaves, each tagged with how many
    enclaves carry it. Assign `.volumes` (list) and `.selected`
-   (a live Set the page owns — deployBody reads it); toggling a
+   (a live Set the page owns - deployBody reads it); toggling a
    row mutates the Set and dispatches a bubbling `change`.
    ============================================================ */
 import { EnclaveElement, register } from "../../js/lib/enclave-element.js";

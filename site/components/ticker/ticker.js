@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-ticker> — the facts marquee under the hero. The items live
+   <c-ticker> - the facts marquee under the hero. The items live
    in the TEMPLATE (so the build-time prerender shows them with
    no JS at all); hydration just doubles the track, which the
    -50% keyframe needs for a seamless loop.

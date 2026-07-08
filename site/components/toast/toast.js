@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-toast> — the site-wide toast. Anyone shows one by
+   <c-toast> - the site-wide toast. Anyone shows one by
    dispatching a `enclave:toast` event (util.showToast does), the
    LWC ShowToastEvent pattern.
    ============================================================ */

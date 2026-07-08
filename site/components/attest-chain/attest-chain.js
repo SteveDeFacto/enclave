@@ -1,5 +1,5 @@
 /* ============================================================
-   <c-attest-chain> — the "what trustless means" walkthrough:
+   <c-attest-chain> - the "what trustless means" walkthrough:
    the chain-of-measurements links on the left, and the selected
    link's artifact (json / verifier code) on the right.
    ============================================================ */

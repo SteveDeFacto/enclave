@@ -1,5 +1,5 @@
 /* ============================================================
-   EnclaveElement — a Lightning-Web-Components-flavored base class
+   EnclaveElement - a Lightning-Web-Components-flavored base class
    for the site's custom elements (tags register under the `c-`
    namespace, like LWC's).
 
@@ -9,7 +9,7 @@
        header.html    the template
        header.js      the component class
        header.css     its styles (stitched into the site
-                          bundle at build time — the same "not
+                          bundle at build time - the same "not
                           scoped" behavior as LWC light DOM)
 
    What it mirrors from LWC:
@@ -52,7 +52,7 @@ export const html = (strings, ...vals) =>
 
 export class EnclaveElement extends HTMLElement {
   static renderMode = "light";          // 'light' | 'shadow'
-  static properties = {};               // { propName: defaultValue } — @api-like
+  static properties = {};               // { propName: defaultValue } - @api-like
   static templateUrl = null;            // new URL("./<name>.html", import.meta.url)
 
   constructor() {
@@ -102,7 +102,7 @@ export class EnclaveElement extends HTMLElement {
 
   /* Fetch the paired .html once per CLASS and cache it in sessionStorage,
      so every navigation after the first renders the component synchronously
-     (no template round trip, no chrome pop-in) — which also guarantees the
+     (no template round trip, no chrome pop-in) - which also guarantees the
      header/footer exist at first paint for cross-document view transitions. */
   _render() {
     const ctor = this.constructor;

@@ -1,8 +1,8 @@
 /* ============================================================
-   <c-app-card> — one catalog listing. Data flows IN through
+   <c-app-card> - one catalog listing. Data flows IN through
    the `app` property; actions that need a wallet transaction or
    navigation flow OUT as a bubbling `card-action` CustomEvent
-   (detail: { app, act, idx }) — the LWC data-down/events-up
+   (detail: { app, act, idx }) - the LWC data-down/events-up
    pattern. Copying the CID and switching the version are handled
    internally.
    ============================================================ */

@@ -1,5 +1,5 @@
 /* ============================================================
-   Deployment run log — records each deploy run's output lines,
+   Deployment run log - records each deploy run's output lines,
    persists the last 10 runs to localStorage, and broadcasts
    `enclave:runlog` events (start / id / line / end) so mounted
    views follow live. Runs are CONCURRENT: startRun()/resume()
@@ -114,7 +114,7 @@ export const runlog = {
 
 /* Append one styled line to a .term container: repeated identical lines
    collapse into a (xN) counter, and the view follows the tail only when the
-   reader is already at (or near) the bottom — never yank someone out of
+   reader is already at (or near) the bottom - never yank someone out of
    scrollback. `scroller` (optional) is the element that actually scrolls
    when it isn't the container itself. */
 export function paintLine(container, cls, txt, scroller) {

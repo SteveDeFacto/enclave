@@ -1,5 +1,5 @@
 /* ============================================================
-   Develop page — sub-tabs (Guide | CLI | API reference) and the
+   Develop page - sub-tabs (Guide | CLI | API reference) and the
    guide's chapter scroll-spy. The reference itself is
    <c-api-reference>; code blocks in the guide/CLI are
    <c-code> components (which own their copy buttons).
@@ -71,7 +71,7 @@ function gotoAnchor(id, smooth){
   try { history.replaceState(null, "", clean ? location.pathname + location.search : "#" + frag); } catch(e){}
 }
 /* ============================================================
-   boot — module-load-once listeners are guarded on #devTabs so
+   boot - module-load-once listeners are guarded on #devTabs so
    they're inert while another page's <main> is mounted (the
    soft-nav router keeps this document alive across pages).
    ============================================================ */
