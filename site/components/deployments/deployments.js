@@ -84,17 +84,21 @@ class Deployments extends EnclaveElement {
     this._logPolls = {};                       // open Output panels' log timers, by id
     this._strips = new Map();                  // live-deploy strips, keyed by run record
     this.querySelector(".enc-refresh").addEventListener("click", () => this.refresh({ spinner: true }));
-    // status filter: persisted set of enabled buckets (default: all on)
+    // status filter: a single-select seg + search, the store toolbar's
+    // grammar (persisted; a legacy stored checkbox-set falls back to All)
     let saved = null; try { saved = JSON.parse(lsGet(FILTER_KEY) || "null"); } catch (e) {}
-    this._filters = new Set(Array.isArray(saved) ? saved.filter(b => BUCKETS.indexOf(b) !== -1) : BUCKETS);
-    $$(".enc-filters input[data-bucket]", this).forEach(i => {
-      i.checked = this._filters.has(i.dataset.bucket);
-      i.addEventListener("change", () => {
-        if (i.checked) this._filters.add(i.dataset.bucket); else this._filters.delete(i.dataset.bucket);
-        lsSet(FILTER_KEY, JSON.stringify([...this._filters]));
+    this._filter = (typeof saved === "string" && ("all" === saved || BUCKETS.indexOf(saved) !== -1)) ? saved : "all";
+    $$(".enc-segs button", this).forEach(b => {
+      b.classList.toggle("on", b.dataset.bucket === this._filter);
+      b.addEventListener("click", () => {
+        this._filter = b.dataset.bucket;
+        lsSet(FILTER_KEY, JSON.stringify(this._filter));
+        $$(".enc-segs button", this).forEach(x => x.classList.toggle("on", x === b));
         this._renderRows(this._list || []);
       });
     });
+    const q = this.querySelector(".enc-search");
+    if (q) q.addEventListener("input", () => { this._q = q.value.trim().toLowerCase(); this._renderRows(this._list || []); });
     // document-level listeners must be removable: the soft-nav router mounts a
     // fresh instance per visit, and detached ones must not keep refreshing.
     // A sign-in mid-view (the lazy log/attestation unlock) must NOT clobber
@@ -188,7 +192,7 @@ class Deployments extends EnclaveElement {
     if (!body) return;
     this._paintedFor = Enclave.address;   // what this paint reflects (see _onWallet)
     const setCount = t => { if (count) count.textContent = t || ""; };
-    const hideBar = () => { const fb = this.querySelector(".enc-filters"); if (fb) fb.hidden = true; };
+    const hideBar = () => { const tb = this.querySelector(".enc-toolbar"); if (tb) tb.hidden = true; };
     if (!Enclave.address){
       setCount(""); this._stopPoll(); hideBar();
       body.innerHTML = '<div class="enc-empty">Connect your wallet (above) to see your enclaves.</div>'; return;
@@ -200,6 +204,7 @@ class Deployments extends EnclaveElement {
     try {
       const res = await Enclave.listDeployments();
       const list = Array.isArray(res) ? res : ((res && (res.deployments || res.items || res.data)) || []);
+      const tb = this.querySelector(".enc-toolbar"); if (tb) tb.hidden = false;   // refresh + Deploy CTA live here now
       this._renderRows(list, opts.highlight);
       this._startPoll();
     } catch(e){
@@ -214,19 +219,17 @@ class Deployments extends EnclaveElement {
     const body = this.querySelector(".enc-body"), count = this.querySelector(".enc-count");
     list = (list || []).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
     this._list = list;
-    const counts = { running: 0, starting: 0, ended: 0, failed: 0 };
+    const counts = { all: list.length, running: 0, starting: 0, ended: 0, failed: 0 };
     list.forEach(d => { counts[bucketOf(d.status)]++; });
-    const bar = this.querySelector(".enc-filters");
-    if (bar) {
-      bar.hidden = !list.length;
-      $$("input[data-bucket]", bar).forEach(i => { const b = i.closest("label").querySelector("b"); if (b) b.textContent = String(counts[i.dataset.bucket] || 0); });
-    }
-    const shown = list.filter(d => this._filters.has(bucketOf(d.status)));
+    $$(".enc-segs button", this).forEach(b => { const n = b.querySelector("b"); if (n) n.textContent = String(counts[b.dataset.bucket] || 0); });
+    let shown = this._filter === "all" ? list.slice() : list.filter(d => bucketOf(d.status) === this._filter);
+    if (this._q) shown = shown.filter(d =>
+      (d.id + " " + ((d.image && d.image.reference) || "") + " " + (d.status || "")).toLowerCase().includes(this._q));
     if (count) count.textContent = list.length
       ? (counts.running + " running · " + list.length + " total" + (shown.length !== list.length ? " · " + shown.length + " shown" : ""))
       : "";
     if (!list.length){ body.innerHTML = '<div class="enc-empty">No enclaves yet. <a href="apps/deploy">Deploy one →</a></div>'; return; }
-    if (!shown.length){ body.innerHTML = '<div class="enc-empty">Nothing matches the status filter - tick more boxes above.</div>'; return; }
+    if (!shown.length){ body.innerHTML = '<div class="enc-empty">Nothing here - pick another status tab or clear the search.</div>'; return; }
     body.innerHTML = shown.map(d => {
       const ep = appEndpoint(d), st = d.status || "–";
       const bud = (d.paidUsdc != null)

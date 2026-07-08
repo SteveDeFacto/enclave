@@ -1,16 +1,17 @@
 <div class="enclaves">
-  <div class="enc-head">
-    <h4>My Apps</h4>
-    <div class="enc-tools">
-      <span class="enc-count"></span>
-      <button class="btn btn-sm enc-refresh" type="button">↻ refresh</button>
+  <!-- the store's toolbar grammar: seg filter · search · count · refresh · primary CTA -->
+  <div class="store-toolbar enc-toolbar" hidden>
+    <div class="seg enc-segs" role="group" aria-label="Filter deployments by status">
+      <button data-bucket="all" class="on" type="button">All <b></b></button>
+      <button data-bucket="running" type="button">Running <b></b></button>
+      <button data-bucket="starting" type="button">Starting <b></b></button>
+      <button data-bucket="ended" type="button">Ended <b></b></button>
+      <button data-bucket="failed" type="button">Failed <b></b></button>
     </div>
-  </div>
-  <div class="enc-filters" role="group" aria-label="Filter deployments by status" hidden>
-    <label><input type="checkbox" data-bucket="running" checked /> running <b></b></label>
-    <label><input type="checkbox" data-bucket="starting" checked /> starting <b></b></label>
-    <label><input type="checkbox" data-bucket="ended" checked /> ended <b></b></label>
-    <label><input type="checkbox" data-bucket="failed" checked /> failed <b></b></label>
+    <input type="text" class="enc-search" placeholder="search app, id, status…" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Search deployments" />
+    <span class="store-count enc-count"></span>
+    <button class="btn btn-sm enc-refresh" type="button">↻ refresh</button>
+    <a class="btn btn-primary btn-sm" href="apps/deploy">+ Deploy app</a>
   </div>
   <!-- one strip per deploy that's streaming (or resumed after a reload) and has no row yet -->
   <div class="enc-lives"></div>
