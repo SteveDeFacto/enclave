@@ -48,9 +48,20 @@ const pageOf = (pathname) => {
 // servers, path gateways). Paths stay relative to wherever the site is
 // mounted: /dashboard on enclave.host, /ipns/<key>/dashboard on a path gateway.
 // The directory the site is mounted at: "/" on enclave.host, "/ipns/<key>/"
-// on a path gateway. document.baseURI already accounts for the nested alias
-// documents' <base href="../">, so this is ALWAYS the site root.
-const rootDir = () => new URL(".", document.baseURI).pathname;
+// on a path gateway. The ENTRY document's baseURI is always right (root docs
+// sit at root depth; the nested alias docs carry <base href="../">) - but it
+// only stays right until the first soft navigation moves `location` to a
+// nested path this document was never served at (then href="apps" would
+// resolve to /apps/apps and 404). So freeze the root NOW, before any
+// navigation, and pin it into an explicit <base> so the BROWSER resolves
+// every relative href from the site root too (middle-clicks included).
+const SITE_ROOT = new URL(".", document.baseURI).pathname;
+{
+  let b = document.querySelector("base");
+  if (!b) { b = document.createElement("base"); document.head.prepend(b); }
+  b.setAttribute("href", SITE_ROOT);
+}
+const rootDir = () => SITE_ROOT;
 const prettyPath = (page) => rootDir() + (page === "overview" ? "" : (PAGE_PRETTY[page] || page));
 const htmlName = (page) => {
   const file = PAGE_ALIAS[page] || page;                     // an alias serves its target's document
