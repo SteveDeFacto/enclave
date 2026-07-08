@@ -171,7 +171,7 @@ function quickDeploy(app, v){
     // It was approved WITH the version, so this is owner-vetted behavior.
     let cfg = null; try { cfg = v.config ? JSON.parse(v.config) : null; } catch(e){}
     m.deployOnChain({ reference: "ipfs://" + v.cid, gpuMilli: mins.gpuPct * 10, cpuMilli: mins.cpuPct * 10,
-      ports: v.ports || "", isPublic: true, config: cfg, volumes: [], fundUsd: usd, asset: "USDC" });
+      ports: v.ports || "", isPublic: true, config: cfg, fundUsd: usd, asset: "USDC" });
   });
   est(); loadBal();
 }

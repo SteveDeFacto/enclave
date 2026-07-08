@@ -151,11 +151,11 @@
           <input type="text" id="cfgPorts" value="" placeholder="empty · or http:8088, tcp:5432, udp:9053" spellcheck="false" autocapitalize="off" autocomplete="off" />
         </div>
         <div class="field" id="volField" hidden>
-          <label>Model volumes <span class="dim">(attested read-only weights the enclave carries · mounted at /models/&lt;name&gt; · picking any builds &amp; pins the app config for you)</span></label>
+          <label>Model volumes <span class="dim">(attested read-only weights the enclave carries · mounted at /models/&lt;name&gt; · a tick writes the App config's <code>volumes</code> key below - the config is the only carrier)</span></label>
           <c-volume-picker></c-volume-picker>
         </div>
         <div class="field">
-          <label for="cfgConfig">App config <span class="dim">(optional · JSON the app receives as ENCLAVE_CONFIG · the console pins it to IPFS at deploy and its CID rides the on-chain record · volumes picked above merge in · e.g. an API key, or a model for llm-chat)</span></label>
+          <label for="cfgConfig">App config <span class="dim">(optional · JSON the app receives as ENCLAVE_CONFIG · its <code>volumes</code> key names the model volumes to mount (the picker above edits it) · the console pins it to IPFS at deploy and its CID rides the on-chain record · e.g. an API key, or a model for llm-chat)</span></label>
           <textarea id="cfgConfig" rows="3" placeholder='empty · or JSON, e.g. {"backend":"ggml","model_volume":"qwen2.5-0.5b"} - pinned to IPFS for you at deploy' spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
         </div>
         <div class="field">

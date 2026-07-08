@@ -2,8 +2,11 @@
    <c-volume-picker> - model volumes the fleet advertises
    (Modelwrap): union across enclaves, each tagged with how many
    enclaves carry it. Assign `.volumes` (list) and `.selected`
-   (a live Set the page owns - deployBody reads it); toggling a
-   row mutates the Set and dispatches a bubbling `change`.
+   (a live Set the page owns); toggling a row mutates the Set and
+   dispatches a bubbling `change`. The picker is a FORM CONTROL
+   for the App config JSON's `volumes` key - the page writes the
+   ticks into that JSON (and mirrors typed edits back into the
+   Set); the config object stays the only carrier.
    ============================================================ */
 import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc } from "../../js/core/util.js";

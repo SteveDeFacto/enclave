@@ -35,7 +35,7 @@ const depsPanel = () => document.querySelector("c-deployments");
 /* ============================================================
    Console state + request rendering
    ============================================================ */
-const dep = { gpuPct: 25, cpuPct: 5, minGpuPct: 0, minCpuPct: 1, asset: "USDC", public: true, gpuEnclave: true, volumes: new Set() };  // gpuEnclave: from /availability (gpu:false = CPU-only enclave); volumes: attached model volume names
+const dep = { gpuPct: 25, cpuPct: 5, minGpuPct: 0, minCpuPct: 1, asset: "USDC", public: true, gpuEnclave: true, volumes: new Set() };  // gpuEnclave: from /availability (gpu:false = CPU-only enclave); volumes: the picker's ticks - a MIRROR of the App config JSON's `volumes` key, never a second source
 function renderAccessNote(){
   const el = $("#accessNote"); if (!el) return;
   el.innerHTML = dep.public
@@ -53,9 +53,11 @@ function currentMins(){
 }
 /* The "App config" textarea: JSON the app receives as ENCLAVE_CONFIG. The
    console pins it to IPFS at deploy and passes the CID as create()'s
-   configCid - users type config, never CIDs. Volumes picked in the volume
-   picker merge into the same object (its `volumes` key). Returns
-   { obj } (null = empty) or { err } (malformed / not a JSON object). */
+   configCid - users type config, never CIDs. This one object is the ONLY
+   carrier of the deployment's config: its `volumes` key names the model
+   volumes to mount, and the volume picker is just a form control that
+   edits that key in place. Returns { obj } (null = empty) or { err }
+   (malformed / not a JSON object). */
 function readCfgConfig(){
   const raw = ($("#cfgConfig") && $("#cfgConfig").value || "").trim();
   if (!raw) return { obj: null };
@@ -65,14 +67,35 @@ function readCfgConfig(){
     return { obj: o };
   } catch(e){ return { err: "app config isn't valid JSON (" + e.message + ")" }; }
 }
-/* the typed config + picked volumes, merged the way deploy will pin it */
-function mergedCfg(cfgObj, volNames){
-  const merged = { ...(cfgObj || {}) };
-  if (volNames && volNames.length){
-    const own = Array.isArray(merged.volumes) ? merged.volumes : [];
-    merged.volumes = [...new Set([...own, ...volNames])];
+/* picker -> textarea: rewrite the config JSON's `volumes` key from the
+   ticks. False = the textarea holds something unparseable, nothing was
+   written (the caller undoes the tick). */
+let lastVols = [];   // the volumes the textarea last agreed to (undo state)
+function writeVolumesToCfg(){
+  const ta = $("#cfgConfig"); if (!ta) return true;
+  const raw = ta.value.trim();
+  let obj = {};
+  if (raw){
+    try { obj = JSON.parse(raw); } catch(e){ return false; }
+    if (!obj || Array.isArray(obj) || typeof obj !== "object") return false;
   }
-  return merged;
+  if (dep.volumes.size) obj.volumes = [...dep.volumes];
+  else delete obj.volumes;
+  ta.value = Object.keys(obj).length ? JSON.stringify(obj, null, 2) : "";
+  lastVols = [...dep.volumes];
+  return true;
+}
+/* textarea -> picker: the ticks mirror the config JSON's `volumes` key
+   (typed edits, applied templates, reset). Invalid JSON keeps the last
+   agreed ticks - there's nothing readable to mirror yet. */
+function syncVolsFromCfg(){
+  const cfg = readCfgConfig();
+  if (cfg.err) return;
+  const names = (cfg.obj && Array.isArray(cfg.obj.volumes)) ? [...new Set(cfg.obj.volumes.map(String))] : [];
+  lastVols = names;
+  if (names.length === dep.volumes.size && names.every(n => dep.volumes.has(n))) return;
+  dep.volumes.clear(); names.forEach(n => dep.volumes.add(n));
+  if (volPicker) volPicker.requestRender();
 }
 function deployBody(){
   // `image.reference` is the Wasm app to run: a catalog slug:version resolved to
@@ -88,14 +111,12 @@ function deployBody(){
   body.resources = { gpuShare: gp, cpuShare: cp };   // the two dials; the app's specs set the minimums
   // GPU attestation only exists when the deployment holds a card slice.
   if (gp > 0 && dep.gpuEnclave) body.attestationPolicy = { requireGpuAttestation: true };
-  // app config + picked volumes: ONE JSON, pinned to IPFS at deploy - its CID
-  // becomes the on-chain configCid, delivered to the app as ENCLAVE_CONFIG
+  // app config: ONE JSON (volume ticks already live in its `volumes` key),
+  // pinned to IPFS at deploy - its CID becomes the on-chain configCid,
+  // delivered to the app as ENCLAVE_CONFIG
   const cfg = readCfgConfig();
   if (cfg.err) body.config = "⚠ " + cfg.err;
-  else {
-    const merged = mergedCfg(cfg.obj, [...dep.volumes]);
-    if (Object.keys(merged).length) body.config = merged;
-  }
+  else if (cfg.obj && Object.keys(cfg.obj).length) body.config = cfg.obj;
   body.region = "auto";
   return body;
 }
@@ -229,8 +250,7 @@ async function runDeploy(){
   // the App config textarea: JSON only, refused loudly BEFORE any wallet step
   const cfg = readCfgConfig();
   if (cfg.err) return note([["warn", "[!] " + cfg.err]]);
-  const volNames = [...dep.volumes];
-  const cfgObj = mergedCfg(cfg.obj, volNames);
+  const cfgObj = cfg.obj || {};
   const hasCfg = Object.keys(cfgObj).length > 0;
 
   if (dry){
@@ -250,7 +270,7 @@ async function runDeploy(){
   btn.disabled = true; const lbl = btn.textContent; btn.textContent = "working…";
   try {
     await deployOnChain({ reference: rref.reference, gpuMilli, cpuMilli, ports,
-      isPublic: dep.public, config: cfg.obj, volumes: volNames, fundUsd: fund, asset: dep.asset });
+      isPublic: dep.public, config: cfg.obj, fundUsd: fund, asset: dep.asset });
   } finally {
     btn.disabled = false; btn.textContent = lbl;
   }
@@ -271,12 +291,11 @@ function portsSpec(raw){
    deploys stream side by side). Resolves once funding lands - the claim/
    status watch continues detached, freeing the caller for the next deploy.
    spec: { reference, gpuMilli, cpuMilli, ports (csv), isPublic,
-   config (JSON object - pinned to IPFS here, volumes merge in) OR
-   configCid (a pre-pinned CID, programmatic callers), volumes, fundUsd,
-   asset } */
+   config (JSON object - pinned to IPFS here; its `volumes` key names the
+   model volumes to mount) OR configCid (a pre-pinned CID, programmatic
+   callers), fundUsd, asset } */
 export async function deployOnChain(spec){
   const fund = spec.fundUsd;
-  const volNames = spec.volumes || [];
   let configCid = spec.configCid || "";
   const { portsCsv, appPort } = portsSpec(spec.ports);
   const asset = spec.asset || "USDC";
@@ -306,13 +325,13 @@ export async function deployOnChain(spec){
       w.line("info", "    " + fund + " USDC ≈ " + fmtDur(fund / rate) + " of runtime at $" + (rate * 3600).toFixed(2) + "/hr");
     }
 
-    // 0) app config: the typed JSON + picked volumes merge into ONE object,
-    // pinned to IPFS here - its CID rides create() and the enclave verifies
-    // the bytes before handing them to the app as ENCLAVE_CONFIG. A
-    // pre-pinned spec.configCid (programmatic callers) passes through when
-    // there's nothing to pin; typed config wins if both arrive (a CID is
-    // opaque - it can't be merged client-side).
-    const cfgObj = mergedCfg(spec.config, volNames);
+    // 0) app config: ONE object (any picked volumes already sit in its
+    // `volumes` key), pinned to IPFS here - its CID rides create() and the
+    // enclave verifies the bytes before handing them to the app as
+    // ENCLAVE_CONFIG. A pre-pinned spec.configCid (programmatic callers)
+    // passes through when there's nothing to pin; typed config wins if both
+    // arrive (a CID is opaque - it can't be merged client-side).
+    const cfgObj = spec.config || {};
     if (Object.keys(cfgObj).length){
       w.line("p", "$ pin app config  (JSON -> IPFS -> configCid)");
       if (configCid) w.line("warn", "    (a pre-pinned config CID was also passed - the config object wins; pin the merge yourself to combine)");
@@ -684,6 +703,7 @@ function applyUseInDeploy(){
     if (config){
       const ta = $("#cfgConfig");
       if (ta){ try { ta.value = JSON.stringify(JSON.parse(config), null, 2); } catch(e){ ta.value = config; } }
+      syncVolsFromCfg();   // a template carrying {"volumes":[…]} ticks the picker
     }
     renderDeploy();
     showToast("Deploy set to " + friendly + " (min " + mins.gpuPct + "% GPU / " + mins.cpuPct + "% CPU)"
@@ -726,8 +746,19 @@ function initDeploy(){
     renderAccessNote(); renderDeploy();
   });
   renderAccessNote();
-  ["#cfgImage", "#cfgBudget", "#cfgPorts", "#cfgConfig"].forEach(s => { const el = $(s); if (el) el.addEventListener("input", renderDeploy); });
-  if (volPicker) volPicker.addEventListener("change", renderDeploy);   // volume ticks change the request body
+  ["#cfgImage", "#cfgBudget", "#cfgPorts"].forEach(s => { const el = $(s); if (el) el.addEventListener("input", renderDeploy); });
+  // the config textarea is the single carrier: typed edits drive the ticks…
+  const cc = $("#cfgConfig"); if (cc) cc.addEventListener("input", () => { syncVolsFromCfg(); renderDeploy(); });
+  // …and a tick edits the textarea (its `volumes` key). Malformed JSON can't
+  // be edited - undo the tick and say why, loudly, before any wallet step.
+  if (volPicker) volPicker.addEventListener("change", () => {
+    if (!writeVolumesToCfg()){
+      dep.volumes.clear(); lastVols.forEach(n => dep.volumes.add(n));
+      volPicker.requestRender();
+      showToast("App config isn't valid JSON - fix it, then pick volumes");
+    }
+    renderDeploy();
+  });
   $$(".console-tabs button").forEach(b => b.addEventListener("click", () => switchPane(b.dataset.pane)));
   $("#deployBtn").addEventListener("click", runDeploy);
   const frb = $("#fetchRunBtn"); if (frb) frb.addEventListener("click", runDeploy);   // the snippet IS the deploy flow
@@ -735,8 +766,7 @@ function initDeploy(){
     $("#cfgImage").value = "";
     const fp0 = $("#cfgPorts"); if (fp0) fp0.value = "";
     const cc0 = $("#cfgConfig"); if (cc0) cc0.value = "";
-    dep.volumes.clear();
-    if (volPicker) volPicker.requestRender();
+    syncVolsFromCfg();   // empty config = no volumes; the ticks follow
     $("#cfgBudget").value = "10";
     $("#cfgGpuShare").value = "25"; dep.gpuPct = 25;
     const cp0 = $("#cfgCpuShare"); if (cp0) cp0.value = "5"; dep.cpuPct = 5;
