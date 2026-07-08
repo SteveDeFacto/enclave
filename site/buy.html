@@ -17,9 +17,12 @@
 <div id="msg">Loading checkout…</div>
 <div id="toasts" style="position:fixed;top:10px;left:10px;right:10px;z-index:2147483647;display:flex;flex-direction:column;gap:8px;pointer-events:none;"></div>
 <script type="module">
-/* Buy USDC · runs Privy's official React funding modal (Stripe/Link, MoonPay, …)
-   in a popup. Same origin as the console, so it inherits the Privy session the
-   user already has. The main page stays framework-free; React lives only here. */
+/* Buy USDC · runs Privy's FUNDING flow (useFundWallet - card via MoonPay et al,
+   per the dashboard's funding config) in a popup. Same origin as the console, so
+   it inherits the Privy session the user already has. The main page stays
+   framework-free; React lives only here. NOTE: the legacy useFiatOnramp surface
+   is DISABLED server-side for this app (fiat_on_ramp_enabled=false) - calling it
+   yields Privy's generic error screen and can drop the session. */
 
 /* Readable error surfacing: Privy's modal swallows provider errors behind a
    generic screen. Tap failing API calls, extract the human message from the
@@ -63,10 +66,11 @@ window.fetch = async (input, init) => {
   const url = String((input && input.url) || input || "");
   const res = await _fetch(input, init);
   try {
-    if (!res.ok && /privy\.io|moonpay|stripe|meld|coinbase/i.test(url)){
+    if (!res.ok){
       const body = await res.clone().text();
-      console.warn("[buy-diag]", res.status, url, body.slice(0, 400));
-      errToast("Payment error (" + res.status + "): " + humanApiError(res.status, body));
+      console.warn("[buy-diag]", res.status, url, body.slice(0, 400));   // EVERY failing call logs
+      if (/privy\.io|moonpay|stripe|meld|coinbase/i.test(url))
+        errToast("Payment error (" + res.status + "): " + humanApiError(res.status, body));
     }
   } catch(_){}
   return res;
@@ -78,8 +82,8 @@ const msg = (html) => { document.getElementById("msg").innerHTML = html; };
 try {
   // self-hosted bundle (site/privy/, built by esbuild from @privy-io/react-auth
   // + react) - no CDN at runtime; lazy screens load as local chunks
-  const mod = await import("/privy/entry.js?v=3");   // ?v busts browser/CDN caches on bundle updates
-  const { React, createRoot, PrivyProvider, usePrivy, useFiatOnramp } = mod;
+  const mod = await import("/privy/entry.js?v=4");   // ?v busts browser/CDN caches on bundle updates
+  const { React, createRoot, PrivyProvider, usePrivy, useFundWallet } = mod;
   const h = React.createElement;
 
   /* Privy's amount screen doesn't enforce a minimum (a $0 continues to the
@@ -120,9 +124,10 @@ try {
 
   function App(){
     const { ready, authenticated, user } = usePrivy();
-    const { fund } = useFiatOnramp();
+    const { fundWallet } = useFundWallet();
     const started = React.useRef(false);
     React.useEffect(() => {
+      console.info("[buy-diag] privy state: ready=" + ready + " authenticated=" + authenticated);
       if (!ready) return;
       if (!authenticated){
         msg("You’re not signed in.<br/>Close this window, hit <b>Sign in</b> on the main page, then try again.");
@@ -136,17 +141,26 @@ try {
       if (started.current) return; started.current = true;
       msg("");
       startMinimumGuard();
-      fund({
-        source: { assets: ["usd", "eur"] },
-        destination: { asset: USDC_BASE, chain: "eip155:8453", address },
-        defaultAmount: "25"     // pre-fill; without it Privy's amount screen starts at "0"
+      fundWallet({
+        address,
+        options: {
+          chain: { id: 8453, name: "Base",
+                   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+                   rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
+                   blockExplorers: { default: { name: "Basescan", url: "https://basescan.org" } } },
+          amount: "25",                              // pre-fill; the amount screen starts here
+          asset: "USDC",
+          card: { preferredProvider: "moonpay" }     // matches the app's funding config
+        }
       }).then(
-        () => {   // flow finished (purchase done or modal dismissed at the end): close the window
+        (res) => {   // the funding flow RESOLVES on cancel too (status says which)
+          if (res && res.status === "cancelled"){ window.close(); return; }
           msg("Done - USDC lands in your account within a few minutes.");
-          setTimeout(() => window.close(), 1500);
+          setTimeout(() => window.close(), 2500);
         },
         (e) => {
           const s = String(e && (e.message || e));
+          console.warn("[buy-diag] fundWallet rejected:", e);
           if (/clos|cancel|exit|abort|dismiss/i.test(s)){ window.close(); return; }   // user closed Privy's modal
           errToast("Checkout didn’t complete: " + s);
           msg("Checkout didn’t complete. This window closes in a moment - you can try again from the console.");
