@@ -68,7 +68,10 @@ function gotoAnchor(id, smooth){
   // other panes and deep anchors stay in the hash so they survive a reload
   const frag = id || DEV_PANES[tab];
   const clean = frag === DEV_PANES.guide || frag === "develop";
-  try { history.replaceState(null, "", clean ? location.pathname + location.search : "#" + frag); } catch(e){}
+  // NOTE: history URLs resolve against document.baseURI - and the router pins
+  // <base> to the SITE ROOT, so a bare "#frag" would wipe the pathname
+  // (/develop#x became /#x). Anchor the fragment to the current path.
+  try { history.replaceState(null, "", location.pathname + location.search + (clean ? "" : "#" + frag)); } catch(e){}
 }
 /* ============================================================
    boot - module-load-once listeners are guarded on #devTabs so
