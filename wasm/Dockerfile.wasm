@@ -15,7 +15,7 @@
 # The wasmtime binary comes from the enclave-wasmtime toolchain image (built from
 # source with wasi-nn + onnx-cuda; see Dockerfile.wasmtime). Bump = rebuild that
 # image via the "Wasmtime Toolchain" workflow, then repin WASMTIME_IMAGE here.
-ARG WASMTIME_IMAGE=ghcr.io/stevedefacto/enclave-wasmtime:v45.0.0@sha256:beae1b58e78a4c2864d9a0b591f5015b4e41d79db76aa0b62356b5c5fd4b6fbc
+ARG WASMTIME_IMAGE=ghcr.io/stevedefacto/enclave-wasmtime:v45.0.0@sha256:80148c928c0a0b0e231310e72034512e7b8ad8459cada72154c516ecaa125360
 FROM ${WASMTIME_IMAGE} AS wasmtime
 
 FROM nvidia/cuda:12.6.2-cudnn-runtime-ubuntu24.04
@@ -31,6 +31,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # CUDA provider .so is dlopened by libonnxruntime from the same directory.
 COPY --from=wasmtime /bin/wasmtime /usr/local/bin/wasmtime
 COPY --from=wasmtime /lib/ /usr/local/lib/
+# ggml (llama.cpp) compute backends are dlopened MODULES (GGML_BACKEND_DL) -
+# libggml-cpu/-cuda in /usr/local/lib are found via this env, not ldconfig.
+# Keeps libcuda.so.1 out of the wasmtime binary's DT_NEEDED: the driver lib
+# only exists where the nvidia runtime injects it (never on CPU flavors).
+ENV ENCLAVE_GGML_BACKEND_DIR=/usr/local/lib
 RUN ldconfig && /usr/local/bin/wasmtime --version
 
 WORKDIR /opt/enclave

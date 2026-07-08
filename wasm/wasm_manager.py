@@ -444,6 +444,14 @@ def _nn_tenant_env(gpu_share: float, pinned: bool) -> dict:
     # host-side wasi-nn traces into the tenant's log file (owner-readable via
     # the deployment logs endpoint) - names the backend step a hang died in
     env.setdefault("WASMTIME_LOG", "wasmtime_wasi_nn=debug")
+    # ggml (GGUF) graphs: offload the whole model to the tenant's GPU share by
+    # default. Load-bearing beyond tuning: the preload registry hardcodes
+    # ExecutionTarget::Cpu, so WITHOUT this env a preloaded GGUF would run
+    # pure-CPU on an H200 tenant; with it set nonzero the backend also REFUSES
+    # to run if the CUDA module/driver didn't actually load (strict-GPU, no
+    # silent fallback). setdefault: a dashboard env on the manager container
+    # overrides per node.
+    env.setdefault("ENCLAVE_GGML_N_GPU_LAYERS", "-1")
     # FUSED ATTENTION. Background: ORT's sm_90 flash/memory-efficient attention
     # kernels compute launch heuristics that integer-divide by the device SM
     # budget; under a small MPS partition (a 2-4% slice of an H200) the
