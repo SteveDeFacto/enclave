@@ -4,7 +4,8 @@
  *
  *   cc -shared -fPIC -Wl,-soname,libenclave_llama.so \
  *      -I<llama.cpp>/include -I<llama.cpp>/ggml/include \
- *      enclave_llama.c -L<llama.cpp>/build/bin -lllama -o libenclave_llama.so
+ *      enclave_llama.c -L<llama.cpp>/build/bin -lllama -lggml \
+ *      -o libenclave_llama.so
  *
  * The -soname is load-bearing: the wasmtime binary NEEDs "libenclave_llama.so"
  * by that bare name, and in the manager image it is resolved by ldconfig from
@@ -12,10 +13,32 @@
  */
 #include "enclave_llama.h"
 #include "llama.h"
+#include "ggml-backend.h"
 
+#include <stdlib.h>
 #include <string.h>
 
-void ell_init(void) { llama_backend_init(); }
+void ell_init(void) {
+    /* GGML_BACKEND_DL builds ship the compute backends (cpu, cuda) as
+     * dlopened modules so the wasmtime binary carries no DT_NEEDED on
+     * libcuda.so.1 (the driver exists only at runtime, injected by the
+     * nvidia container runtime - and never on CPU-flavor nodes). Load them
+     * from ENCLAVE_GGML_BACKEND_DIR (NULL = executable dir + cwd). A module
+     * whose own deps are unresolvable is skipped silently in release builds;
+     * ell_gpu_devices() is how callers check that a GPU actually arrived. */
+    ggml_backend_load_all_from_path(getenv("ENCLAVE_GGML_BACKEND_DIR"));
+    llama_backend_init();
+}
+
+int32_t ell_gpu_devices(void) {
+    int32_t n = 0;
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        if (ggml_backend_dev_type(ggml_backend_dev_get(i)) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+            n++;
+        }
+    }
+    return n;
+}
 
 void *ell_load_model(const char *path, int32_t n_gpu_layers) {
     struct llama_model_params p = llama_model_default_params();

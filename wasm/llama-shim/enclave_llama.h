@@ -4,7 +4,7 @@
  * that would be layout-roulette on every bump. This shim pins the boundary to
  * pointers and scalars only (opaque handles, int32/uint32/float*), compiled and
  * shipped INSIDE the prebuilt enclave-llamacpp tarball next to libllama, so the
- * Rust side binds eight trivial functions that cannot drift.
+ * Rust side binds nine trivial functions that cannot drift.
  *
  * Threading/session model: one ell_context per wasi-nn execution context. The
  * KV cache lives inside it - callers feed token ids (chunked to <= n_batch)
@@ -19,8 +19,13 @@
 extern "C" {
 #endif
 
-/* once per process, before anything else */
+/* once per process, before anything else; loads the dlopened ggml backend
+ * modules from ENCLAVE_GGML_BACKEND_DIR (unset = exe dir + cwd) */
 void ell_init(void);
+
+/* how many ggml GPU devices the loaded backends expose (0 = the CUDA module
+ * or the driver is missing; CPU inference still works) */
+int32_t ell_gpu_devices(void);
 
 /* n_gpu_layers: 0 = pure CPU, -1 = offload every layer. NULL on failure. */
 void *ell_load_model(const char *path, int32_t n_gpu_layers);

@@ -9,8 +9,9 @@
 # system-linked enclave_llama shim - see wasm/llama-shim/), its registration
 # in backend/mod.rs + wit.rs FromStr ("ggml" now parses for -S nn-graph), a
 # no-dependency `ggml` cargo feature, and build.rs link directives driven by
-# ELL_LIB_LOCATION (same system-link pattern as ORT_LIB_LOCATION). NO
-# Cargo.lock delta: the backend is pure std + FFI.
+# ELL_LIB_LOCATION (same system-link pattern as ORT_LIB_LOCATION). The ggml
+# backend adds NO crates (pure std + FFI); the Cargo.lock hunk only records
+# the other patches' deps (half, sha2).
 #
 # Model delivery: -S nn-graph=ggml::<dir> preloads <dir>/model.gguf (or the
 # single *.gguf) under the DIRECTORY BASENAME; guests load_by_name() it, so
@@ -21,14 +22,28 @@
 # lives in the execution context (stateful across compute() calls). GGUF
 # volumes must also carry tokenizer.json (guest-side tokenization).
 #
+# GPU: the llama.cpp libs are GGML_BACKEND_DL builds - the cpu/cuda compute
+# backends are dlopened MODULES, loaded by the shim's ell_init() from
+# ENCLAVE_GGML_BACKEND_DIR. The wasmtime binary therefore carries NO
+# DT_NEEDED on libcuda.so.1 (driver libs exist only where the nvidia
+# container runtime injects them - never on CPU-flavor nodes). STRICT GPU:
+# offload requested (ENCLAVE_GGML_N_GPU_LAYERS != 0) + no ggml GPU device
+# loaded = loud load failure, never a silent CPU fallback. The preload
+# registry hardcodes ExecutionTarget::Cpu, so the env is ALSO what turns
+# offload on for preloaded graphs (the wasm-manager sets -1 per GPU tenant).
+#
 # Tuning env (host process only): ENCLAVE_GGML_N_CTX (default 8192),
-# ENCLAVE_GGML_N_BATCH (512), ENCLAVE_GGML_N_GPU_LAYERS (-1 = offload all).
+# ENCLAVE_GGML_N_BATCH (512), ENCLAVE_GGML_N_GPU_LAYERS (-1 = offload all),
+# ENCLAVE_GGML_BACKEND_DIR (backend-module dir; unset = exe dir + cwd).
 #
 # Build: cargo build --release --features "wasi-nn,wasmtime-wasi-nn/ggml"
 # with ELL_LIB_LOCATION=<dir holding libenclave_llama.so + libllama.so>
 # (the enclave-llamacpp toolchain artifact; llamacpp-toolchain.yml builds it).
 # CPU-smoked 2026-07-07 on the fully-patched tree (qwen2.5-0.5b q4_k_m,
-# ~116 tok/s, deterministic greedy path identical across shim/probe/llm-chat).
+# ~114 tok/s via the dlopened cpu module; self-deterministic; strict-GPU
+# guard + no-backend failure paths exercised). NOTE: greedy token streams
+# differ between GGML_NATIVE=ON and =OFF kernel builds (near-tie argmax
+# flips) - compare like with like when validating determinism.
 diff --git a/Cargo.lock b/Cargo.lock
 index 6ffaac1..3c68c51 100644
 --- a/Cargo.lock
@@ -91,19 +106,28 @@ index b2db808..af89d10 100644
  
 diff --git a/crates/wasi-nn/src/backend/ggml.rs b/crates/wasi-nn/src/backend/ggml.rs
 new file mode 100644
-index 0000000..81a87dc
+index 0000000..46e7f14
 --- /dev/null
 +++ b/crates/wasi-nn/src/backend/ggml.rs
-@@ -0,0 +1,323 @@
+@@ -0,0 +1,345 @@
 +//! A ggml/llama.cpp backend for wasi-nn — GGUF language models behind the
 +//! standard `wasi:nn` interface.
 +//!
 +//! The heavy lifting happens in the system-linked `enclave_llama` shim (a
 +//! flat pointer/scalar C ABI over llama.cpp, shipped next to libllama in the
 +//! enclave-llamacpp toolchain artifact — see wasm/llama-shim in the platform
-+//! repo). This file binds eight shim functions and adapts them to the
++//! repo). This file binds nine shim functions and adapts them to the
 +//! wasi-nn backend traits. No new crates: std + FFI only, so the toolchain
 +//! patch carries no Cargo.lock delta.
++//!
++//! The llama.cpp libs are built GGML_BACKEND_DL: the compute backends (cpu,
++//! cuda) are dlopened modules, loaded by `ell_init()` from
++//! ENCLAVE_GGML_BACKEND_DIR — the wasmtime binary carries no DT_NEEDED on
++//! libcuda.so.1, so it starts on driverless (CPU-flavor) nodes. The flip
++//! side is that a broken CUDA module load degrades SILENTLY to CPU, so
++//! `load_path` enforces: GPU offload requested but no ggml GPU device
++//! loaded = loud failure, never a silent CPU fallback (tenants BUY the
++//! share — same discipline as the strict-GPU ONNX patch).
 +//!
 +//! Model delivery is `load_by_name()` via the CLI preload registry
 +//! (`-S nn-graph=ggml::<dir>`): the HOST opens the GGUF straight off the
@@ -124,6 +148,8 @@ index 0000000..81a87dc
 +//!   ENCLAVE_GGML_N_BATCH        max tokens per compute (default 512)
 +//!   ENCLAVE_GGML_N_GPU_LAYERS   -1 = offload all (default when built with
 +//!                               CUDA-enabled libllama), 0 = pure CPU
++//!   ENCLAVE_GGML_BACKEND_DIR    dir holding the dlopened libggml-* backend
++//!                               modules (unset = exe dir + cwd)
 +
 +use super::{
 +    BackendError, BackendExecutionContext, BackendFromDir, BackendGraph, BackendInner, Id,
@@ -137,6 +163,7 @@ index 0000000..81a87dc
 +
 +unsafe extern "C" {
 +    fn ell_init();
++    fn ell_gpu_devices() -> i32;
 +    fn ell_load_model(path: *const c_char, n_gpu_layers: i32) -> *mut c_void;
 +    fn ell_free_model(model: *mut c_void);
 +    fn ell_n_vocab(model: *mut c_void) -> i32;
@@ -181,6 +208,16 @@ index 0000000..81a87dc
 +            ExecutionTarget::Cpu => 0,
 +            _ => env_i32("ENCLAVE_GGML_N_GPU_LAYERS", -1),
 +        };
++        // Strict GPU: the CUDA backend is a dlopened module whose load
++        // failure (missing libcuda, wrong SASS, future lib drift) is silent
++        // by design — a 122B model "working" at CPU speed is the failure
++        // mode, so offload-requested + no GPU device = refuse loudly.
++        if ngl != 0 && unsafe { ell_gpu_devices() } == 0 {
++            return Err(err(
++                "ggml: GPU offload requested (ENCLAVE_GGML_N_GPU_LAYERS != 0) but no ggml GPU \
++                 device is available — CUDA backend module or driver missing",
++            ));
++        }
 +        let cpath = CString::new(path.to_string_lossy().as_bytes())
 +            .map_err(|_| err("model path contains NUL"))?;
 +        let model = unsafe { ell_load_model(cpath.as_ptr(), ngl) };
