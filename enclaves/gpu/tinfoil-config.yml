@@ -22,7 +22,7 @@ gpus: 1            # whole H200 attached to the enclave (CC allows 1 or 8)
 containers:
   # --- MPS daemon: makes per-tenant SM%/VRAM caps enforceable in prod -----------
   - name: "mps-control"
-    image: "ghcr.io/stevedefacto/enclave-mps@sha256:e7c28466c299913e4319bb913cd15223fa96b74454de0b7f938283906d648049"
+    image: "ghcr.io/enclavehost/enclave-mps@sha256:e7c28466c299913e4319bb913cd15223fa96b74454de0b7f938283906d648049"
     runtime: nvidia
     gpus: all
     ipc: host
@@ -39,7 +39,7 @@ containers:
 
   # --- GPU worker: forks MPS-capped CUDA processes per tenant, runs submitted jobs
   - name: "worker"
-    image: "ghcr.io/stevedefacto/enclave-worker@sha256:67879963d2057244a30ff82096ca671fb80ba04938fdbce0c9894b5066b93016"
+    image: "ghcr.io/enclavehost/enclave-worker@sha256:67879963d2057244a30ff82096ca671fb80ba04938fdbce0c9894b5066b93016"
     runtime: nvidia
     gpus: all
     ipc: host
@@ -59,7 +59,7 @@ containers:
 
   # --- supervisor: control plane (no GPU), public ingress -----------------------
   - name: "supervisor"
-    image: "ghcr.io/stevedefacto/enclave-supervisor@sha256:57a458ea614935acf1f021409bb34ea24ab6a0c8ddbd95a1c18666dde4df4a52"
+    image: "ghcr.io/enclavehost/enclave-supervisor@sha256:57a458ea614935acf1f021409bb34ea24ab6a0c8ddbd95a1c18666dde4df4a52"
     restart: always
     env:
       - PORT: "8080"
@@ -201,7 +201,7 @@ containers:
   # are hardware-enforced per process. Tenants without a GPU share never get
   # the wasi-nn import at all.
   - name: "wasm-manager"
-    image: "ghcr.io/stevedefacto/enclave-wasm-manager@sha256:ee6b95c61794fecfa278e59e5bc5246eec873c0aaafa7f58a05e1b6a5a5f5f6a"
+    image: "ghcr.io/enclavehost/enclave-wasm-manager@sha256:ee6b95c61794fecfa278e59e5bc5246eec873c0aaafa7f58a05e1b6a5a5f5f6a"
     runtime: nvidia
     gpus: all
     ipc: host

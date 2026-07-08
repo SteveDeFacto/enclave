@@ -26,7 +26,7 @@ gpus: 8            # all 8 H200s attached (CC allows 1 or 8)
 containers:
   # --- vLLM: serves the attested Modelwrap model across all 8 GPUs ------------
   - name: "vllm"
-    image: "ghcr.io/stevedefacto/enclave-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000"  # pinned by release.sh / the release workflow
+    image: "ghcr.io/enclavehost/enclave-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000"  # pinned by release.sh / the release workflow
     runtime: nvidia
     gpus: all
     ipc: host          # NCCL tensor-parallel uses shared-memory transport across the 8 cards
@@ -49,7 +49,7 @@ containers:
 
   # --- supervisor: control plane + platform-model proxy, public ingress -------
   - name: "supervisor"
-    image: "ghcr.io/stevedefacto/enclave-supervisor@sha256:57a458ea614935acf1f021409bb34ea24ab6a0c8ddbd95a1c18666dde4df4a52"
+    image: "ghcr.io/enclavehost/enclave-supervisor@sha256:57a458ea614935acf1f021409bb34ea24ab6a0c8ddbd95a1c18666dde4df4a52"
     restart: always
     env:
       - PORT: "8080"

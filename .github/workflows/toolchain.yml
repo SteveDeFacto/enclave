@@ -56,7 +56,7 @@ jobs:
           push: true
           build-args: |
             WASMTIME_VERSION=${{ inputs.wasmtime-version }}
-          tags: ghcr.io/stevedefacto/enclave-wasmtime:${{ inputs.wasmtime-version }}
+          tags: ghcr.io/enclavehost/enclave-wasmtime:${{ inputs.wasmtime-version }}
 
       - name: Print the digest to pin in Dockerfile.wasm
         env:
@@ -69,7 +69,7 @@ jobs:
             echo "Pin it in \`wasm/Dockerfile.wasm\`:"
             echo
             echo '```'
-            echo "ARG WASMTIME_IMAGE=ghcr.io/stevedefacto/enclave-wasmtime:${VERSION}@${DIGEST}"
+            echo "ARG WASMTIME_IMAGE=ghcr.io/enclavehost/enclave-wasmtime:${VERSION}@${DIGEST}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "digest=${DIGEST}"

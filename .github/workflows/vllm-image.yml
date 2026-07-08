@@ -52,11 +52,11 @@ jobs:
           file: vllm/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/stevedefacto/enclave-vllm:${{ inputs.tag }}
+          tags: ghcr.io/enclavehost/enclave-vllm:${{ inputs.tag }}
 
       - name: Print the digest to pin
         run: |
           echo "enclave-vllm digest: ${{ steps.build.outputs.digest }}"
           echo "Pin it in enclaves/gpu8/tinfoil-config.yml:"
-          echo "  ghcr.io/stevedefacto/enclave-vllm@${{ steps.build.outputs.digest }}"
+          echo "  ghcr.io/enclavehost/enclave-vllm@${{ steps.build.outputs.digest }}"
           echo "Then confirm the package is PUBLIC (ghcr Settings) so Tinfoil can pull it."

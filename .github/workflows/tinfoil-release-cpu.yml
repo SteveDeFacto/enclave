@@ -80,7 +80,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/stevedefacto/enclave-supervisor:${{ inputs.version }}
+            ghcr.io/enclavehost/enclave-supervisor:${{ inputs.version }}
 
   prepare-release:
     needs: build
@@ -106,8 +106,8 @@ jobs:
           cp enclaves/cpu/tinfoil-config.yml tinfoil-config.yml
           # `enclave-supervisor[:@]` cannot match enclave-wasm-manager (next char is '-'), so only
           # the supervisor line is repinned; the wasm-manager pin stays as committed.
-          sed -i -E "s#(image: \"ghcr\.io/stevedefacto/enclave-supervisor)[:@][^\"]*\"#\1@${DIGEST}\"#" tinfoil-config.yml
-          grep -q "ghcr.io/stevedefacto/enclave-supervisor@${DIGEST}" tinfoil-config.yml \
+          sed -i -E "s#(image: \"ghcr\.io/enclavehost/enclave-supervisor)[:@][^\"]*\"#\1@${DIGEST}\"#" tinfoil-config.yml
+          grep -q "ghcr.io/enclavehost/enclave-supervisor@${DIGEST}" tinfoil-config.yml \
             || { echo "::error::failed to pin supervisor digest into tinfoil-config.yml"; exit 1; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

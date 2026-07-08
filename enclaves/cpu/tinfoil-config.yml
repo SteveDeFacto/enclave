@@ -26,7 +26,7 @@ memory: 65536      # 64 GiB
 containers:
   # --- supervisor: control plane (no GPU), public ingress -----------------------
   - name: "supervisor"
-    image: "ghcr.io/stevedefacto/enclave-supervisor@sha256:57a458ea614935acf1f021409bb34ea24ab6a0c8ddbd95a1c18666dde4df4a52"
+    image: "ghcr.io/enclavehost/enclave-supervisor@sha256:57a458ea614935acf1f021409bb34ea24ab6a0c8ddbd95a1c18666dde4df4a52"
     restart: always
     env:
       - PORT: "8080"
@@ -102,7 +102,7 @@ containers:
   # Identical to the GPU flavor's wasm-manager except NODE_HAS_GPU=0: catalog
   # apps marked `gpu: true` are refused at launch (a CPU node cannot serve them).
   - name: "wasm-manager"
-    image: "ghcr.io/stevedefacto/enclave-wasm-manager@sha256:ee6b95c61794fecfa278e59e5bc5246eec873c0aaafa7f58a05e1b6a5a5f5f6a"
+    image: "ghcr.io/enclavehost/enclave-wasm-manager@sha256:ee6b95c61794fecfa278e59e5bc5246eec873c0aaafa7f58a05e1b6a5a5f5f6a"
     restart: always
     env:
       - WASM_MANAGER_PORT: "8091"
