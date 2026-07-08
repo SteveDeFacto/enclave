@@ -215,10 +215,12 @@ containers:
       - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
       # each app's memory cap is its deployment's cpuShare × NODE_RAM_GB
       # (>= the mem_mb its specs declare); WASM_APP_MIN_MEM_MB (64) is the floor
-      # friendly name -> mount for each Modelwrap image mounted under volumes:
-      # (the manager advertises these in /availability; llm-chat loads from
-      # /models/qwen2.5-0.5b inside the guest)
-      - MODEL_VOLUMES: "qwen2.5-0.5b:/models-src/qwen2.5-0.5b"
+      # friendly name -> the model's auto-mount path. Tinfoil mounts each
+      # `models:` entry into every container at /tinfoil/mpk/mpk-<root_hash>
+      # (NO volumes: bind - the source path doesn't exist on the CVM host).
+      # The manager advertises these in /availability; llm-chat loads from
+      # /models/qwen2.5-0.5b inside the guest.
+      - MODEL_VOLUMES: "qwen2.5-0.5b:/tinfoil/mpk/mpk-e8e9414bf9f999b44ecd86524627b4a912f17a79d7f191280092af3513688da4"
     # SECRET doubles as the manager's control-plane token (VMMGR_TOKEN): tenants
     # hold outbound HTTP to loopback, so the control API on :8091 must reject
     # calls that don't carry it (the supervisor sends X-Vmmgr-Token). The tenant
@@ -227,12 +229,6 @@ containers:
       - SECRET
     volumes:
       - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # join the MPS daemon (SM%/VRAM caps)
-      # --- attached model volumes (Tinfoil Modelwrap) -----------------------
-      # The enclave's model images, mounted into the manager so deployments can
-      # attach them by name (mounted read-only into the guest at /models/<name>).
-      # Each maps a /tinfoil/mpk/mpk-<root_hash> image (from the `models:` block
-      # below) to a friendly name that MODEL_VOLUMES advertises.
-      - /tinfoil/mpk/mpk-e8e9414bf9f999b44ecd86524627b4a912f17a79d7f191280092af3513688da4:/models-src/qwen2.5-0.5b:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
       interval: 15s
@@ -244,7 +240,9 @@ containers:
 # Read-only model volumes; each becomes a dm-verity image whose root hash is
 # part of the enclave measurement (the attestation commits to the exact bytes).
 # Generate the `mpk` value in the Tinfoil Models tab from the pinned repo, then
-# paste it here AND into the wasm-manager volume mount above. Deployments
+# paste the full value here and the mpk-<root_hash> path into MODEL_VOLUMES
+# above (Tinfoil auto-mounts each model into every container at
+# /tinfoil/mpk/mpk-<root_hash>; do NOT add a volumes: bind for it). Deployments
 # attach these by name (via the console volume picker or their configCid JSON
 # `volumes` field); the wasm-manager mounts each into the guest at /models/<name>.
 models:
