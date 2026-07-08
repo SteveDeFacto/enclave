@@ -149,8 +149,12 @@ try {
                    rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
                    blockExplorers: { default: { name: "Basescan", url: "https://basescan.org" } } },
           amount: "25",                              // pre-fill; the amount screen starts here
-          asset: "USDC",
-          card: { preferredProvider: "moonpay" }     // matches the app's funding config
+          asset: "USDC"
+          // NO card.preferredProvider: the Privy dashboard's Onramps toggles
+          // decide the processors (Privy's funding supports Meld / MoonPay /
+          // Coinbase; the old Stripe/Link ride was the RETIRED legacy onramp -
+          // Privy discontinued it, it cannot come back). Enabling Coinbase
+          // Onramp in the dashboard changes the checkout with no code change.
         }
       }).then(
         (res) => {   // the funding flow RESOLVES on cancel too (status says which)
