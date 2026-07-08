@@ -5,7 +5,7 @@
    ============================================================ */
 import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc, fmtNum } from "../../js/core/util.js";
-import { CARD_GB, NODE_RAM_GB, NODE_VCPUS } from "../../js/core/pricing.js";
+import { CARD_GB, CARD_TFLOPS, NODE_RAM_GB, NODE_VCPUS } from "../../js/core/pricing.js";
 import { REGISTRY_ADDRESS } from "../../js/core/config.js";
 import { catExplorer } from "../../js/core/chain.js";
 
@@ -32,7 +32,8 @@ class FleetList extends EnclaveElement {
             + '<span class="fleet-name">' + esc(name) + '</span>'
             + '</span>'
             + (gpu ? '<span class="fleet-pool">GPU ' + meter(gPct) + ' ' + gPct + '% free · ≈'
-                   + Math.round(gFree * (a.cardVramGb || CARD_GB)) + ' GB VRAM</span>' : '')
+                   + Math.round(gFree * (a.cardVramGb || CARD_GB)) + ' GB VRAM / '
+                   + Math.round(gFree * (a.cardTflops || CARD_TFLOPS)) + ' TFLOPS</span>' : '')
             + '<span class="fleet-pool">CPU ' + meter(cPct) + ' ' + cPct + '% free · ≈'
             + fmtNum(cFree * (a.nodeRamGb || NODE_RAM_GB)) + ' GB RAM / ' + fmtNum(cFree * (a.nodeVcpus || NODE_VCPUS)) + ' vCPU</span>'
             + '</div>';
