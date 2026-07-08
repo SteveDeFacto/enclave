@@ -60,7 +60,7 @@ ENV ORT_LIB_LOCATION=/opt/onnxruntime-linux-x64-gpu-${ORT_VERSION}
 # break the Rust side. Rebuild flow: run llamacpp-toolchain.yml -> paste
 # ELL_URL/ELL_SHA256 here -> this commit triggers the enclave-wasmtime rebuild.
 ARG ELL_URL=https://github.com/SteveDeFacto/enclave/releases/download/enclave-llamacpp-bec4772f/enclave-llamacpp-bec4772f.tgz
-ARG ELL_SHA256=6144569a2a9a8c36fe42df884f72893b7f37ba1445420416370ddb4619e6efa0
+ARG ELL_SHA256=c0fde5a203327b6e2833cbc8f9498c141f516888ebe2e68e127c2c19a144f7f6
 RUN curl -fsSL -o /tmp/ell.tgz "${ELL_URL}" \
  && echo "${ELL_SHA256}  /tmp/ell.tgz" | sha256sum -c - \
  && tar -xzf /tmp/ell.tgz -C /opt && rm /tmp/ell.tgz
