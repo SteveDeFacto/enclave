@@ -78,6 +78,7 @@ class Deployments extends EnclaveElement {
     if (this._wired) return;
     this._wired = true;
     this._logPolls = {};                       // open Output panels' log timers, by id
+    this._strips = new Map();                  // live-deploy strips, keyed by run record
     this.querySelector(".enc-refresh").addEventListener("click", () => this.refresh({ spinner: true }));
     // status filter: persisted set of enabled buckets (default: all on)
     let saved = null; try { saved = JSON.parse(lsGet(FILTER_KEY) || "null"); } catch (e) {}
@@ -96,18 +97,15 @@ class Deployments extends EnclaveElement {
     document.addEventListener("enclave:auth", this._onAuth);
     this._onLog = (e) => this._onRunlog(e.detail || {});
     document.addEventListener("enclave:runlog", this._onLog);
-    const x = this.querySelector(".enc-live-x");
-    if (x) x.addEventListener("click", () => { const s = this.querySelector(".enc-live"); if (s) s.hidden = true; this._liveRun = null; });
-    // arriving mid-deploy (soft-nav away and back): rejoin the live run.
-    // After a HARD reload no run is live - but one may sit interrupted in the
-    // persisted log (the refresh killed its deploy flow mid-stream); hand it
-    // to deploy.js to re-read the ledger and keep narrating into the same run.
-    const live = runlog.current();
-    if (live) this._showLive(live);
-    else {
-      const cut = runlog.interrupted();
-      if (cut) import("../../js/pages/deploy.js").then(m => m.resumeDeployWatch(cut)).catch(() => {});
-    }
+    // deploys in flight (soft-nav away and back): rejoin every live run.
+    // After a HARD reload none are live - but some may sit interrupted in the
+    // persisted log (the refresh killed their deploy flows mid-stream); hand
+    // them ALL to deploy.js to re-read the ledger and keep narrating, each
+    // into its own run (a fleet resumes as a fleet).
+    runlog.live().forEach(r => this._strip(r));
+    const cuts = runlog.interrupted();
+    if (cuts.length) import("../../js/pages/deploy.js")
+      .then(m => cuts.forEach(r => m.resumeDeployWatch(r))).catch(() => {});
     this.refresh();
   }
   disconnectedCallback() {
@@ -119,33 +117,45 @@ class Deployments extends EnclaveElement {
     this._wired = false; this._onAuth = null; this._onLog = null;
   }
 
-  /* ---- the live-deploy strip: a run streaming with no row to live in ---- */
-  _showLive(run) {
-    this._liveRun = run;
-    const s = this.querySelector(".enc-live"), out = this.querySelector(".enc-live-out"), lbl = this.querySelector(".enc-live-lbl");
-    if (!s) return;
-    s.hidden = false; if (out) out.innerHTML = "";
-    if (lbl) lbl.textContent = run.id || run.label || "";
-    if (out) run.lines.forEach(l => paintLine(out, l[0], l[1]));   // rejoined/resumed runs replay their history
+  /* ---- live-deploy strips: one per run streaming with no row to live in ---- */
+  _strip(run, create) {
+    let s = this._strips.get(run);
+    if (s || create === false) return s || null;
+    const wrap = this.querySelector(".enc-lives"); if (!wrap) return null;
+    s = document.createElement("div");
+    s.className = "enc-live";
+    s.innerHTML = '<div class="enc-live-bar"><span class="elb-k">deploying</span><span class="enc-live-lbl"></span><button class="enc-live-x" type="button" title="dismiss">✕</button></div>'
+      + '<div class="term enc-live-out"></div>';
+    s.querySelector(".enc-live-lbl").textContent = run.id || run.label || "";
+    s.querySelector(".enc-live-x").addEventListener("click", () => { this._strips.delete(run); s.remove(); });
+    const out = s.querySelector(".enc-live-out");
+    run.lines.forEach(l => paintLine(out, l[0], l[1]));   // rejoined/resumed runs replay their history
+    wrap.appendChild(s);
+    this._strips.set(run, s);
+    return s;
+  }
+  /* a strip yields to its row the moment one exists (the row's Output panel
+     carries the history from there); an UNCLAIMED deployment has no row (rows
+     come from the enclave API), so its strip stays until claimed or dismissed */
+  _retireStrip(run) {
+    const s = this._strips.get(run);
+    if (s && run.done && run.id && this.querySelector('.enc-outbtn[data-id="' + run.id + '"]')) {
+      this._strips.delete(run); s.remove();
+    }
   }
   _onRunlog(d) {
-    const s = this.querySelector(".enc-live");
-    if (d.type === "start") this._showLive(d.run);
+    if (d.type === "start") this._strip(d.run);
     else if (d.type === "id") {
-      const lbl = this.querySelector(".enc-live-lbl"); if (lbl && this._liveRun === d.run) lbl.textContent = d.run.id;
+      const s = this._strip(d.run, false);
+      const lbl = s && s.querySelector(".enc-live-lbl"); if (lbl) lbl.textContent = d.run.id;
     }
     else if (d.type === "line") {
-      if (this._liveRun === d.run) paintLine(this.querySelector(".enc-live-out"), d.cls, d.txt);
+      const s = this._strip(d.run, false);               // a dismissed strip stays dismissed
+      if (s) paintLine(s.querySelector(".enc-live-out"), d.cls, d.txt);
       // a row's open Output panel for this deployment follows the narrative too
       if (d.run.id) { const nar = this._openNar(d.run.id); if (nar) paintLine(nar.box, d.cls, d.txt, nar.scroller); }
     }
-    else if (d.type === "end") {
-      // the row (with its Output panel) carries the history from here - but
-      // only when a row EXISTS: an unclaimed deployment has none (rows come
-      // from the enclave API), so its strip is all the user can see of it.
-      // _renderRows retires the strip the moment a matching row renders.
-      if (d.run.id && s && this.querySelector('.enc-outbtn[data-id="' + d.run.id + '"]')) { s.hidden = true; this._liveRun = null; }
-    }
+    else if (d.type === "end") this._retireStrip(d.run);
   }
   _openNar(id) {
     const row = this.querySelector('.enc-out[data-id="' + id + '"]:not([hidden])');
@@ -239,12 +249,8 @@ class Deployments extends EnclaveElement {
     $$(".enc-fundbtn", body).forEach(b => b.addEventListener("click", () => this._fund(b.dataset.id, b)));
     $$(".enc-verify", body).forEach(b => b.addEventListener("click", () => this._verify(b.dataset.id, b)));
     $$(".enc-kill", body).forEach(b => b.addEventListener("click", () => this._kill(b.dataset.id, b)));
-    // a finished run's strip yields to its row the moment one renders
-    if (this._liveRun && this._liveRun.done && this._liveRun.id
-        && body.querySelector('.enc-outbtn[data-id="' + this._liveRun.id + '"]')) {
-      const s = this.querySelector(".enc-live"); if (s) s.hidden = true;
-      this._liveRun = null;
-    }
+    // finished runs' strips yield to their rows the moment those render
+    [...this._strips.keys()].forEach(r => this._retireStrip(r));
     // a just-deployed row opens its Output panel so the narrative continues in place
     if (highlight) {
       const b = body.querySelector('.enc-outbtn[data-id="' + highlight + '"]');

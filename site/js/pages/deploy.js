@@ -2,8 +2,9 @@
    Deploy page — the console form (two dials, request preview)
    and the on-chain create+fund flow. Validation and dry runs
    render inline; a REAL deploy soft-navigates to the dashboard
-   and streams its narrative into the run log (js/core/runlog —
-   <c-deployments>' live strip and row Output panels follow it).
+   and streams its narrative into its own run (js/core/runlog —
+   <c-deployments>' live strips and row Output panels follow it;
+   deploys are concurrent, so fleets stream side by side).
    <c-fleet-list> / <c-volume-picker> show live capacity.
    ============================================================ */
 import "../../components/header/header.js";
@@ -265,8 +266,11 @@ function portsSpec(raw){
 
 /* The on-chain deploy flow, shared by the console form above and the store's
    quick-deploy modal (apps.js imports this): soft-navigate to the dashboard,
-   then create -> fund -> claim-hint -> watch, narrating into the run log the
-   whole way. spec: { reference, gpuMilli, cpuMilli, ports (csv), isPublic,
+   then create -> fund -> claim-hint -> watch, narrating into ITS OWN run
+   (concurrent-safe: every call gets its own runlog writer, so a fleet of
+   deploys stream side by side). Resolves once funding lands - the claim/
+   status watch continues detached, freeing the caller for the next deploy.
+   spec: { reference, gpuMilli, cpuMilli, ports (csv), isPublic,
    config (JSON object - pinned to IPFS here, volumes merge in) OR
    configCid (a pre-pinned CID, programmatic callers), volumes, fundUsd,
    asset } */
@@ -276,24 +280,25 @@ export async function deployOnChain(spec){
   let configCid = spec.configCid || "";
   const { portsCsv, appPort } = portsSpec(spec.ports);
   const asset = spec.asset || "USDC";
+  let w = null, detached = false;
   try {
     // the run log lives on the dashboard: get there BEFORE the first wallet
     // step so the whole narrative streams where the user is looking (the
     // document never unloads — this async flow survives the soft navigation)
     await navigate("dashboard.html");
-    runlog.startRun();
+    w = runlog.startRun();
     if (!Enclave.token){
-      runlog.line("info", "[*] connecting wallet + signing in (SIWE)…");
+      w.line("info", "[*] connecting wallet + signing in (SIWE)…");
       await authenticate();
-      runlog.line("ok", "[✓] signed in as " + short(Enclave.address));
+      w.line("ok", "[✓] signed in as " + short(Enclave.address));
     }
     // a restored session has a token but NO provider - reconnect before any tx
     if (!Enclave.provider){
-      runlog.line("info", "[*] reconnecting wallet…");
+      w.line("info", "[*] reconnecting wallet…");
       await connectWallet();
-      runlog.line("ok", "[✓] wallet " + short(Enclave.address));
+      w.line("ok", "[✓] wallet " + short(Enclave.address));
     }
-    runlog.line("dimln", "    if nothing happens, check your wallet - a popup may be waiting (or queued behind an old one; open the wallet and clear pending requests)");
+    w.line("dimln", "    if nothing happens, check your wallet - a popup may be waiting (or queued behind an old one; open the wallet and clear pending requests)");
     await ensureBaseChain();
 
     // rate estimate straight from the contract (same ceil math as create) -
@@ -302,7 +307,7 @@ export async function deployOnChain(spec){
     try { rate6 = await Promise.race([depRate6(spec.gpuMilli, spec.cpuMilli), wait(6000).then(() => 0n)]); } catch(e){}
     if (rate6 > 0n){
       const rate = Number(rate6) / 1e6;
-      runlog.line("info", "    " + fund + " USDC ≈ " + fmtDur(fund / rate) + " of runtime at $" + (rate * 3600).toFixed(2) + "/hr");
+      w.line("info", "    " + fund + " USDC ≈ " + fmtDur(fund / rate) + " of runtime at $" + (rate * 3600).toFixed(2) + "/hr");
     }
 
     // 0) app config: the typed JSON + picked volumes merge into ONE object,
@@ -313,8 +318,8 @@ export async function deployOnChain(spec){
     // opaque - it can't be merged client-side).
     const cfgObj = mergedCfg(spec.config, volNames);
     if (Object.keys(cfgObj).length){
-      runlog.line("p", "$ pin app config  (JSON -> IPFS -> configCid)");
-      if (configCid) runlog.line("warn", "    (a pre-pinned config CID was also passed - the config object wins; pin the merge yourself to combine)");
+      w.line("p", "$ pin app config  (JSON -> IPFS -> configCid)");
+      if (configCid) w.line("warn", "    (a pre-pinned config CID was also passed - the config object wins; pin the merge yourself to combine)");
       const jsonUrl = (IPFS_UPLOAD_URL || "").replace(/\/add-wasm$/, "/add-json");
       if (!jsonUrl) throw new EnclaveError("app config needs the upload gateway; not configured here. Pin the JSON yourself (ipfs add config.json) and deploy with its CID via the API or CLI (--config-cid).", 0);
       const pr = await fetch(jsonUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(cfgObj) });
@@ -322,26 +327,26 @@ export async function deployOnChain(spec){
       if (!pr.ok || !pj.cid) throw new EnclaveError("config pin failed: " + (pj.error || ("HTTP " + pr.status)), 0);
       configCid = pj.cid;
       const vols = Array.isArray(cfgObj.volumes) ? cfgObj.volumes : [];
-      runlog.line("ok", "[✓] config pinned " + configCid + (vols.length ? "  (mounts: " + vols.join(", ") + " -> /models/…)" : ""));
+      w.line("ok", "[✓] config pinned " + configCid + (vols.length ? "  (mounts: " + vols.join(", ") + " -> /models/…)" : ""));
     }
 
     // 1) create: one tx from YOUR wallet - msg.sender owns the on-chain record
-    runlog.line("p", "$ EnclaveDeployments.create(…)  (wallet · one tx · you own the record)");
-    runlog.line("info", "[*] confirm the create transaction in your wallet…");
+    w.line("p", "$ EnclaveDeployments.create(…)  (wallet · one tx · you own the record)");
+    w.line("info", "[*] confirm the create transaction in your wallet…");
     const cdata = encCall(DEP_SEL.create, [
       { t: "str", v: spec.reference }, { t: "uint", v: spec.gpuMilli }, { t: "uint", v: spec.cpuMilli },
       { t: "uint", v: appPort }, { t: "str", v: portsCsv }, { t: "bool", v: !!spec.isPublic },
       { t: "str", v: "" }, { t: "str", v: configCid },
     ]);
     const chash = await sendTx(DEPLOYMENTS_ADDRESS, cdata);
-    runlog.line("dimln", "  ↳ sent " + chash + " · waiting for confirmation…");
+    w.line("dimln", "  ↳ sent " + chash + " · waiting for confirmation…");
     const rcpt = await waitReceipt(chash);
     const clog = (rcpt.logs || []).find(l => (l.topics || [])[0] === DEP_CREATED_TOPIC
       && (l.address || "").toLowerCase() === DEPLOYMENTS_ADDRESS.toLowerCase());
     if (!clog) throw new EnclaveError("create() confirmed but no Created event found in the receipt", 0);
     const id = clog.topics[1];
-    runlog.setId(id);   // name the run explicitly: bytes32 ids read exactly like the tx hashes already in the log
-    runlog.line("ok", "[✓] created " + id);
+    w.setId(id);   // name the run explicitly: bytes32 ids read exactly like the tx hashes already in the log
+    w.line("ok", "[✓] created " + id);
 
     // 2) fund: the credit lands in the deployment's on-chain balance
     let pricing = null;
@@ -351,21 +356,27 @@ export async function deployOnChain(spec){
         contract: DEPLOYMENTS_ADDRESS, deploymentRef: id,
         usdcDomain: pricing && pricing.usdcDomain, usdc: (pricing && pricing.usdc) || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         ethUsd: pricing && pricing.ethUsd,
-      }, fund, asset);
+      }, fund, asset, w.line);
     } catch(e){
       const rejected = (e && e.code === 4001) || /reject|denied|declin|cancell/i.test(e && e.message || "");
-      runlog.line("warn", rejected ? "[x] funding rejected in wallet." : "[x] funding failed: " + (e.message || e));
-      runlog.line("dimln", "    " + id + " exists on-chain but is unfunded (inert, costs nothing). Fund it any time - it starts once it has balance.");
+      w.line("warn", rejected ? "[x] funding rejected in wallet." : "[x] funding failed: " + (e.message || e));
+      w.line("dimln", "    " + id + " exists on-chain but is unfunded (inert, costs nothing). Fund it any time - it starts once it has balance.");
       return;
     }
 
-    // 3+4) nudge the fleet, then watch the claim and the runner's status
-    await watchClaimAndRun(id);
+    // 3+4) nudge the fleet, then watch the claim and the runner's status -
+    // DETACHED: deployOnChain resolves here (the wallet work is done), so the
+    // caller frees for the NEXT deploy of a fleet while this run's writer
+    // keeps streaming into its own strip / row panel
+    watchClaimAndRun(id, null, w)
+      .catch(e => w.line("warn", "[x] " + (e.message || String(e))))
+      .finally(() => { w.end(); refreshWallet(); });
+    detached = true;
   } catch(e){
-    runlog.line("warn", "[x] " + (e.message || String(e)));
-    if (e.status === 0) runlog.line("dimln", "    set a reachable API endpoint on the deploy console, then retry.");
+    if (w) w.line("warn", "[x] " + (e.message || String(e)));
+    if (w && e.status === 0) w.line("dimln", "    set a reachable API endpoint on the deploy console, then retry.");
   } finally {
-    runlog.endRun();
+    if (!detached && w) w.end();
     refreshWallet();
   }
 }
@@ -374,11 +385,9 @@ export async function deployOnChain(spec){
    resumed watch (resumeDeployWatch): nudge the fleet, watch the ledger for a
    lease, follow the runner to "running", and land the row in the My Apps
    panel. `dPre` (a fresh depGet) skips the claim wait when the ledger already
-   shows a live lease; `w` is the narrative sink - the runlog itself, or a
-   resumed run's bound writer (whose dead() aborts us if a new deploy takes
-   the log over). */
+   shows a live lease; `w` is the run's bound writer (its dead() aborts us if
+   the run is ended from outside). */
 async function watchClaimAndRun(id, dPre, w){
-  w = w || runlog;
   const leased = (d) => d && d.runner && !/^0x0+$/.test(d.runner) && d.leaseUntil * 1000 > Date.now();
   let claimed = leased(dPre) ? dPre : null;
   if (!claimed){
@@ -431,7 +440,6 @@ async function watchClaimAndRun(id, dPre, w){
   const dp = depsPanel(); if (dp) dp.refresh({ highlight: (final && final.id) || id });
 }
 async function pollDeployment(id, w){
-  w = w || runlog;
   const done = { running: 1, failed: 1, stopped: 1, error: 1 };
   let last = null, d = null;
   for (let i = 0; i < 180; i++){
@@ -465,7 +473,7 @@ async function pollDeployment(id, w){
    when it mounts and finds an interrupted run. */
 export async function resumeDeployWatch(run){
   const w = runlog.resume(run);
-  if (!w) return;                                       // a live deploy owns the log
+  if (!w) return;                                       // something is already writing this run
   try {
     w.line("dimln", "// resumed after a reload - re-reading the ledger (nothing is re-sent or re-signed)");
     let id = /^0x[0-9a-f]{64}$/i.test(run.id || "") ? run.id.toLowerCase() : null;

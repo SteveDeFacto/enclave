@@ -12,10 +12,7 @@
     <label><input type="checkbox" data-bucket="ended" checked /> ended <b></b></label>
     <label><input type="checkbox" data-bucket="failed" checked /> failed <b></b></label>
   </div>
-  <!-- a deploy streaming (or resumed after a reload) whose row doesn't exist yet -->
-  <div class="enc-live" hidden>
-    <div class="enc-live-bar"><span class="elb-k">deploying</span><span class="enc-live-lbl"></span><button class="enc-live-x" type="button" title="dismiss">✕</button></div>
-    <div class="term enc-live-out"></div>
-  </div>
+  <!-- one strip per deploy that's streaming (or resumed after a reload) and has no row yet -->
+  <div class="enc-lives"></div>
   <div class="enc-body"></div>
 </div>

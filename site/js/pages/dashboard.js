@@ -1,7 +1,7 @@
 /* ============================================================
    Dashboard page — the signed-in view: <c-deployments> (the My
-   Apps panel) with a live-deploy strip and a per-row Output
-   panel (deploy narrative + app logs). The component is
+   Apps panel) with per-run live-deploy strips and a per-row
+   Output panel (deploy narrative + app logs). The component is
    self-wiring; the page module only makes sure it's registered
    before the markup upgrades.
    ============================================================ */
