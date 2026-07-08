@@ -9,8 +9,13 @@
 /dashboard  /dashboard.html  200
 /buy        /buy.html        200
 /admin      /admin.html      200
-# /deploy and /publish are VIEWS of the Apps page (router aliases): a hard
-# load serves the apps document and apps.js picks the view from the pathname.
-# (deploy.html stays only as the legacy /deploy.html redirect stub.)
-/deploy     /apps.html       200
-/publish    /apps.html       200
+# /apps/deploy and /apps/publish are VIEWS of the Apps page (router aliases):
+# a hard load serves the nested apps document (a build-time copy carrying
+# <base href="../">) and apps.js picks the view from the pathname. The flat
+# /deploy and /publish forms stay as rewrites to the ROOT-DEPTH document
+# (no base needed there); the router canonicalizes the bar to the nested
+# form. deploy.html stays only as the legacy /deploy.html redirect stub.
+/apps/deploy   /apps/deploy.html   200
+/apps/publish  /apps/publish.html  200
+/deploy        /apps.html          200
+/publish       /apps.html          200

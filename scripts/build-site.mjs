@@ -182,6 +182,16 @@ for (const d of ["assets", "privy", ".well-known"])
   fs.cpSync(path.join(SITE, d), path.join(DIST, d), { recursive: true });
 // pretty URLs: the gateway's rewrite rules ride the pin itself
 fs.copyFileSync(path.join(SITE, "_redirects"), path.join(DIST, "_redirects"));
+/* nested console/form URLs (/apps/deploy, /apps/publish): the SAME apps
+   document one directory deep, with <base href="../"> injected so its
+   relative asset/link URLs still resolve from the site root. The base is
+   itself RELATIVE, so path-gateway subpath mounts keep working; the router
+   reads document.baseURI, so it always knows the real root. */
+fs.mkdirSync(path.join(DIST, "apps"), { recursive: true });
+const appsNested = fs.readFileSync(path.join(DIST, "apps.html"), "utf8")
+  .replace("<head>", '<head>\n<base href="../" />');
+for (const v of ["deploy", "publish"])
+  fs.writeFileSync(path.join(DIST, "apps", v + ".html"), appsNested);
 
 /* size report */
 const out = Object.entries(result.metafile.outputs)

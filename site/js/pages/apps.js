@@ -1,5 +1,5 @@
 /* ============================================================
-   Apps page — the on-chain catalog store. Each listing renders
+   Apps page - the on-chain catalog store. Each listing renders
    as a <c-app-card>; the page owns the toolbar (filter/search),
    the publish form, and the wallet transactions the cards
    request via `card-action` events.
@@ -69,7 +69,7 @@ function useInDeploy(app, v){
 }
 
 /* ---- quick deploy: the store card's one-decision modal. Wallet balance,
-   an amount, the runtime it buys at the app's MINIMUM shares — then the
+   an amount, the runtime it buys at the app's MINIMUM shares - then the
    shared deployOnChain flow (public endpoint, catalog ports, USDC).
    "Advanced settings" is the full console (useInDeploy). ---- */
 let qdEsc = null;
@@ -81,7 +81,7 @@ function quickDeploy(app, v){
   closeQuick();
   const mins = minPctsOf(v);
   // constants first paint; the CONTRACT's live prices (incl. its ceil-to-a-
-  // micro-USDC floor) replace them the moment the cached read lands — the
+  // micro-USDC floor) replace them the moment the cached read lands - the
   // rate shown here must match what the deployment actually burns
   let rate = shareRates(mins.gpuPct, mins.cpuPct).rate;
   const perHr = (rate * 3600).toFixed(2);
@@ -90,7 +90,7 @@ function quickDeploy(app, v){
   host.innerHTML =
     '<div class="qd-card" role="dialog" aria-modal="true" aria-label="Deploy ' + esc(app.name || app.slug) + '">' +
       '<div class="qd-h">Deploy <b>' + esc(app.name || app.slug) + '</b> <span class="qd-ver">' + esc(v.version) + '</span></div>' +
-      '<p class="qd-sub">Runs in its own confidential enclave at <b class="qd-rate">$' + perHr + '/hr</b>. Fund it from your wallet — it runs until the time you bought is used up, and you can top up or stop it whenever you like.</p>' +
+      '<p class="qd-sub">Runs in its own confidential enclave at <b class="qd-rate">$' + perHr + '/hr</b>. Fund it from your wallet - it runs until the time you bought is used up, and you can top up or stop it whenever you like.</p>' +
       '<div class="qd-bal"><span>Your wallet</span><b class="qd-balv">…</b><button class="qd-buy" type="button" hidden>Buy USDC →</button><button class="qd-connect btn btn-sm" type="button" hidden>Connect wallet</button></div>' +
       '<label class="qd-lbl" for="qdAmt">Amount to fund (USDC)</label>' +
       '<input class="qd-amt" id="qdAmt" type="number" value="5" min="0.01" step="any" inputmode="decimal" />' +
@@ -421,8 +421,8 @@ function prefillPublish(app){
 /* ============================================================
    Hash-routed sub-pages that replace the store content
    (deliberately not header tabs):
-     apps.html#publish — the publish form
-     apps.html#deploy  — the deploy console (usually arriving as
+     apps.html#publish - the publish form
+     apps.html#deploy - the deploy console (usually arriving as
                          ?app=slug:ver from a card's Use in deploy)
    Plain hash navigation gives us history, back/forward, and
    shareable links for free; the soft-nav router ignores '#'
@@ -431,14 +431,15 @@ function prefillPublish(app){
 function applyView(){
   const store = $("#storeView"), pub = $("#publishView"), dep = document.getElementById("deploy");
   if (!store || !pub || !dep) return;
-  // the PATHNAME names the view now (/deploy and /publish are router aliases
-  // of this page); the legacy #deploy/#publish hashes stay honored and
-  // canonicalize in place to the pretty pathname
+  // the PATHNAME names the view now (/apps/deploy and /apps/publish are
+  // router aliases of this page); the legacy #deploy/#publish hashes stay
+  // honored and canonicalize in place to the pretty nested pathname
+  // (document.baseURI = the site root - the alias documents carry <base>)
   const sub = location.pathname.split("/").pop();
   const view = sub === "deploy" || location.hash === "#deploy" ? "deploy"
              : sub === "publish" || location.hash === "#publish" ? "publish" : "store";
   if (sub !== view && (location.hash === "#deploy" || location.hash === "#publish"))
-    history.replaceState(history.state, "", location.pathname.replace(/[^/]*$/, "") + view + location.search);
+    history.replaceState(history.state, "", new URL(".", document.baseURI).pathname + "apps/" + view + location.search);
   store.closest("section").hidden = view === "deploy";
   dep.hidden = view !== "deploy";
   store.hidden = view !== "store";

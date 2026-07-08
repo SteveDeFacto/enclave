@@ -1,8 +1,8 @@
 /* ============================================================
-   Deploy page — the console form (two dials, request preview)
+   Deploy page - the console form (two dials, request preview)
    and the on-chain create+fund flow. Validation and dry runs
    render inline; a REAL deploy soft-navigates to the dashboard
-   and streams its narrative into its own run (js/core/runlog —
+   and streams its narrative into its own run (js/core/runlog - 
    <c-deployments>' live strips and row Output panels follow it;
    deploys are concurrent, so fleets stream side by side).
    <c-fleet-list> / <c-volume-picker> show live capacity.
@@ -77,7 +77,7 @@ function mergedCfg(cfgObj, volNames){
 function deployBody(){
   // `image.reference` is the Wasm app to run: a catalog slug:version resolved to
   // its ipfs://<cid> by resolveAppRef() (the enclave fetches + verifies those
-  // bytes against the CID). Raw CID input is refused — deploys need the listing.
+  // bytes against the CID). Raw CID input is refused - deploys need the listing.
   const body = { image: { reference: resolveAppRef($("#cfgImage").value).reference } };
   body.public = dep.public;   // public endpoint (anyone) vs private (owner token only)
   // firewall: ports the app may bind (from the catalog via Use-in-Deploy; editable)
@@ -160,7 +160,7 @@ function renderDeploy(){
   }
   else {
     const g = shareRates(gpuPct, cpuPct);
-    // money comes from the CONTRACT's prices + ceil math (cached read) —
+    // money comes from the CONTRACT's prices + ceil math (cached read) - 
     // client constants drift; the hardware figures below stay client-side
     rate = prices6 ? Number(rate6Of(prices6, g.gpuPct * 10, g.cpuPct * 10)) / 1e6 : g.rate;
     readout = (g.gpuPct > 0
@@ -177,7 +177,7 @@ function switchPane(name){
   $$(".console-body .pane").forEach(p => p.classList.toggle("on", p.dataset.pane === name));
 }
 /* pre-flight feedback (validation, dry runs) renders inline under the run
-   row — the full output console lives on the dashboard, where a real deploy
+   row - the full output console lives on the dashboard, where a real deploy
    navigates before its first wallet step. lines: [cls, text][] */
 function note(lines){
   const el = $("#deployNote"); if (!el) return;
@@ -197,7 +197,7 @@ async function runDeploy(){
   }
   const rref = resolveAppRef(raw);
   if (rref.error) return note([["warn", "[!] " + rref.error]]);
-  if (rref.pending) return note([["warn", "[!] couldn’t reach the catalog to resolve " + raw + " — deploys need the on-chain listing; try again in a moment."]]);
+  if (rref.pending) return note([["warn", "[!] couldn’t reach the catalog to resolve " + raw + " - deploys need the on-chain listing; try again in a moment."]]);
   const fwErr = validPortsCsv($("#cfgPorts") ? $("#cfgPorts").value : "");
   if (fwErr) return note([["warn", "[!] open ports: " + fwErr]]);
   // pre-flight the catalog gate BEFORE any wallet action: enclaves refuse
@@ -284,7 +284,7 @@ export async function deployOnChain(spec){
   try {
     // the run log lives on the dashboard: get there BEFORE the first wallet
     // step so the whole narrative streams where the user is looking (the
-    // document never unloads — this async flow survives the soft navigation)
+    // document never unloads - this async flow survives the soft navigation)
     await navigate("dashboard");
     w = runlog.startRun();
     // NO SIWE sign-in here: the create tx and the funding signature ARE the
@@ -430,7 +430,7 @@ async function watchClaimAndRun(id, dPre, w){
     // tokenless flows read the LEDGER (create/fund/claim all show), but the
     // runner's live status stream is an owner-session read - the app itself
     // is already booting and reachable at the origin above
-    w.line("dimln", "    claimed and funded — the app boots now. Open the app origin above, or unlock live status/logs on the row below (one gas-free signature).");
+    w.line("dimln", "    claimed and funded - the app boots now. Open the app origin above, or unlock live status/logs on the row below (one gas-free signature).");
     const dp1 = depsPanel(); if (dp1) dp1.refresh(); return;
   }
   const final = await pollDeployment(id, w);
@@ -594,7 +594,7 @@ async function refreshFleet(){
 function startAvailPoll(){
   refreshAvailability(); refreshFleet();
   if (availPoll) return;
-  // #deploy always exists on the apps page now — only poll while the deploy
+  // #deploy always exists on the apps page now - only poll while the deploy
   // view is actually visible (a reopened view is at most one tick stale)
   availPoll = setInterval(() => { const d = $("#deploy"); if (d && !d.hidden) { refreshAvailability(); refreshFleet(); } }, 20000);
 }
