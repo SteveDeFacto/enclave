@@ -30,7 +30,7 @@ table.symptoms td.pname{white-space:normal;width:30%;}
 /* ---------- develop sub-tabs ---------- */
 [id]{scroll-margin-top:78px;}                     /* anchor jumps clear the sticky header */
 #docs,#cli,#api{scroll-margin-top:132px;}         /* pane jumps also keep the sub-tab bar in view */
-.dev-tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin-top:12px;}
+.dev-tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin-top:26px;}
 .dev-tabs a{font-family:var(--font-mono);font-size:.92rem;color:var(--text-muted);padding:10px 20px;border:1px solid transparent;border-bottom:none;border-radius:9px 9px 0 0;position:relative;top:1px;transition:.15s;}
 .dev-tabs a:hover{color:var(--text);background:var(--surface);}
 .dev-tabs a.on{color:var(--jade);border-color:var(--line);background:var(--bg-1);}
