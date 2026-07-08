@@ -15,11 +15,7 @@
 /* header row: section-head left, the fleet's live capacity upper-right
    (same data the deploy console shows; stacks on narrow viewports) */
 .dash-head{display:grid;grid-template-columns:1fr minmax(300px,400px);gap:28px;align-items:start;}
-.dash-fleet{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-top:6px;}
+.dash-fleet{margin-top:6px;}
 .dash-fleet-h{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:10px;}
 .dash-fleet-h .dim{text-transform:none;letter-spacing:0;color:var(--text-dim);}
-.dash-fleet .fleet-list{border:0;border-radius:0;background:transparent;}
-.dash-fleet .fleet-row{padding:8px 2px;}
-.dash-fleet .fleet-empty{padding:14px 0 8px;}
-.dash-fleet .fleet-foot{margin-top:6px;}
 @media (max-width:1000px){ .dash-head{grid-template-columns:1fr;} }
