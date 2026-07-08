@@ -93,6 +93,13 @@ img{max-width:100%;display:block;}
 section{padding:84px 0;position:relative;}
 .divider{height:1px;background:linear-gradient(90deg,var(--line),transparent);}
 
+/* centered loading state: a ring spinner + quiet caption, used by the store
+   grid and the My Apps panel while their first read is in flight */
+.loading{display:flex;align-items:center;justify-content:center;gap:12px;padding:44px 0;color:var(--text-dim);font-family:var(--font-mono);font-size:.8rem;}
+.loading::before{content:"";width:18px;height:18px;flex:none;border-radius:50%;border:2px solid var(--line);border-top-color:var(--jade);animation:encspin .8s linear infinite;}
+@keyframes encspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.loading::before{animation:none;border-top-color:var(--line);}}
+
 /* ---------- code block ---------- */
 .code{font-family:var(--font-mono);font-size:.82rem;line-height:1.65;background:#080C12;border:1px solid var(--line-soft);border-radius:var(--radius-sm);overflow:auto;}
 .code .codebar{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid var(--line-soft);background:var(--bg-1);position:sticky;top:0;}

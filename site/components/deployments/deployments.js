@@ -196,7 +196,7 @@ class Deployments extends EnclaveElement {
     // NO sign-in wall: a connected wallet is enough - the list is public
     // ledger data, scoped by address (api.js adds ?owner= when tokenless);
     // a session only enriches rows with the enclaves' live view
-    if (!body.querySelector(".enc-row") || opts.spinner) body.innerHTML = '<div class="enc-empty">loading your enclaves…</div>';
+    if (!body.querySelector(".enc-row") || opts.spinner) body.innerHTML = '<div class="loading" role="status">loading your enclaves…</div>';
     try {
       const res = await Enclave.listDeployments();
       const list = Array.isArray(res) ? res : ((res && (res.deployments || res.items || res.data)) || []);
