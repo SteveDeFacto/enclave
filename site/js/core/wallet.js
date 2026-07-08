@@ -443,7 +443,7 @@ export async function restoreSession(){
   if (early && s.address && !early.dataset.painted){
     const who = s.email ? (s.email.length > 24 ? s.email.slice(0, 21) + "…" : s.email) : short(s.address);
     early.classList.add("connected");
-    early.innerHTML = '<span class="wdot"></span>' + esc(who) + (s.token ? "" : ' <span class="lock">unlocked</span>');
+    early.innerHTML = '<span class="wdot"></span>' + esc(who);
   }
   try {
   let chosen = null;
@@ -479,7 +479,7 @@ export function refreshWallet(){
     if (Enclave.address){
       const who = Enclave.walletEmail ? (Enclave.walletEmail.length > 24 ? Enclave.walletEmail.slice(0, 21) + "…" : Enclave.walletEmail) : short(Enclave.address);
       btn.classList.add("connected");
-      btn.innerHTML = '<span class="wdot"></span>' + esc(who) + (Enclave.authed() ? "" : ' <span class="lock">unlocked</span>');
+      btn.innerHTML = '<span class="wdot"></span>' + esc(who);
     } else {
       btn.classList.remove("connected");
       btn.innerHTML = 'Sign in <span class="arr">→</span>';

@@ -7,7 +7,6 @@ c-wallet-button{display:contents;}
 
 #walletBtn.connected{font-family:var(--font-mono);letter-spacing:.01em;display:inline-flex;align-items:center;gap:.5em;}
 #walletBtn .wdot{width:7px;height:7px;border-radius:50%;background:var(--jade);box-shadow:0 0 8px var(--jade);}
-#walletBtn .lock{font-size:.62rem;color:var(--amber);border:1px solid var(--amber-dim);border-radius:4px;padding:.05em .3em;}
 .wallet-mount{position:relative;display:inline-block;}
 .nav-inner .wallet-mount{margin-left:auto;}  /* sit at the right of the header */
 /* under 880px the nav links are in-flow (see header.css): an auto margin

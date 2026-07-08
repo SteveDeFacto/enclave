@@ -99,15 +99,11 @@ for (const n of fs.readdirSync(path.join(SITE, "components"))) {
 const WALLET_PAINT = `<script>(function(){try{
 var s=JSON.parse(localStorage.getItem("enclave_session")||"null");if(!s||!s.address)return;
 var dt=document.querySelector('.nav-links a[data-view="dashboard"]');if(dt)dt.hidden=false;
-var t=s.token||null;
-if(t){try{var b64=t.split(".")[1].replace(/-/g,"+").replace(/_/g,"/");b64+="=".repeat((4-b64.length%4)%4);
-var p=JSON.parse(atob(b64));if(typeof p.exp==="number"&&p.exp*1000<=Date.now())t=null;}catch(e){t=null;}}
 var who=s.email?(s.email.length>24?s.email.slice(0,21)+"…":s.email):(s.address.slice(0,6)+"…"+s.address.slice(-4));
 var b=document.getElementById("walletBtn");if(!b)return;
 b.classList.add("connected");b.textContent="";
 var d=document.createElement("span");d.className="wdot";b.appendChild(d);
 b.appendChild(document.createTextNode(who));
-if(!t){b.appendChild(document.createTextNode(" "));var l=document.createElement("span");l.className="lock";l.textContent="unlocked";b.appendChild(l);}
 b.dataset.painted="1";
 }catch(e){}})();</script>`;
 
