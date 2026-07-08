@@ -1,9 +1,11 @@
 /* ============================================================
-   <c-deployments> — the "My Apps" panel: the signed-in
+   <c-deployments> - the "My Apps" panel: the signed-in
    wallet's deployments, each with status, spend, its app origin,
    its dedicated IPv6 (when the deployment declares tcp/udp
    ports), in-browser attestation verification, and terminate.
-   Polls while authed; repaints on `enclave:auth` sign-in/out edges.
+   Polls while a wallet is connected; follows `enclave:wallet`
+   address edges (async session restore, account switches) and
+   `enclave:auth` sign-in edges.
    ============================================================ */
 import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { $$, esc, hlJson, fmtDur, statusCls, copyText, showToast, lsGet, lsSet } from "../../js/core/util.js";
@@ -69,7 +71,7 @@ function depIp6Row(d){
   const tcp = (net.tcp && net.tcp.ports) || [];
   const udp = (net.udp && net.udp.ports) || [];
   const ports = (tcp.length ? " · tcp " + tcp.join(",") : "") + (udp.length ? " · udp " + udp.join(",") : "");
-  return '<button class="enc-ep" data-ep="' + esc(net.address) + '" title="dedicated IPv6 — this deployment\'s own address: tcp/udp ports are served on it at their real port numbers, and its outbound traffic egresses from it">'
+  return '<button class="enc-ep" data-ep="' + esc(net.address) + '" title="dedicated IPv6 - this deployment\'s own address: tcp/udp ports are served on it at their real port numbers, and its outbound traffic egresses from it">'
     + 'ip6 [' + esc(net.address) + ']' + esc(ports) + ' ⧉</button>';
 }
 
@@ -103,6 +105,14 @@ class Deployments extends EnclaveElement {
       this.refresh({ spinner: !!(e.detail && e.detail.spinner) });
     };
     document.addEventListener("enclave:auth", this._onAuth);
+    // the wallet session restores ASYNC after a hard reload (provider
+    // discovery can take seconds), so the panel mounts and paints the connect
+    // wall FIRST - and an address-only session (the lazy-SIWE norm) never
+    // fires enclave:auth. Follow the wallet edges instead: whenever the
+    // effective address differs from what the last paint used (restore,
+    // connect, account switch, disconnect), re-list.
+    this._onWallet = () => { if (Enclave.address !== this._paintedFor) this.refresh(); };
+    document.addEventListener("enclave:wallet", this._onWallet);
     this._onLog = (e) => this._onRunlog(e.detail || {});
     document.addEventListener("enclave:runlog", this._onLog);
     // deploys in flight (soft-nav away and back): rejoin every live run.
@@ -121,8 +131,9 @@ class Deployments extends EnclaveElement {
     this._stopPoll();
     Object.keys(this._logPolls || {}).forEach(id => this._stopLogPoll(id));
     if (this._onAuth) document.removeEventListener("enclave:auth", this._onAuth);
+    if (this._onWallet) document.removeEventListener("enclave:wallet", this._onWallet);
     if (this._onLog) document.removeEventListener("enclave:runlog", this._onLog);
-    this._wired = false; this._onAuth = null; this._onLog = null;
+    this._wired = false; this._onAuth = null; this._onWallet = null; this._onLog = null;
   }
 
   /* ---- live-deploy strips: one per run streaming with no row to live in ---- */
@@ -175,6 +186,7 @@ class Deployments extends EnclaveElement {
     opts = opts || {};
     const body = this.querySelector(".enc-body"), count = this.querySelector(".enc-count");
     if (!body) return;
+    this._paintedFor = Enclave.address;   // what this paint reflects (see _onWallet)
     const setCount = t => { if (count) count.textContent = t || ""; };
     const hideBar = () => { const fb = this.querySelector(".enc-filters"); if (fb) fb.hidden = true; };
     if (!Enclave.address){
@@ -213,8 +225,8 @@ class Deployments extends EnclaveElement {
     if (count) count.textContent = list.length
       ? (counts.running + " running · " + list.length + " total" + (shown.length !== list.length ? " · " + shown.length + " shown" : ""))
       : "";
-    if (!list.length){ body.innerHTML = '<div class="enc-empty">No enclaves yet. <a href="deploy">Deploy one →</a></div>'; return; }
-    if (!shown.length){ body.innerHTML = '<div class="enc-empty">Nothing matches the status filter — tick more boxes above.</div>'; return; }
+    if (!list.length){ body.innerHTML = '<div class="enc-empty">No enclaves yet. <a href="apps/deploy">Deploy one →</a></div>'; return; }
+    if (!shown.length){ body.innerHTML = '<div class="enc-empty">Nothing matches the status filter - tick more boxes above.</div>'; return; }
     body.innerHTML = shown.map(d => {
       const ep = appEndpoint(d), st = d.status || "–";
       const bud = (d.paidUsdc != null)
@@ -234,7 +246,7 @@ class Deployments extends EnclaveElement {
           '<span class="enc-spend">' + bud + '</span>' +
           '<span class="enc-acts">' +
             '<button class="btn btn-sm enc-outbtn" data-id="' + esc(d.id) + '">Output</button>' +
-            (live ? '<button class="btn btn-sm enc-fundbtn" data-id="' + esc(d.id) + '" title="Add runtime — a gas-free USDC signature credits the deployment’s on-chain balance">Top up</button>' : '') +
+            (live ? '<button class="btn btn-sm enc-fundbtn" data-id="' + esc(d.id) + '" title="Add runtime - a gas-free USDC signature credits the deployment’s on-chain balance">Top up</button>' : '') +
             '<button class="btn btn-sm enc-verify" data-id="' + esc(d.id) + '">Verify</button>' +
             (live ? '<button class="btn btn-sm danger enc-kill" data-id="' + esc(d.id) + '">Terminate</button>' : '') +
           '</span>' +
@@ -310,12 +322,12 @@ class Deployments extends EnclaveElement {
           usdcDomain: pricing && pricing.usdcDomain, usdc: (pricing && pricing.usdc) || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
           ethUsd: pricing && pricing.ethUsd,
         }, usd, "USDC", paint);
-        paint("ok", "[✓] topped up" + (rate > 0 ? " — +" + fmtDur(usd / rate) + " of runtime" : "") + " · the enclave picks up the new balance within a minute");
+        paint("ok", "[✓] topped up" + (rate > 0 ? " - +" + fmtDur(usd / rate) + " of runtime" : "") + " · the enclave picks up the new balance within a minute");
         showToast("topped up " + id.slice(0, 10) + "… with $" + usd.toFixed(2));
         setTimeout(() => { if (box.isConnected && !box.hidden){ box.hidden = true; box.innerHTML = ""; } this.refresh(); }, 3500);
       } catch(e){
         const rejected = (e && e.code === 4001) || /reject|denied|declin|cancell/i.test(e && e.message || "");
-        paint("warn", rejected ? "[x] rejected in wallet — nothing was paid" : "[x] " + (e.message || String(e)));
+        paint("warn", rejected ? "[x] rejected in wallet - nothing was paid" : "[x] " + (e.message || String(e)));
       } finally { go.disabled = false; refreshWallet(); }
     });
   }
@@ -332,7 +344,7 @@ class Deployments extends EnclaveElement {
       +   '<div class="enc-out-logs"><span class="ln dimln">// fetching app logs…</span></div>'
       + '</div>';
     const nar = box.querySelector(".enc-out-nar"), scroller = box.querySelector(".enc-out-term");
-    // lead with the OUTSIDE view — the app's reachable endpoints — because the
+    // lead with the OUTSIDE view - the app's reachable endpoints - because the
     // logs below speak in enclave-internal bind ports that match nothing out here
     const info = box.querySelector(".enc-out-info");
     const d = (this._list || []).find(x => x.id === id);
@@ -345,7 +357,7 @@ class Deployments extends EnclaveElement {
         paintLine(info, "info", "→ dedicated IPv6 [" + net.address + "]"
           + (tcp.length ? " · tcp " + tcp.join(",") : "") + (udp.length ? " · udp " + udp.join(",") : "")
           + "   (served at these real port numbers)", scroller);
-      paintLine(info, "dimln", "// any 127.0.0.1:<port> below is the app's internal bind inside the enclave — from outside, use the endpoints above", scroller);
+      paintLine(info, "dimln", "// any 127.0.0.1:<port> below is the app's internal bind inside the enclave - from outside, use the endpoints above", scroller);
     }
     const run = runlog.runFor(id);
     if (run) {
@@ -368,7 +380,7 @@ class Deployments extends EnclaveElement {
      key ownership once - a gas-free signature - right where it's needed */
   _lockedLogs(id, box) {
     const el = box.querySelector(".enc-out-logs"); if (!el) return;
-    el.innerHTML = '<span class="ln dimln">// app logs are owner-private — one gas-free signature proves this wallet owns this deployment (lasts a week)</span>'
+    el.innerHTML = '<span class="ln dimln">// app logs are owner-private - one gas-free signature proves this wallet owns this deployment (lasts a week)</span>'
       + '<button class="wp-mini enc-unlock" type="button">unlock logs</button>';
     el.querySelector(".enc-unlock").addEventListener("click", async () => {
       try { await authenticate(); if (!box.hidden && box.isConnected) this._startLogs(id, box); }
@@ -411,7 +423,7 @@ class Deployments extends EnclaveElement {
     if (!Enclave.authed()){
       // the attestation read rides the owner session; unlock it in place
       box.innerHTML = '<div class="ap-attbar">attestation · ' + esc(id) + '</div>'
-        + '<div class="term"><span class="ln dimln">// attestation reads ride the owner session — one gas-free signature unlocks them (lasts a week)</span>'
+        + '<div class="term"><span class="ln dimln">// attestation reads ride the owner session - one gas-free signature unlocks them (lasts a week)</span>'
         + '<button class="wp-mini enc-unlock" type="button">unlock &amp; verify</button></div>';
       box.querySelector(".enc-unlock").addEventListener("click", async () => {
         try { await authenticate(); if (!box.hidden && box.isConnected) this._attest(id, box); }
