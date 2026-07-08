@@ -36,6 +36,7 @@ table.symptoms td.pname{white-space:normal;width:30%;}
 .dev-tabs a.on{color:var(--jade);border-color:var(--line);background:var(--bg-1);}
 .docs-main{min-width:0;display:grid;gap:56px;}
 .doc{min-width:0;}
+.doc-lead{margin-bottom:26px;}                    /* a tab pane's lead heading, above .docs-layout */
 .doc > h3{font-family:var(--font-mono);font-size:1.25rem;letter-spacing:-.01em;margin:0 0 6px;padding-top:6px;border-top:1px solid var(--line-soft);}
 .doc:first-child > h3{border-top:0;padding-top:0;}
 .doc > h3 .n{color:var(--text-dim);font-size:.8rem;margin-right:.7em;}

@@ -42,9 +42,10 @@
 </section>
 <section id="docs" data-view="develop" aria-label="App development guide">
   <div class="wrap">
-    <c-section-head eyebrow="Developer guide · build → publish → deploy" heading="Build your first Wasm app.">
+    <article class="doc doc-lead">
+      <h3>Build your first Wasm app.</h3>
       <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code. That covers HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, and attestation your users can check themselves. Everything here runs against the same <a href="#api">public API</a> the <a href="apps/deploy">Deploy console</a> uses.</p>
-    </c-section-head>
+    </article>
 
     <div class="docs-layout">
       <aside class="docs-side">
@@ -695,9 +696,10 @@ enclave logs 0x3f2a9c1b -f               # watch it serve</code></pre></c-code>
 <section class="api" id="api" data-view="develop" aria-label="API reference" hidden>
   <div class="wrap">
     <div class="api-head">
-      <c-section-head flush eyebrow="Reference" heading="The Enclave API">
+      <article class="doc">
+        <h3>The Enclave API</h3>
         <p>Everything the service does, fully scoped. Authenticate with an Ethereum signature, pay USDC or ETH per deployment, and orchestrate confidential compute over plain HTTPS. Prefer a terminal? The <a href="#docs-cli">enclave CLI</a> wraps every operation below.</p>
-      </c-section-head>
+      </article>
       <div class="api-meta">
         <span class="chip">OpenAPI <b>3.1</b></span>
         <span class="chip">base <b>https://api.enclave.host/v1</b></span>
