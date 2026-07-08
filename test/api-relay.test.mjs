@@ -155,6 +155,17 @@ test("api-relay: zero live enclaves — list returns every on-chain deployment t
   assert.equal((await getJson(origin, "/v1/deployments/" + ID("99"), jwt(OWNER))).status, 404);
   // subpaths (logs/attestation) still need a live enclave
   assert.equal((await getJson(origin, "/v1/deployments/" + ID("11") + "/logs", jwt(OWNER))).status, 503);
+
+  // fleet-down honesty: the API front door is UP (health says so instead of
+  // crying no_capacity), and auth failures explain what is actually down
+  const health = await getJson(origin, "/v1/health");
+  assert.equal(health.status, 200);
+  assert.equal(health.body.ok, true);
+  assert.equal(health.body.enclaves, 0);
+  const nonce = await getJson(origin, "/v1/auth/nonce?address=" + OWNER);
+  assert.equal(nonce.status, 503);
+  assert.equal(nonce.body.error, "auth_unavailable", "sign-in failures name the real cause, not generic no_capacity");
+  assert.match(nonce.body.message, /enclave-issued/);
 });
 
 // ---------- fleet UP: hosted rows win, ledger fills the gaps -----------------

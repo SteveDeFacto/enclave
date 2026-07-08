@@ -642,8 +642,15 @@ async function checkHealth(){
   const ind = $("#epState");
   if (ind){ ind.className = "ep-state"; ind.textContent = "checking…"; }
   try {
-    await Enclave.health();
-    if (ind){ ind.className = "ep-state ok"; ind.textContent = "reachable"; }
+    const h = await Enclave.health();
+    if (ind){
+      ind.className = "ep-state ok";
+      // the RELAY answers even with zero enclaves: the API is reachable and
+      // deploys still work (they queue on the ledger) - say that, don't cry wolf
+      ind.textContent = (h && h.enclaves === 0)
+        ? "reachable · no live enclaves (deploys queue on-chain)"
+        : "reachable";
+    }
   } catch(e){
     if (ind){ ind.className = "ep-state down"; ind.textContent = "unreachable · set a live endpoint"; }
   }

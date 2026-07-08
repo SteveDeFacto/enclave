@@ -453,7 +453,17 @@ async function gateway(u, req, res) {
   const bare = p.match(/^\/v1\/deployments\/([A-Za-z0-9_-]+)$/);
   if (bare && req.method === "GET") return getDeployment(bare[1], u, req, res);
 
-  if (!live.length) return json(res, 503, { error: "no_capacity", message: "No live enclaves.", updatedAt }, req);
+  if (!live.length) {
+    // fleet-down answers that tell the truth about WHAT is down: the API
+    // front door (this relay) is healthy - only enclave-served things are out
+    if (p === "/v1/health")
+      return json(res, 200, { ok: true, enclaves: 0, of: registry.length, gateway: "api-relay",
+        note: "API relay up; no live enclaves right now - funded deployments queue on the ledger and are claimed when one returns.", updatedAt }, req);
+    if (p.startsWith("/v1/auth/"))
+      return json(res, 503, { error: "auth_unavailable",
+        message: "Sign-in needs a live enclave (SIWE nonces and session tokens are enclave-issued; this relay deliberately can't mint them) and none is up right now. Everything wallet-signed still works without a session: deploying, funding, top-ups, terminate, and your deployment list.", updatedAt }, req);
+    return json(res, 503, { error: "no_capacity", message: "No live enclaves.", updatedAt }, req);
+  }
   if (p === "/availability") return json(res, 200, aggregateAvailability(), req);
 
   const dep = p.match(DEP_PATH_RE), x = p.match(X_PATH_RE);
