@@ -13,8 +13,14 @@
 //   POST /v1/deployments        -> pick() by the body's resources.{gpuShare,cpuShare}
 //                                  (CPU-only work -> CPU enclaves first; GPU work
 //                                  -> a GPU enclave with both pools free)
-//   GET  /v1/deployments        -> fan out to every live enclave, merge the lists
-//   /v1/deployments/:id*, /x/:id* and app subdomains
+//   GET  /v1/deployments        -> fan out to every live enclave, merge the lists,
+//                                  then MERGE THE LEDGER: every EnclaveDeployments
+//                                  record the wallet owns appears, hosted or not
+//                                  (queued/stopped/unfunded work is real work) —
+//                                  this endpoint answers even with ZERO enclaves
+//   GET  /v1/deployments/:id    -> the owning enclave when one is live, else the
+//                                  ledger record (same zero-enclave guarantee)
+//   /v1/deployments/:id/*, /x/:id* and app subdomains
 //                               -> the enclave that OWNS the deployment (probed
 //                                  once, cached)
 //   /availability               -> FLEET aggregate (best card slice + best node
@@ -41,6 +47,7 @@ import http from "node:http";
 import https from "node:https";
 
 let   REGISTRY_ADDRESS  = (process.env.REGISTRY_ADDRESS || "").trim();   // env fallback; the address book (below) overrides
+let   DEPLOYMENTS_ADDRESS = (process.env.DEPLOYMENTS_ADDRESS || "").trim(); // EnclaveDeployments ledger; book overrides too
 const ADDRESS_BOOK      = (process.env.ADDRESS_BOOK_ADDRESS || "").trim();
 const BASE_RPC          = process.env.BASE_RPC || "https://mainnet.base.org";
 const STATIC_ENCLAVES   = (process.env.ENCLAVES || "").split(",").map((s) => s.trim().replace(/\/+$/, "")).filter(Boolean);
@@ -112,6 +119,103 @@ async function readRegistry() {
   return out
     .filter((e) => e.active && now - Number(e.lastSeen) <= STALE_AFTER_SEC)
     .map((e) => ({ endpoint: e.endpoint.replace(/\/+$/, ""), repo: e.repo, lastSeen: Number(e.lastSeen) }));
+}
+
+// --- EnclaveDeployments ledger (the source of truth for a wallet's work) --------
+// The fleet only reports deployments it currently HOSTS; created/funded/stopped
+// records live on-chain regardless, so the list/get endpoints read the ledger
+// too. Resolved from the address book like the registry; paged eth_calls (no
+// log scans - public RPCs cap those), cached briefly.
+const BOOK_KEY_DEPLOYMENTS = "0x6465706c6f796d656e7473" + "0".repeat(42);   // "deployments" ascii right-padded
+const DEP_ABI = [
+  { type: "function", name: "count", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "getPage", stateMutability: "view",
+    inputs: [{ name: "start", type: "uint256" }, { name: "n", type: "uint256" }],
+    outputs: [{ type: "tuple[]", components: [
+      { name: "id", type: "bytes32" }, { name: "owner", type: "address" },
+      { name: "appRef", type: "string" }, { name: "ports", type: "string" },
+      { name: "sshPubKey", type: "string" }, { name: "configCid", type: "string" },
+      { name: "gpuMilli", type: "uint16" }, { name: "cpuMilli", type: "uint16" },
+      { name: "appPort", type: "uint32" }, { name: "isPublic", type: "bool" },
+      { name: "active", type: "bool" }, { name: "createdAt", type: "uint64" },
+      { name: "rate", type: "uint256" }, { name: "balance6", type: "uint256" },
+      { name: "spent6", type: "uint256" }, { name: "runner", type: "bytes32" },
+      { name: "runnerOperator", type: "address" }, { name: "leaseUntil", type: "uint64" },
+    ] }] },
+];
+async function resolveDeployments() {
+  if (!ADDRESS_BOOK) return;
+  try {
+    const c = await chain();
+    const a = await c.readContract({ address: ADDRESS_BOOK, abi: BOOK_ABI, functionName: "addr", args: [BOOK_KEY_DEPLOYMENTS] });
+    if (a && !/^0x0{40}$/i.test(a) && a.toLowerCase() !== DEPLOYMENTS_ADDRESS.toLowerCase()) {
+      console.log(`[api-relay] address book: deployments ${DEPLOYMENTS_ADDRESS || "(unset)"} -> ${a}`);
+      DEPLOYMENTS_ADDRESS = a;
+    }
+  } catch (e) { /* keep the current address; next poll retries */ }
+}
+const LEDGER_TTL_MS = 10_000;
+let _ledger = { rows: [], at: 0, inflight: null };
+async function ledgerRows() {
+  if (!DEPLOYMENTS_ADDRESS) return _ledger.rows;
+  if (Date.now() - _ledger.at < LEDGER_TTL_MS) return _ledger.rows;
+  if (_ledger.inflight) return _ledger.inflight;
+  _ledger.inflight = (async () => {
+    try {
+      const c = await chain();
+      const total = Number(await c.readContract({ address: DEPLOYMENTS_ADDRESS, abi: DEP_ABI, functionName: "count" }));
+      const rows = [];
+      for (let start = 0; start < total; start += 50)
+        rows.push(...await c.readContract({ address: DEPLOYMENTS_ADDRESS, abi: DEP_ABI,
+          functionName: "getPage", args: [BigInt(start), 50n] }));
+      _ledger.rows = rows; _ledger.at = Date.now();
+      return rows;
+    } finally { _ledger.inflight = null; }
+  })();
+  return _ledger.inflight;
+}
+// A ledger record's status, when NO live enclave reports it: "claimed" = a
+// lease is live but its runner isn't answering (enclave down/restarting);
+// "queued" = funded work awaiting a claim (incl. expired leases - claimable);
+// they resume by themselves, nothing needs the owner.
+const ZERO32 = /^0x0+$/;
+function ledgerStatus(d) {
+  if (!d.active) return "stopped";
+  if (!(d.balance6 > 0n || d.spent6 > 0n)) return "awaiting_payment";
+  if (!ZERO32.test(d.runner) && Number(d.leaseUntil) * 1000 > Date.now()) return "claimed";
+  return "queued";
+}
+// Shape a ledger record like the enclaves' own rows (supervisor view()), so
+// dashboards/CLIs treat both alike. `ledger: true` marks the synthesis - logs,
+// ssh and attestation exist only once a runner hosts it.
+function ledgerView(d) {
+  const rate6 = Number(d.rate);                               // per-second price, 6dp USDC
+  return {
+    id: d.id, owner: d.owner.toLowerCase(), status: ledgerStatus(d), public: d.isPublic,
+    image: { reference: d.appRef },
+    resources: { gpuShare: Number(d.gpuMilli) / 1000, cpuShare: Number(d.cpuMilli) / 1000 },
+    createdAt: new Date(Number(d.createdAt) * 1000).toISOString(),
+    ratePerSecondUsdc: (rate6 / 1e6).toFixed(7),
+    spentUsdc: (Number(d.spent6) / 1e6).toFixed(2),
+    paidUsdc: ((Number(d.balance6) + Number(d.spent6)) / 1e6).toFixed(2),
+    timeRemainingSec: rate6 > 0 ? Math.floor(Number(d.balance6) / rate6) : null,
+    onchain: { contract: DEPLOYMENTS_ADDRESS, id: d.id,
+               leaseUntil: Number(d.leaseUntil) ? new Date(Number(d.leaseUntil) * 1000).toISOString() : null },
+    ledger: true,
+  };
+}
+// The wallet the session token names. The relay can't VERIFY the fleet's JWTs
+// (that would mean holding the enclave SECRET here, and the relay is untrusted
+// by design) - and it doesn't need to: every field a ledger row carries is
+// public on-chain data; the token only picks WHICH owner's public records to
+// return. Enclaves keep verifying it for everything they serve.
+function tokenAddress(auth) {
+  const m = /^Bearer\s+(.+)$/.exec(auth || ""); if (!m) return null;
+  try {
+    const p = JSON.parse(Buffer.from(m[1].split(".")[1], "base64url").toString());
+    if (p.exp && p.exp * 1000 <= Date.now()) return null;
+    return (typeof p.sub === "string" && /^0x[0-9a-fA-F]{40}$/.test(p.sub)) ? p.sub.toLowerCase() : null;
+  } catch { return null; }
 }
 
 // --- availability polling -----------------------------------------------------
@@ -340,8 +444,16 @@ const DEP_PATH_RE = /^\/v1\/deployments\/([A-Za-z0-9_-]+)(?:\/|$)/;
 const X_PATH_RE   = /^\/x\/([A-Za-z0-9_-]+)(?:\/|$)/;
 
 async function gateway(u, req, res) {
-  if (!live.length) return json(res, 503, { error: "no_capacity", message: "No live enclaves.", updatedAt }, req);
   const p = u.pathname;
+
+  // Ledger-backed reads FIRST: the wallet's list and bare record reads answer
+  // from EnclaveDeployments even with zero live enclaves - on-chain work is
+  // real whether or not anything currently hosts it.
+  if (p === "/v1/deployments" && req.method === "GET") return listDeployments(req, res);
+  const bare = p.match(/^\/v1\/deployments\/([A-Za-z0-9_-]+)$/);
+  if (bare && req.method === "GET") return getDeployment(bare[1], req, res);
+
+  if (!live.length) return json(res, 503, { error: "no_capacity", message: "No live enclaves.", updatedAt }, req);
   if (p === "/availability") return json(res, 200, aggregateAvailability(), req);
 
   const dep = p.match(DEP_PATH_RE), x = p.match(X_PATH_RE);
@@ -390,24 +502,61 @@ async function gateway(u, req, res) {
     return sendForwarded(res, r, req);
   }
 
-  if (p === "/v1/deployments" && req.method === "GET") {     // one wallet, one list: merge the fleet
-    const rs = await Promise.all(live.map((e) =>
-      forward(e.endpoint, req, null).then((r) => ({ e, r })).catch(() => null)));
-    const oks = rs.filter((x) => x && x.r.status === 200);
-    if (!oks.length) {
-      const first = rs.find(Boolean);
-      return first ? sendForwarded(res, first.r, req)
-                   : json(res, 502, { error: "upstream_error", message: "No enclave answered.", updatedAt }, req);
-    }
-    const data = [];
-    for (const { e, r } of oks) {
-      try { for (const it of JSON.parse(r.text).data || []) { data.push(it); ownerLearn(it.id, e.endpoint); } } catch {}
-    }
-    return json(res, 200, { data, cursor: null }, req);
-  }
-
   const c = sticky();                                        // auth, pricing, version, attestation, ...
   return proxyTo(c.endpoint, req, res);
+}
+
+// One wallet, one list: fan out to the live fleet (hosted rows carry live
+// status/network/ssh), then merge in the LEDGER's rows for the wallet - every
+// on-chain deployment appears whether or not an enclave hosts it right now.
+async function listDeployments(req, res) {
+  const addr = tokenAddress(req.headers.authorization);
+  const rs = await Promise.all(live.map((e) =>
+    forward(e.endpoint, req, null).then((r) => ({ e, r })).catch(() => null)));
+  const answered = rs.filter(Boolean);
+  const oks = answered.filter((x) => x.r.status === 200);
+  // the fleet REFUSING the token is real (expired/garbage session): surface it
+  // rather than mask it with public ledger rows
+  if (answered.length && !oks.length && answered.every((x) => x.r.status === 401))
+    return sendForwarded(res, answered[0].r, req);
+  if (!addr && !oks.length)
+    return json(res, 401, { error: "unauthorized", message: "Sign in first (the session token names whose deployments to list)." }, req);
+  const data = [], seen = new Set();
+  for (const { e, r } of oks) {
+    try { for (const it of JSON.parse(r.text).data || []) { data.push(it); seen.add(String(it.id).toLowerCase()); ownerLearn(it.id, e.endpoint); } } catch {}
+  }
+  if (addr) {
+    try {
+      for (const d of await ledgerRows()) {
+        if (d.owner.toLowerCase() !== addr || seen.has(d.id.toLowerCase())) continue;
+        data.push(ledgerView(d));
+      }
+    } catch (e) { console.error("[api-relay] ledger read failed:", e.message); }
+  }
+  return json(res, 200, { data, cursor: null }, req);
+}
+
+// Bare record read: the owning enclave has the live view (status transitions,
+// network, ssh) - prefer it; otherwise the ledger record answers, so watchers
+// keep working across enclave restarts and for still-queued work.
+async function getDeployment(id, req, res) {
+  if (live.length) {
+    const owner = await v1OwnerOf(id, req.headers.authorization);
+    if (owner) return proxyTo(owner, req, res, { idleMs: 180000 });
+  }
+  const addr = tokenAddress(req.headers.authorization);
+  if (!addr) return json(res, 401, { error: "unauthorized", message: "Sign in first." }, req);
+  let rows;
+  try { rows = await ledgerRows(); }
+  catch (e) { return json(res, 502, { error: "ledger_error", message: e.message, updatedAt }, req); }
+  const want = id.toLowerCase();
+  // full ids and unique prefixes both resolve (the CLI passes prefixes)
+  const mine = rows.filter((d) => d.owner.toLowerCase() === addr && d.id.toLowerCase().startsWith(want));
+  if (mine.length !== 1)
+    return json(res, 404, { error: "not_found",
+      message: mine.length ? `${id} is ambiguous (${mine.length} of your deployments match).`
+                           : `No live enclave has ${id}, and the ledger has no deployment of yours under it.`, updatedAt }, req);
+  return json(res, 200, ledgerView(mine[0]), req);
 }
 
 // <label>.<APP_DOMAIN> -> canonical dep_<label>, or null if not an app subdomain.
@@ -503,8 +652,10 @@ const server = http.createServer((req, res) => {
 });
 
 await pollRegistry();
+await resolveDeployments();
 await pollAvailability();
 setInterval(pollRegistry, REGISTRY_POLL_SEC * 1000);
+setInterval(resolveDeployments, REGISTRY_POLL_SEC * 1000);
 setInterval(pollAvailability, AVAIL_POLL_SEC * 1000);
 
 server.listen(PORT, process.env.API_RELAY_BIND || undefined, () => console.log(

@@ -47,7 +47,9 @@ const BUCKETS = ["running", "starting", "ended", "failed"];
 function bucketOf(st){
   st = String(st || "").toLowerCase();
   if (st === "running") return "running";
-  if (["provisioning", "queued", "pending", "claiming", "starting", "created"].indexOf(st) !== -1) return "starting";
+  // "claimed"/"queued"/"awaiting_payment" include LEDGER rows (the API merges
+  // on-chain records the fleet isn't hosting right now): on their way, not over
+  if (["provisioning", "queued", "pending", "claiming", "claimed", "starting", "created", "awaiting_payment"].indexOf(st) !== -1) return "starting";
   if (["failed", "error"].indexOf(st) !== -1) return "failed";
   return "ended";   // stopped, stopping, terminated, expired, …
 }
@@ -218,7 +220,9 @@ class Deployments extends EnclaveElement {
         ? (esc(d.paidUsdc) + " USDC paid" + (d.timeRemainingSec != null ? " · " + esc(fmtDur(d.timeRemainingSec)) + " left" : "")
            + (d.paused ? " · ⏸ time frozen (" + esc(d.pauseReason || "outage") + ", resumes when service is restored)" : ""))
         : "–";
-      const live = ["running", "provisioning", "queued", "pending"].indexOf(st) !== -1;
+      // on-chain rows without a live runner stay actionable: queued/claimed
+      // work can be topped up, and awaiting_payment is Top up's whole point
+      const live = ["running", "provisioning", "queued", "pending", "claiming", "claimed", "awaiting_payment"].indexOf(st) !== -1;
       return '<div class="enc-row' + (highlight && d.id === highlight ? " enc-new" : "") + '">' +
         '<div class="enc-main">' +
           '<span class="ap-badge ' + statusCls(st) + '">' + esc(st) + '</span>' +
