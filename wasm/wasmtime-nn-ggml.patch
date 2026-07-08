@@ -8,16 +8,26 @@
 # What it adds: crates/wasi-nn/src/backend/ggml.rs (a backend that binds the
 # system-linked enclave_llama shim - see wasm/llama-shim/), its registration
 # in backend/mod.rs + wit.rs FromStr ("ggml" now parses for -S nn-graph), a
-# no-dependency `ggml` cargo feature, and build.rs link directives driven by
-# ELL_LIB_LOCATION (same system-link pattern as ORT_LIB_LOCATION). The ggml
-# backend adds NO crates (pure std + FFI); the Cargo.lock hunk only records
-# the other patches' deps (half, sha2).
+# no-dependency `ggml` cargo feature, build.rs link directives driven by
+# ELL_LIB_LOCATION (same system-link pattern as ORT_LIB_LOCATION), and the
+# serve-startup preload hoist (serve.rs + wasi-nn lib.rs/in_memory.rs, below).
+# The ggml backend adds NO crates (pure std + FFI); the Cargo.lock hunk only
+# records the other patches' deps (half, sha2).
 #
 # Model delivery: -S nn-graph=ggml::<dir> preloads <dir>/model.gguf (or the
 # single *.gguf) under the DIRECTORY BASENAME; guests load_by_name() it, so
 # weights never transit the guest's 32-bit linear memory - model size is
-# bounded by the tenant's share, not wasm32. The model loads ONCE per process
-# at preload; per-request cost is llama-context allocation only. Contract:
+# bounded by the tenant's share, not wasm32. The model loads ONCE per
+# process, AT SERVER STARTUP: upstream `wasmtime serve` preloads -S nn-graph
+# inside new_store(), i.e. per request store (wasip2 components get a fresh
+# store per request), which would pull a multi-GB GGUF into VRAM on every
+# request and free it after. This patch hoists the preload to right after
+# the listener binds (weights hit VRAM the moment the deployment is up;
+# connections arriving during the load queue in the listen backlog) and
+# shares the graphs with every store through Arc'd registry clones
+# (InMemoryRegistry gains Clone, lib.rs gains preload_registry()). A preload
+# failure kills the server at boot, loudly, instead of failing per request.
+# Per-request cost is llama-context allocation only. Contract:
 # input "tokens" I32 [1,n] -> output "logits" Fp32 [1,n_vocab]; the KV cache
 # lives in the execution context (stateful across compute() calls). GGUF
 # volumes must also carry tokenizer.json (guest-side tokenization).
@@ -488,6 +498,52 @@ index f6f81e8..b8d8710 100644
      #[cfg(feature = "pytorch")]
      {
          backends.push(Backend::from(PytorchBackend::default()));
+diff --git a/crates/wasi-nn/src/lib.rs b/crates/wasi-nn/src/lib.rs
+index b826f6a..efb8fd6 100644
+--- a/crates/wasi-nn/src/lib.rs
++++ b/crates/wasi-nn/src/lib.rs
+@@ -16,6 +16,17 @@ use wasmtime::format_err;
+ /// from a local directory, which is a safe assumption currently for the current
+ /// model types.
+ pub fn preload(preload_graphs: &[(String, String)]) -> wasmtime::Result<(Vec<Backend>, Registry)> {
++    let registry = preload_registry(preload_graphs)?;
++    Ok((backend::list(), Registry::from(registry)))
++}
++
++/// Enclave: like [`preload`], but returns the concrete registry so a server
++/// can load its graphs ONCE at process start and clone the registry (graphs
++/// are `Arc`-shared) into every per-request store. Without this, `wasmtime
++/// serve` - a fresh store per request for wasip2 components - re-loads every
++/// `-S nn-graph` model on each request, including multi-GB GGUFs bound for
++/// VRAM.
++pub fn preload_registry(preload_graphs: &[(String, String)]) -> wasmtime::Result<InMemoryRegistry> {
+     let mut backends = backend::list();
+     let mut registry = InMemoryRegistry::new();
+     for (kind, path) in preload_graphs {
+@@ -28,7 +39,7 @@ pub fn preload(preload_graphs: &[(String, String)]) -> wasmtime::Result<(Vec<Bac
+             .ok_or(format_err!("{kind} does not support directory loading"))?;
+         registry.load(backend, Path::new(path))?;
+     }
+-    Ok((backends, Registry::from(registry)))
++    Ok(registry)
+ }
+ 
+ /// A machine learning backend.
+diff --git a/crates/wasi-nn/src/registry/in_memory.rs b/crates/wasi-nn/src/registry/in_memory.rs
+index 0523c8d..797ae4d 100644
+--- a/crates/wasi-nn/src/registry/in_memory.rs
++++ b/crates/wasi-nn/src/registry/in_memory.rs
+@@ -6,6 +6,10 @@ use crate::wit::ExecutionTarget;
+ use std::{collections::HashMap, path::Path};
+ use wasmtime::{bail, format_err};
+ 
++/// Enclave: `Clone` is load-bearing - graphs are `Arc`-shared, so a process
++/// can load its `-S nn-graph` models once at startup and hand a pointer-sized
++/// clone of the whole registry to every per-request store.
++#[derive(Clone)]
+ pub struct InMemoryRegistry(HashMap<String, Graph>);
+ impl InMemoryRegistry {
+     pub fn new() -> Self {
 diff --git a/crates/wasi-nn/src/wit.rs b/crates/wasi-nn/src/wit.rs
 index 32e668e..805d5df 100644
 --- a/crates/wasi-nn/src/wit.rs
@@ -500,3 +556,88 @@ index 32e668e..805d5df 100644
              "pytorch" => Ok(generated::graph::GraphEncoding::Pytorch),
              "tensorflow" => Ok(generated::graph::GraphEncoding::Tensorflow),
              "tensorflowlite" => Ok(generated::graph::GraphEncoding::Tensorflowlite),
+diff --git a/src/commands/serve.rs b/src/commands/serve.rs
+index 6b491c7..177ac30 100644
+--- a/src/commands/serve.rs
++++ b/src/commands/serve.rs
+@@ -48,6 +48,15 @@ const DEFAULT_WASIP3_MAX_INSTANCE_REUSE_COUNT: usize = 128;
+ const DEFAULT_WASIP2_MAX_INSTANCE_REUSE_COUNT: usize = 1;
+ const DEFAULT_WASIP3_MAX_INSTANCE_CONCURRENT_REUSE_COUNT: usize = 16;
+ 
++/// Enclave: `-S nn-graph` models, loaded ONCE at server startup (right after
++/// the listener binds - see `execute`) and shared with every request store
++/// through pointer-sized registry clones (graphs are `Arc`-shared). A wasip2
++/// component gets a fresh store per request, so loading in `new_store` would
++/// pull a multi-GB GGUF into VRAM on every request - and free it after.
++#[cfg(feature = "wasi-nn")]
++static NN_PRELOAD: std::sync::OnceLock<wasmtime_wasi_nn::InMemoryRegistry> =
++    std::sync::OnceLock::new();
++
+ struct Host {
+     table: wasmtime::component::ResourceTable,
+     ctx: WasiCtx,
+@@ -395,16 +404,17 @@ impl ServeCommand {
+         if self.run.common.wasi.nn == Some(true) {
+             #[cfg(feature = "wasi-nn")]
+             {
+-                let graphs = self
+-                    .run
+-                    .common
+-                    .wasi
+-                    .nn_graph
+-                    .iter()
+-                    .map(|g| (g.format.clone(), g.dir.clone()))
+-                    .collect::<Vec<_>>();
+-                let (backends, registry) = wasmtime_wasi_nn::preload(&graphs)?;
+-                host.nn.replace(WasiNnCtx::new(backends, registry));
++                // Graphs were loaded once at startup (see NN_PRELOAD); this
++                // store gets fresh (stateless) backends plus an Arc-clone of
++                // the already-loaded registry.
++                let registry = NN_PRELOAD
++                    .get()
++                    .cloned()
++                    .unwrap_or_else(wasmtime_wasi_nn::InMemoryRegistry::new);
++                host.nn.replace(WasiNnCtx::new(
++                    wasmtime_wasi_nn::backend::list(),
++                    wasmtime_wasi_nn::Registry::from(registry),
++                ));
+             }
+         }
+ 
+@@ -635,6 +645,36 @@ impl ServeCommand {
+ 
+         log::info!("Listening on {}", self.addr);
+ 
++        // Enclave: load `-S nn-graph` models NOW, once for the process - a
++        // ggml GGUF hits VRAM the moment the server is up instead of on
++        // (every!) request. Deliberately after bind: connections arriving
++        // during a long model load queue in the listen backlog, and port
++        // probes see the server as up. A load failure kills the server here,
++        // loudly, rather than failing each request.
++        if self.run.common.wasi.nn == Some(true) {
++            #[cfg(feature = "wasi-nn")]
++            {
++                let graphs = self
++                    .run
++                    .common
++                    .wasi
++                    .nn_graph
++                    .iter()
++                    .map(|g| (g.format.clone(), g.dir.clone()))
++                    .collect::<Vec<_>>();
++                if !graphs.is_empty() {
++                    eprintln!("Preloading {} wasi-nn graph(s)...", graphs.len());
++                    let t0 = std::time::Instant::now();
++                    let registry = wasmtime_wasi_nn::preload_registry(&graphs)?;
++                    let _ = NN_PRELOAD.set(registry);
++                    eprintln!(
++                        "wasi-nn graph preload done in {:.1}s",
++                        t0.elapsed().as_secs_f64()
++                    );
++                }
++            }
++        }
++
+         let epoch_interval = if let Some(Profile::Guest { interval, .. }) = self.run.profile {
+             Some(interval)
+         } else if let Some(t) = self.run.common.wasm.timeout {
