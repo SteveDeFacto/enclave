@@ -45,13 +45,13 @@ function shortImg(s){ if (!s) return ""; return s.length > 44 ? s.slice(0, 42) +
 // Status buckets for the filter bar: coarse groups beat ten raw statuses.
 // Unknown/new statuses land in "ended" rather than vanishing.
 const FILTER_KEY = "enclave_dash_filters";
-const BUCKETS = ["running", "starting", "ended", "failed"];
+const BUCKETS = ["running", "queued", "ended", "failed"];
 function bucketOf(st){
   st = String(st || "").toLowerCase();
   if (st === "running") return "running";
-  // "claimed"/"queued"/"awaiting_payment" include LEDGER rows (the API merges
-  // on-chain records the fleet isn't hosting right now): on their way, not over
-  if (["provisioning", "queued", "pending", "claiming", "claimed", "starting", "created", "awaiting_payment"].indexOf(st) !== -1) return "starting";
+  // the "queued" bucket matches the ledger's own vocabulary: everything on
+  // its way (queued/claimed/provisioning/awaiting_payment/...) but not over
+  if (["provisioning", "queued", "pending", "claiming", "claimed", "starting", "created", "awaiting_payment"].indexOf(st) !== -1) return "queued";
   if (["failed", "error"].indexOf(st) !== -1) return "failed";
   return "ended";   // stopped, stopping, terminated, expired, …
 }
