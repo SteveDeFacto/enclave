@@ -62,7 +62,7 @@ async function freePort() {
   const s = net.createServer(); s.listen(0, "127.0.0.1"); await once(s, "listening");
   const p = s.address().port; s.close(); return p;
 }
-function stubRpc() {
+function stubRpc(ledger = LEDGER) {
   return http.createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -71,10 +71,10 @@ function stubRpc() {
       const one = (m) => {
         if (m.method !== "eth_call") return "0x";
         const data = m.params[0].data;
-        if (data.length === 10) return "0x" + W(LEDGER.length);                       // count()
+        if (data.length === 10) return "0x" + W(ledger.length);                       // count()
         const start = Number(BigInt("0x" + data.slice(10, 74)));
         const n = Number(BigInt("0x" + data.slice(74, 138)));
-        return encPage(LEDGER.slice(start, start + n));                               // getPage(start, n)
+        return encPage(ledger.slice(start, start + n));                               // getPage(start, n)
       };
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify(Array.isArray(q)
@@ -83,8 +83,8 @@ function stubRpc() {
     });
   });
 }
-async function startRelay(t, { enclaves }) {
-  const rpc = stubRpc(); rpc.listen(0, "127.0.0.1"); await once(rpc, "listening");
+async function startRelay(t, { enclaves, ledger }) {
+  const rpc = stubRpc(ledger); rpc.listen(0, "127.0.0.1"); await once(rpc, "listening");
   const port = await freePort();
   const child = spawn(process.execPath, [path.join(RELAY_DIR, "api-relay.js")], {
     env: { ...process.env, ENCLAVES: enclaves, API_RELAY_PORT: String(port), API_RELAY_BIND: "127.0.0.1",
@@ -197,6 +197,38 @@ test("api-relay: live enclave rows merge with ledger-only rows, deduped by id", 
   assert.equal(bare.status, 200);
   assert.equal(bare.body.status, "claimed", "tokenless hosted read serves the ledger view, not a proxied 401");
   assert.ok(bare.body.ledger);
+});
+
+// ---------- lease + live runner: the ledger view says "running" --------------
+// The dashboard's tokenless list is built purely from ledger rows; a deployment
+// whose lease-holder is a live, answering enclave must read "running", not sit
+// on "claimed" forever. The match is the registry's id rule: keccak256(endpoint).
+test("api-relay: a leased deployment whose runner is live reads as running, even tokenless", async (t) => {
+  const enclave = http.createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    if (req.url === "/availability") return res.end(JSON.stringify({ gpu: false, cpuShareFree: 0.5 }));
+    res.statusCode = 404; res.end("{}");
+  });
+  enclave.listen(0, "127.0.0.1"); await once(enclave, "listening");
+  t.after(() => enclave.close());
+  const endpoint = `http://127.0.0.1:${enclave.address().port}`;
+  const { keccak256, stringToBytes } = await import("viem");
+  const ledger = [
+    { id: ID("66"), owner: OWNER, appRef: "ipfs://hosted", active: true, balance6: 2_000_000, spent6: 100_000,
+      runner: keccak256(stringToBytes(endpoint)), leaseUntil: FUTURE },     // lease live, runner IS the live enclave
+    { id: ID("77"), owner: OWNER, appRef: "ipfs://orphaned", active: true, balance6: 2_000_000, spent6: 100_000,
+      runner: RUNNER, leaseUntil: FUTURE },                                 // lease live, runner unknown/absent
+  ];
+
+  const origin = await startRelay(t, { enclaves: endpoint, ledger });
+  const { status, body } = await getJson(origin, "/v1/deployments?owner=" + OWNER);
+  assert.equal(status, 200);
+  const by = Object.fromEntries(body.data.map((r) => [r.id, r]));
+  assert.equal(by[ID("66")].status, "running", "lease live + runner answering = running, no session needed");
+  assert.equal(by[ID("77")].status, "claimed", "lease live but runner silent stays claimed");
+  const bare = await getJson(origin, "/v1/deployments/" + ID("66"));
+  assert.equal(bare.status, 200);
+  assert.equal(bare.body.status, "running", "the tokenless bare read agrees");
 });
 
 // ---------- fleet refuses the token: surface the 401, don't mask it ----------

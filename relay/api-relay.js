@@ -94,9 +94,22 @@ async function chain() {
 const BOOK_ABI = [{ type: "function", name: "addr", stateMutability: "view",
   inputs: [{ type: "bytes32" }], outputs: [{ type: "address" }] }];
 const BOOK_KEY_REGISTRY = "0x7265676973747279000000000000000000000000000000000000000000000000";
+// An enclave's registry id is keccak256(bytes(endpoint)) — the contract's own
+// derivation (EnclaveRegistry.register), which is also what EnclaveDeployments
+// records as a lease's `runner`. Carrying the id on every registry row lets
+// ledger rows be matched against the live fleet (see ledgerStatus).
+let _hashEndpoint = null;
+async function endpointId(endpoint) {
+  if (!_hashEndpoint) {
+    const { keccak256, stringToBytes } = await import("viem");
+    _hashEndpoint = (s) => keccak256(stringToBytes(s));
+  }
+  return _hashEndpoint(endpoint);
+}
 async function readRegistry() {
   if (STATIC_ENCLAVES.length)
-    return STATIC_ENCLAVES.map((endpoint) => ({ endpoint, repo: null, lastSeen: null }));
+    return Promise.all(STATIC_ENCLAVES.map(async (endpoint) =>
+      ({ endpoint, id: await endpointId(endpoint), repo: null, lastSeen: null })));
   const c = await chain();
   // resolve the registry from the on-chain address book each cycle, so a
   // registry redeploy reaches this box with one owner tx (no env edits)
@@ -116,9 +129,12 @@ async function readRegistry() {
     out.push(...await c.readContract({ address: REGISTRY_ADDRESS, abi: ABI,
       functionName: "getPage", args: [BigInt(start), 50n] }));
   const now = Math.floor(Date.now() / 1000);
-  return out
+  return Promise.all(out
     .filter((e) => e.active && now - Number(e.lastSeen) <= STALE_AFTER_SEC)
-    .map((e) => ({ endpoint: e.endpoint.replace(/\/+$/, ""), repo: e.repo, lastSeen: Number(e.lastSeen) }));
+    .map(async (e) => {
+      const endpoint = e.endpoint.replace(/\/+$/, "");
+      return { endpoint, id: await endpointId(endpoint), repo: e.repo, lastSeen: Number(e.lastSeen) };
+    }));
 }
 
 // --- EnclaveDeployments ledger (the source of truth for a wallet's work) --------
@@ -174,15 +190,25 @@ async function ledgerRows() {
   })();
   return _ledger.inflight;
 }
-// A ledger record's status, when NO live enclave reports it: "claimed" = a
-// lease is live but its runner isn't answering (enclave down/restarting);
-// "queued" = funded work awaiting a claim (incl. expired leases - claimable);
-// they resume by themselves, nothing needs the owner.
+// A ledger record's status, synthesized WITHOUT asking any enclave (the
+// tokenless list is built purely from these): "running" = a live lease whose
+// runner is a live, answering enclave — matched by registry id, keccak256 of
+// the endpoint (the moment right after a claim, while the runner still
+// provisions, reads as running here; the signed-in view carries the enclave's
+// finer-grained truth); "claimed" = a lease is live but its runner isn't
+// answering (enclave down/restarting); "queued" = funded work awaiting a claim
+// (incl. expired leases - claimable); they resume by themselves, nothing needs
+// the owner.
 const ZERO32 = /^0x0+$/;
+const runnerIsLive = (runner) => {
+  runner = String(runner).toLowerCase();
+  return live.some((e) => e.id && e.id.toLowerCase() === runner);
+};
 function ledgerStatus(d) {
   if (!d.active) return "stopped";
   if (!(d.balance6 > 0n || d.spent6 > 0n)) return "awaiting_payment";
-  if (!ZERO32.test(d.runner) && Number(d.leaseUntil) * 1000 > Date.now()) return "claimed";
+  if (!ZERO32.test(d.runner) && Number(d.leaseUntil) * 1000 > Date.now())
+    return runnerIsLive(d.runner) ? "running" : "claimed";
   return "queued";
 }
 // Shape a ledger record like the enclaves' own rows (supervisor view()), so
@@ -226,7 +252,7 @@ async function fetchJson(url, timeoutMs = 4000) {
   catch { return null; } finally { clearTimeout(t); }
 }
 
-let registry = [];                 // [{endpoint, repo, lastSeen}]
+let registry = [];                 // [{endpoint, id, repo, lastSeen}] (id = the registry's keccak256(endpoint))
 let live = [];                     // registry ∩ answering, each + {availability, checkedAt}
 let updatedAt = null;
 
