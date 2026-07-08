@@ -239,7 +239,7 @@ class AdminConsole extends EnclaveElement {
     /* -- catalog pointer -- */
     if (S.cat) {
       parts.push(sec(`EnclaveAppCatalog · ${link(S.cat.addr)}`,
-        `Owner ${mono(S.cat.owner)}. Moderation (approve / reject / verify / delist) already lives on the <a href="apps.html">Apps page</a> when you browse it with the owner wallet — it isn't duplicated here.`, ""));
+        `Owner ${mono(S.cat.owner)}. Moderation (approve / reject / verify / delist) already lives on the <a href="apps">Apps page</a> when you browse it with the owner wallet — it isn't duplicated here.`, ""));
     }
 
     /* -- deploy cards -- */

@@ -1,0 +1,12 @@
+# Pretty URLs — Netlify-style rewrites the IPFS gateway applies for DNSLink /
+# subdomain hosts (enclave.host serves via DNSLink; docs: specs.ipfs.tech/http-
+# gateways/web-redirects-file). Rules are evaluated ONLY for paths that do not
+# exist in the DAG, so the shipped .html files keep serving at their old URLs
+# (the router's history.replaceState canonicalizes those in the address bar).
+# Ships from the site root via build-site.mjs; nan-deploy.sh pins it with -r.
+/apps       /apps.html       200
+/develop    /develop.html    200
+/dashboard  /dashboard.html  200
+/deploy     /deploy.html     200
+/buy        /buy.html        200
+/admin      /admin.html      200

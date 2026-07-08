@@ -63,7 +63,7 @@ function useInDeploy(app, v){
   } catch(e){}
   // same page, new search: the router re-fetches + swaps <main>, and boot()'s
   // applyView lands on the deploy view with ?app= in place
-  navigate("apps.html?app=" + encodeURIComponent(friendly) + "#deploy", { push: true });
+  navigate("apps?app=" + encodeURIComponent(friendly) + "#deploy", { push: true });
 }
 
 /* ---- quick deploy: the store card's one-decision modal. Wallet balance,

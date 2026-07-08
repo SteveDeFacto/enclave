@@ -15,8 +15,8 @@
   var h = location.hash.slice(1); if (!h) return;
   var dev = h === "develop" || h === "docs" || h === "cli" || h === "api"
          || h.indexOf("docs-") === 0 || h.indexOf("op-") === 0 || h.indexOf("grp-") === 0;
-  if (h === "deploy") return location.replace("apps.html#deploy");   // console is a sub-page of Apps now
-  var page = h === "apps" ? "apps.html" : dev ? "develop.html" : null;
+  if (h === "deploy") return location.replace("apps#deploy");   // console is a sub-page of Apps now
+  var page = h === "apps" ? "apps" : dev ? "develop" : null;
   if (page) location.replace(page + (h === "apps" || h === "develop" ? "" : "#" + h));
 })();
 </script>
@@ -48,8 +48,8 @@
       <h1>Trustless compute<br>you can&nbsp;actually <span class="hl">verify</span>.</h1>
       <p class="lede">Deploy a <b>WebAssembly app</b> onto a confidential <b>H200 GPU</b> straight from your browser. Pay per second in <b>ETH or USDC</b>, with no account and no KYC. Then check the cryptographic attestation <b>yourself</b> before you send a single byte of data.</p>
       <div class="hero-cta">
-        <a href="apps.html" class="btn btn-primary">Deploy an app <span class="arr">→</span></a>
-        <a href="develop.html#api" class="btn btn-ghost">Read the API</a>
+        <a href="apps" class="btn btn-primary">Deploy an app <span class="arr">→</span></a>
+        <a href="develop#api" class="btn btn-ghost">Read the API</a>
       </div>
       <div class="hero-foot">
         <span>H200 · confidential (TDX + NVIDIA&nbsp;CC)</span>

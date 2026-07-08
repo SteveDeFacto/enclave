@@ -285,7 +285,7 @@ export async function deployOnChain(spec){
     // the run log lives on the dashboard: get there BEFORE the first wallet
     // step so the whole narrative streams where the user is looking (the
     // document never unloads — this async flow survives the soft navigation)
-    await navigate("dashboard.html");
+    await navigate("dashboard");
     w = runlog.startRun();
     if (!Enclave.token){
       w.line("info", "[*] connecting wallet + signing in (SIWE)…");

@@ -112,7 +112,7 @@ twice.
 ## Development
 
 - `npm test` — the supervisor/contract test suite (`test/*.test.mjs`).
-- `npm run build:site` — bundle the site into `site/dist/` (Tailwind + esbuild + build-time component prerender). `site/` itself is valid unbundled ES modules — serve it raw for dev, or `npm run watch:site` for CSS.
+- `npm run build:site` — bundle the site into `site/dist/` (Tailwind + esbuild + build-time component prerender). `site/` itself is valid unbundled ES modules — serve it raw for dev, or `npm run watch:site` for CSS. Site URLs are extensionless (`/apps`, `/dashboard`): `site/_redirects` rewrites them on the DNSLink/subdomain IPFS gateway, and the router always fetches the real `.html` files, so soft navigation works on any dumb static server — only a HARD reload of a pretty URL needs rewrite support (use `npx serve site`, or just hit the `.html` path; the router re-prettifies the bar).
 - `site/deploy.sh` — build + publish the site to the box and IPFS (the IPNS gateway caches ~5 min). CI does this automatically on push.
 
 ## Documentation & support

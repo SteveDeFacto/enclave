@@ -31,16 +31,24 @@ const pageOf = (pathname) => {
   const name = base.replace(/\.html$/, "");
   return name === "" || name === "index" ? "overview" : (PAGES[name] ? name : null);
 };
+// Pretty URLs: the address bar shows extensionless paths (/apps, /dashboard) —
+// hard loads of those are rewritten by the gateway's _redirects (site/_redirects,
+// DNSLink/subdomain IPFS hosts) — while the router always FETCHES the real
+// .html file, so soft navigation needs no rewrite support at all (raw dev
+// servers, path gateways). Paths stay relative to wherever the site is
+// mounted: /dashboard on enclave.host, /ipns/<key>/dashboard on a path gateway.
+const dirOf = (pathname) => pathname.replace(/[^/]*$/, "");
+const prettyPath = (page, refPathname) => dirOf(refPathname) + (page === "overview" ? "" : page);
+const htmlName = (page) => page === "overview" ? "index.html" : page + ".html";
 
-const docCache = new Map();   // url pathname -> html text (warmed in idle time)
+const docCache = new Map();   // page name -> html text (warmed in idle time)
 
-async function fetchPage(url) {
-  const key = url.pathname;
-  if (docCache.has(key)) return docCache.get(key);
-  const r = await fetch(url.pathname + url.search, { headers: { "Accept": "text/html" } });
+async function fetchPage(page) {
+  if (docCache.has(page)) return docCache.get(page);
+  const r = await fetch(dirOf(location.pathname) + htmlName(page), { headers: { "Accept": "text/html" } });
   if (!r.ok) throw new Error("HTTP " + r.status);
   const t = await r.text();
-  docCache.set(key, t);
+  docCache.set(page, t);
   return t;
 }
 
@@ -56,6 +64,14 @@ function swapFrom(doc) {
 }
 
 let navSeq = 0;
+// canonicalize a .html entry in place (no reload): the file loaded, the bar
+// shows the pretty path — /dashboard.html -> /dashboard
+{
+  const entry = pageOf(location.pathname);
+  const pp = entry && prettyPath(entry, location.pathname);
+  if (pp && pp !== location.pathname)
+    history.replaceState(history.state, "", pp + location.search + location.hash);
+}
 // the page currently RENDERED — not `location`, which a popstate has already
 // moved to the destination before our handler runs
 let current = { pathname: location.pathname, search: location.search };
@@ -65,6 +81,7 @@ export async function navigate(href, opts) {
   const url = new URL(href, location.href);
   const page = pageOf(url.pathname);
   if (!page) { location.href = href; return; }               // not one of ours: hard nav
+  url.pathname = prettyPath(page, url.pathname);             // the bar always shows the pretty form
 
   // already rendered: just handle the fragment
   if (url.pathname === current.pathname && url.search === current.search) {
@@ -79,7 +96,7 @@ export async function navigate(href, opts) {
 
   const seq = ++navSeq;
   let html;
-  try { html = await fetchPage(url); }
+  try { html = await fetchPage(page); }
   catch (e) { location.href = href; return; }                // network trouble: fall back to a hard nav
   if (seq !== navSeq) return;                                // superseded by a newer navigation
 
@@ -137,8 +154,6 @@ bootPage(initial);
 setTimeout(() => {
   for (const p of Object.keys(PAGES)) {
     if (p === "admin") continue;                 // nobody navigates there by accident — don't warm it
-    const path = p === "overview" ? "index.html" : p + ".html";
-    if (pageOf(location.pathname) !== p)
-      fetchPage(new URL(path, location.href)).catch(() => {});
+    if (initial !== p) fetchPage(p).catch(() => {});
   }
 }, 1500);

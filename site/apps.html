@@ -56,7 +56,7 @@
 
   <div class="wrap" id="publishView" hidden>
     <c-section-head eyebrow="App store · publish" heading="Publish a Wasm app version.">
-      <p>Add a <span class="mono">wasi:http</span> component release to the on-chain catalog. Its bytes go on IPFS; the CID and metadata go on Base. An app is keyed by <b>slug</b> in your wallet's namespace; publish the same slug again to cut a new <b>version</b>. Only you (<span class="mono">msg.sender</span>) can add versions, edit, or delist it. New to building components? The <a href="develop.html#docs">developer guide</a> takes you from an empty directory to a published app.</p>
+      <p>Add a <span class="mono">wasi:http</span> component release to the on-chain catalog. Its bytes go on IPFS; the CID and metadata go on Base. An app is keyed by <b>slug</b> in your wallet's namespace; publish the same slug again to cut a new <b>version</b>. Only you (<span class="mono">msg.sender</span>) can add versions, edit, or delist it. New to building components? The <a href="develop#docs">developer guide</a> takes you from an empty directory to a published app.</p>
     </c-section-head>
 
     <div class="publish-panel" id="publishPanel">
@@ -128,7 +128,7 @@
 <section id="deploy" data-view="deploy" aria-label="Deploy console" hidden>
   <div class="wrap">
     <c-section-head eyebrow="Deploy · live on Base" heading="Deploy an app.">
-      <p>Deploying is deliberately simple: pick an app from the <a href="apps.html">store</a>, set two dials — a GPU share and a CPU share — and fund it from your wallet. Hit <span class="mono">Deploy</span> and a confidential enclave claims the work, boots your app, and hands back its URL in seconds — the provisioning output and your running apps live on your <a href="dashboard.html">Dashboard</a>. No account, no servers, no lock-in: it's one call to the public REST API, shown here exactly as it goes out, and <span class="mono">Dry run</span> lets you inspect everything before spending anything. Building your own app? The <a href="develop.html#docs">developer guide</a> walks you through it.</p>
+      <p>Deploying is deliberately simple: pick an app from the <a href="apps">store</a>, set two dials — a GPU share and a CPU share — and fund it from your wallet. Hit <span class="mono">Deploy</span> and a confidential enclave claims the work, boots your app, and hands back its URL in seconds — the provisioning output and your running apps live on your <a href="dashboard">Dashboard</a>. No account, no servers, no lock-in: it's one call to the public REST API, shown here exactly as it goes out, and <span class="mono">Dry run</span> lets you inspect everything before spending anything. Building your own app? The <a href="develop#docs">developer guide</a> walks you through it.</p>
       <div class="endpoint-row">
         <label for="apiBase">API endpoint</label>
         <input type="text" id="apiBase" spellcheck="false" autocapitalize="off" autocomplete="off" readonly />
@@ -142,7 +142,7 @@
       <div class="cfg">
         <h4>App</h4>
         <div class="field">
-          <label for="cfgImage">Wasm app <span class="dim">(<b>slug:version</b> from the <a href="apps.html">Apps</a> catalog — deploys need the app's on-chain listing)</span></label>
+          <label for="cfgImage">Wasm app <span class="dim">(<b>slug:version</b> from the <a href="apps">Apps</a> catalog — deploys need the app's on-chain listing)</span></label>
           <input type="text" id="cfgImage" value="" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="my-app:1.0.0" />
         </div>
         <div class="field">

@@ -41,7 +41,7 @@
 <section id="docs" data-view="develop" aria-label="App development guide">
   <div class="wrap">
     <c-section-head eyebrow="Developer guide · build → publish → deploy" heading="Build your first Wasm app.">
-      <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code. That covers HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, and attestation your users can check themselves. Everything here runs against the same <a href="#api">public API</a> the <a href="apps.html#deploy">Deploy console</a> uses.</p>
+      <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code. That covers HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, and attestation your users can check themselves. Everything here runs against the same <a href="#api">public API</a> the <a href="apps#deploy">Deploy console</a> uses.</p>
     </c-section-head>
 
     <div class="docs-layout">
@@ -92,7 +92,7 @@
           </ul>
           <p>And one catalog every app reference points at:</p>
           <ul>
-            <li><b>The on-chain app store</b>: the <a href="apps.html">Apps</a> tab: anyone publishes, bytes live on IPFS addressed by CID, listings live in the <code>EnclaveAppCatalog</code> contract on Base. First-party samples (<code>hello-world</code>, <code>nn-demo</code>, <code>llm-chat</code>) are published there too - the enclave image ships no deployable apps, so every deploy resolves to a CID the enclave fetches and hash-verifies. <a href="#docs-publish">Chapter 04 →</a></li>
+            <li><b>The on-chain app store</b>: the <a href="apps">Apps</a> tab: anyone publishes, bytes live on IPFS addressed by CID, listings live in the <code>EnclaveAppCatalog</code> contract on Base. First-party samples (<code>hello-world</code>, <code>nn-demo</code>, <code>llm-chat</code>) are published there too - the enclave image ships no deployable apps, so every deploy resolves to a CID the enclave fetches and hash-verifies. <a href="#docs-publish">Chapter 04 →</a></li>
           </ul>
           <div class="doc-note">
             <span class="nt">The contract</span>
@@ -179,7 +179,7 @@ wasmtime serve -Scli -Shttp -Sp3 \
         <!-- 04 ------------------------------------------------------------ -->
         <article class="doc" id="docs-publish">
           <h3><span class="n">04</span>Publish to the app store</h3>
-          <p>Your app's bytes go on <b>IPFS</b>, addressed by their CID (a hash of the exact wasm). The listing goes on <b>Base</b>, in the <code>EnclaveAppCatalog</code> contract. Publishing is one wallet transaction on the <a href="apps.html">Apps</a> tab:</p>
+          <p>Your app's bytes go on <b>IPFS</b>, addressed by their CID (a hash of the exact wasm). The listing goes on <b>Base</b>, in the <code>EnclaveAppCatalog</code> contract. Publishing is one wallet transaction on the <a href="apps">Apps</a> tab:</p>
           <ol>
             <li>Connect your wallet (header button) and hit <b>+ Publish app</b>.</li>
             <li>Pick a <b>slug</b>, your app's stable id, e.g. <code>my-hello</code> (a–z, 0–9, hyphens, ≤ 40 chars). Slugs live in <i>your wallet's namespace</i>: the on-chain app id is <code>keccak256(publisher, slug)</code>, so nobody can squat or write to your lineage. The slug doesn't have to match your crate name.</li>
@@ -211,7 +211,7 @@ wasmtime serve -Scli -Shttp -Sp3 \
             </tbody>
           </table></div>
           <p>Unlisted CIDs can't deploy: the catalog listing carries everything a deploy needs on-chain — the resource specs that floor the dials, the open ports, and the owner's approval of that exact CID. Built something new? Publish it first (<a href="#docs-publish">chapter 04</a>), then deploy the slug.</p>
-          <p>The easy path is the <a href="apps.html#deploy">Deploy console</a>: your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and open ports. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
+          <p>The easy path is the <a href="apps#deploy">Deploy console</a>: your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and open ports. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
 
           <h4>Sign in: an Ethereum signature, no account</h4>
           <c-code fn="deploy.js · SIWE handshake"><pre><code>const API = "https://api.enclave.host/v1";
@@ -520,7 +520,7 @@ let graph = load(&amp;[MODEL.to_vec()], GraphEncoding::Onnx, ExecutionTarget::Gp
 let ctx   = graph.init_execution_context()?;
 let x     = Tensor::new(&amp;[1, 4], TensorType::Fp32, &amp;input_bytes);   // little-endian f32s
 let out   = ctx.compute(vec![("X".into(), x)])?;                     // named tensors, in and out</code></pre></c-code>
-          <p>Try it without writing code: the <code>nn-demo</code> app in the <a href="apps.html">Apps</a> catalog is exactly this. Deploy it with 1% GPU + 1% CPU and hit <code>/?target=gpu</code>; it runs a tiny ONNX graph and echoes which target served it (its source lives in the repo under <code>wasm/apps/nn-demo/</code>).</p>
+          <p>Try it without writing code: the <code>nn-demo</code> app in the <a href="apps">Apps</a> catalog is exactly this. Deploy it with 1% GPU + 1% CPU and hit <code>/?target=gpu</code>; it runs a tiny ONNX graph and echoes which target served it (its source lives in the repo under <code>wasm/apps/nn-demo/</code>).</p>
           <p>And for the full-scale proof, deploy <code>llm-chat</code> from the same catalog: an entire LLM (Qwen2.5-0.5B-Instruct, ONNX with 4-bit weights) plus its tokenizer and a web chat UI compiled into one 493&nbsp;MB component. Open its URL and chat - tokens stream from an autoregressive KV-cache decode running through <code>wasi:nn</code> on your MPS slice of the H200. It is everything on this page composed together: i64 token ids in, fp32 logits out, present-tensors handed back as past-tensors, target <code>gpu</code> strict with a reported <code>cpu</code> fallback. Source: <code>wasm/apps/llm-chat/</code>.</p>
           <p><b>Getting the model in.</b> Embed it (<code>include_bytes!</code>) for anything small - it ships inside your published CID, so it's attested with your code. The practical ceilings: the wasm artifact is ≤&nbsp;2&nbsp;GB and <code>load()</code> passes the bytes through your linear memory (≤&nbsp;4&nbsp;GiB). Larger models: fetch them at startup over outbound HTTP into memory, and check the hash yourself before loading - the platform verifies your <i>code</i> by CID, a fetched model is your responsibility.</p>
           <div class="doc-note">
@@ -546,7 +546,7 @@ tinfoil attestation verify -e &lt;enclave-host&gt; -r SteveDeFacto/enclave
 curl https://&lt;enclave-host&gt;/v1/attestation
 curl -H "Authorization: Bearer $LOGIN_TOKEN" \
   https://&lt;enclave-host&gt;/v1/deployments/dep_3xK9f2Qa/attestation</code></pre></c-code>
-          <p>Point your users at the <a href="index.html#attest">attestation walkthrough</a> for what each link in the chain proves, or embed the check in your own client as above. For raw-TCP services, add the <a href="#docs-tcp">bridge-cert pin</a> so even the TLS session is bound to the measured enclave.</p>
+          <p>Point your users at the <a href="./#attest">attestation walkthrough</a> for what each link in the chain proves, or embed the check in your own client as above. For raw-TCP services, add the <a href="#docs-tcp">bridge-cert pin</a> so even the TLS session is bound to the measured enclave.</p>
         </article>
 
         <!-- 14 ------------------------------------------------------------ -->
@@ -605,7 +605,7 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
             <thead><tr><th>symptom</th><th>cause → fix</th></tr></thead>
             <tbody>
               <tr><td class="pname">"a core wasm module, not a wasi:http component"</td><td>You built a plain module. Build with <code>cargo component</code> (or a toolchain that emits components); the upload gateway and the enclave both check the component layer field.</td></tr>
-              <tr><td class="pname">403 not_approved on deploy</td><td>That version is still Pending (or was Rejected); the catalog owner approves each CID before it can run. Check the status badge on your app card in <a href="apps.html">Apps</a>.</td></tr>
+              <tr><td class="pname">403 not_approved on deploy</td><td>That version is still Pending (or was Rejected); the catalog owner approves each CID before it can run. Check the status badge on your app card in <a href="apps">Apps</a>.</td></tr>
               <tr><td class="pname">"firewall: bound unassigned port(s) … app killed"</td><td>The app hardcoded a port. Read <code>ENCLAVE_PORTS</code> and bind the <i>actual</i> ports (<a href="#docs-ports">ch. 09</a>).</td></tr>
               <tr><td class="pname">"did not open port in time"</td><td>Bind your first <code>http:</code>/<code>tcp:</code> port early in <code>main()</code>; the readiness window is ~20 s.</td></tr>
               <tr><td class="pname">"storage: /data used … exceeds the cap; app killed"</td><td>Write less, or publish the next version with a larger <code>storage_mb</code>.</td></tr>
@@ -623,7 +623,7 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
             <li><code>wasmtime serve</code> (or <code>run</code>, for service apps) runs it locally, including with the enclave-parity flags.</li>
             <li>No hardcoded ports anywhere; everything comes from <code>ENCLAVE_PORTS</code>.</li>
             <li>All writes go under <code>/data</code>, stay under the cap, and survive being wiped.</li>
-            <li>Publish on the <a href="apps.html">Apps</a> tab → wait for the version's <b>Approved</b> badge → <a href="apps.html">deploy</a> with <b>Use in Deploy</b>.</li>
+            <li>Publish on the <a href="apps">Apps</a> tab → wait for the version's <b>Approved</b> badge → <a href="apps">deploy</a> with <b>Use in Deploy</b>.</li>
             <li>Verify your own deployment's <a href="#docs-attest">attestation</a>, then hand the same check to your users.</li>
           </ol>
         </article>

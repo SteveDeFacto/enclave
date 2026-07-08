@@ -180,6 +180,8 @@ for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "dash
 }
 for (const d of ["assets", "privy", ".well-known"])
   fs.cpSync(path.join(SITE, d), path.join(DIST, d), { recursive: true });
+// pretty URLs: the gateway's rewrite rules ride the pin itself
+fs.copyFileSync(path.join(SITE, "_redirects"), path.join(DIST, "_redirects"));
 
 /* size report */
 const out = Object.entries(result.metafile.outputs)
