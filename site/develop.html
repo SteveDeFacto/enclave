@@ -41,7 +41,7 @@
 <section id="docs" data-view="develop" aria-label="App development guide">
   <div class="wrap">
     <c-section-head eyebrow="Developer guide · build → publish → deploy" heading="Build your first Wasm app.">
-      <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code. That covers HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, and attestation your users can check themselves. Everything here runs against the same <a href="#api">public API</a> the <a href="apps#deploy">Deploy console</a> uses.</p>
+      <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code. That covers HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, and attestation your users can check themselves. Everything here runs against the same <a href="#api">public API</a> the <a href="deploy">Deploy console</a> uses.</p>
     </c-section-head>
 
     <div class="docs-layout">
@@ -211,7 +211,7 @@ wasmtime serve -Scli -Shttp -Sp3 \
             </tbody>
           </table></div>
           <p>Unlisted CIDs can't deploy: the catalog listing carries everything a deploy needs on-chain — the resource specs that floor the dials, the open ports, and the owner's approval of that exact CID. Built something new? Publish it first (<a href="#docs-publish">chapter 04</a>), then deploy the slug.</p>
-          <p>The easy path is the <a href="apps#deploy">Deploy console</a>: your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and open ports. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
+          <p>The easy path is the <a href="deploy">Deploy console</a>: your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and open ports. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
 
           <h4>Sign in: an Ethereum signature, no account</h4>
           <c-code fn="deploy.js · SIWE handshake"><pre><code>const API = "https://api.enclave.host/v1";

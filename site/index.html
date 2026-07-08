@@ -15,7 +15,7 @@
   var h = location.hash.slice(1); if (!h) return;
   var dev = h === "develop" || h === "docs" || h === "cli" || h === "api"
          || h.indexOf("docs-") === 0 || h.indexOf("op-") === 0 || h.indexOf("grp-") === 0;
-  if (h === "deploy") return location.replace("apps#deploy");   // console is a sub-page of Apps now
+  if (h === "deploy") return location.replace("deploy");   // console is a sub-page of Apps now
   var page = h === "apps" ? "apps" : dev ? "develop" : null;
   if (page) location.replace(page + (h === "apps" || h === "develop" ? "" : "#" + h));
 })();

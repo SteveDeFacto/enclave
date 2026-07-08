@@ -21,15 +21,20 @@ import "./core/addressbook.js";   // resolve contract addresses from the on-chai
 
 const PAGES = {
   overview:  () => import("./pages/overview.js"),
-  apps:      () => import("./pages/apps.js"),      // also hosts #publish and #deploy (deploy.js is its lazy chunk)
+  apps:      () => import("./pages/apps.js"),      // also hosts #publish and the deploy console (deploy.js is its lazy chunk)
   develop:   () => import("./pages/develop.js"),
   dashboard: () => import("./pages/dashboard.js"), // signed-in view: run log + My Apps
   admin:     () => import("./pages/admin.js"),     // operator console — deliberately absent from the nav
 };
+// URL aliases: pathnames that render ANOTHER page's document. /deploy and
+// /publish are the canonical console/form URLs (share links read
+// /deploy?app=hello-world_1.0.0), but both stay views of the Apps page -
+// apps.js's applyView picks the view from the pathname.
+const PAGE_ALIAS = { deploy: "apps", publish: "apps" };
 const pageOf = (pathname) => {
   const base = pathname.split("/").pop() || "index.html";
   const name = base.replace(/\.html$/, "");
-  return name === "" || name === "index" ? "overview" : (PAGES[name] ? name : null);
+  return name === "" || name === "index" ? "overview" : ((PAGES[name] || PAGE_ALIAS[name]) ? name : null);
 };
 // Pretty URLs: the address bar shows extensionless paths (/apps, /dashboard) —
 // hard loads of those are rewritten by the gateway's _redirects (site/_redirects,
@@ -39,21 +44,25 @@ const pageOf = (pathname) => {
 // mounted: /dashboard on enclave.host, /ipns/<key>/dashboard on a path gateway.
 const dirOf = (pathname) => pathname.replace(/[^/]*$/, "");
 const prettyPath = (page, refPathname) => dirOf(refPathname) + (page === "overview" ? "" : page);
-const htmlName = (page) => page === "overview" ? "index.html" : page + ".html";
+const htmlName = (page) => {
+  const file = PAGE_ALIAS[page] || page;                     // an alias serves its target's document
+  return file === "overview" ? "index.html" : file + ".html";
+};
 
-const docCache = new Map();   // page name -> html text (warmed in idle time)
+const docCache = new Map();   // html file name -> text (warmed in idle time; aliases share their target's entry)
 
 async function fetchPage(page) {
-  if (docCache.has(page)) return docCache.get(page);
-  const r = await fetch(dirOf(location.pathname) + htmlName(page), { headers: { "Accept": "text/html" } });
+  const key = htmlName(page);
+  if (docCache.has(key)) return docCache.get(key);
+  const r = await fetch(dirOf(location.pathname) + key, { headers: { "Accept": "text/html" } });
   if (!r.ok) throw new Error("HTTP " + r.status);
   const t = await r.text();
-  docCache.set(page, t);
+  docCache.set(key, t);
   return t;
 }
 
 async function bootPage(page) {
-  const m = await PAGES[page]();
+  const m = await PAGES[PAGE_ALIAS[page] || page]();
   if (typeof m.boot === "function") m.boot();
 }
 
@@ -83,15 +92,20 @@ export async function navigate(href, opts) {
   if (!page) { location.href = href; return; }               // not one of ours: hard nav
   url.pathname = prettyPath(page, url.pathname);             // the bar always shows the pretty form
 
-  // already rendered: just handle the fragment
-  if (url.pathname === current.pathname && url.search === current.search) {
+  // already rendered - same document, maybe a different sub-view: an alias
+  // and its target (apps ↔ deploy/publish) share one <main>, so the flip is
+  // just a URL push + the view signal; no fetch, no swap. Same search only:
+  // a new ?app= must re-boot the page so its prefill logic runs.
+  const curPage = pageOf(current.pathname);
+  if (curPage && (PAGE_ALIAS[page] || page) === (PAGE_ALIAS[curPage] || curPage) && url.search === current.search) {
     const prev = location.href;
     if (opts.push) history.pushState({ scroll: 0 }, "", url);
+    current = { pathname: location.pathname, search: location.search };
     if (opts.scroll != null) scrollTo(0, opts.scroll);
     else scrollToTarget(url.hash);
-    if (location.href !== prev)                   // pushState never fires hashchange itself;
+    if (location.href !== prev || opts.push === false)   // pushState never fires hashchange itself;
       dispatchEvent(new HashChangeEvent("hashchange", { oldURL: prev, newURL: location.href }));
-    return;                                       // pages with hash-routed views need the signal
+    return;                                       // pages with view routing need the signal (popstate included)
   }
 
   const seq = ++navSeq;
@@ -112,7 +126,7 @@ export async function navigate(href, opts) {
     swapFrom(doc);
     current = { pathname: url.pathname, search: url.search };
     const hdr = document.querySelector("c-header");
-    if (hdr) hdr.current = page;                             // hydrated header just re-toggles the active tab
+    if (hdr) hdr.current = PAGE_ALIAS[page] || page;         // hydrated header just re-toggles the active tab (aliases light their target's)
   };
   if (document.startViewTransition) {
     try { await document.startViewTransition(apply).updateCallbackDone; } catch (e) { apply(); }

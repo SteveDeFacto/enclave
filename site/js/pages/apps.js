@@ -61,9 +61,11 @@ function useInDeploy(app, v){
     sessionStorage.setItem("enclave_use_in_deploy", JSON.stringify({
       friendly, cid: v.cid, ports: v.ports || "", mins: MINS_CACHE[friendly], config: v.config || "" }));
   } catch(e){}
-  // same page, new search: the router re-fetches + swaps <main>, and boot()'s
-  // applyView lands on the deploy view with ?app= in place
-  navigate("apps?app=" + encodeURIComponent(friendly) + "#deploy", { push: true });
+  // the console's own URL, share-friendly: /deploy?app=hello-world_1.0.0
+  // (the "_" form keeps the query un-percent-encoded; deploy.js normalizes it
+  // back to slug:version). New search -> the router re-swaps <main>, and
+  // boot()'s applyUseInDeploy prefills from ?app=.
+  navigate("deploy?app=" + encodeURIComponent(friendly.replace(/:(?=[^:]*$)/, "_")), { push: true });
 }
 
 /* ---- quick deploy: the store card's one-decision modal. Wallet balance,
@@ -429,7 +431,14 @@ function prefillPublish(app){
 function applyView(){
   const store = $("#storeView"), pub = $("#publishView"), dep = document.getElementById("deploy");
   if (!store || !pub || !dep) return;
-  const view = location.hash === "#publish" ? "publish" : location.hash === "#deploy" ? "deploy" : "store";
+  // the PATHNAME names the view now (/deploy and /publish are router aliases
+  // of this page); the legacy #deploy/#publish hashes stay honored and
+  // canonicalize in place to the pretty pathname
+  const sub = location.pathname.split("/").pop();
+  const view = sub === "deploy" || location.hash === "#deploy" ? "deploy"
+             : sub === "publish" || location.hash === "#publish" ? "publish" : "store";
+  if (sub !== view && (location.hash === "#deploy" || location.hash === "#publish"))
+    history.replaceState(history.state, "", location.pathname.replace(/[^/]*$/, "") + view + location.search);
   store.closest("section").hidden = view === "deploy";
   dep.hidden = view !== "deploy";
   store.hidden = view !== "store";
@@ -451,12 +460,12 @@ function ensureDeployBooted(){
   }).catch(e => console.warn("[apps] deploy console failed to boot:", e));
 }
 function openPublish(){
-  if (location.hash === "#publish") applyView();
-  else location.hash = "publish";                 // -> hashchange -> applyView
+  // same-document pathname flip: the router pushes /publish and re-signals
+  // the view (no fetch, no <main> swap - apps/deploy/publish share one)
+  navigate("publish", { push: true });
 }
 function closePublish(){
-  history.pushState(null, "", location.pathname + location.search);   // clean URL, no #
-  applyView();
+  navigate("apps", { push: true });
 }
 // module-load-once; inert while another page's <main> is mounted
 addEventListener("hashchange", () => { if (document.getElementById("publishView")) applyView(); });

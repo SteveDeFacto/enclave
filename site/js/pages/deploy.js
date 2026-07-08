@@ -656,8 +656,12 @@ async function checkHealth(){
    on-chain catalog instead.
    ============================================================ */
 function applyUseInDeploy(){
-  const friendly = new URLSearchParams(location.search).get("app");
-  if (!friendly) return;
+  const raw = new URLSearchParams(location.search).get("app");
+  if (!raw) return;
+  // ?app= accepts slug:version AND the share-link form slug_version (the "_"
+  // keeps the URL un-percent-encoded; the LAST one splits, so slugs with
+  // underscores survive - versions carry none)
+  const friendly = raw.includes(":") ? raw : raw.replace(/_(?=[^_]*$)/, ":");
   const inp = $("#cfgImage"); if (!inp) return;
   inp.value = friendly;
   let stash = null;
