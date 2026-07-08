@@ -232,7 +232,7 @@ containers:
       # attach them by name (mounted read-only into the guest at /models/<name>).
       # Each maps a /tinfoil/mpk/mpk-<root_hash> image (from the `models:` block
       # below) to a friendly name that MODEL_VOLUMES advertises.
-      - /tinfoil/mpk/mpk-REPLACE_WITH_HASH_FROM_MODELS_TAB:/models-src/qwen2.5-0.5b:ro
+      - /tinfoil/mpk/mpk-e8e9414bf9f999b44ecd86524627b4a912f17a79d7f191280092af3513688da4:/models-src/qwen2.5-0.5b:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
       interval: 15s
@@ -250,7 +250,7 @@ containers:
 models:
   - name: "qwen2.5-0.5b"
     repo: "onnx-community/Qwen2.5-0.5B-Instruct@cc5cc01a65cc3ff17bdb73a7de33d879f62599b0"
-    mpk: "REPLACE_WITH_HASH_FROM_MODELS_TAB"
+    mpk: "e8e9414bf9f999b44ecd86524627b4a912f17a79d7f191280092af3513688da4_6571900928_4f334276-d275-54dc-9abe-d458e80adf97"
 
 # Single ingress → supervisor. Only these paths are reachable from outside.
 shim:
