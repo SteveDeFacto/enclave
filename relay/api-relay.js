@@ -219,6 +219,10 @@ function ledgerStatus(d) {
 // ssh and attestation exist only once a runner hosts it.
 function ledgerView(d) {
   const rate6 = Number(d.rate);                               // per-second price, 6dp USDC
+  // remaining runtime = the live lease's prepaid tail + what the balance still
+  // buys (mirrors the supervisor's own view()). Balance alone reads ~0 the
+  // moment a renew burns it into the lease - the owner still has minutes left.
+  const leaseTail = Math.max(0, Number(d.leaseUntil) - Math.floor(Date.now() / 1000));
   return {
     id: d.id, owner: d.owner.toLowerCase(), status: ledgerStatus(d), public: d.isPublic,
     image: { reference: d.appRef },
@@ -227,7 +231,7 @@ function ledgerView(d) {
     ratePerSecondUsdc: (rate6 / 1e6).toFixed(7),
     spentUsdc: (Number(d.spent6) / 1e6).toFixed(2),
     paidUsdc: ((Number(d.balance6) + Number(d.spent6)) / 1e6).toFixed(2),
-    timeRemainingSec: rate6 > 0 ? Math.floor(Number(d.balance6) / rate6) : null,
+    timeRemainingSec: rate6 > 0 ? leaseTail + Math.floor(Number(d.balance6) / rate6) : null,
     onchain: { contract: DEPLOYMENTS_ADDRESS, id: d.id,
                leaseUntil: Number(d.leaseUntil) ? new Date(Number(d.leaseUntil) * 1000).toISOString() : null },
     ledger: true,

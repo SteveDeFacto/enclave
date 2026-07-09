@@ -234,7 +234,7 @@ class Deployments extends EnclaveElement {
     body.innerHTML = shown.map(d => {
       const ep = appEndpoint(d), st = d.status || "–";
       const bud = (d.paidUsdc != null)
-        ? (esc(d.paidUsdc) + " USDC paid" + (d.timeRemainingSec != null ? " · " + esc(fmtDur(d.timeRemainingSec)) + " left" : "")
+        ? (esc(d.paidUsdc) + " USDC paid" + (d.timeRemainingSec > 0 ? " · " + esc(fmtDur(d.timeRemainingSec)) + " left" : "")
            + (d.paused ? " · ⏸ time frozen (" + esc(d.pauseReason || "outage") + ", resumes when service is restored)" : ""))
         : "–";
       // on-chain rows without a live runner stay actionable: queued/claimed

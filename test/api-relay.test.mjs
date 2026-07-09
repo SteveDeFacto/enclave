@@ -125,6 +125,11 @@ test("api-relay: zero live enclaves — list returns every on-chain deployment t
   assert.equal(by[ID("11")].paidUsdc, "5.00");
   assert.equal(by[ID("22")].paidUsdc, "1.50", "paid = balance + spent");
   assert.ok(by[ID("33")].onchain.leaseUntil, "live lease surfaces its expiry");
+  // remaining runtime counts the PREPAID lease tail, not just the balance:
+  // 2_000_000 balance / rate 3 = 666_666s funded + up to 3600s of live lease
+  assert.ok(by[ID("33")].timeRemainingSec > 666_666, "a live lease adds its prepaid tail to timeRemainingSec");
+  assert.ok(by[ID("33")].timeRemainingSec <= 666_666 + 3600, "…but no more than the lease that was bought");
+  assert.equal(by[ID("88")].timeRemainingSec, 0, "drained + expired lease = nothing left");
 
   // TOKENLESS listing: a connected wallet's address is enough (?owner= scopes
   // the public ledger rows - no SIWE popup needed just to see your fleet)
