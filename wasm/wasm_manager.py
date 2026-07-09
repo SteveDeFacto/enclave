@@ -35,6 +35,11 @@ Notes:
   into. The supervisor already tolerates sshPort 0.
 - Apps must be wasi:http components (what `wasmtime serve` runs). A WASIX/wasmer
   socket-server launcher can be added behind the same LAUNCHER seam later.
+- Attached model volumes (MODEL_VOLUMES) that carry a GGUF are preloaded as
+  host wasi-nn graphs for GPU tenants (see _gguf_path / _stage_nn_graph). A
+  volume may ship a single *.gguf OR a llama.cpp split family
+  ("<prefix>-NNNNN-of-MMMMM.gguf"); the whole family is staged together so
+  models larger than HF's 50GB per-file cap load as one graph.
 """
 import collections
 import hmac
