@@ -1648,7 +1648,23 @@
             "example": 3600
           },
           "payment": {
-            "$ref": "#/components/schemas/PaymentInstructions"
+            "$ref": "#/components/schemas/PaymentInstructions",
+            "description": "Legacy pre-on-chain records only. Absent for on-chain deployments, which get `funding` instead."
+          },
+          "funding": {
+            "type": "object",
+            "description": "On-chain deployments only: fund the EnclaveDeployments contract (fundWithAuthorization / fundEth); a payment to the legacy forwarder cannot credit an on-chain balance.",
+            "properties": {
+              "contract": { "type": "string", "nullable": true, "description": "EnclaveDeployments contract address on Base." },
+              "chainId": { "type": "integer", "example": 8453 },
+              "usdc": { "type": "string" },
+              "ratePerSecondUsdc": { "type": "string", "example": "0.0008611" },
+              "fundMethod": { "type": "string", "example": "fundWithAuthorization(bytes32 id, address from, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce, bytes signature)" },
+              "fundEthMethod": { "type": "string", "example": "fundEth(bytes32 id) payable" },
+              "usdcDomain": { "type": "object", "nullable": true, "description": "USDC EIP-712 domain to sign the ReceiveWithAuthorization against (to = the contract; nonce = first 16 bytes of the id + 16 random bytes)." },
+              "ethUsd": { "type": "string", "nullable": true },
+              "note": { "type": "string" }
+            }
           }
         }
       },

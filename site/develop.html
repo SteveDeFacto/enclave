@@ -88,7 +88,7 @@
             <li><b>Network</b>: none by default beyond the HTTP socket the runtime serves for you. Declaring open ports switches the app to service mode with <code>wasi:sockets</code>. <a href="#docs-ports">Chapter 09 →</a></li>
             <li><b>GPU</b>: none by default. A deployment that buys a GPU share gets <code>wasi-nn</code> - ONNX inference through the enclave's runtime, on an MPS-capped slice of the H200. <a href="#docs-gpu">Chapter 12 →</a></li>
             <li><b>Memory</b>: the guest's linear memory is capped at the deployment's CPU share of the node's RAM (cpuShare × 64&nbsp;GB), enforced by the runtime - always at least the <code>memMb</code> the app's specs declare, since the specs floor the share.</li>
-            <li><b>No host reach</b>: no processes, no exec, no SSH (a Wasm app isn't an OS; there's nothing to SSH into).</li>
+            <li><b>No host reach</b>: no processes, no exec, no SSH into the app (a Wasm app isn't an OS; there's nothing to SSH into). The <code>sshPubKey</code> field on <code>create()</code> and the attestation's <code>sshHostKey</code> belong to a supervisor-served owner-access channel that is unwired in the current revision - not to your app.</li>
           </ul>
           <p>Two kinds of app, one format:</p>
           <ul>

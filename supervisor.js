@@ -2239,17 +2239,35 @@ app.delete("/v1/deployments/:id", authed, async (req, res) => {
 });
 
 
-// Top-up instructions: just call EnclavePay.pay(deploymentRef, amount) again to extend.
+// Top-up instructions. An on-chain deployment funds the EnclaveDeployments
+// ledger - the contract, not this box, meters its runtime, so EnclavePay
+// instructions here would take the user's money without crediting balance6.
+// Legacy pre-on-chain records still get the forwarder instructions.
 app.post("/v1/deployments/:id/topup", authed, (req, res) => {
   const rec = deployments.get(req.params.id);
   if (!rec || rec.owner !== req.address) return fail(res, 404, "not_found", "No such deployment.");
   if (!["running", "awaiting_payment"].includes(rec.status))
     return fail(res, 409, "not_toppable", `Deployment is ${rec.status}.`);
+  if (rec._onchain) return res.json({
+    id: rec.id, status: rec.status, timeRemainingSec: timeRemainingSec(rec),
+    funding: {
+      contract: DEPLOYMENTS_ADDRESS || null, chainId: CHAIN_ID, usdc: USDC_ADDRESS,
+      ratePerSecondUsdc: (rec.rate || 0).toFixed(7),
+      fundMethod: "fundWithAuthorization(bytes32 id, address from, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce, bytes signature)",
+      fundEthMethod: "fundEth(bytes32 id) payable",
+      usdcDomain: _usdcDomain,
+      ethUsd: _ethUsd.price8 ? (Number(_ethUsd.price8) / 1e8).toFixed(2) : null,
+      note: "On-chain deployment: fund the EnclaveDeployments contract, NOT the legacy forwarder (a forwarder "
+          + "payment cannot credit an on-chain balance). USDC: sign a ReceiveWithAuthorization (EIP-712, to = the "
+          + "contract, nonce = first 16 bytes of the id + 16 random bytes), then anyone submits fundWithAuthorization. "
+          + "ETH: fundEth(id) with msg.value, credited at the contract's Chainlink ETH/USD read. Each payment adds "
+          + "amount(6dp)/rate seconds to the on-chain balance.",
+    } });
   res.json({ id: rec.id, status: rec.status, timeRemainingSec: timeRemainingSec(rec), payment: paymentInstructions(rec) });
 });
 
 // Optional ?nonce=<64 hex chars>: freshness challenge folded into the GPU report
-// (the TDX quote needs none - it binds the long-lived TLS key, and freshness
+// (the CPU quote needs none - it binds the long-lived TLS key, and freshness
 // comes from fetching the RAD over your own connection).
 function attestNonce(req, res) {
   const n = req.query.nonce;
