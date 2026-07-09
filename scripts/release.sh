@@ -20,9 +20,9 @@ DIGEST_SEP="${DIGEST_SEP:-@}"   # OCI digest pin form: name@sha256:HEX. (':' is 
 TAG="${TAG:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-CONFIG="$REPO_ROOT/enclaves/gpu/tinfoil-config.yml"        # GPU flavor: tenant stack + co-hosted enclave-vllm platform model
+CONFIG="$REPO_ROOT/enclaves/gpu/tinfoil-config.yml"
 CONFIG_CPU="$REPO_ROOT/enclaves/cpu/tinfoil-config.yml"    # CPU-only flavor; shares the supervisor + wasm-manager images
-CONFIG_GPU8="$REPO_ROOT/enclaves/gpu8/tinfoil-config.yml"  # 8xGPU platform-model flavor; shares the supervisor + enclave-vllm images
+CONFIG_GPU8="$REPO_ROOT/enclaves/gpu8/tinfoil-config.yml"  # 8xGPU platform-model flavor; shares the supervisor image, adds enclave-vllm
 cd "$REPO_ROOT"
 
 # image short-name -> build context (Dockerfile is <context>/Dockerfile unless

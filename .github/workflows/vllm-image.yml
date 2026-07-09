@@ -1,13 +1,10 @@
 # Builds + pushes the enclave-vllm image (the platform-model inference tier) and
-# prints the digest to pin into EVERY flavor config that ships it - currently
-# enclaves/gpu/tinfoil-config.yml (co-hosted qwen3.5-122b sidecar) and
-# enclaves/gpu8/tinfoil-config.yml (dedicated GLM-5.2 tier).
+# prints the digest to pin into enclaves/gpu8/tinfoil-config.yml.
 #
 # Manual: run after changing vllm/Dockerfile or vllm/entrypoint.sh (or to move
 # the vLLM base version). Then pin the printed digest:
-#   sed -i 's#enclave-vllm@sha256:[0-9a-f]*#enclave-vllm@<DIGEST>#' \
-#     enclaves/gpu/tinfoil-config.yml enclaves/gpu8/tinfoil-config.yml
-# commit it, and cut the release(s) (tinfoil-release.yml / tinfoil-release-gpu8.yml).
+#   sed -i 's#enclave-vllm@sha256:[0-9a-f]*#enclave-vllm@<DIGEST>#' enclaves/gpu8/tinfoil-config.yml
+# commit it, and cut the -gpu8 release (tinfoil-release-gpu8.yml).
 #
 # NOTE: the image is large (FROM vllm/vllm-openai:glm52-cu129, ~10GB+); the
 # build mostly pulls the base + adds our thin entrypoint layer.
@@ -60,6 +57,6 @@ jobs:
       - name: Print the digest to pin
         run: |
           echo "enclave-vllm digest: ${{ steps.build.outputs.digest }}"
-          echo "Pin it in enclaves/gpu/tinfoil-config.yml AND enclaves/gpu8/tinfoil-config.yml:"
+          echo "Pin it in enclaves/gpu8/tinfoil-config.yml:"
           echo "  ghcr.io/enclavehost/enclave-vllm@${{ steps.build.outputs.digest }}"
           echo "Then confirm the package is PUBLIC (ghcr Settings) so Tinfoil can pull it."
