@@ -9,7 +9,7 @@
   "servers": [
     {
       "url": "https://api.enclave.host/v1",
-      "description": "Production API gateway: proxies to the live enclave (attested TLS terminates in the enclave; the gateway sees control-plane traffic). Talk to an enclave directly by using its base, e.g. https://enclave1.nan.containers.tinfoil.dev/v1"
+      "description": "Production API gateway: proxies to the live enclave (attested TLS terminates in the enclave; the gateway sees control-plane traffic). Talk to an enclave directly by using its base, e.g. https://svalbard.enclave.containers.tinfoil.dev/v1"
     }
   ],
   "security": [
@@ -24,7 +24,7 @@
     },
     {
       "name": "Account",
-      "description": "Your address, the payment forwarder, and a summary of your deployments. No balances are held."
+      "description": "Your address, the legacy payment forwarder, and a summary of your deployments. Current deployments fund on the EnclaveDeployments contract; no balances are held by this service."
     },
     {
       "name": "Pricing",
@@ -128,7 +128,7 @@
         ],
         "operationId": "getAccount",
         "summary": "Account summary",
-        "description": "Your address, the USDC payment forwarder to pay, and counts of your running and awaiting-payment deployments plus total funded time remaining. No balances are held by Enclave.",
+        "description": "Your address, the legacy USDC payment forwarder (pre-on-chain records only; current deployments fund the EnclaveDeployments contract), and counts of your running and awaiting-payment deployments plus total funded time remaining. No balances are held by Enclave.",
         "responses": {
           "200": {
             "description": "Account summary.",
@@ -420,7 +420,7 @@
         ],
         "operationId": "terminateDeployment",
         "summary": "Stop a deployment",
-        "description": "Stops the worker process, tears down the tenant, and releases both shares (GPU and CPU); the deployment finishes as `terminated` once teardown completes (the receipt already carries it). An `awaiting_payment` reservation is removed outright instead (`canceled`). Pay-per-deploy holds no balance, so any unused funded time is forfeit on early stop.",
+        "description": "Stops the worker process, tears down the tenant, and releases both shares (GPU and CPU); the deployment finishes as `terminated` once teardown completes (the receipt already carries it). An `awaiting_payment` reservation is removed outright instead (`canceled`). For an on-chain deployment this only ends the CURRENT run: the lease is released and its unused tail is refunded to the deployment's on-chain balance, which stays on the record - an active, funded deployment gets re-claimed by the fleet, and a permanent stop is your setActive(false) transaction. Unspent balance survives for a later restart but is never withdrawable; payments are final. (Legacy pre-on-chain records had no balance: their unused funded time was forfeit on early stop.)",
         "parameters": [
           {
             "name": "id",
@@ -462,7 +462,7 @@
         ],
         "operationId": "topupDeployment",
         "summary": "Top-up instructions",
-        "description": "Returns the payment instructions to extend a deployment. A top-up is just another payWithAuthorization (with a fresh nonce) to the same forwarder; each payment adds amount(6dp)/rate seconds to the expiry. Send it before expiry (a short grace period covers in-flight top-ups).",
+        "description": "Returns the funding instructions to extend a deployment. For on-chain deployments (the current path) that means the EnclaveDeployments contract: fundWithAuthorization (EIP-3009 USDC, nonce prefixed with the id's first 16 bytes) or fundEth - NOT the legacy forwarder, which cannot credit an on-chain balance. Each payment adds amount(6dp)/rate seconds. Legacy pre-on-chain records still receive EnclavePay payWithAuthorization instructions. Send it before expiry (a short grace period covers in-flight top-ups).",
         "parameters": [
           {
             "name": "id",
@@ -566,7 +566,7 @@
         ],
         "operationId": "getEnclaveAttestation",
         "summary": "Get the enclave attestation (public)",
-        "description": "Enclave-level attestation, no auth: the Tinfoil Remote Attestation Document (live Intel TDX quote binding this origin's TLS key), parsed measurement registers, and NVIDIA GPU CC evidence from a short server-side cache. Verify client-side BEFORE logging in or sending data. For a fresh GPU nonce challenge, use the per-deployment endpoint.",
+        "description": "Enclave-level attestation, no auth: the Tinfoil Remote Attestation Document (the live CPU attestation report binding this origin's TLS key - AMD SEV-SNP on today's fleet; Intel TDX quotes are handled identically), parsed measurement registers, and NVIDIA GPU CC evidence from a short server-side cache. Verify client-side BEFORE logging in or sending data. For a fresh GPU nonce challenge, use the per-deployment endpoint.",
         "security": [],
         "responses": {
           "200": {
@@ -589,7 +589,7 @@
         ],
         "operationId": "getAttestation",
         "summary": "Get a deployment's attestation",
-        "description": "The live Intel TDX quote (relayed Tinfoil Remote Attestation Document plus parsed registers) and the NVIDIA GPU attestation report signed over your nonce, with honest per-app coverage notes. Verify client-side before sending data.",
+        "description": "The live CPU attestation report (AMD SEV-SNP on today's fleet; relayed Tinfoil Remote Attestation Document plus parsed registers) and the NVIDIA GPU attestation report signed over your nonce, with honest per-app coverage notes. Verify client-side before sending data.",
         "parameters": [
           {
             "name": "id",
@@ -784,7 +784,7 @@
       },
       "PaymentInstructions": {
         "type": "object",
-        "description": "How to fund (or top up) a deployment by paying the EnclavePay forwarder. Funds pass straight through to Enclave; nothing is custodied.",
+        "description": "LEGACY (pre-on-chain records only): how to top up by paying the EnclavePay forwarder. Current deployments live on the EnclaveDeployments ledger and fund there instead (fundWithAuthorization / fundEth); paying the forwarder cannot credit an on-chain balance. Funds pass straight through to Enclave either way; nothing is custodied.",
         "properties": {
           "chainId": {
             "type": "integer",
@@ -1347,7 +1347,7 @@
           "endpoint": {
             "type": "string",
             "description": "Public URL on the enclave's single pinned origin: a path under the shim.",
-            "example": "https://enclave1.debug.nan.containers.tinfoil.dev/x/dep_3xK9f2Qa"
+            "example": "https://svalbard.enclave.containers.tinfoil.dev/x/dep_3xK9f2Qa"
           },
           "address": {
             "type": "string",
@@ -1630,7 +1630,7 @@
           },
           "note": {
             "type": "string",
-            "example": "Pay-per-deploy: no balance is held, so unused funded time is forfeit on early stop."
+            "example": "On-chain deployment: lease released (unused lease time refunded to its balance). It stays claimable by any enclave while active and funded - call setActive(false) on EnclaveDeployments to stop it for good."
           }
         }
       },
@@ -1654,7 +1654,7 @@
       },
       "Measurements": {
         "type": "object",
-        "description": "Registers parsed out of the quote (Intel TDX: mrTd + rtmr0-3; AMD SEV-SNP: measurement). Compare against the Sigstore-signed measurements published on the enclave repo's release.",
+        "description": "Registers parsed out of the report (AMD SEV-SNP: measurement; Intel TDX: mrTd + rtmr0-3). Compare against the Sigstore-signed measurements published on the enclave repo's release.",
         "additionalProperties": true
       },
       "VmAttestation": {
