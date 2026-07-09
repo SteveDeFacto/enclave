@@ -612,10 +612,13 @@ async function cmdStatus(rest) {
   if (!rec && !chainRec) throw new Error(`no deployment ${rest[0]} (not on any live enclave, not on the ledger)`);
   if (opt.json) return jout({ api: rec, chain: chainRec });
   const leased = chainRec && Number(chainRec.leaseUntil) * 1000 > Date.now();
+  // queued vs unfunded is the contract's claimable() boundary (balance6 >= rate):
+  // below it no enclave will ever claim, so "queued" would be a lie
+  const claimable = chainRec && chainRec.balance6 >= chainRec.rate;
   kv([
     ["id", id],
     ["app", rec?.image?.reference || chainRec?.appRef],
-    ["status", rec?.status || (chainRec ? (!chainRec.active ? "stopped" : leased ? "claimed (no live enclave record yet)" : "queued — waiting for an enclave to claim") : null)],
+    ["status", rec?.status || (chainRec ? (!chainRec.active ? "stopped" : leased ? "claimed (no live enclave record yet)" : claimable ? "queued — waiting for an enclave to claim" : "unfunded — spent its funding; a top-up re-queues it (enclave fund)") : null)],
     ["visibility", (rec ? rec.public : chainRec?.isPublic) ? "public" : "private (owner bearer required)"],
     rec?.resources ? ["shares", `gpu ${Math.round((rec.resources.gpuShare || 0) * 100)}% · cpu ${Math.round((rec.resources.cpuShare || 0) * 100)}%`]
                    : chainRec ? ["shares", `gpu ${Number(chainRec.gpuMilli) / 10}% · cpu ${Number(chainRec.cpuMilli) / 10}%`] : null,

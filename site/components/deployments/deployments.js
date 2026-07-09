@@ -50,8 +50,9 @@ function bucketOf(st){
   st = String(st || "").toLowerCase();
   if (st === "running") return "running";
   // the "queued" bucket matches the ledger's own vocabulary: everything on
-  // its way (queued/claimed/provisioning/awaiting_payment/...) but not over
-  if (["provisioning", "queued", "pending", "claiming", "claimed", "starting", "created", "awaiting_payment"].indexOf(st) !== -1) return "queued";
+  // its way (queued/claimed/provisioning/awaiting_payment/...) but not over —
+  // unfunded (drained; resumes on top-up) waits here too, it just isn't "queued"
+  if (["provisioning", "queued", "pending", "claiming", "claimed", "starting", "created", "awaiting_payment", "unfunded"].indexOf(st) !== -1) return "queued";
   if (["failed", "error"].indexOf(st) !== -1) return "failed";
   return "ended";   // stopped, stopping, terminated, expired, …
 }
@@ -237,8 +238,9 @@ class Deployments extends EnclaveElement {
            + (d.paused ? " · ⏸ time frozen (" + esc(d.pauseReason || "outage") + ", resumes when service is restored)" : ""))
         : "–";
       // on-chain rows without a live runner stay actionable: queued/claimed
-      // work can be topped up, and awaiting_payment is Top up's whole point
-      const live = ["running", "provisioning", "queued", "pending", "claiming", "claimed", "awaiting_payment"].indexOf(st) !== -1;
+      // work can be topped up, and awaiting_payment/unfunded are Top up's
+      // whole point (unfunded = drained; a top-up is what un-sticks it)
+      const live = ["running", "provisioning", "queued", "pending", "claiming", "claimed", "awaiting_payment", "unfunded"].indexOf(st) !== -1;
       return '<div class="enc-row' + (highlight && d.id === highlight ? " enc-new" : "") + '">' +
         '<div class="enc-main">' +
           '<span class="ap-badge ' + statusCls(st) + '">' + esc(st) + '</span>' +

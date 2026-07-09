@@ -50,8 +50,9 @@ const LEDGER = [
   { id: ID("11"), owner: OWNER, appRef: "ipfs://queued", active: true,  balance6: 5_000_000, spent6: 0 },                                   // funded, unclaimed
   { id: ID("22"), owner: OWNER, appRef: "ipfs://stopped", active: false, balance6: 1_000_000, spent6: 500_000 },                            // owner-stopped
   { id: ID("33"), owner: OWNER, appRef: "ipfs://claimed", active: true,  balance6: 2_000_000, spent6: 100_000, runner: RUNNER, leaseUntil: FUTURE }, // lease live, runner silent
-  { id: ID("44"), owner: OWNER, appRef: "ipfs://unfunded", active: true, balance6: 0, spent6: 0 },                                          // created, never funded
+  { id: ID("44"), owner: OWNER, appRef: "ipfs://unpaid", active: true, balance6: 0, spent6: 0 },                                            // created, never funded
   { id: ID("55"), owner: OTHER, appRef: "ipfs://foreign", active: true,  balance6: 9_000_000, spent6: 0 },                                  // someone else's
+  { id: ID("88"), owner: OWNER, appRef: "ipfs://drained", active: true,  balance6: 2, spent6: 4_999_998, runner: RUNNER, leaseUntil: 1700000500 }, // ran, lease over, balance < rate
 ];
 
 // ---------- harness ----------------------------------------------------------
@@ -112,12 +113,13 @@ test("api-relay: zero live enclaves — list returns every on-chain deployment t
   const { status, body } = await getJson(origin, "/v1/deployments", jwt(OWNER));
   assert.equal(status, 200);
   const rows = body.data;
-  assert.equal(rows.length, 4, "all four of the owner's ledger records, none of the foreign one");
+  assert.equal(rows.length, 5, "all five of the owner's ledger records, none of the foreign one");
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));
   assert.equal(by[ID("11")].status, "queued");
   assert.equal(by[ID("22")].status, "stopped");
   assert.equal(by[ID("33")].status, "claimed");
   assert.equal(by[ID("44")].status, "awaiting_payment");
+  assert.equal(by[ID("88")].status, "unfunded", "drained work (balance < rate) must not read as queued: nothing will claim it");
   assert.ok(rows.every((r) => r.ledger === true), "rows are marked as ledger-synthesized");
   assert.equal(by[ID("11")].image.reference, "ipfs://queued");
   assert.equal(by[ID("11")].paidUsdc, "5.00");
@@ -128,7 +130,7 @@ test("api-relay: zero live enclaves — list returns every on-chain deployment t
   // the public ledger rows - no SIWE popup needed just to see your fleet)
   const noTok = await getJson(origin, "/v1/deployments?owner=" + OWNER);
   assert.equal(noTok.status, 200);
-  assert.equal(noTok.body.data.length, 4, "owner param scopes the same 4 rows without any token");
+  assert.equal(noTok.body.data.length, 5, "owner param scopes the same 5 rows without any token");
   assert.ok(noTok.body.data.every((r) => r.ledger === true));
   // scoping is NOT authentication: ledger rows are public on-chain data
   const foreign = await getJson(origin, "/v1/deployments?owner=" + OTHER);
@@ -185,7 +187,7 @@ test("api-relay: live enclave rows merge with ledger-only rows, deduped by id", 
   const { status, body } = await getJson(origin, "/v1/deployments", jwt(OWNER));
   assert.equal(status, 200);
   const by = Object.fromEntries(body.data.map((r) => [r.id, r]));
-  assert.equal(body.data.length, 4, "hosted row + the 3 ledger-only rows, no duplicate for the hosted id");
+  assert.equal(body.data.length, 5, "hosted row + the 4 ledger-only rows, no duplicate for the hosted id");
   assert.equal(by[ID("33")].status, "running", "the enclave's live row wins over the ledger view");
   assert.equal(by[ID("33")].ledger, undefined);
   assert.equal(by[ID("11")].status, "queued");

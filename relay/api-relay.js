@@ -198,7 +198,10 @@ async function ledgerRows() {
 // finer-grained truth); "claimed" = a lease is live but its runner isn't
 // answering (enclave down/restarting); "queued" = funded work awaiting a claim
 // (incl. expired leases - claimable); they resume by themselves, nothing needs
-// the owner.
+// the owner. "unfunded" = the balance can't buy one second (drained mid-run or
+// funded below the rate): no enclave will claim it until the owner tops up —
+// the boundary mirrors the contract's claimable() (balance6 >= rate) and the
+// supervisor's own sweep gate, so "queued" always means "will start by itself".
 const ZERO32 = /^0x0+$/;
 const runnerIsLive = (runner) => {
   runner = String(runner).toLowerCase();
@@ -209,7 +212,7 @@ function ledgerStatus(d) {
   if (!(d.balance6 > 0n || d.spent6 > 0n)) return "awaiting_payment";
   if (!ZERO32.test(d.runner) && Number(d.leaseUntil) * 1000 > Date.now())
     return runnerIsLive(d.runner) ? "running" : "claimed";
-  return "queued";
+  return d.balance6 >= d.rate ? "queued" : "unfunded";
 }
 // Shape a ledger record like the enclaves' own rows (supervisor view()), so
 // dashboards/CLIs treat both alike. `ledger: true` marks the synthesis - logs,
