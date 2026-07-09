@@ -233,11 +233,21 @@ containers:
       # head-dim x (K+V) x 2 bytes = 24 KB/token: 256K f16 = ~6.4 GB on top of the
       # ~60 GB weights (~67 GB total), so a 122B deployment MUST buy a >=~50% GPU
       # share or context allocation fails loudly ("n_ctx too large for the share").
-      # (A q8_0 KV cache - see ENCLAVE_GGML_KV_CACHE_TYPE, once the toolchain
-      # carries it - halves the KV to ~3.2 GB, dropping the floor to ~48%.) Small
-      # models (qwen2.5-0.5b) pay only a few hundred MB. Lower this if the node
-      # should not carry the big-context cost by default.
+      # (The q8_0 KV cache set below halves it to ~3.2 GB, easing the floor to
+      # ~48%.) Small models (qwen2.5-0.5b) pay only a few hundred MB. Lower this
+      # if the node should not carry the big-context cost by default.
       - ENCLAVE_GGML_N_CTX: "262144"
+      # KV-cache quantization (needs the KV-quant wasmtime toolchain - the
+      # WASMTIME_IMAGE repinned alongside this commit). q8_0 on BOTH K and V
+      # halves the up-front KV the window costs (256K: ~6.4 GB f16 -> ~3.2 GB) at
+      # negligible quality cost. A quantized V cache REQUIRES Flash Attention (the
+      # backend auto-enables it for a q8 V, but we set it explicitly). FA on this
+      # H200 UNDER MPS is the one unvalidated piece: if a 122B ever fails context
+      # allocation after this release, fall back to a q8 K-only cache with
+      #   ENCLAVE_GGML_KV_CACHE_TYPE_V: "f16"  +  ENCLAVE_GGML_FLASH_ATTN: "auto"
+      # (K-quant needs no FA) - a config-only re-measure, no toolchain rebuild.
+      - ENCLAVE_GGML_KV_CACHE_TYPE: "q8_0"
+      - ENCLAVE_GGML_FLASH_ATTN: "on"
       # each app's memory cap is its deployment's cpuShare × NODE_RAM_GB
       # (>= the mem_mb its specs declare); WASM_APP_MIN_MEM_MB (64) is the floor
       # friendly name -> the model's auto-mount path. Tinfoil mounts each
