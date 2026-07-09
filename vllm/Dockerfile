@@ -15,10 +15,13 @@ FROM ${VLLM_BASE}
 COPY entrypoint.sh /usr/local/bin/enclave-vllm-entrypoint.sh
 RUN chmod +x /usr/local/bin/enclave-vllm-entrypoint.sh
 
-# GLM-5.2 defaults; override via env in tinfoil-config.yml.
+# GLM-5.2 defaults; override via env in tinfoil-config.yml. (The gpu flavor
+# co-hosts this next to the tenant stack and overrides SERVED_MODEL_NAME,
+# GPU_MEMORY_UTILIZATION and VLLM_EXTRA_ARGS for its model - see enclaves/gpu.)
 ENV SERVED_MODEL_NAME=glm-5.2 \
     KV_CACHE_DTYPE=fp8 \
     MAX_MODEL_LEN=262144 \
+    GPU_MEMORY_UTILIZATION=0.90 \
     VLLM_PORT=8000 \
     VLLM_EXTRA_ARGS="--tool-call-parser glm47 --reasoning-parser glm45 --enable-auto-tool-choice --enable-prefix-caching"
 

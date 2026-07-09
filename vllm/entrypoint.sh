@@ -15,6 +15,10 @@
 #   TENSOR_PARALLEL  GPUs to shard across (default = nvidia-smi count, else 8)
 #   MAX_MODEL_LEN    context window (default 262144; GLM supports up to 1M)
 #   KV_CACHE_DTYPE   default fp8 (halves KV cache; Hopper-native)
+#   GPU_MEMORY_UTILIZATION  fraction of each card vLLM may claim (default 0.90,
+#                    vLLM's own default). Lower it when the flavor co-hosts the
+#                    per-tenant GPU stack on the same card (enclaves/gpu) so
+#                    tenant MPS shares keep their VRAM budget.
 #   VLLM_PORT        loopback port for the OpenAI server (default 8000)
 #   VLLM_EXTRA_ARGS  appended verbatim (parsers, quant flags, etc.)
 set -euo pipefail
@@ -23,6 +27,7 @@ MODEL_VOLUME_ROOT="${MODEL_VOLUME_ROOT:-/tinfoil/mpk}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-glm-5.2}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-262144}"
 KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8}"
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 VLLM_PORT="${VLLM_PORT:-8000}"
 
 # --- locate the model ------------------------------------------------------- #
@@ -54,7 +59,7 @@ if [ -z "${TENSOR_PARALLEL:-}" ]; then
   TENSOR_PARALLEL="${TENSOR_PARALLEL:-8}"
 fi
 
-echo "enclave-vllm: serving $MODEL_DIR as '$SERVED_MODEL_NAME' | TP=$TENSOR_PARALLEL kv=$KV_CACHE_DTYPE ctx=$MAX_MODEL_LEN port=$VLLM_PORT" >&2
+echo "enclave-vllm: serving $MODEL_DIR as '$SERVED_MODEL_NAME' | TP=$TENSOR_PARALLEL kv=$KV_CACHE_DTYPE ctx=$MAX_MODEL_LEN gpu-util=$GPU_MEMORY_UTILIZATION port=$VLLM_PORT" >&2
 
 # Loopback bind: the enclave shim only exposes the supervisor; nothing reaches
 # vLLM except the supervisor's in-CVM proxy.
@@ -63,6 +68,7 @@ exec vllm serve "$MODEL_DIR" \
   --tensor-parallel-size "$TENSOR_PARALLEL" \
   --kv-cache-dtype "$KV_CACHE_DTYPE" \
   --max-model-len "$MAX_MODEL_LEN" \
+  --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
   --host 127.0.0.1 \
   --port "$VLLM_PORT" \
   ${VLLM_EXTRA_ARGS:-}

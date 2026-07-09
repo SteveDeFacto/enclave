@@ -57,6 +57,18 @@ jobs:
             exit 1
           fi
 
+      # the GPU flavor ships the enclave-vllm sidecar (platform model); its
+      # digest is pinned by scripts/release.sh / vllm-image.yml, NOT here (this
+      # workflow only repins the supervisor), so a zero placeholder would ship
+      # verbatim into the measured tag and the enclave could never pull it.
+      - name: Guard against an unpinned enclave-vllm digest
+        run: |
+          cfg=enclaves/gpu/tinfoil-config.yml
+          if grep -q 'enclave-vllm@sha256:0\{64\}' "$cfg"; then
+            echo "::error::enclave-vllm digest is the zero placeholder in $cfg - run vllm-image.yml (or scripts/release.sh enclave-vllm), commit the pin, then release."
+            exit 1
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 

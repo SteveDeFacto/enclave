@@ -178,6 +178,9 @@ for (const d of ["assets", "privy", ".well-known"])
   fs.cpSync(path.join(SITE, d), path.join(DIST, d), { recursive: true });
 // pretty URLs: the gateway's rewrite rules ride the pin itself
 fs.copyFileSync(path.join(SITE, "_redirects"), path.join(DIST, "_redirects"));
+// Google's favicon crawler needs a fetchable file, and legacy fetchers ask
+// for /favicon.ico blindly - it must exist at the site root
+fs.copyFileSync(path.join(SITE, "favicon.ico"), path.join(DIST, "favicon.ico"));
 /* nested console/form URLs (/apps/deploy, /apps/publish): the SAME apps
    document one directory deep, with <base href="../"> injected so its
    relative asset/link URLs still resolve from the site root. The base is
