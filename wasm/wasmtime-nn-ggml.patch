@@ -15,7 +15,10 @@
 # records the other patches' deps (half, sha2).
 #
 # Model delivery: -S nn-graph=ggml::<dir> preloads <dir>/model.gguf (or the
-# single *.gguf) under the DIRECTORY BASENAME; guests load_by_name() it, so
+# single *.gguf, or part 00001 of ONE complete "<prefix>-NNNNN-of-MMMMM.gguf"
+# split family - HF's 50GB per-file cap forces big models to ship split, and
+# llama.cpp derives the sibling paths from part 00001's file name) under the
+# DIRECTORY BASENAME; guests load_by_name() it, so
 # weights never transit the guest's 32-bit linear memory - model size is
 # bounded by the tenant's share, not wasm32. The model loads ONCE per
 # process, AT SERVER STARTUP: upstream `wasmtime serve` preloads -S nn-graph
@@ -53,7 +56,9 @@
 # ~114 tok/s via the dlopened cpu module; self-deterministic; strict-GPU
 # guard + no-backend failure paths exercised). NOTE: greedy token streams
 # differ between GGML_NATIVE=ON and =OFF kernel builds (near-tie argmax
-# flips) - compare like with like when validating determinism.
+# flips) - compare like with like when validating determinism. Split-family
+# smoke 2026-07-09: a q4_k_m gguf-split into 3 parts loads through the staged
+# symlink dir and greedy-decodes TOKEN-IDENTICAL to the merged file.
 diff --git a/Cargo.lock b/Cargo.lock
 index 6ffaac1..3c68c51 100644
 --- a/Cargo.lock
@@ -116,10 +121,10 @@ index b2db808..af89d10 100644
  
 diff --git a/crates/wasi-nn/src/backend/ggml.rs b/crates/wasi-nn/src/backend/ggml.rs
 new file mode 100644
-index 0000000..46e7f14
+index 0000000..9fb444e
 --- /dev/null
 +++ b/crates/wasi-nn/src/backend/ggml.rs
-@@ -0,0 +1,345 @@
+@@ -0,0 +1,379 @@
 +//! A ggml/llama.cpp backend for wasi-nn — GGUF language models behind the
 +//! standard `wasi:nn` interface.
 +//!
@@ -274,9 +279,35 @@ index 0000000..46e7f14
 +    }
 +}
 +
++/// Part 00001 of the split-GGUF family covering EXACTLY the given file names
++/// (llama.cpp's "<prefix>-NNNNN-of-MMMMM.gguf" split convention, forced on
++/// >50GB models by HF's per-file cap), if there is one. llama.cpp opens part
++/// 00001 and derives the sibling paths from its file name, so handing it the
++/// first part loads the whole model; extra ggufs outside the family stay an
++/// error (an ambiguous pick would misload).
++fn split_family_first(names: &std::collections::BTreeSet<String>) -> Option<String> {
++    for name in names {
++        let Some(stem) = name.strip_suffix(".gguf") else { continue };
++        let Some((rest, count)) = stem.rsplit_once("-of-") else { continue };
++        let Some((prefix, no)) = rest.rsplit_once('-') else { continue };
++        if no != "00001" || count.len() != 5 {
++            continue;
++        }
++        let Some(n) = count.parse::<u32>().ok().filter(|n| *n >= 1) else { continue };
++        let family: std::collections::BTreeSet<String> = (1..=n)
++            .map(|i| format!("{prefix}-{i:05}-of-{count}.gguf"))
++            .collect();
++        if family == *names {
++            return Some(name.clone());
++        }
++    }
++    None
++}
++
 +impl BackendFromDir for GgmlBackend {
 +    fn load_from_dir(&mut self, path: &Path, target: ExecutionTarget) -> Result<Graph, BackendError> {
-+        // model.gguf wins; otherwise exactly one *.gguf in the directory.
++        // model.gguf wins; otherwise exactly one *.gguf in the directory;
++        // otherwise one complete split family (part 00001 is the model).
 +        let preferred = path.join("model.gguf");
 +        let model_path = if preferred.is_file() {
 +            preferred
@@ -286,14 +317,22 @@ index 0000000..46e7f14
 +                .filter_map(|e| e.ok().map(|e| e.path()))
 +                .filter(|p| p.extension().map(|x| x == "gguf").unwrap_or(false))
 +                .collect();
++            let names: std::collections::BTreeSet<String> = ggufs
++                .iter()
++                .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
++                .collect();
 +            match (ggufs.len(), ggufs.pop()) {
 +                (1, Some(p)) => p,
-+                (n, _) => {
-+                    return Err(err(format!(
-+                        "expected model.gguf or exactly one *.gguf in {} (found {n})",
-+                        path.display()
-+                    )))
-+                }
++                (n, _) => match split_family_first(&names) {
++                    Some(first) => path.join(first),
++                    None => {
++                        return Err(err(format!(
++                            "expected model.gguf, exactly one *.gguf, or one complete \
++                             *-00001-of-NNNNN.gguf split family in {} (found {n})",
++                            path.display()
++                        )))
++                    }
++                },
 +            }
 +        };
 +        // Preloads arrive with ExecutionTarget::Cpu from the registry; the

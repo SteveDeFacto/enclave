@@ -343,21 +343,50 @@ def _vol_gguf_selection() -> dict:
     return sel
 
 
+_GGUF_SPLIT_RE = re.compile(r"^(.+)-(\d{5})-of-(\d{5})\.gguf$")
+
+
+def _split_family(gguf):
+    """All parts of the split-GGUF family `gguf` belongs to (llama.cpp's
+    "<prefix>-NNNNN-of-MMMMM.gguf" convention, forced on >50GB models by HF's
+    per-file cap), sorted 00001 first - or None if the name isn't a split part
+    or any sibling is missing. llama.cpp opens part 00001 and derives the
+    sibling paths from its file name, so a family only loads complete."""
+    m = _GGUF_SPLIT_RE.match(gguf.name)
+    if not m:
+        return None
+    prefix, count = m.group(1), int(m.group(3))
+    parts = [gguf.parent / f"{prefix}-{i:05d}-of-{m.group(3)}.gguf"
+             for i in range(1, count + 1)]
+    return parts if count >= 1 and all(x.is_file() for x in parts) else None
+
+
 def _gguf_path(name: str, host_path):
     """The concrete GGUF a volume preloads: the MODEL_VOLUMES-selected file
-    when given, else model.gguf, else the single *.gguf. None = not a
-    (preloadable) gguf volume - including multi-quant repos with no selection,
-    where any pick would be a guess."""
+    when given, else model.gguf, else the single *.gguf, else part 00001 of
+    the single complete split family covering every *.gguf in the dir. None =
+    not a (preloadable) gguf volume - including multi-quant repos with no
+    selection, where any pick would be a guess. A selection naming ANY part of
+    a split family selects the family (normalized to part 00001)."""
     p = pathlib.Path(host_path)
     sel = _vol_gguf_selection().get(name)
     if sel:
         f = p / sel
-        return f if f.is_file() else None
+        if not f.is_file():
+            return None
+        fam = _split_family(f)
+        return fam[0] if fam else f
     preferred = p / "model.gguf"
     if preferred.is_file():
         return preferred
     ggufs = [x for x in p.glob("*.gguf") if x.is_file()]
-    return ggufs[0] if len(ggufs) == 1 else None
+    if len(ggufs) == 1:
+        return ggufs[0]
+    if len(ggufs) > 1:
+        fam = _split_family(ggufs[0])
+        if fam and {x.name for x in fam} == {x.name for x in ggufs}:
+            return fam[0]
+    return None
 
 
 def _model_volumes() -> dict:
@@ -409,22 +438,31 @@ VOL_GUEST_ROOT = os.environ.get("VOL_GUEST_ROOT", "/models")
 
 def _stage_nn_graph(name: str, gguf):
     """wasmtime's -S nn-graph loads a DIRECTORY, registers the graph under the
-    dir BASENAME, and wants model.gguf (or a single *.gguf) inside. Modelwrap
-    mounts are named mpk-<root_hash> and multi-quant HF repos carry many
-    *.gguf, so neither is directly loadable: stage a symlink dir named after
-    the VOLUME - <FS_DIR>/nn-graph/<name>/model.gguf -> the chosen file - and
-    hand wasmtime that. The staging dir holds no bytes; reads resolve inside
-    the dm-verity mount. Re-linked atomically on every launch so a changed
-    MODEL_VOLUMES selection takes effect and concurrent launches never see a
-    missing file."""
+    dir BASENAME, and wants model.gguf (or a single *.gguf, or one complete
+    split family) inside. Modelwrap mounts are named mpk-<root_hash> and
+    multi-quant HF repos carry many *.gguf, so neither is directly loadable:
+    stage a symlink dir named after the VOLUME - <FS_DIR>/nn-graph/<name>/ -
+    and hand wasmtime that. A single-file model stages as model.gguf; a SPLIT
+    model stages every part under its REAL basename (llama.cpp derives the
+    sibling paths from part 00001's name, so the split names must survive).
+    The staging dir holds no bytes; reads resolve inside the dm-verity mount.
+    Re-linked atomically on every launch - and stale *.gguf links from a
+    previous selection are pruned - so a changed MODEL_VOLUMES selection takes
+    effect and concurrent launches never see a missing or ambiguous file."""
     d = FS_DIR / "nn-graph" / name
+    fam = _split_family(gguf)
+    targets = {x.name: x for x in fam} if fam else {"model.gguf": gguf}
     try:
         d.mkdir(parents=True, exist_ok=True)
-        tmp = d / f".model.gguf.{os.getpid()}"
-        if tmp.is_symlink() or tmp.exists():
-            tmp.unlink()
-        tmp.symlink_to(gguf)
-        os.replace(tmp, d / "model.gguf")
+        for stale in d.glob("*.gguf"):
+            if stale.name not in targets:
+                stale.unlink()
+        for link_name, src in targets.items():
+            tmp = d / f".{link_name}.{os.getpid()}"
+            if tmp.is_symlink() or tmp.exists():
+                tmp.unlink()
+            tmp.symlink_to(src)
+            os.replace(tmp, d / link_name)
         return d
     except OSError as e:
         print(f"[nn-graph] staging volume '{name}' failed: {e}", flush=True)
@@ -1201,10 +1239,12 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     # it and the weights never enter guest linear memory - model size is bounded
     # by the tenant's share, not wasm32's 4 GiB. Gated on `nn` like the
     # interface itself (no GPU share, no wasi-nn). wasmtime wants the dir named
-    # after the graph with one unambiguous .gguf inside - true for neither
-    # Modelwrap mounts (dir = mpk-<root_hash>) nor multi-quant HF repos - so
-    # every volume preloads through a STAGED symlink dir named after the
-    # volume (_stage_nn_graph); MODEL_VOLUMES' third field picks the file.
+    # after the graph with one unambiguous model inside (model.gguf, a single
+    # *.gguf, or one complete split family) - true for neither Modelwrap
+    # mounts (dir = mpk-<root_hash>) nor multi-quant HF repos - so every
+    # volume preloads through a STAGED symlink dir named after the volume
+    # (_stage_nn_graph); MODEL_VOLUMES' third field picks the file (any part
+    # of a split family selects the whole family).
     if nn:
         for name, host_path in vol_mounts.items():
             gguf = _gguf_path(name, host_path)
