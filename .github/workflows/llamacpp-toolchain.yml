@@ -121,8 +121,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.release_tag }}
         run: |
+          # --prerelease is load-bearing: this is a LIB TARBALL, not an enclave
+          # release. GitHub's /releases/latest returns the most recent
+          # NON-prerelease release, and the attestation verifier (github-proxy)
+          # hits exactly that endpoint. A plain release here would, for the window
+          # between its creation and the next vX.Y.Z enclave release, make
+          # /releases/latest point at a tarball with no tinfoil.hash - breaking
+          # verification fleet-wide. Marking it prerelease keeps it out of that
+          # endpoint forever. (Same reason the existing tarball releases were
+          # retro-flagged prerelease.)
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
                  --title "$TAG (llama.cpp lib tarball)" \
                  --notes "llama.cpp $LLAMA_COMMIT CUDA libs (sm_86+sm_90, CUDA 12.6, GGML_NATIVE=OFF, GGML_BACKEND_DL: cpu/cuda are dlopened modules) + the enclave_llama shim (wasm/llama-shim/). Consumed by Dockerfile.wasmtime (ELL_URL/ELL_SHA256) for the ggml wasi-nn backend (wasm/wasmtime-nn-ggml.patch)."
           gh release upload "$TAG" "/tmp/pkg/$TAG.tgz" \
