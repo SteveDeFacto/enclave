@@ -59,8 +59,8 @@ ENV ORT_LIB_LOCATION=/opt/onnxruntime-linux-x64-gpu-${ORT_VERSION}
 # pins the FFI boundary to pointers/scalars so llama.cpp bumps can't silently
 # break the Rust side. Rebuild flow: run llamacpp-toolchain.yml -> paste
 # ELL_URL/ELL_SHA256 here -> this commit triggers the enclave-wasmtime rebuild.
-ARG ELL_URL=https://github.com/EnclaveHost/enclave/releases/download/enclave-llamacpp-bec4772f/enclave-llamacpp-bec4772f.tgz
-ARG ELL_SHA256=c0fde5a203327b6e2833cbc8f9498c141f516888ebe2e68e127c2c19a144f7f6
+ARG ELL_URL=https://github.com/EnclaveHost/enclave/releases/download/enclave-llamacpp-bec4772f-kv1/enclave-llamacpp-bec4772f-kv1.tgz
+ARG ELL_SHA256=3ed9e68c7a003249214d1b5d5aab63cd0a664ae2475007bb28ca3b03d475ca89
 RUN curl -fsSL -o /tmp/ell.tgz "${ELL_URL}" \
  && echo "${ELL_SHA256}  /tmp/ell.tgz" | sha256sum -c - \
  && tar -xzf /tmp/ell.tgz -C /opt && rm /tmp/ell.tgz
