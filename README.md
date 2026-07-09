@@ -3,20 +3,20 @@
 **Trustless compute you can actually verify.** Enclave is a confidential-compute platform: publish a WebAssembly app to an on-chain catalog, fund a deployment straight from your wallet, and it runs inside a hardware-attested enclave (AMD SEV-SNP CPUs + NVIDIA confidential computing on H200 nodes today; Intel TDX quotes verify through the same pipeline) that neither the operator nor the host can see into. TLS terminates inside the enclave, billing is per-second on Base, and the whole chain of trust, from the CPU's attestation quote down to the exact commit of this repo that built the running image, can be verified from a browser before you send the service a byte.
 
 - **Site / deploy console / app store:** https://enclave.host
-- **Developer guide + API reference:** https://enclave.host/develop.html (OpenAPI spec: [site/openapi.json](site/openapi.json))
+- **Developer guide + API reference:** https://enclave.host/develop (OpenAPI spec: [site/openapi.json](site/openapi.json))
 - **REST API:** https://api.enclave.host/v1 (CORS-enabled; drive it from a browser)
-- **Deployed apps:** `https://<id>.app.enclave.host`, TLS terminated in-enclave
+- **Deployed apps:** `https://<id>.app.enclave.host` (the deployment id's first 8 hex chars), TLS terminated in-enclave
 
-There are no accounts and no KYC: an Ethereum wallet is the identity (email sign-in gets an embedded wallet). The project was formerly named **NaN**; the rename to **Enclave** is complete across code and contracts, with only a few live infrastructure names (the `nan.host` legacy domain, the Tinfoil org hostname) keeping the old token.
+There are no accounts and no KYC: an Ethereum wallet is the identity.
 
 ## How it works
 
 1. **Apps are Wasm components** (`wasi:http`). Anyone publishes to the on-chain app store (`EnclaveAppCatalog` on Base): the bytes go to IPFS addressed by CID, the listing, versions, and resource specs live on-chain. The enclave image ships no deployable apps; everything it runs is fetched by CID and hash-verified inside the enclave.
-2. **Deployments are on-chain work items** (`EnclaveDeployments`: create → fund → claim → lease). Funding is USDC (EIP-3009) or ETH, metered per second; top up to extend, stop anytime.
+2. **Deployments are on-chain work items** (`EnclaveDeployments`: create → fund → claim → lease). A deployment references a catalog **version** (`catalog://<appId>/<versionIndex>`), the immutable wasm + config + ports record the catalog owner approved. Funding is USDC (EIP-3009) or ETH, metered per second; top up to extend, stop anytime.
 3. **Enclaves claim the work.** Each enclave self-registers in `EnclaveRegistry`, polls for funded work it can serve, claims it, and runs the app in a wasmtime sandbox: per-tenant process isolation, a private RAM-backed `/data`, no network beyond the served HTTP socket unless the app declares firewall ports.
 4. **Every layer attests.** Tinfoil measures the container image (with a Sigstore transparency-log record tying it to this repo's release), the enclave proves the measurement in its attestation quote, and TLS keys never leave it. The site and CLI verify the full chain client-side before connecting.
 
-Beyond plain web apps: GPU inference via `wasi-nn` (ONNX on an MPS-capped slice of an H200), attested read-only **model volumes** mounted at `/models` (Tinfoil Modelwrap; the attestation commits to the exact weight bytes), raw TCP/UDP services behind an SNI relay, per-deployment dedicated IPv6 (inbound and outbound), and a **platform model tier**, an 8×GPU vLLM flavor serving large models over an attested OpenAI-compatible API.
+Beyond plain web apps: GPU inference via `wasi-nn` (ONNX, plus GGUF through a bundled llama.cpp backend, on an MPS-capped slice of an H200), attested read-only **model volumes** mounted at `/models` (Tinfoil Modelwrap; the attestation commits to the exact weight bytes), raw TCP/UDP services behind an SNI relay, per-deployment dedicated IPv6 (inbound and outbound), and a **platform model tier**, an 8×GPU vLLM flavor serving large models over an attested OpenAI-compatible API.
 
 ## Repository layout
 
@@ -38,14 +38,14 @@ Beyond plain web apps: GPU inference via `wasi-nn` (ONNX on an MPS-capped slice 
 
 ## Resources: apps declare specs, deployments buy shares
 
-**Apps** declare their exact resource specs in the on-chain catalog (EnclaveAppCatalog): `vramMb` + `gpuGflops` of one GPU card (both 0 = CPU-only app) and `memMb` + `cpuGflops` of the node (compute in GFLOPS = 1/1000 TFLOPS). Every app deploys from that catalog by IPFS CID; the enclave image ships no deployable apps.
+**Apps** declare their exact resource specs in the on-chain catalog (EnclaveAppCatalog): `vramMb` + `gpuGflops` of one GPU card (both 0 = CPU-only app) and `memMb` + `cpuGflops` of the node (compute in GFLOPS = 1/1000 TFLOPS). Every deployment references a catalog version (`catalog://<appId>/<versionIndex>`); the enclave image ships no deployable apps.
 
-**Deployments** buy exactly TWO shares, the only two settings on the deploy page (0–100% each):
+**Deployments** buy exactly TWO shares, the only two settings on the deploy page:
 
-- **`gpuShare`**: a slice of ONE GPU card. VRAM and compute move together: the same fraction caps both (MPS compute % + VRAM cap). 0 = CPU-only app.
-- **`cpuShare`**: a slice of the node's vCPU+RAM. The wasm guest's memory cap is that slice of the node's RAM.
+- **`gpuShare`** (0–100%): a slice of ONE GPU card. VRAM and compute move together: the same fraction caps both (MPS compute % + VRAM cap). 0 = CPU-only app.
+- **`cpuShare`** (1–100%): a slice of the node's vCPU+RAM. The wasm guest's memory cap is that slice of the node's RAM.
 
-The app's specs set the **minimum shares**: each pool's floor is the spec divided by the server's spec (H200 = 141 GB / 989 TFLOPS - VRAM is probed from the card itself at boot (nvidia-smi memory.total), `GPU_VRAM_GB` is only the fallback; compute via `GPU_TFLOPS`; node = 64 GB / ~1000 GFLOPS via `NODE_RAM_GB`/`NODE_GFLOPS`; CPU compute is denominated in GFLOPS because a whole node is only ~1/1000 of a card), taking the **larger** of the memory and compute axes, rounded up to the whole percent. A GPU app's CPU minimum also lifts its GPU minimum, because of the invariant: **`gpuShare >= cpuShare` whenever `gpuShare > 0`** (a GPU app's CPU slice rides on the same node as its card). Runners enforce the minimums at deploy and claim time; the site's deploy page floors its two dials at them.
+The app's specs set the **minimum shares**: each pool's floor is the spec divided by the server's spec, taking the **larger** of the memory and compute axes, rounded up to the whole percent. Server specs: H200 = 141 GB / 989 TFLOPS (VRAM is probed from the card at boot via `nvidia-smi memory.total`, `GPU_VRAM_GB` is only the fallback; compute via `GPU_TFLOPS`); node = 64 GB / ~1000 GFLOPS (`NODE_RAM_GB`/`NODE_GFLOPS`; CPU compute is denominated in GFLOPS because a whole node is only ~1/1000 of a card). A GPU app's CPU minimum also lifts its GPU minimum, because of the invariant: **`gpuShare >= cpuShare` whenever `gpuShare > 0`** (a GPU app's CPU slice rides on the same node as its card). Runners enforce the minimums at deploy and claim time; the site's deploy page floors its two dials at them.
 
 The leftovers are the point: a tenant buying 100% GPU + 10% CPU leaves 90% of that node's CPU/RAM rentable by CPU-only apps. Pricing is additive: `rate = gpuShare × cardRate ($6/hr) + cpuShare × nodeRate ($1/hr)`, per second.
 
@@ -117,5 +117,5 @@ twice.
 
 ## Documentation & support
 
-- App developers: the guide and API reference live on the site at https://enclave.host/develop.html
+- App developers: the guide and API reference live on the site at https://enclave.host/develop
 - The underlying confidential-container platform is [Tinfoil](https://docs.tinfoil.sh) ([contact@tinfoil.sh](mailto:contact@tinfoil.sh))
