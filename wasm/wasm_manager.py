@@ -143,6 +143,31 @@ AUDIT_SECS     = float(os.environ.get("WASM_AUDIT_INTERVAL", "10"))
 # card"). WASM_NN=0 is the fleet-wide kill-switch (same shape as WASM_P3).
 NN_ENABLED   = os.environ.get("WASM_NN", "1").lower() not in ("0", "false", "no")
 GPU_VRAM_GB  = float(os.environ.get("GPU_VRAM_GB", "141"))
+# The card outranks config: GPU_VRAM_GB above is only the fallback for when the
+# card can't be asked (CPU node, mock, driver hiccup). This container holds the
+# GPU, so probe memory.total at boot and size the MPS caps — and the gpuVramGb
+# /health reports upward to the supervisor — from the hardware itself.
+GPU_VRAM_SRC = "env" if "GPU_VRAM_GB" in os.environ else "default"
+
+def _probe_card_vram_gb():
+    """Smallest attached card's memory.total, in GiB (nvidia-smi reports MiB)."""
+    try:
+        r = subprocess.run(["nvidia-smi", "--query-gpu=memory.total",
+                            "--format=csv,noheader,nounits"],
+                           capture_output=True, text=True, timeout=15)
+        mib = [float(x) for x in r.stdout.split() if x]
+        gb = round(min(mib) / 1024, 1) if mib else 0.0
+        return gb if 1 <= gb <= 8192 else None
+    except Exception:                                    # noqa: BLE001
+        return None
+
+if NODE_HAS_GPU and not MOCK:
+    _vram = _probe_card_vram_gb()
+    if _vram:
+        GPU_VRAM_GB, GPU_VRAM_SRC = _vram, "nvidia-smi"
+        print(f"[gpu] card VRAM probed: {GPU_VRAM_GB} GB (nvidia-smi memory.total)", flush=True)
+    else:
+        print(f"[gpu] card VRAM probe failed - using {GPU_VRAM_SRC} {GPU_VRAM_GB} GB", flush=True)
 MPS_PIPE_DIR = os.environ.get("CUDA_MPS_PIPE_DIRECTORY", "/tmp/nvidia-mps")
 # CUDA readiness probe (see _nn_probe_loop): a wasi-nn load() is a SYNCHRONOUS
 # host call, so a CUDA init that HANGS (rather than errors) eats a runtime
@@ -1742,6 +1767,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                     "version": _wasmtime_version(), "mock": MOCK,
                                     "nn": NN_ENABLED and NODE_HAS_GPU and (MOCK or _NN_PROBE["state"] == "ok"),
                                     "nnProbe": dict(_NN_PROBE),
+                                    **({"gpuVramGb": GPU_VRAM_GB, "gpuVramSource": GPU_VRAM_SRC}
+                                       if NODE_HAS_GPU else {}),
                                     "volumes": _volumes_public(),
                                     "capacity": _capacity()})
         if not self._ctrl_authed():
@@ -1922,7 +1949,7 @@ def _debug_env() -> dict:
            "catalog": sorted(_load_catalog().keys()), "version": _wasmtime_version(),
            "p3": bool(P3_FLAGS),
            "nn": NN_ENABLED and NODE_HAS_GPU and (MOCK or _NN_PROBE["state"] == "ok"),
-           "nn_probe": dict(_NN_PROBE), "gpu_vram_gb": GPU_VRAM_GB,
+           "nn_probe": dict(_NN_PROBE), "gpu_vram_gb": GPU_VRAM_GB, "gpu_vram_source": GPU_VRAM_SRC,
            "mps_pipe": MPS_PIPE_DIR if (NN_ENABLED and NODE_HAS_GPU) else None,
            "fs": FS_ENABLED, "fs_guest": FS_GUEST_PATH if FS_ENABLED else None,
            "default_storage_mb": DEF_STORAGE_MB if FS_ENABLED else 0}

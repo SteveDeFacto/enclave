@@ -137,6 +137,8 @@ function mgrReq(method, path, body, timeoutMs = 120000) {
 async function mgrHealth(timeoutMs = 3000) {
   const r = await mgrReq("GET", "/health", null, timeoutMs);
   if (r.status !== 200) throw new Error(`manager /health ${r.status}`);
+  // the worker holds the card this container can't see: adopt its probed VRAM
+  if (r.body && r.body.gpuVramSource === "nvidia-smi") adoptCardVram(r.body.gpuVramGb, "worker");
   return r.body;
 }
 
@@ -164,6 +166,8 @@ function vmReq(method, path, body, timeoutMs = 120000) {
 async function vmHealth(timeoutMs = 3000) {
   const r = await vmReq("GET", "/health", null, timeoutMs);
   if (r.status !== 200) throw new Error(`vmmanager /health ${r.status}`);
+  // the wasm-manager holds the card this container can't see: adopt its probed VRAM
+  if (r.body && r.body.gpuVramSource === "nvidia-smi") adoptCardVram(r.body.gpuVramGb, "manager");
   return r.body;
 }
 
@@ -303,7 +307,8 @@ const NODE_VCPUS      = parseInt(process.env.NODE_VCPUS || "16", 10);   // node 
 const NODE_RAM_GB     = parseInt(process.env.NODE_RAM_GB || "64", 10);
 const NODE_GFLOPS     = parseFloat(process.env.NODE_GFLOPS || "")       // CPU compute per node in GFLOPS (16 vCPU ≈ 1000)
                      || parseFloat(process.env.NODE_TFLOPS || "1") * 1000; // legacy env name (was TFLOPS-denominated)
-const CARD_VRAM_GB    = parseFloat(process.env.GPU_VRAM_GB || "141");   // usable VRAM per card
+let CARD_VRAM_GB      = parseFloat(process.env.GPU_VRAM_GB || "141");   // usable VRAM per card (fallback until the card itself is probed - see adoptCardVram)
+let CARD_VRAM_SRC     = process.env.GPU_VRAM_GB ? "env" : "default";
 const CARD_TFLOPS     = parseFloat(process.env.GPU_TFLOPS || "989");    // GPU compute per card (H200 FP16 dense)
 const CTX_OVERHEAD_GB = parseFloat(process.env.CTX_OVERHEAD_GB || "0.5"); // per-worker context cost, reserved on top of the cap
 const SM_TOTAL        = parseInt(process.env.SM_TOTAL || "132", 10);   // SMs per card (H200=132); for reporting granted SMs
@@ -338,6 +343,27 @@ function minSharesOf(min) {
 // per-card free pools (vram + compute). With CC on there is exactly one whole
 // device per card - no MIG instances to enumerate.
 const gpuCards = Array.from({ length: GPU_COUNT }, (_, i) => ({ id: i, uuid: null, vramFree: CARD_VRAM_GB, computeFree: 1 }));
+
+// The card outranks config: GPU_VRAM_GB is only the boot fallback. The real
+// memory.total arrives from whichever probe can reach the card - our own
+// nvidia-smi discovery where this process has the GPU or a docker socket, or
+// the manager's boot probe via /health on Tinfoil (this container has neither).
+// Rebase the free pools by the delta so reservations made before adoption
+// (loadState restores, early claims) stay accounted.
+function adoptCardVram(gb, source) {
+  if (!IS_GPU || !(gb > 0)) return;
+  if (Math.abs(gb - CARD_VRAM_GB) < 0.05) { CARD_VRAM_SRC = source; return; }
+  const delta = gb - CARD_VRAM_GB;
+  for (const c of gpuCards) {
+    c.vramFree += delta;
+    if (c.vramFree < 0) {
+      console.warn(`[gpu] card ${c.id}: live reservations exceed probed ${gb} GB by ${(-c.vramFree).toFixed(1)} GB - clamping (frees as tenants release)`);
+      c.vramFree = 0;
+    }
+  }
+  console.log(`[gpu] card VRAM ${CARD_VRAM_GB} GB (${CARD_VRAM_SRC}) -> ${gb} GB (${source})`);
+  CARD_VRAM_GB = gb; CARD_VRAM_SRC = source;
+}
 
 // The node's vCPU+RAM pool — EVERY enclave has one. On a CPU-only enclave it is
 // the only pool; on a GPU enclave every GPU deployment's cpuShare draws from it
@@ -410,16 +436,17 @@ async function waitForDocker(tries = 20, gapMs = 500) {
 }
 
 const _applyGpu = (text) => {
-  let got = 0;
+  let got = 0; const totals = [];
   for (const line of text.trim().split("\n")) {
     const [idx, uuid, memMiB] = line.split(",").map(s => s.trim());
     const i = parseInt(idx, 10);
     if (gpuCards[i] && /^GPU-/.test(uuid || "")) {
       gpuCards[i].uuid = uuid; got++;
       const totalGb = parseFloat(memMiB) / 1024;
-      if (totalGb > 0) console.log(`[gpu] card ${i} ${uuid} (${totalGb.toFixed(0)}GB)`);
+      if (totalGb > 0) { totals.push(totalGb); console.log(`[gpu] card ${i} ${uuid} (${totalGb.toFixed(0)}GB)`); }
     }
   }
+  if (totals.length) adoptCardVram(round1(Math.min(...totals)), "nvidia-smi");
   return got;
 };
 const GPU_QUERY = ["nvidia-smi", "--query-gpu=index,uuid,memory.total", "--format=csv,noheader,nounits"];
@@ -1440,6 +1467,7 @@ app.get("/availability", async (_req, res) => {
     vramFreeGb: IS_GPU ? round1(gpuFree * CARD_VRAM_GB) : 0,
     gpuTflopsFree: IS_GPU ? round1(gpuFree * CARD_TFLOPS) : 0,
     cardVramGb: IS_GPU ? CARD_VRAM_GB : 0, cardTflops: IS_GPU ? CARD_TFLOPS : 0, cards: GPU_COUNT,
+    ...(IS_GPU ? { cardVramSource: CARD_VRAM_SRC } : {}),   // "nvidia-smi"/"manager"/"worker" = probed hardware; "env"/"default" = config fallback
     source, ...(note ? { note } : {}), updatedAt: new Date().toISOString(),
   });
   try {

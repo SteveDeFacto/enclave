@@ -32,7 +32,8 @@ class FleetList extends EnclaveElement {
             + '<span class="fleet-name">' + esc(name) + '</span>'
             + '</span>'
             + (gpu ? '<span class="fleet-pool">GPU ' + meter(gPct) + ' ' + gPct + '% free · ≈'
-                   + Math.round(gFree * (a.cardVramGb || CARD_GB)) + ' GB VRAM / '
+                   + fmtNum(a.vramFreeGb != null ? a.vramFreeGb : gFree * (a.cardVramGb || CARD_GB)) + ' / '
+                   + fmtNum(a.cardVramGb || CARD_GB) + ' GB VRAM / '
                    + Math.round(gFree * (a.cardTflops || CARD_TFLOPS)) + ' TFLOPS</span>' : '')
             + '<span class="fleet-pool">CPU ' + meter(cPct) + ' ' + cPct + '% free · ≈'
             + fmtNum(cFree * (a.nodeRamGb || NODE_RAM_GB)) + ' GB RAM / ' + fmtNum(cFree * (a.nodeVcpus || NODE_VCPUS)) + ' vCPU</span>'

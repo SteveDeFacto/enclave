@@ -52,7 +52,7 @@ containers:
     env:
       - WORKER_PORT: "8090"
       - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
-      - GPU_VRAM_GB: "141"
+      - GPU_VRAM_GB: "141"          # FALLBACK only: the worker probes the card (nvidia-smi memory.total) at boot
     volumes:
       - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # join the MPS daemon
     healthcheck:
@@ -127,7 +127,7 @@ containers:
       # - RENEW_MARGIN_SEC: "300"                        # optional: renew when less lease than this remains
       # - CPU_CLAIM_GRACE_SEC: "120"                     # optional: how long CPU-only work waits for a CPU enclave before we bid on it
       - GPU_COUNT: "1"
-      - GPU_VRAM_GB: "141"                               # the whole card is tenant-sellable: a share's VRAM cap = gpuShare × this (keep in sync with worker/wasm-manager)
+      - GPU_VRAM_GB: "141"                               # FALLBACK until probed: the supervisor adopts the wasm-manager's nvidia-smi total via /health (this container has no GPU), so a share's VRAM cap tracks the real card
       - GPU_TFLOPS: "989"                                # GPU compute per card (H200 FP16 dense); exact gpuTflops asks divide by this
       - NODE_GFLOPS: "1000"                              # CPU compute per node in GFLOPS (16 vCPU ≈ 1 TFLOPS); exact cpuGflops asks divide by this
       - SM_TOTAL: "132"
@@ -219,7 +219,7 @@ containers:
       - NODE_VCPUS: "16"
       - NODE_RAM_GB: "64"
       - NODE_HAS_GPU: "1"           # GPU node: catalog apps with vram_mb > 0 may launch here (CPU flavor sets "0")
-      - GPU_VRAM_GB: "141"          # VRAM budget base: a tenant's MPS mem limit = gpuShare × this
+      - GPU_VRAM_GB: "141"          # FALLBACK only: the manager probes the card at boot; a tenant's MPS mem limit = gpuShare × the probed total
       - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
       # ggml (GGUF) context window for EVERY GPU tenant on this node (the manager
       # inherits this into each -S nn-graph wasmtime process; there is no

@@ -32,6 +32,26 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # -------- shared config (both roles) ----------------------------------------
 PORT        = int(os.environ.get("WORKER_PORT", "8090"))   # manager port (child overrides via env)
 VRAM_GB     = float(os.environ.get("GPU_VRAM_GB", "141"))
+# The card outranks config: GPU_VRAM_GB is only the fallback for when the card
+# can't be asked (local dev without a GPU). This container holds the card, so
+# probe memory.total at boot; capacity reporting then reflects the hardware.
+VRAM_SRC    = "env" if "GPU_VRAM_GB" in os.environ else "default"
+
+def _probe_vram_gb():
+    """Smallest attached card's memory.total, in GiB (nvidia-smi reports MiB)."""
+    try:
+        r = subprocess.run(["nvidia-smi", "--query-gpu=memory.total",
+                            "--format=csv,noheader,nounits"],
+                           capture_output=True, text=True, timeout=15)
+        mib = [float(x) for x in r.stdout.split() if x]
+        gb = round(min(mib) / 1024, 1) if mib else 0.0
+        return gb if 1 <= gb <= 8192 else 0.0
+    except Exception:                                    # noqa: BLE001
+        return 0.0
+
+_probed_vram = _probe_vram_gb()
+if _probed_vram:
+    VRAM_GB, VRAM_SRC = _probed_vram, "nvidia-smi"
 NODE_VCPUS  = int(os.environ.get("NODE_VCPUS", "16"))
 CHILD_BASE  = int(os.environ.get("CHILD_PORT_BASE", "8100"))
 CUDA_ATTR_MULTIPROCESSOR_COUNT = 16   # cudaDevAttrMultiProcessorCount — reflects the MPS cap
@@ -286,6 +306,7 @@ class MGR(BaseHTTPRequestHandler):
         if self.path in ("/health", "/healthz"):
             return self._send(200, {"ok": True, "role": "manager",
                                     "mps_pipe": os.environ.get("CUDA_MPS_PIPE_DIRECTORY"),
+                                    "gpuVramGb": VRAM_GB, "gpuVramSource": VRAM_SRC,
                                     "tenants": [_pub(r) for r in _tenants.values()],
                                     "capacity": _capacity()})
         if self.path == "/tenants":
