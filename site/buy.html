@@ -151,8 +151,12 @@ window.fetch = async (input, init) => {
     if (!res.ok){
       const body = await res.clone().text();
       console.warn("[buy-diag]", res.status, url, body.slice(0, 400));   // EVERY failing call logs
-      if (/privy\.io|moonpay|stripe|meld|coinbase/i.test(url))
-        errToast("Payment error (" + res.status + "): " + humanApiError(res.status, body));
+      if (/privy\.io|moonpay|stripe|meld|coinbase/i.test(url)){
+        // the endpoint IS the diagnosis (which provider, which step) - a
+        // screenshot of this toast must be enough to debug from
+        let at = ""; try { at = " @ " + new URL(url).pathname.replace(/\/(cae|sess|txn)?[a-z0-9_-]{16,}/gi, "/…"); } catch(_){}
+        errToast("Payment error (" + res.status + at + "): " + humanApiError(res.status, body));
+      }
     }
   } catch(_){}
   return res;
