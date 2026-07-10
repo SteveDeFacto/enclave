@@ -291,7 +291,10 @@ export async function ethBalanceOf(addr){
 // straight into checkout.
 export function openBuyModal(){
   if (!Enclave.address) return;
-  const w = window.open("/buy.html?v=14", "enclaveBuy", "popup,width=480,height=780");
+  // fresh every open: buy.html is tiny and iterated hard - a 4h-stale cached
+  // copy (per-?v URL key) kept masking checkout fixes. The big Privy bundle
+  // behind it stays cacheable via its own stable ?v.
+  const w = window.open("/buy.html?t=" + Date.now(), "enclaveBuy", "popup,width=480,height=780");
   if (!w){ showToast("Popup blocked - allow popups for this site and try again."); return; }
   showToast("Complete your purchase in the checkout window.");
 }

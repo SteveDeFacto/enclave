@@ -57,17 +57,32 @@
    until dismissed (✕ / click) - they're the only explanation of a dead
    checkout, so they must outlive it. Full raw detail still goes to the
    console as [buy-diag].
-   Stacking: the host is a manual popover promoted to the browser top layer
-   (beats any z-index, survives Privy re-mounting its portal every screen);
-   the body re-append below is only the fallback for browsers without the
-   Popover API, where DOM order among equal z-indexes decides. */
+   Stacking (the hard-won rules): a NATIVE dialog.showModal() makes the rest
+   of the document INERT and outranks popovers in the top layer, so a
+   body-mounted host loses no matter its z-index or promotion order. The one
+   escape is being INSIDE the open dialog. surfaceToasts() therefore parents
+   the host into the current modal dialog when one exists (body otherwise,
+   also rescuing it before a closing dialog would destroy it), re-appends to
+   win same-z DOM-order ties, and re-promotes the popover; a 1s watchdog
+   re-asserts all of it across Privy's screen-change remounts. Verified
+   headless: toast wins elementFromPoint over an open full-screen showModal
+   dialog, including after the dialog closes and reopens. */
 const recentToasts = new Map();
+const toastHost = document.getElementById("toasts");   // module ref: survives detachment
+function surfaceToasts(){
+  if (!toastHost.children.length) return;
+  const modal = document.querySelector("dialog:modal, dialog[open], [role=dialog]");
+  const target = (modal && modal.isConnected) ? modal : document.body;
+  try { if (toastHost.matches(":popover-open")) toastHost.hidePopover(); } catch(_){}
+  target.appendChild(toastHost);
+  try { if (toastHost.showPopover) toastHost.showPopover(); } catch(_){}
+}
+setInterval(surfaceToasts, 1000);
 function errToast(text){
   const now = Date.now();
   for (const [k, t] of recentToasts) if (now - t > 12000) recentToasts.delete(k);
-  const host = document.getElementById("toasts");
-  const dup = [...host.children].some(el => el._text === text);
-  if (dup || recentToasts.has(text) || host.children.length >= 3) return;   // no dupes, no spam
+  const dup = [...toastHost.children].some(el => el._text === text);
+  if (dup || recentToasts.has(text) || toastHost.children.length >= 3) return;   // no dupes, no spam
   recentToasts.set(text, now);
   const el = document.createElement("div");
   el._text = text;
@@ -83,9 +98,8 @@ function errToast(text){
   el.append(body, x);
   el.title = "click to dismiss";
   el.onclick = () => el.remove();
-  document.body.appendChild(host);
-  host.appendChild(el);
-  try { if (host.showPopover && !host.matches(":popover-open")) host.showPopover(); } catch(_){}
+  toastHost.appendChild(el);
+  surfaceToasts();
 }
 function humanApiError(status, body){
   try {
