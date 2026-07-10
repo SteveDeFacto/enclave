@@ -46,7 +46,7 @@ const msg = (html) => { document.getElementById("msg").innerHTML = html; };
 try {
   // self-hosted bundle (site/privy/, built by esbuild from @privy-io/react-auth
   // + react) - no CDN at runtime; lazy screens load as local chunks
-  const mod = await import("/privy/entry.js?v=2");   // ?v busts browser/CDN caches on bundle updates
+  const mod = await import("/privy/entry.js");
   const { React, createRoot, PrivyProvider, usePrivy, useFiatOnramp } = mod;
   const h = React.createElement;
 

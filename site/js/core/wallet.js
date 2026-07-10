@@ -286,12 +286,12 @@ export async function ethBalanceOf(addr){
 
 // Card purchases run in /buy.html: a same-origin popup that hosts Privy's
 // fiat onramp. It inherits this page's Privy session via localStorage, so it
-// opens straight into checkout. VERBATIM the 129a7709 (2026-07-06, last
-// verified-working) opener - only Nan->Enclave adapted (the global was
-// renamed repo-wide in 7dbee4f1; the old identifier no longer exists).
+// opens straight into checkout. The 129a7709 (2026-07-06, last verified-
+// working) opener, adapted twice: Nan->Enclave (global renamed repo-wide in
+// 7dbee4f1) and the ?v= cache key dropped (Steven, 2026-07-10) - bare URL.
 export function openBuyModal(){
   if (!Enclave.address) return;
-  const w = window.open("/buy.html?v=2", "enclaveBuy", "popup,width=480,height=780");
+  const w = window.open("/buy.html", "enclaveBuy", "popup,width=480,height=780");
   if (!w){ showToast("Popup blocked - allow popups for this site and try again."); return; }
   showToast("Complete your purchase in the checkout window.");
 }
