@@ -11,8 +11,8 @@ import "../../components/toast/toast.js";
 import "../../components/section-head/section-head.js";
 import "../../components/deployments/deployments.js";
 import "../../components/fleet-list/fleet-list.js";
-import { $, short, lsGet, on } from "../core/util.js";
-import { DEPLOYMENTS_ADDRESS, BASE_CHAIN } from "../core/config.js";
+import { $, lsGet, on } from "../core/util.js";
+import { DEPLOYMENTS_ADDRESS } from "../core/config.js";
 import { catExplorer } from "../core/chain.js";
 import { Enclave } from "../core/api.js";
 import { navigate } from "../boot.js";
@@ -54,13 +54,13 @@ export function boot() {
   if (!_fleetPoll) _fleetPoll = setInterval(() => {
     if (document.querySelector('section[data-view="dashboard"]')) refreshFleet();
   }, 20000);
-  // the ledger's chips, mirroring the store head: which contract, which chain
-  const link = $("#depAddrLink"), sh = $("#depAddrShort"), ch = $("#depChain");
-  if (ch) ch.textContent = "Base · " + BASE_CHAIN;
+  // the ledger's chip: just the contract, full address (Steven's call - the
+  // chain/funds chips were noise next to it)
+  const link = $("#depAddrLink"), sh = $("#depAddrShort");
   if (link && sh){
     if (DEPLOYMENTS_ADDRESS && !/^0x0+$/i.test(DEPLOYMENTS_ADDRESS)){
       link.href = catExplorer() + "/address/" + DEPLOYMENTS_ADDRESS;
-      sh.textContent = "EnclaveDeployments · " + short(DEPLOYMENTS_ADDRESS);
+      sh.textContent = "EnclaveDeployments · " + DEPLOYMENTS_ADDRESS;
     } else { link.removeAttribute("href"); sh.textContent = "not deployed"; }
   }
   gate();
