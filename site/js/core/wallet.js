@@ -9,6 +9,7 @@
    ============================================================ */
 import { BASE_CHAIN, BASE_CHAIN_HEX, USDC_BASE, PRIVY_APP_ID, PRIVY_CLIENT_ID, PRIVY_RDNS } from "./config.js";
 import { Enclave, EnclaveError } from "./api.js";
+import { baseRpc } from "./chain.js";
 import { $, $$, esc, short, lsGet, lsSet, fmtDur, copyText, showToast, emit } from "./util.js";
 import { qrSvg } from "../lib/qr.js";
 
@@ -547,12 +548,15 @@ export async function sendTx(to, data, value){
   if (to) tx.to = to; // omitted = contract creation
   // Privy's embedded signer signs the request verbatim - without an explicit
   // gas field it produces a gas-0 tx every node rejects ("intrinsic gas too
-  // low"). Injected wallets accept a provided limit too, so estimate for both;
-  // if estimation fails (tx would revert), fall through and let the wallet
-  // surface its own error.
-  try {
-    const est = await Enclave.provider.request({ method: "eth_estimateGas", params: [tx] });
-    tx.gas = "0x" + (BigInt(est) + BigInt(est) / 4n).toString(16);
-  } catch(_){}
+  // low"). Injected wallets accept a provided limit too, so estimate for both:
+  // provider first, public Base RPC as fallback.
+  let est = null;
+  try { est = await Enclave.provider.request({ method: "eth_estimateGas", params: [tx] }); }
+  catch(_){ try { est = await baseRpc("eth_estimateGas", [tx]); } catch(_2){} }
+  if (est) tx.gas = "0x" + (BigInt(est) + BigInt(est) / 4n).toString(16);
+  // an injected wallet estimates for itself, so a gasless send is fine there;
+  // for the embedded wallet it is a guaranteed gas-0 failure - say so instead
+  else if (Enclave.walletRdns === PRIVY_RDNS)
+    throw new EnclaveError("Could not estimate gas for this transaction - it may revert (check your balance and inputs), or the RPC is unreachable. Nothing was sent.", 0);
   return Enclave.provider.request({ method: "eth_sendTransaction", params: [tx] });
 }
