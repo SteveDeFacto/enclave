@@ -455,7 +455,7 @@ class AdminConsole extends EnclaveElement {
           await this._connect();
           this._status(status, "p", "deploying - confirm the creation transaction in your wallet…");
           const data = c.bytecode + args.map(encAddr).join("");
-          const hash = await Enclave.provider.request({ method: "eth_sendTransaction", params: [{ from: Enclave.address, data }] });
+          const hash = await sendTx(null, data);
           this._status(status, "p", "sent " + hash.slice(0, 14) + "… waiting for confirmation…");
           const rcpt = await waitReceipt(hash, 90);
           const addr = rcpt.contractAddress;

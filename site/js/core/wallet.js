@@ -543,5 +543,16 @@ export async function ensureBaseChain(){
   catch(e){ throw new EnclaveError("Switch your wallet to Base to pay.", 0); }
 }
 export async function sendTx(to, data, value){
-  return Enclave.provider.request({ method: "eth_sendTransaction", params: [{ from: Enclave.address, to, data, value: value || "0x0" }] });
+  const tx = { from: Enclave.address, data, value: value || "0x0" };
+  if (to) tx.to = to; // omitted = contract creation
+  // Privy's embedded signer signs the request verbatim - without an explicit
+  // gas field it produces a gas-0 tx every node rejects ("intrinsic gas too
+  // low"). Injected wallets accept a provided limit too, so estimate for both;
+  // if estimation fails (tx would revert), fall through and let the wallet
+  // surface its own error.
+  try {
+    const est = await Enclave.provider.request({ method: "eth_estimateGas", params: [tx] });
+    tx.gas = "0x" + (BigInt(est) + BigInt(est) / 4n).toString(16);
+  } catch(_){}
+  return Enclave.provider.request({ method: "eth_sendTransaction", params: [tx] });
 }
