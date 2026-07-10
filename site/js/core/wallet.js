@@ -553,7 +553,13 @@ export async function sendTx(to, data, value){
   let est = null;
   try { est = await Enclave.provider.request({ method: "eth_estimateGas", params: [tx] }); }
   catch(_){ try { est = await baseRpc("eth_estimateGas", [tx]); } catch(_2){} }
-  if (est) tx.gas = "0x" + (BigInt(est) + BigInt(est) / 4n).toString(16);
+  if (est) {
+    tx.gas = "0x" + (BigInt(est) + BigInt(est) / 4n).toString(16);
+    // Privy's legacy iframe signer (the pinned era bundle) skips its populate
+    // step when wallet UIs are on and reads the limit ONLY under its
+    // ethers-style name - without gasLimit it signs the tx with gas 0.
+    if (Enclave.walletRdns === PRIVY_RDNS) tx.gasLimit = tx.gas;
+  }
   // an injected wallet estimates for itself, so a gasless send is fine there;
   // for the embedded wallet it is a guaranteed gas-0 failure - say so instead
   else if (Enclave.walletRdns === PRIVY_RDNS)
