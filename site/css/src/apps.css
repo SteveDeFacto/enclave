@@ -52,3 +52,7 @@
 .qd-est b{color:var(--jade);}
 .qd-note{font-family:var(--font-mono);font-size:.74rem;color:var(--amber);margin-top:8px;}
 .qd-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;}
+/* icon-only contract link (the provenance mark): the chip shrinks to its
+   glyph; color/hover ride the existing chip rules */
+.store-meta .chip-contract{display:inline-flex;align-items:center;padding:.4em .5em;line-height:0;}
+.store-meta .chip-contract svg{display:block;}

@@ -491,11 +491,12 @@ function closePublish(){
 addEventListener("hashchange", () => { if (document.getElementById("publishView")) applyView(); });
 function initStore(){
   const grid = $("#storeGrid"); if (!grid) return;
-  const link = $("#catAddrLink"), sh = $("#catAddrShort"), ch = $("#catChain");
-  if (ch) ch.textContent = (APP_CATALOG_CHAIN === 84532 ? "Base Sepolia · " : "Base · ") + APP_CATALOG_CHAIN;
-  if (link && sh){
-    if (catConfigured()){ link.href = catExplorer() + "/address/" + APP_CATALOG_ADDRESS; sh.textContent = "EnclaveAppCatalog · " + short(APP_CATALOG_ADDRESS); }
-    else { link.removeAttribute("href"); sh.textContent = "not deployed"; }
+  // provenance mark: one icon straight to the catalog contract on Basescan
+  // (Steven's call); full name + address in the tooltip
+  const link = $("#catAddrLink");
+  if (link){
+    if (catConfigured()){ link.href = catExplorer() + "/address/" + APP_CATALOG_ADDRESS; link.title = "EnclaveAppCatalog · " + APP_CATALOG_ADDRESS; }
+    else link.hidden = true;
   }
   $$("#storeFilter button").forEach(b => b.addEventListener("click", () => {
     $$("#storeFilter button").forEach(x => x.classList.remove("on")); b.classList.add("on");

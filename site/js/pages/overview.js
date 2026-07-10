@@ -13,19 +13,19 @@ import "../../components/ticker/ticker.js";
 import "../../components/flow/flow.js";
 import "../../components/attest-chain/attest-chain.js";
 import "../../components/live-verify/live-verify.js";
-import { $, short } from "../core/util.js";
-import { DEPLOYMENTS_ADDRESS, BASE_CHAIN } from "../core/config.js";
+import { $ } from "../core/util.js";
+import { DEPLOYMENTS_ADDRESS } from "../core/config.js";
 import { catExplorer } from "../core/chain.js";
 
 export function boot() {
-  // the pricing chips: the EnclaveDeployments contract the rates are read
-  // from (and enforced by) - address resolved via the on-chain address book
-  const link = $("#priceAddrLink"), sh = $("#priceAddrShort"), ch = $("#priceChain");
-  if (ch) ch.textContent = "Base · " + BASE_CHAIN;
-  if (link && sh){
+  // the pricing section's provenance mark: one icon straight to the contract
+  // on Basescan (Steven's call - no chip text, no chain/short-address noise);
+  // the full name + address live in the tooltip
+  const link = $("#priceAddrLink");
+  if (link){
     if (DEPLOYMENTS_ADDRESS && !/^0x0+$/i.test(DEPLOYMENTS_ADDRESS)){
       link.href = catExplorer() + "/address/" + DEPLOYMENTS_ADDRESS;
-      sh.textContent = "EnclaveDeployments · " + short(DEPLOYMENTS_ADDRESS);
-    } else { link.removeAttribute("href"); sh.textContent = "not deployed"; }
+      link.title = "EnclaveDeployments · " + DEPLOYMENTS_ADDRESS;
+    } else link.hidden = true;
   }
 }

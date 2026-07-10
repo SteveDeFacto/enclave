@@ -54,14 +54,14 @@ export function boot() {
   if (!_fleetPoll) _fleetPoll = setInterval(() => {
     if (document.querySelector('section[data-view="dashboard"]')) refreshFleet();
   }, 20000);
-  // the ledger's chip: just the contract, full address (Steven's call - the
-  // chain/funds chips were noise next to it)
-  const link = $("#depAddrLink"), sh = $("#depAddrShort");
-  if (link && sh){
+  // the ledger's provenance mark: one icon straight to the contract on
+  // Basescan (Steven's call); full name + address in the tooltip
+  const link = $("#depAddrLink");
+  if (link){
     if (DEPLOYMENTS_ADDRESS && !/^0x0+$/i.test(DEPLOYMENTS_ADDRESS)){
       link.href = catExplorer() + "/address/" + DEPLOYMENTS_ADDRESS;
-      sh.textContent = "EnclaveDeployments · " + DEPLOYMENTS_ADDRESS;
-    } else { link.removeAttribute("href"); sh.textContent = "not deployed"; }
+      link.title = "EnclaveDeployments · " + DEPLOYMENTS_ADDRESS;
+    } else link.hidden = true;
   }
   gate();
 }
