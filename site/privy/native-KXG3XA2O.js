@@ -1,0 +1,1 @@
+import"./chunk-KL2DZ7E2.js";function e(){if(typeof WebSocket<"u")return WebSocket;if(typeof globalThis.WebSocket<"u")return globalThis.WebSocket;if(typeof window.WebSocket<"u")return window.WebSocket;if(typeof self.WebSocket<"u")return self.WebSocket;throw new Error("`WebSocket` is not supported in this environment")}var n=e();export{n as WebSocket};
