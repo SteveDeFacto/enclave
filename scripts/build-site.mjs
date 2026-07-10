@@ -195,7 +195,12 @@ for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "dash
     s = s.replace(' blocking="render"', "");
   }
   if (preloads[f]) s = s.replace('<script type="module" src="js/boot.js">', preloads[f] + '\n<script type="module" src="js/boot.js">');
-  if (f.endsWith(".html")) s = s.replace("<head>", "<head>\n" + SKEW_HEAL);   // must be first: it watches every later load
+  // buy.html ships RAW - byte-identical to source. Its only import is the
+  // stable-named /privy/entry.js (no hashed chunks -> no skew to heal), and
+  // SKEW_HEAL's reload-on-"Failed to fetch" is fatal mid-checkout: an
+  // ad-blocked Stripe telemetry fetch rejects with exactly that message and
+  // the watcher would reload the popup 8s later, killing the session.
+  if (f.endsWith(".html") && f !== "buy.html") s = s.replace("<head>", "<head>\n" + SKEW_HEAL);   // must be first: it watches every later load
   fs.writeFileSync(path.join(DIST, f), s);
 }
 for (const d of ["assets", "privy", ".well-known"])
