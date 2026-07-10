@@ -107,6 +107,29 @@ b.appendChild(document.createTextNode(who));
 b.dataset.painted="1";
 }catch(e){}})();</script>`;
 
+/* deploy-skew self-heal: for ~5 min after a deploy the DNSLink edges serve
+   MIXED trees - a fresh page can reference chunk hashes an edge hasn't
+   converged on yet (new chunks can't ride the union archive backwards), so a
+   module 404s and the page half-dies until "it randomly works again". Catch
+   both failure shapes (static <script>/<link> load errors at capture;
+   dynamic import() rejections via unhandledrejection) and schedule ONE
+   guarded reload - by then the edge has almost always converged. */
+const SKEW_HEAL = `<script>(function(){
+var heal=function(){try{
+  var k="enclave_skew_reload",last=+sessionStorage.getItem(k)||0;
+  if(Date.now()-last<240000)return;
+  sessionStorage.setItem(k,String(Date.now()));
+  setTimeout(function(){location.reload();},8000);
+}catch(e){}};
+addEventListener("error",function(e){
+  var t=e.target;
+  if(t&&(t.tagName==="SCRIPT"||(t.tagName==="LINK"&&t.rel==="modulepreload")))heal();
+},true);
+addEventListener("unhandledrejection",function(e){
+  if(/dynamically imported module|Failed to fetch|error loading/i.test(String(e.reason)))heal();
+});
+})();</script>`;
+
 function bake(html) {
   let pos = 0, guard = 0;
   while (guard++ < 2000) {
@@ -172,6 +195,7 @@ for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "dash
     s = s.replace(' blocking="render"', "");
   }
   if (preloads[f]) s = s.replace('<script type="module" src="js/boot.js">', preloads[f] + '\n<script type="module" src="js/boot.js">');
+  if (f.endsWith(".html")) s = s.replace("<head>", "<head>\n" + SKEW_HEAL);   // must be first: it watches every later load
   fs.writeFileSync(path.join(DIST, f), s);
 }
 for (const d of ["assets", "privy", ".well-known"])
