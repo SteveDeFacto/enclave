@@ -164,15 +164,14 @@
   <div class="wrap">
     <c-section-head eyebrow="Pricing" heading="Metered per second. Paid on-chain.">
       <p>Deploying is <b>two dials</b> - what you rent - and <b>two rates</b> - what you pay. USDC or ETH up front buys runtime by the second; the instance runs until that time is used up, and you top up to extend it. Nothing is custodied - payments forward straight to Enclave and are final. Unspent time stays on the deployment's on-chain record (stop now, resume later) but isn't withdrawable, so fund in small top-ups.</p>
+      <!-- provenance chips, same grammar as the store head: these rates aren't
+           marketing copy, they're EnclaveDeployments state anyone can read -->
+      <div class="store-meta">
+        <a class="chip" id="priceAddrLink" target="_blank" rel="noopener">contract <b id="priceAddrShort">…</b></a>
+        <span class="chip">chain <b id="priceChain">Base · 8453</b></span>
+        <span class="chip">rate <b>snapshotted at deploy · never re-priced</b></span>
+      </div>
     </c-section-head>
-
-    <!-- provenance chips, same grammar as the store head: these rates aren't
-         marketing copy, they're EnclaveDeployments state anyone can read -->
-    <div class="store-meta">
-      <a class="chip" id="priceAddrLink" target="_blank" rel="noopener">contract <b id="priceAddrShort">…</b></a>
-      <span class="chip">chain <b id="priceChain">Base · 8453</b></span>
-      <span class="chip">rate <b>snapshotted at deploy · never re-priced</b></span>
-    </div>
 
     <div class="price-grid">
       <div class="price-card">

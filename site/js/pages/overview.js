@@ -25,7 +25,7 @@ export function boot() {
   if (link && sh){
     if (DEPLOYMENTS_ADDRESS && !/^0x0+$/i.test(DEPLOYMENTS_ADDRESS)){
       link.href = catExplorer() + "/address/" + DEPLOYMENTS_ADDRESS;
-      sh.textContent = short(DEPLOYMENTS_ADDRESS);
+      sh.textContent = "EnclaveDeployments · " + short(DEPLOYMENTS_ADDRESS);
     } else { link.removeAttribute("href"); sh.textContent = "not deployed"; }
   }
 }

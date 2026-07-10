@@ -494,7 +494,7 @@ function initStore(){
   const link = $("#catAddrLink"), sh = $("#catAddrShort"), ch = $("#catChain");
   if (ch) ch.textContent = (APP_CATALOG_CHAIN === 84532 ? "Base Sepolia · " : "Base · ") + APP_CATALOG_CHAIN;
   if (link && sh){
-    if (catConfigured()){ link.href = catExplorer() + "/address/" + APP_CATALOG_ADDRESS; sh.textContent = short(APP_CATALOG_ADDRESS); }
+    if (catConfigured()){ link.href = catExplorer() + "/address/" + APP_CATALOG_ADDRESS; sh.textContent = "EnclaveAppCatalog · " + short(APP_CATALOG_ADDRESS); }
     else { link.removeAttribute("href"); sh.textContent = "not deployed"; }
   }
   $$("#storeFilter button").forEach(b => b.addEventListener("click", () => {
