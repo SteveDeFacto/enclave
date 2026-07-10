@@ -47,23 +47,37 @@
 
 /* Readable error surfacing: Privy's modal swallows provider errors behind a
    generic screen. Tap failing API calls, extract the human message from the
-   JSON body, and show it as a red toast ON TOP of the modal. Full raw detail
-   still goes to the console as [buy-diag]. */
+   JSON body, and show it as a red toast ON TOP of the modal. Toasts stay
+   until dismissed (✕ / click) - they're the only explanation of a dead
+   checkout, so they must outlive it. Full raw detail still goes to the
+   console as [buy-diag].
+   Stacking: Privy's portal also uses a maxed z-index and mounts LATER in
+   <body>, which wins the tie on DOM order - so re-append the toast host on
+   every toast to make IT the last child and paint above the dialog. */
 const recentToasts = new Map();
 function errToast(text){
   const now = Date.now();
   for (const [k, t] of recentToasts) if (now - t > 12000) recentToasts.delete(k);
-  if (recentToasts.has(text) || recentToasts.size >= 3) return;   // no dupes, no spam
-  recentToasts.set(text, now);
   const host = document.getElementById("toasts");
+  const dup = [...host.children].some(el => el._text === text);
+  if (dup || recentToasts.has(text) || host.children.length >= 3) return;   // no dupes, no spam
+  recentToasts.set(text, now);
   const el = document.createElement("div");
+  el._text = text;
   el.style.cssText = "pointer-events:auto;background:#2a1113;border:1px solid #ff6b6b;color:#ffb3b3;" +
-    "border-radius:10px;padding:10px 14px;font:12.5px/1.5 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5);cursor:pointer;";
-  el.textContent = text;
+    "border-radius:10px;padding:10px 12px;font:12.5px/1.5 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5);" +
+    "cursor:pointer;display:flex;gap:10px;align-items:flex-start;";
+  const body = document.createElement("span");
+  body.textContent = text;
+  body.style.flex = "1 1 auto";
+  const x = document.createElement("span");
+  x.textContent = "✕";
+  x.style.cssText = "flex:0 0 auto;color:#ff8f8f;font-weight:700;";
+  el.append(body, x);
   el.title = "click to dismiss";
   el.onclick = () => el.remove();
+  document.body.appendChild(host);
   host.appendChild(el);
-  setTimeout(() => el.remove(), 10000);
 }
 function humanApiError(status, body){
   try {
@@ -186,10 +200,11 @@ try {
         msg("Done - USDC lands in your account within a few minutes.");
         setTimeout(() => window.close(), 2500);
       };
+      /* No auto-close on failure: closing the window destroys the one
+         explanation of what went wrong before anyone can read it. */
       const failed = (s) => {
         errToast("Checkout didn’t complete: " + s);
-        msg("Checkout didn’t complete. This window closes in a moment - you can try again from the console.");
-        setTimeout(() => window.close(), 8000);
+        msg("Checkout didn’t complete. Close this window and try again from the console.");
       };
       const isCancel = (s) => /clos|cancel|exit|abort|dismiss/i.test(s);
       /* A cancel that lands right after a click we saw hit the backdrop is
