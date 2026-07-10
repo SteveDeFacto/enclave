@@ -829,7 +829,8 @@ function appMeasurement(rec) {
                        + "measurement registers below." };
 }
 // ---- REAL ATTESTATION -------------------------------------------------------
-// The Tinfoil shim generates the enclave TLS key, obtains an Intel TDX quote
+// The Tinfoil shim generates the enclave TLS key, obtains a CPU attestation
+// report (AMD SEV-SNP on today's fleet; Intel TDX flows through the same path)
 // whose report_data[0:32] = sha256(TLS pubkey, SPKI DER), and serves the signed
 // Remote Attestation Document at /.well-known/tinfoil-attestation. We RELAY that
 // document verbatim and PARSE the quote so the registers are inspectable - but
@@ -892,8 +893,9 @@ async function fetchEnclaveRad(origin) {
   try { return await _radInflight; } finally { _radInflight = null; }
 }
 
-// Parse a raw Intel TDX quote (DCAP QuoteV4/V5). Offsets are the fixed TD-report
-// layout; report_data is what binds the TLS key. Returns null on anything odd -
+// Parse a raw Intel TDX quote (DCAP QuoteV4/V5, in case a CVM lands on TDX
+// hardware). Offsets are the fixed TD-report layout; report_data is what binds
+// the TLS key. Returns null on anything odd -
 // the verbatim document is still returned, clients parse it themselves anyway.
 function parseTdxQuote(q) {
   try {
@@ -915,7 +917,7 @@ function parseTdxQuote(q) {
              reportData: hx(520, 64) };
   } catch { return null; }
 }
-// AMD SEV-SNP report (in case a CVM lands on SNP hardware): fixed offsets too.
+// AMD SEV-SNP report (today's fleet): fixed offsets too.
 function parseSnpReport(r) {
   try {
     if (r.length < 0x90 + 48) return null;

@@ -332,8 +332,9 @@ Instead the supervisor publishes the cert **over the attested origin** at
 `GET /v1/tls-bridge` (`fingerprint256`, `spkiPinSha256`, the PEM). A
 verifying client:
 
-1. Verifies the enclave itself (`/v1/attestation` — TDX quote + H200 CC
-   evidence, checked against the Sigstore-signed release measurements).
+1. Verifies the enclave itself (`/v1/attestation` — CPU attestation report
+   (AMD SEV-SNP on today's fleet) + H200 CC evidence, checked against the
+   Sigstore-signed release measurements).
 2. Reads the expected cert fingerprint from that same attested origin.
 3. Pins it on the TCP connection:
 
