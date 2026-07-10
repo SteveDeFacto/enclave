@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<!-- The ONE deviation from the 129a7709 era page (re-added 2026-07-10): the
+     edge serves a blanket `referrer-policy: no-referrer` (Cloudflare, not
+     repo) and Stripe's session-bound onramp controller verifies the
+     embedding origin via the Referer - with no-referrer its iframe request
+     carries neither Referer nor Origin and js.stripe.com 403s it (fallback
+     doc.write + same-origin /crypto-onramp/v1/*.js 404s follow). This meta
+     beats the header for requests this document initiates. -->
+<meta name="referrer" content="strict-origin-when-cross-origin"/>
 <title>Buy USDC · Enclave</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 9v14L16 30 4 23V9z' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 7.333 24 12v8L16 24.667 8 20v-8z' fill='none' stroke='%232FE6A8' stroke-width='1.4' opacity='.55'/%3E%3Ccircle cx='16' cy='12.55' r='2.45' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 15v6.6M16 21.6h2M16 19.4h1.5' fill='none' stroke='%232FE6A8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"/>
 <style>
