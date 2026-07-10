@@ -54,8 +54,9 @@
    Same origin as the console, so it inherits the Privy session the user
    already has. The main page stays framework-free; React lives only here.
    If the onramp rejects before showing UI (region/provider outage), we fall
-   back to the useFundWallet modal (Meld/MoonPay/Coinbase toggles in the
-   dashboard) so the Buy button never dead-ends. (Privy's LEGACY fiat onramp
+   back to the useFundWallet modal (MoonPay/Coinbase toggles in the
+   dashboard), and if THAT is disabled server-side, to a plain deposit-address
+   screen - the Buy button never dead-ends. (Privy's LEGACY fiat onramp
    - the pre-July-2026 fiat_on_ramp_enabled surface - stays retired; this is
    its replacement, not a revival.) */
 
@@ -271,6 +272,32 @@ try {
         document.getElementById("retryBtn").onclick = () => { msg(""); retry(); };
       };
 
+      /* The dashboard kill-switch: Privy's SDK throws "Wallet funding is
+         not enabled" when the app's SERVER-side funding config has zero
+         usable methods - it's the dashboard's Funding toggles, fetched with
+         the app config; nothing the client passes can override it. (And
+         this SDK build only counts external-wallet / Coinbase / MoonPay
+         options - a Meld-only dashboard still throws.) The account wallet
+         is a normal Base address though, so don't dead-end: show it and
+         take the deposit directly. */
+      const manualDeposit = () => {
+        msg('Card checkout is temporarily unavailable.<br/>' +
+            'You can still add funds by sending <b>USDC on Base</b> to your account wallet:<br/><br/>' +
+            '<code id="depAddr" style="display:inline-block;max-width:92%;overflow-wrap:anywhere;user-select:all;' +
+            'background:#0D141C;border:1px solid #1E2B36;border-radius:10px;padding:10px 14px;color:#E8F4EF;' +
+            'font:13px/1.5 ui-monospace,monospace;">' + address + '</code><br/><br/>' +
+            '<button id="copyAddr" style="pointer-events:auto;background:#2FE6A8;color:#06281C;border:0;' +
+            'border-radius:10px;padding:10px 22px;font:600 14px system-ui,sans-serif;cursor:pointer;">Copy address</button>' +
+            '<br/><br/><span style="font-size:12px;">Only send USDC on the Base network - it shows up in your account soon after the transfer confirms.</span>');
+        const btn = document.getElementById("copyAddr");
+        btn.onclick = () => navigator.clipboard.writeText(address).then(
+          () => { btn.textContent = "Copied ✓"; setTimeout(() => { btn.textContent = "Copy address"; }, 1600); },
+          () => {   // clipboard blocked (permissions/insecure context): select for manual copy
+            const r = document.createRange(); r.selectNodeContents(document.getElementById("depAddr"));
+            const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+          });
+      };
+
       /* THE checkout (2026-07-10, Steven's "please fix"): Privy's funding
          modal - processors per the dashboard's Onramps toggles (Meld /
          MoonPay / Coinbase). The Stripe fiat onramp consistently dies at
@@ -301,6 +328,7 @@ try {
           (e) => {
             const s = String(e && (e.message || e));
             console.warn("[buy-diag] fundWallet rejected:", e);
+            if (/funding is not enabled/i.test(s)){ manualDeposit(); return; }
             if (isCancel(s)){   // user closed Privy's modal
               if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening funding modal"); fallback(); return; }
               dismissed(fallback); return;
