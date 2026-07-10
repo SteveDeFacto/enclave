@@ -53,12 +53,11 @@
    @stripe/crypto in the bundle - see scripts/build-privy.mjs) in a popup.
    Same origin as the console, so it inherits the Privy session the user
    already has. The main page stays framework-free; React lives only here.
-   If the onramp rejects before showing UI (region/provider outage), we fall
-   back to the useFundWallet modal (MoonPay/Coinbase toggles in the
-   dashboard), and if THAT is disabled server-side, to a plain deposit-address
-   screen - the Buy button never dead-ends. (Privy's LEGACY fiat onramp
-   - the pre-July-2026 fiat_on_ramp_enabled surface - stays retired; this is
-   its replacement, not a revival.) */
+   The Stripe onramp is the ONLY checkout (Steven's ruling, 2026-07-10):
+   no useFundWallet fallback, no Coinbase/MoonPay, no deposit-address
+   screen - a failure surfaces its error and stops. (Privy's LEGACY fiat
+   onramp - the pre-July-2026 fiat_on_ramp_enabled surface - stays retired;
+   this is its replacement, not a revival.) */
 
 /* Readable error surfacing: Privy's modal swallows provider errors behind a
    generic screen. Tap failing API calls, extract the human message from the
@@ -179,16 +178,15 @@ try {
   // self-hosted bundle (site/privy/, built by esbuild from @privy-io/react-auth
   // + react) - no CDN at runtime; lazy screens load as local chunks
   const mod = await import("/privy/entry.js?v=7");   // ?v busts browser/CDN caches on bundle updates
-  const { React, createRoot, PrivyProvider, usePrivy, useFundWallet, useFiatOnramp, useWallets, getAccessToken } = mod;
+  const { React, createRoot, PrivyProvider, usePrivy, useFiatOnramp, useWallets, getAccessToken } = mod;
   const h = React.createElement;
 
-  /* Privy's amount screens (fiat onramp AND the fallback funding modal)
-     don't enforce a minimum (a $0 continues to the provider, which only
-     rejects a screen later). The modal renders in OUR document, so watch its
-     amount input and hold the primary button below the floor. Runs for both
-     flows; while a provider iframe (Stripe card fields) has the screen there
-     is no amount input in our DOM and the guard idles. Degrades safely: if
-     Privy's DOM changes, worst case is no guard. */
+  /* Privy's amount screen doesn't enforce a minimum (a $0 continues to the
+     provider, which only rejects a screen later). The modal renders in OUR
+     document, so watch its amount input and hold the primary button below
+     the floor. While a provider iframe (Stripe card fields) has the screen
+     there is no amount input in our DOM and the guard idles. Degrades
+     safely: if Privy's DOM changes, worst case is no guard. */
   const MIN_USD = 1;
   function startMinimumGuard(){
     setInterval(() => {
@@ -224,7 +222,6 @@ try {
   function App(){
     const { ready, authenticated, user } = usePrivy();
     const { fund } = useFiatOnramp();
-    const { fundWallet } = useFundWallet();
     const { wallets } = useWallets();
     const walletsRef = React.useRef(wallets); walletsRef.current = wallets;   // effect closure sees live list
     const started = React.useRef(false);
@@ -242,7 +239,7 @@ try {
       }
       if (started.current) return; started.current = true;
       msg("");
-      startMinimumGuard();   // guards the amount screen of whichever flow runs
+      startMinimumGuard();   // guards the onramp's amount screen
       const finish = () => {
         msg("Done - USDC lands in your account within a few minutes.");
         setTimeout(() => window.close(), 2500);
@@ -272,73 +269,7 @@ try {
         document.getElementById("retryBtn").onclick = () => { msg(""); retry(); };
       };
 
-      /* The dashboard kill-switch: Privy's SDK throws "Wallet funding is
-         not enabled" when the app's SERVER-side funding config has zero
-         usable methods - it's the dashboard's Funding toggles, fetched with
-         the app config; nothing the client passes can override it. (And
-         this SDK build only counts external-wallet / Coinbase / MoonPay
-         options - a Meld-only dashboard still throws.) The account wallet
-         is a normal Base address though, so don't dead-end: show it and
-         take the deposit directly. */
-      const manualDeposit = () => {
-        msg('Card checkout is temporarily unavailable.<br/>' +
-            'You can still add funds by sending <b>USDC on Base</b> to your account wallet:<br/><br/>' +
-            '<code id="depAddr" style="display:inline-block;max-width:92%;overflow-wrap:anywhere;user-select:all;' +
-            'background:#0D141C;border:1px solid #1E2B36;border-radius:10px;padding:10px 14px;color:#E8F4EF;' +
-            'font:13px/1.5 ui-monospace,monospace;">' + address + '</code><br/><br/>' +
-            '<button id="copyAddr" style="pointer-events:auto;background:#2FE6A8;color:#06281C;border:0;' +
-            'border-radius:10px;padding:10px 22px;font:600 14px system-ui,sans-serif;cursor:pointer;">Copy address</button>' +
-            '<br/><br/><span style="font-size:12px;">Only send USDC on the Base network - it shows up in your account soon after the transfer confirms.</span>');
-        const btn = document.getElementById("copyAddr");
-        btn.onclick = () => navigator.clipboard.writeText(address).then(
-          () => { btn.textContent = "Copied ✓"; setTimeout(() => { btn.textContent = "Copy address"; }, 1600); },
-          () => {   // clipboard blocked (permissions/insecure context): select for manual copy
-            const r = document.createRange(); r.selectNodeContents(document.getElementById("depAddr"));
-            const s = getSelection(); s.removeAllRanges(); s.addRange(r);
-          });
-      };
-
-      /* THE checkout (2026-07-10, Steven's "please fix"): Privy's funding
-         modal - processors per the dashboard's Onramps toggles (Meld /
-         MoonPay / Coinbase). The Stripe fiat onramp consistently dies at
-         final submit: its controller iframe 403s inside a context we can't
-         tap (see enclave-buy-flow memory; referrer, environment, tokens and
-         wallet-signature all ruled out). Until that's cracked with Privy
-         support or an extension-isolation test, Stripe runs ONLY behind
-         ?stripe=1 - a paying user never lands on it. */
-      const fallback = () => {
-        return fundWallet({
-          address,
-          options: {
-            chain: { id: 8453, name: "Base",
-                     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-                     rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
-                     blockExplorers: { default: { name: "Basescan", url: "https://basescan.org" } } },
-            amount: "25",                              // pre-fill; the amount screen starts here
-            asset: "USDC"
-          }
-        }).then(
-          (res) => {   // the funding flow RESOLVES on cancel too (status says which)
-            if (res && res.status === "cancelled"){
-              if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening funding modal"); fallback(); return; }
-              dismissed(fallback); return;
-            }
-            finish();
-          },
-          (e) => {
-            const s = String(e && (e.message || e));
-            console.warn("[buy-diag] fundWallet rejected:", e);
-            if (/funding is not enabled/i.test(s)){ manualDeposit(); return; }
-            if (isCancel(s)){   // user closed Privy's modal
-              if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening funding modal"); fallback(); return; }
-              dismissed(fallback); return;
-            }
-            failed(s);
-          }
-        );
-      };
-
-      /* Primary: the fiat onramp - Stripe/Link card + Apple/Google Pay + ACH
+      /* THE checkout - the fiat onramp - Stripe/Link card + Apple/Google Pay + ACH
          checkout in the US+EU, Privy's provider aggregator elsewhere. USDC on
          Base straight to the embedded wallet. Resolves 'confirmed' (done) or
          'submitted' (user left with the purchase in flight) - both mean money
@@ -393,7 +324,6 @@ try {
           console.warn("[buy-diag] wallet ownership signature FAILED:", e);
           errToast("Wallet signature failed: " + String(e && (e.message || e)).slice(0, 140));
         }
-        const startedAt = Date.now();
         fund({
           source: { defaultAsset: "usd" },
           defaultAmount: "25",
@@ -412,20 +342,11 @@ try {
               if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening checkout"); startCheckout(); return; }
               dismissed(startCheckout); return;
             }
-            if (Date.now() - startedAt < 8000){
-              // died before the user could have done anything (region gate,
-              // provider outage, app not enabled) -> the old funding modal
-              console.warn("[buy-diag] fiat onramp unavailable, falling back to funding modal");
-              return fallback();
-            }
             failed(s);
           }
         );
       };
-      // Stripe stays opt-in (?stripe=1) until its controller-403 is cracked;
-      // everyone else gets the funding modal that actually completes.
-      if (new URLSearchParams(location.search).has("stripe")) startCheckout();
-      else fallback();
+      startCheckout();
     }, [ready, authenticated]);
     return null;
   }
