@@ -31,7 +31,13 @@
 <body>
 <div id="root"></div>
 <div id="msg">Loading checkout…</div>
-<div id="toasts" style="position:fixed;top:10px;left:10px;right:10px;z-index:2147483647;display:flex;flex-direction:column;gap:8px;pointer-events:none;"></div>
+<!-- popover=manual: showPopover() lifts the host into the browser TOP LAYER,
+     which paints above ANY z-index/DOM-order combination - Privy re-mounts
+     its maxed-z-index portal on every screen change, so no ordering trick
+     holds. The inline style neutralizes the popover UA sheet (inset/margin/
+     border/background), incl. display:flex overriding its display:none -
+     harmless: the host is transparent and pointer-events:none when empty. -->
+<div id="toasts" popover="manual" style="position:fixed;top:10px;left:10px;right:10px;bottom:auto;margin:0;border:0;padding:0;width:auto;height:auto;background:transparent;overflow:visible;z-index:2147483647;display:flex;flex-direction:column;gap:8px;pointer-events:none;"></div>
 <script type="module">
 /* Buy USDC · runs Privy's FIAT ONRAMP (useFiatOnramp - the Stripe Crypto
    Onramp surface Privy launched 2026-07-07: Stripe/Link checkout in the
@@ -51,9 +57,10 @@
    until dismissed (✕ / click) - they're the only explanation of a dead
    checkout, so they must outlive it. Full raw detail still goes to the
    console as [buy-diag].
-   Stacking: Privy's portal also uses a maxed z-index and mounts LATER in
-   <body>, which wins the tie on DOM order - so re-append the toast host on
-   every toast to make IT the last child and paint above the dialog. */
+   Stacking: the host is a manual popover promoted to the browser top layer
+   (beats any z-index, survives Privy re-mounting its portal every screen);
+   the body re-append below is only the fallback for browsers without the
+   Popover API, where DOM order among equal z-indexes decides. */
 const recentToasts = new Map();
 function errToast(text){
   const now = Date.now();
@@ -78,6 +85,7 @@ function errToast(text){
   el.onclick = () => el.remove();
   document.body.appendChild(host);
   host.appendChild(el);
+  try { if (host.showPopover && !host.matches(":popover-open")) host.showPopover(); } catch(_){}
 }
 function humanApiError(status, body){
   try {
