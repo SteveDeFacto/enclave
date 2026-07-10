@@ -20,3 +20,6 @@ cli/dist/
 site/dist/
 # privy bundle build workspace (scripts/build-privy.mjs; its output site/privy/ IS committed)
 scripts/.privy-build/
+# rolling archive of hashed site chunks (deploy.sh ships the union so cached
+# entries keep resolving their chunks across deploys)
+site/.chunk-archive/
