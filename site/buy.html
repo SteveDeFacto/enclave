@@ -93,10 +93,13 @@ try {
   const { React, createRoot, PrivyProvider, usePrivy, useFundWallet, useFiatOnramp } = mod;
   const h = React.createElement;
 
-  /* Privy's amount screen doesn't enforce a minimum (a $0 continues to the
-     provider, which only rejects a screen later). The modal renders in OUR
-     document, so watch its amount input and hold the primary button below the
-     floor. Degrades safely: if Privy's DOM changes, worst case is no guard. */
+  /* Privy's amount screens (fiat onramp AND the fallback funding modal)
+     don't enforce a minimum (a $0 continues to the provider, which only
+     rejects a screen later). The modal renders in OUR document, so watch its
+     amount input and hold the primary button below the floor. Runs for both
+     flows; while a provider iframe (Stripe card fields) has the screen there
+     is no amount input in our DOM and the guard idles. Degrades safely: if
+     Privy's DOM changes, worst case is no guard. */
   const MIN_USD = 5;
   function startMinimumGuard(){
     setInterval(() => {
@@ -148,6 +151,7 @@ try {
       }
       if (started.current) return; started.current = true;
       msg("");
+      startMinimumGuard();   // guards the amount screen of whichever flow runs
       const finish = () => {
         msg("Done - USDC lands in your account within a few minutes.");
         setTimeout(() => window.close(), 2500);
@@ -163,7 +167,6 @@ try {
          toggles: Meld / MoonPay / Coinbase). Runs only when the fiat onramp
          rejects before showing UI, so a card path always remains. */
       const fallback = () => {
-        startMinimumGuard();   // Privy's amount screen lets $0 continue; hold the button under $5
         return fundWallet({
           address,
           options: {
