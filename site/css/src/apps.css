@@ -52,8 +52,14 @@
 .qd-est b{color:var(--jade);}
 .qd-note{font-family:var(--font-mono);font-size:.74rem;color:var(--amber);margin-top:8px;}
 .qd-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;}
-/* the contract link: a btn-sm twin of the store's ↻ refresh button - mini
-   document glyph beside the word, glyph sized by the button's own font */
+/* the contract link: a ghost twin of the fleet list's ↻ refresh - bare dim
+   mono text that greens on hover, mini document glyph sized by the font */
+.contract-link{
+  display:inline-flex;align-items:center;gap:.45em;
+  font-family:var(--font-mono);font-size:.68rem;color:var(--text-dim);
+  background:none;border:0;padding:0;text-decoration:none;cursor:pointer;
+}
+.contract-link:hover{color:var(--jade);}
 .contract-link svg{width:1em;height:1em;display:block;}
 /* the contract link parks bottom-right of the block it vouches for (same
    grammar as the fleet list's footer) */
