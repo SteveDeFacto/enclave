@@ -215,12 +215,23 @@ try {
         msg("Checkout didn’t complete. Close this window and try again from the console.");
       };
       const isCancel = (s) => /clos|cancel|exit|abort|dismiss/i.test(s);
-      /* A cancel that lands right after a click we saw hit the backdrop is
-         the focus-click mishap, not intent: reopen the flow instead of
-         closing the window. Capped so a genuinely broken flow can't loop. */
+      /* Cancel NEVER closes the window. The backdrop heuristics kept losing
+         (Privy's [role=dialog] can BE the full-screen wrapper, making
+         backdrop clicks land "inside" it), and every miss cost Steven the
+         window mid-focus-click. Deterministic instead: a dismissed flow
+         parks on a restart screen; only the user (or a finished purchase)
+         closes the window. A dismiss within 1.5s of a click we saw hit the
+         backdrop still reopens by itself (capped, so nothing can loop). */
       let reopens = 0;
       const accidentalDismiss = () =>
         Date.now() - lastBackdropClick < 1500 && reopens++ < 3;
+      const dismissed = (retry) => {
+        msg('Checkout closed before finishing.<br/><br/>' +
+            '<button id="retryBtn" style="pointer-events:auto;background:#2FE6A8;color:#06281C;border:0;' +
+            'border-radius:10px;padding:10px 22px;font:600 14px system-ui,sans-serif;cursor:pointer;">Restart checkout</button>' +
+            '<br/><br/><span style="font-size:12px;">…or just close this window.</span>');
+        document.getElementById("retryBtn").onclick = () => { msg(""); retry(); };
+      };
 
       /* Fallback: Privy's funding modal (processors = the dashboard's Onramps
          toggles: Meld / MoonPay / Coinbase). Runs only when the fiat onramp
@@ -240,7 +251,7 @@ try {
           (res) => {   // the funding flow RESOLVES on cancel too (status says which)
             if (res && res.status === "cancelled"){
               if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening funding modal"); fallback(); return; }
-              window.close(); return;
+              dismissed(fallback); return;
             }
             finish();
           },
@@ -249,7 +260,7 @@ try {
             console.warn("[buy-diag] fundWallet rejected:", e);
             if (isCancel(s)){   // user closed Privy's modal
               if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening funding modal"); fallback(); return; }
-              window.close(); return;
+              dismissed(fallback); return;
             }
             failed(s);
           }
@@ -295,7 +306,7 @@ try {
             console.warn("[buy-diag] fiat onramp rejected:", e);
             if (isCancel(s)){
               if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening checkout"); startCheckout(); return; }
-              window.close(); return;
+              dismissed(startCheckout); return;
             }
             if (Date.now() - startedAt < 8000){
               // died before the user could have done anything (region gate,
