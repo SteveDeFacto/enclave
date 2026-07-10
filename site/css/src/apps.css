@@ -57,3 +57,6 @@
 .store-meta .contract-link{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:.68rem;color:var(--text-dim);text-decoration:none;}
 .store-meta .contract-link:hover{color:var(--jade);}
 .store-meta .contract-link svg{width:11px;height:11px;display:block;}
+/* the contract link parks bottom-right of the block it vouches for (same
+   grammar as the fleet list's footer) */
+.contract-foot{display:flex;justify-content:flex-end;margin-top:8px;}

@@ -47,7 +47,10 @@ class FleetList extends EnclaveElement {
     if (foot) {
       foot.innerHTML = '<button class="fleet-refresh" type="button" title="re-fetch the live fleet view">↻ refresh</button>'
         + (/^0x[0-9a-fA-F]{40}$/.test(REGISTRY_ADDRESS || "")
-          ? '<a class="fleet-reg" href="' + catExplorer() + '/address/' + REGISTRY_ADDRESS + '" target="_blank" rel="noopener" title="EnclaveRegistry - the on-chain fleet membership this table mirrors">view registry contract ↗</a>'
+          ? '<a class="fleet-reg contract-link" href="' + catExplorer() + '/address/' + REGISTRY_ADDRESS + '" target="_blank" rel="noopener" title="EnclaveRegistry · ' + REGISTRY_ADDRESS + '">'
+            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            + '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>'
+            + '<line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg> contract</a>'
           : "");
       const btn = foot.querySelector(".fleet-refresh");
       btn.addEventListener("click", () => {
