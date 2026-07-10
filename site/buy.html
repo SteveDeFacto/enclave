@@ -73,13 +73,29 @@ function humanApiError(status, body){
   } catch(_){ return String(body).slice(0, 180); }
 }
 /* Clicking the dark backdrop must NOT dismiss checkout - people click the
-   window just to focus it. Swallow pointer events that land outside Privy's
-   dialog panel; its own ✕ button (inside the dialog) still closes normally. */
+   window just to focus it. Two lines of defense:
+   1) swallow pointer events that land outside Privy's dialog panel (capture
+      on window, registered before Privy loads, so we run first);
+   2) if a dismiss slips through anyway (markup we don't recognize, or Privy
+      wins the listener race), the cancel handlers below see the fresh
+      backdrop click and REOPEN the checkout instead of closing the window.
+   The dialog's own ✕ button is a real button - not counted as backdrop -
+   so deliberate closes still close. */
+let lastBackdropClick = 0;
 ["pointerdown", "mousedown", "mouseup", "click"].forEach(t =>
-  document.addEventListener(t, (e) => {
-    if (e.target.closest("#toasts")) return;                 // keep toasts dismissible
+  window.addEventListener(t, (e) => {
+    if (e.target.closest && e.target.closest("#toasts")) return;   // keep toasts dismissible
     const dlg = document.querySelector('[role="dialog"]');
-    if (dlg && !dlg.contains(e.target)){ e.stopPropagation(); e.preventDefault(); }
+    if (dlg){
+      if (!dlg.contains(e.target)){
+        lastBackdropClick = Date.now();
+        e.stopPropagation(); e.preventDefault();
+      }
+    } else if (!(e.target.closest && e.target.closest("button,a,input,select,textarea,iframe,[role=button]"))){
+      // no dialog we recognize: don't swallow (unknown UI), but remember
+      // inert-area clicks so a dismiss right after reads as accidental
+      lastBackdropClick = Date.now();
+    }
   }, true));
 
 const _fetch = window.fetch.bind(window);
@@ -176,6 +192,12 @@ try {
         setTimeout(() => window.close(), 8000);
       };
       const isCancel = (s) => /clos|cancel|exit|abort|dismiss/i.test(s);
+      /* A cancel that lands right after a click we saw hit the backdrop is
+         the focus-click mishap, not intent: reopen the flow instead of
+         closing the window. Capped so a genuinely broken flow can't loop. */
+      let reopens = 0;
+      const accidentalDismiss = () =>
+        Date.now() - lastBackdropClick < 1500 && reopens++ < 3;
 
       /* Fallback: Privy's funding modal (processors = the dashboard's Onramps
          toggles: Meld / MoonPay / Coinbase). Runs only when the fiat onramp
@@ -193,13 +215,19 @@ try {
           }
         }).then(
           (res) => {   // the funding flow RESOLVES on cancel too (status says which)
-            if (res && res.status === "cancelled"){ window.close(); return; }
+            if (res && res.status === "cancelled"){
+              if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening funding modal"); fallback(); return; }
+              window.close(); return;
+            }
             finish();
           },
           (e) => {
             const s = String(e && (e.message || e));
             console.warn("[buy-diag] fundWallet rejected:", e);
-            if (isCancel(s)){ window.close(); return; }   // user closed Privy's modal
+            if (isCancel(s)){   // user closed Privy's modal
+              if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening funding modal"); fallback(); return; }
+              window.close(); return;
+            }
             failed(s);
           }
         );
@@ -210,27 +238,33 @@ try {
          Base straight to the embedded wallet. Resolves 'confirmed' (done) or
          'submitted' (user left with the purchase in flight) - both mean money
          is on the way. Rejects on cancel AND on real errors, so triage below. */
-      const startedAt = Date.now();
-      fund({
-        source: { defaultAsset: "usd" },
-        defaultAmount: "25",
-        environment: "production",
-        destination: { asset: USDC_BASE, chain: "eip155:8453", address }
-      }).then(
-        () => finish(),
-        (e) => {
-          const s = String(e && (e.message || e));
-          console.warn("[buy-diag] fiat onramp rejected:", e);
-          if (isCancel(s)){ window.close(); return; }
-          if (Date.now() - startedAt < 8000){
-            // died before the user could have done anything (region gate,
-            // provider outage, app not enabled) -> the old funding modal
-            console.warn("[buy-diag] fiat onramp unavailable, falling back to funding modal");
-            return fallback();
+      const startCheckout = () => {
+        const startedAt = Date.now();
+        fund({
+          source: { defaultAsset: "usd" },
+          defaultAmount: "25",
+          environment: "production",
+          destination: { asset: USDC_BASE, chain: "eip155:8453", address }
+        }).then(
+          () => finish(),
+          (e) => {
+            const s = String(e && (e.message || e));
+            console.warn("[buy-diag] fiat onramp rejected:", e);
+            if (isCancel(s)){
+              if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening checkout"); startCheckout(); return; }
+              window.close(); return;
+            }
+            if (Date.now() - startedAt < 8000){
+              // died before the user could have done anything (region gate,
+              // provider outage, app not enabled) -> the old funding modal
+              console.warn("[buy-diag] fiat onramp unavailable, falling back to funding modal");
+              return fallback();
+            }
+            failed(s);
           }
-          failed(s);
-        }
-      );
+        );
+      };
+      startCheckout();
     }, [ready, authenticated]);
     return null;
   }
