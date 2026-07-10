@@ -152,15 +152,49 @@ let lastBackdropClick = 0;
     }
   }, true));
 
+/* Blocked-frame detector (added 2026-07-10 after the controller-403 hunt).
+   PROVEN by out-of-band testing: the app is fully provisioned (Privy mints a
+   live pk_live onramp session) and enclave.host is an accepted Stripe origin
+   (the js.stripe.com controller loads clean from a real-origin headless
+   browser - no 403). The failure only appears in a browser that BLOCKS
+   Stripe: an ad/privacy extension or third-party-storage lockdown stops the
+   cross-origin controller iframe, so Stripe's outer script falls back to an
+   inline same-origin controller that then requests its OWN chunks relative to
+   enclave.host - producing GET enclave.host/crypto-onramp/v1/*.js 404s and a
+   postMessage origin mismatch. That 404 pattern is an unambiguous fingerprint
+   of the blocked frame. Catch it (resource errors + our own-origin 404s) and
+   tell the user exactly how to unblock, instead of dead-ending silently. */
+let blockedFrameShown = false;
+function blockedFrameHelp(){
+  if (blockedFrameShown) return; blockedFrameShown = true;
+  console.warn("[buy-diag] BLOCKED-FRAME signature seen - Stripe's controller iframe was blocked client-side");
+  errToast("Your browser is blocking Stripe’s secure checkout window.");
+  msg("Your browser is blocking Stripe’s secure checkout.<br/><br/>" +
+      "This is almost always an <b>ad or privacy blocker</b>, or blocked third-party cookies. To finish your purchase:<br/><br/>" +
+      "• turn off ad/privacy blockers for <b>enclave.host</b> and <b>stripe.com</b>, <b>or</b><br/>" +
+      "• open this page in a normal (non-private) window with a clean profile,<br/>" +
+      "then click Buy again.");
+}
+window.addEventListener("error", (e) => {
+  const t = e && e.target;
+  if (t && (t.tagName === "SCRIPT" || t.tagName === "IFRAME")){
+    const src = String(t.src || "");
+    if (/\/crypto-onramp\//.test(src) && src.indexOf(location.origin) === 0) blockedFrameHelp();
+  }
+}, true);
+
 const _fetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url = String((input && input.url) || input || "");
+  // Stripe's own chunks requested from OUR origin = the blocked-frame fallback
+  if (/\/crypto-onramp\/v1\//.test(url) && url.indexOf(location.origin) === 0) blockedFrameHelp();
   const res = await _fetch(input, init);
   try {
     if (!res.ok){
       const body = await res.clone().text();
       console.warn("[buy-diag]", res.status, url, body.slice(0, 400));   // EVERY failing call logs
-      if (/privy\.io|moonpay|stripe|meld|coinbase/i.test(url)){
+      if (/\/crypto-onramp\/v1\//.test(url) && url.indexOf(location.origin) === 0){ blockedFrameHelp(); }
+      else if (/privy\.io|moonpay|stripe|meld|coinbase/i.test(url)){
         // the endpoint IS the diagnosis (which provider, which step) - a
         // screenshot of this toast must be enough to debug from
         let at = ""; try { at = " @ " + new URL(url).pathname.replace(/\/(cae|sess|txn)?[a-z0-9_-]{16,}/gi, "/…"); } catch(_){}
