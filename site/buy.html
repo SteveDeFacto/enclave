@@ -3,46 +3,169 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<!-- The ONE deviation from the 129a7709 era page (re-added 2026-07-10): the
-     edge serves a blanket `referrer-policy: no-referrer` (Cloudflare, not
-     repo) and Stripe's session-bound onramp controller verifies the
-     embedding origin via the Referer - with no-referrer its iframe request
-     carries neither Referer nor Origin and js.stripe.com 403s it (fallback
-     doc.write + same-origin /crypto-onramp/v1/*.js 404s follow). This meta
-     beats the header for requests this document initiates. -->
+<!-- OVERRIDES the edge's blanket `referrer-policy: no-referrer` for THIS
+     document (meta beats header). Stripe's onramp controller iframe is
+     session-bound and verifies the embedding origin via the Referer; with
+     no-referrer the request carries neither Referer nor Origin and
+     js.stripe.com 403s the controller - the checkout then dies at submit
+     with Stripe's "User is not authenticated". strict-origin-when-cross-origin
+     (the browser default) sends exactly the origin, nothing more. -->
 <meta name="referrer" content="strict-origin-when-cross-origin"/>
 <title>Buy USDC · Enclave</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 9v14L16 30 4 23V9z' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 7.333 24 12v8L16 24.667 8 20v-8z' fill='none' stroke='%232FE6A8' stroke-width='1.4' opacity='.55'/%3E%3Ccircle cx='16' cy='12.55' r='2.45' fill='none' stroke='%232FE6A8' stroke-width='2'/%3E%3Cpath d='M16 15v6.6M16 21.6h2M16 19.4h1.5' fill='none' stroke='%232FE6A8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"/>
+<link rel="icon" href="favicon.ico" sizes="48x48 32x32 16x16" />
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
 <style>
   html,body{margin:0;height:100%;background:#070B10;color:#E8F4EF;font:15px/1.5 system-ui,sans-serif;}
   #msg{display:flex;height:100%;align-items:center;justify-content:center;text-align:center;padding:24px;color:#8FA6B2;}
   #msg b{color:#E8F4EF;}
   a{color:#2FE6A8;}
+  /* The popup IS the checkout: Privy styles its dialog as a floating card
+     sized for overlaying a full page, so in this small window it overflows
+     and crops top/bottom. Stretch the card to the viewport, scroll inside,
+     and drop the card chrome (there's no page behind it). The centering
+     wrapper loses its padding too, or the card can't reach the edges. */
+  [role="dialog"]{
+    width:100% !important; max-width:100% !important;
+    max-height:100dvh !important;
+    margin:0 !important;
+    border-radius:0 !important;
+    box-shadow:none !important;
+    overflow-y:auto !important;
+  }
+  *:has(> [role="dialog"]){ padding:0 !important; }
 </style>
 </head>
 <body>
 <div id="root"></div>
 <div id="msg">Loading checkout…</div>
-<div id="diag" hidden style="position:fixed;bottom:0;left:0;right:0;padding:8px 12px;background:#160f0f;color:#ff9a9a;font:11px/1.5 monospace;word-break:break-all;max-height:130px;overflow:auto;"></div>
+<!-- popover=manual: showPopover() lifts the host into the browser TOP LAYER,
+     which paints above ANY z-index/DOM-order combination - Privy re-mounts
+     its maxed-z-index portal on every screen change, so no ordering trick
+     holds. The inline style neutralizes the popover UA sheet (inset/margin/
+     border/background), incl. display:flex overriding its display:none -
+     harmless: the host is transparent and pointer-events:none when empty. -->
+<div id="toasts" popover="manual" style="position:fixed;top:10px;left:10px;right:10px;bottom:auto;margin:0;border:0;padding:0;width:auto;height:auto;background:transparent;overflow:visible;z-index:2147483647;display:flex;flex-direction:column;gap:8px;pointer-events:none;"></div>
 <script type="module">
-/* Buy USDC · runs Privy's official React funding modal (Stripe/Link, MoonPay, …)
-   in a popup. Same origin as the console, so it inherits the Privy session the
-   user already has. The main page stays framework-free; React lives only here. */
+/* Buy USDC · runs Privy's FIAT ONRAMP (useFiatOnramp - the Stripe Crypto
+   Onramp surface Privy launched 2026-07-07: Stripe/Link checkout in the
+   US+EU, Privy's aggregator elsewhere; needs react-auth >=3.33.1 with
+   @stripe/crypto in the bundle - see scripts/build-privy.mjs) in a popup.
+   Same origin as the console, so it inherits the Privy session the user
+   already has. The main page stays framework-free; React lives only here.
+   The Stripe onramp is the ONLY checkout (Steven's ruling, 2026-07-10):
+   no useFundWallet fallback, no Coinbase/MoonPay, no deposit-address
+   screen - a failure surfaces its error and stops. (Privy's LEGACY fiat
+   onramp - the pre-July-2026 fiat_on_ramp_enabled surface - stays retired;
+   this is its replacement, not a revival.) */
 
-/* diagnostic tap: Privy's modal swallows provider errors behind a generic
-   screen; capture failing API calls so the real reason is visible on-page. */
-const apiFails = [];
+/* Readable error surfacing: Privy's modal swallows provider errors behind a
+   generic screen. Tap failing API calls, extract the human message from the
+   JSON body, and show it as a red toast ON TOP of the modal. Toasts stay
+   until dismissed (✕ / click) - they're the only explanation of a dead
+   checkout, so they must outlive it. Full raw detail still goes to the
+   console as [buy-diag].
+   Stacking (the hard-won rules): a NATIVE dialog.showModal() makes the rest
+   of the document INERT and outranks popovers in the top layer, so a
+   body-mounted host loses no matter its z-index or promotion order. The one
+   escape is being INSIDE the open dialog. surfaceToasts() therefore parents
+   the host into the current modal dialog when one exists (body otherwise,
+   also rescuing it before a closing dialog would destroy it), re-appends to
+   win same-z DOM-order ties, and re-promotes the popover; a 1s watchdog
+   re-asserts all of it across Privy's screen-change remounts. Verified
+   headless: toast wins elementFromPoint over an open full-screen showModal
+   dialog, including after the dialog closes and reopens. */
+const recentToasts = new Map();
+const toastHost = document.getElementById("toasts");   // module ref: survives detachment
+function surfaceToasts(){
+  if (!toastHost.children.length) return;
+  const modal = document.querySelector("dialog:modal, dialog[open], [role=dialog]");
+  const target = (modal && modal.isConnected) ? modal : document.body;
+  try { if (toastHost.matches(":popover-open")) toastHost.hidePopover(); } catch(_){}
+  target.appendChild(toastHost);
+  try { if (toastHost.showPopover) toastHost.showPopover(); } catch(_){}
+}
+setInterval(surfaceToasts, 1000);
+function errToast(text){
+  const now = Date.now();
+  for (const [k, t] of recentToasts) if (now - t > 12000) recentToasts.delete(k);
+  const dup = [...toastHost.children].some(el => el._text === text);
+  if (dup || recentToasts.has(text) || toastHost.children.length >= 3) return;   // no dupes, no spam
+  recentToasts.set(text, now);
+  const el = document.createElement("div");
+  el._text = text;
+  el.style.cssText = "pointer-events:auto;background:#2a1113;border:1px solid #ff6b6b;color:#ffb3b3;" +
+    "border-radius:10px;padding:10px 12px;font:12.5px/1.5 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5);" +
+    "cursor:pointer;display:flex;gap:10px;align-items:flex-start;";
+  const body = document.createElement("span");
+  body.textContent = text;
+  body.style.flex = "1 1 auto";
+  const x = document.createElement("span");
+  x.textContent = "✕";
+  x.style.cssText = "flex:0 0 auto;color:#ff8f8f;font-weight:700;";
+  el.append(body, x);
+  el.title = "click to dismiss";
+  el.onclick = () => el.remove();
+  toastHost.appendChild(el);
+  surfaceToasts();
+}
+function humanApiError(status, body){
+  try {
+    const j = JSON.parse(body);
+    const m = (j.error && (j.error.message || j.error)) || j.message || j.detail || body;
+    return String(typeof m === "string" ? m : JSON.stringify(m)).slice(0, 180);
+  } catch(_){ return String(body).slice(0, 180); }
+}
+/* Clicking the dark backdrop must NOT dismiss checkout - people click the
+   window just to focus it. Two lines of defense:
+   1) swallow pointer events that land outside Privy's dialog panel (capture
+      on window, registered before Privy loads, so we run first);
+   2) if a dismiss slips through anyway (markup we don't recognize, or Privy
+      wins the listener race), the cancel handlers below see the fresh
+      backdrop click and REOPEN the checkout instead of closing the window.
+   The dialog's own ✕ button is a real button - not counted as backdrop -
+   so deliberate closes still close. */
+let lastBackdropClick = 0;
+["pointerdown", "pointerup", "mousedown", "mouseup", "click", "touchstart", "touchend"].forEach(t =>
+  window.addEventListener(t, (e) => {
+    if (e.target.closest && e.target.closest("#toasts")) return;   // keep toasts dismissible
+    /* The dismiss boundary is the PANEL, not [role=dialog]: Privy's modal is
+       a Headless UI Dialog whose role=dialog wrapper CONTAINS the backdrop
+       (#privy-dialog-backdrop, aria-hidden) and a full-screen centering
+       layer - so "inside the dialog element" was still the dark area, and
+       Headless UI's own outside-click closer fired. Everything outside
+       #privy-modal-content is backdrop. Interactive elements are never
+       swallowed (dropdown portals, iframes). */
+    const panel = document.querySelector("#privy-modal-content")
+               || document.querySelector('dialog:modal, dialog[open], [role="dialog"]');
+    const interactive = e.target.closest &&
+      e.target.closest("button,a,input,select,textarea,iframe,[role=button],[role=option],[role=listbox],[role=menuitem]");
+    if (panel){
+      if ((e.target === panel || !panel.contains(e.target)) && !interactive){
+        lastBackdropClick = Date.now();
+        e.stopPropagation(); e.preventDefault();
+      }
+    } else if (!interactive){
+      // no modal we recognize: don't swallow (unknown UI), but remember
+      // inert-area clicks so a dismiss right after reads as accidental
+      lastBackdropClick = Date.now();
+    }
+  }, true));
+
 const _fetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url = String((input && input.url) || input || "");
   const res = await _fetch(input, init);
   try {
-    if (!res.ok && /privy\.io|moonpay|stripe|meld|coinbase/i.test(url)){
+    if (!res.ok){
       const body = await res.clone().text();
-      const line = res.status + " " + url.replace(/^https:\/\//, "").slice(0, 90) + " :: " + body.slice(0, 220);
-      apiFails.push(line); console.warn("[buy-diag]", line);
-      const d = document.getElementById("diag");
-      if (d){ d.hidden = false; d.textContent = "diagnostics: " + apiFails.slice(-3).join(" || "); }
+      console.warn("[buy-diag]", res.status, url, body.slice(0, 400));   // EVERY failing call logs
+      if (/privy\.io|moonpay|stripe|meld|coinbase/i.test(url)){
+        // the endpoint IS the diagnosis (which provider, which step) - a
+        // screenshot of this toast must be enough to debug from
+        let at = ""; try { at = " @ " + new URL(url).pathname.replace(/\/(cae|sess|txn)?[a-z0-9_-]{16,}/gi, "/…"); } catch(_){}
+        errToast("Payment error (" + res.status + at + "): " + humanApiError(res.status, body));
+      }
     }
   } catch(_){}
   return res;
@@ -55,8 +178,38 @@ try {
   // self-hosted bundle (site/privy/, built by esbuild from @privy-io/react-auth
   // + react) - no CDN at runtime; lazy screens load as local chunks
   const mod = await import("/privy/entry.js");
-  const { React, createRoot, PrivyProvider, usePrivy, useFiatOnramp } = mod;
+  const { React, createRoot, PrivyProvider, usePrivy, useFiatOnramp, useWallets, getAccessToken } = mod;
   const h = React.createElement;
+
+  /* Privy's amount screen doesn't enforce a minimum (a $0 continues to the
+     provider, which only rejects a screen later). The modal renders in OUR
+     document, so watch its amount input and hold the primary button below
+     the floor. While a provider iframe (Stripe card fields) has the screen
+     there is no amount input in our DOM and the guard idles. Degrades
+     safely: if Privy's DOM changes, worst case is no guard. */
+  const MIN_USD = 1;
+  function startMinimumGuard(){
+    setInterval(() => {
+      const amt = [...document.querySelectorAll("input")].find(i =>
+        i.inputMode === "decimal" || i.type === "number" ||
+        /amount/i.test((i.name || "") + (i.id || "") + (i.placeholder || "") + (i.getAttribute("aria-label") || "")));
+      let hint = document.getElementById("minHint");
+      if (!amt){ if (hint) hint.remove(); return; }
+      const val = parseFloat(String(amt.value).replace(/[^\d.,]/g, "").replace(",", ".")) || 0;
+      const ok = val >= MIN_USD;
+      [...document.querySelectorAll("button")]
+        .filter(b => /^(continue|review|next|buy)\b/i.test((b.textContent || "").trim()))
+        .forEach(b => { b.disabled = !ok; b.style.opacity = ok ? "" : ".45"; b.style.pointerEvents = ok ? "" : "none"; });
+      if (!ok){
+        if (!hint){
+          hint = document.createElement("div"); hint.id = "minHint";
+          hint.style.cssText = "position:fixed;bottom:8px;left:0;right:0;text-align:center;color:#ffb86b;font:12px/1.4 monospace;z-index:2147483647;pointer-events:none;";
+          document.body.appendChild(hint);
+        }
+        hint.textContent = "Minimum purchase: $" + MIN_USD;
+      } else if (hint) hint.remove();
+    }, 350);
+  }
 
   function embeddedAddressOf(user){
     const accs = (user && (user.linkedAccounts || user.linked_accounts)) || [];
@@ -69,8 +222,11 @@ try {
   function App(){
     const { ready, authenticated, user } = usePrivy();
     const { fund } = useFiatOnramp();
+    const { wallets } = useWallets();
+    const walletsRef = React.useRef(wallets); walletsRef.current = wallets;   // effect closure sees live list
     const started = React.useRef(false);
     React.useEffect(() => {
+      console.info("[buy-diag] privy state: ready=" + ready + " authenticated=" + authenticated);
       if (!ready) return;
       if (!authenticated){
         msg("You’re not signed in.<br/>Close this window, hit <b>Sign in</b> on the main page, then try again.");
@@ -83,14 +239,114 @@ try {
       }
       if (started.current) return; started.current = true;
       msg("");
-      fund({
-        source: { assets: ["usd", "eur"] },
-        destination: { asset: USDC_BASE, chain: "eip155:8453", address },
-        defaultAmount: "25"     // pre-fill; without it Privy's amount screen starts at "0"
-      }).then(
-        () => { msg("Purchase flow finished. You can close this window - USDC lands in your account within a few minutes."); },
-        (e) => { msg("Checkout didn’t complete: <b>" + String(e && (e.message || e)).replace(/</g, "&lt;") + "</b><br/>You can close this window and try again."); }
+      startMinimumGuard();   // guards the onramp's amount screen
+      const finish = () => {
+        msg("Done - USDC lands in your account within a few minutes.");
+        setTimeout(() => window.close(), 2500);
+      };
+      /* No auto-close on failure: closing the window destroys the one
+         explanation of what went wrong before anyone can read it. */
+      const failed = (s) => {
+        errToast("Checkout didn’t complete: " + s);
+        msg("Checkout didn’t complete. Close this window and try again from the console.");
+      };
+      const isCancel = (s) => /clos|cancel|exit|abort|dismiss/i.test(s);
+      /* Cancel NEVER closes the window. The backdrop heuristics kept losing
+         (Privy's [role=dialog] can BE the full-screen wrapper, making
+         backdrop clicks land "inside" it), and every miss cost Steven the
+         window mid-focus-click. Deterministic instead: a dismissed flow
+         parks on a restart screen; only the user (or a finished purchase)
+         closes the window. A dismiss within 1.5s of a click we saw hit the
+         backdrop still reopens by itself (capped, so nothing can loop). */
+      let reopens = 0;
+      const accidentalDismiss = () =>
+        Date.now() - lastBackdropClick < 1500 && reopens++ < 3;
+      const dismissed = (retry) => {
+        msg('Checkout closed before finishing.<br/><br/>' +
+            '<button id="retryBtn" style="pointer-events:auto;background:#2FE6A8;color:#06281C;border:0;' +
+            'border-radius:10px;padding:10px 22px;font:600 14px system-ui,sans-serif;cursor:pointer;">Restart checkout</button>' +
+            '<br/><br/><span style="font-size:12px;">…or just close this window.</span>');
+        document.getElementById("retryBtn").onclick = () => { msg(""); retry(); };
+      };
+
+      /* THE checkout - the fiat onramp - Stripe/Link card + Apple/Google Pay + ACH
+         checkout in the US+EU, Privy's provider aggregator elsewhere. USDC on
+         Base straight to the embedded wallet. Resolves 'confirmed' (done) or
+         'submitted' (user left with the purchase in flight) - both mean money
+         is on the way. Rejects on cancel AND on real errors, so triage below. */
+      /* Token freshness: the middle of checkout runs entirely in the
+         provider's UI, so MINUTES pass with no Privy API call - the final
+         submit (POST /api/v1/onramp/stripe/checkout/:id) is often the first
+         one in a long while, and a stale or rotated access token surfaces
+         there as a 401 "User is not authenticated" with the purchase fully
+         entered. (The console shares this session from a DIFFERENT Privy SDK
+         - js-sdk-core - so cross-window refresh races are real.) Force a
+         fresh token before the flow starts, and nudge it every 2 minutes
+         while the window lives; getAccessToken() only hits the network when
+         the token is actually near expiry. */
+      const freshToken = () => getAccessToken().then(
+        (t) => { if (!t) console.warn("[buy-diag] getAccessToken returned null"); return t; },
+        (e) => { console.warn("[buy-diag] token refresh failed:", e); return null; }
       );
+      setInterval(freshToken, 120000);
+
+      /* The wallet signature, restored (Steven's call: the old working flow
+         signed right before its last screen). Stripe verifies OWNERSHIP of
+         self-custody destination wallets; an embedded wallet that can't sign
+         in this popup fails the transaction at the very end with a generic
+         "couldn't complete". Signing up front proves the wallet is
+         operational BEFORE money is on the line, and [buy-diag] records the
+         outcome either way. Not a hard gate: if signing fails we continue,
+         so the provider's own error still surfaces. */
+      const signOwnership = async () => {
+        let w = null;
+        for (let i = 0; i < 30 && !w; i++){   // wallets hydrate async after auth
+          const list = walletsRef.current || [];
+          w = list.find(x => x.walletClientType === "privy" && (x.address || "").toLowerCase() === address.toLowerCase())
+           || list.find(x => x.walletClientType === "privy");
+          if (!w) await new Promise(r => setTimeout(r, 250));
+        }
+        if (!w) throw new Error("embedded wallet not available in this window");
+        const provider = await w.getEthereumProvider();
+        const text = "Enclave · verify wallet for card checkout\n" + w.address;
+        const hex = "0x" + Array.from(new TextEncoder().encode(text), b => b.toString(16).padStart(2, "0")).join("");
+        const sig = await provider.request({ method: "personal_sign", params: [hex, w.address] });
+        console.info("[buy-diag] wallet ownership signature ok: " + String(sig).slice(0, 20) + "…");
+      };
+
+      const startCheckout = async () => {
+        if (!await freshToken()){
+          msg("Your session has expired.<br/>Close this window, sign in again on the main page, then retry.");
+          return;
+        }
+        try { await signOwnership(); }
+        catch(e){
+          console.warn("[buy-diag] wallet ownership signature FAILED:", e);
+          errToast("Wallet signature failed: " + String(e && (e.message || e)).slice(0, 140));
+        }
+        fund({
+          source: { defaultAsset: "usd" },
+          defaultAmount: "25",
+          // NO environment override: Privy matches the provider environment
+          // to the app's provisioning. Forcing "production" can pair a
+          // production Stripe controller with a session minted for the other
+          // mode - the controller iframe then 403s and the checkout dies at
+          // submit with Stripe's "User is not authenticated".
+          destination: { asset: USDC_BASE, chain: "eip155:8453", address }
+        }).then(
+          () => finish(),
+          (e) => {
+            const s = String(e && (e.message || e));
+            console.warn("[buy-diag] fiat onramp rejected:", e);
+            if (isCancel(s)){
+              if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening checkout"); startCheckout(); return; }
+              dismissed(startCheckout); return;
+            }
+            failed(s);
+          }
+        );
+      };
+      startCheckout();
     }, [ready, authenticated]);
     return null;
   }
