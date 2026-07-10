@@ -271,9 +271,14 @@ try {
         document.getElementById("retryBtn").onclick = () => { msg(""); retry(); };
       };
 
-      /* Fallback: Privy's funding modal (processors = the dashboard's Onramps
-         toggles: Meld / MoonPay / Coinbase). Runs only when the fiat onramp
-         rejects before showing UI, so a card path always remains. */
+      /* THE checkout (2026-07-10, Steven's "please fix"): Privy's funding
+         modal - processors per the dashboard's Onramps toggles (Meld /
+         MoonPay / Coinbase). The Stripe fiat onramp consistently dies at
+         final submit: its controller iframe 403s inside a context we can't
+         tap (see enclave-buy-flow memory; referrer, environment, tokens and
+         wallet-signature all ruled out). Until that's cracked with Privy
+         support or an extension-isolation test, Stripe runs ONLY behind
+         ?stripe=1 - a paying user never lands on it. */
       const fallback = () => {
         return fundWallet({
           address,
@@ -389,7 +394,10 @@ try {
           }
         );
       };
-      startCheckout();
+      // Stripe stays opt-in (?stripe=1) until its controller-403 is cracked;
+      // everyone else gets the funding modal that actually completes.
+      if (new URLSearchParams(location.search).has("stripe")) startCheckout();
+      else fallback();
     }, [ready, authenticated]);
     return null;
   }
