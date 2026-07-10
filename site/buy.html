@@ -11,6 +11,28 @@
      with Stripe's "User is not authenticated". strict-origin-when-cross-origin
      (the browser default) sends exactly the origin, nothing more. -->
 <meta name="referrer" content="strict-origin-when-cross-origin"/>
+<!-- THE FIX (2026-07-10): load Stripe's CURRENT onramp loader from their CDN
+     before Privy's SDK runs. Root cause of the universal checkout failure:
+     Privy bundles @stripe/crypto 1.1.1 (the newest npm release), whose loader
+     is STALE against Stripe's current CDN scripts - it injects crypto-onramp.js
+     as an ES module whose controller then loads SAME-ORIGIN (enclave.host)
+     instead of js.stripe.com, 404ing on its own chunks. Proven not-browser
+     (clean profile, no blocker, plain connection all fail identically) and not
+     our code (worked 2026-07-06; Stripe changed their CDN under the pinned
+     loader - exactly what Stripe's docs warn bundling causes). Stripe's
+     crypto-onramp-outer.js sets window.StripeOnramp to the CURRENT, working
+     constructor; Privy's bundled loadStripeOnramp explicitly reuses an existing
+     window.StripeOnramp (`if(window.StripeOnramp) return it`) instead of
+     injecting its own broken module - VERIFIED: with this tag the loader reuses
+     the CDN version (same constructor) and makes ZERO same-origin requests.
+     Must load from Stripe's domain (never bundled/self-hosted) per PCI + so it
+     stays in sync with Stripe's controller. If it fails to load, the flow just
+     falls back to Privy's (broken) path - strictly no worse than before.
+     Stripe.js (v3) MUST load alongside it - the onramp SDK requires window.Stripe
+     ("Please include StripeJS alongside Stripe Crypto Onramp"); both are reused
+     by Privy's loader via window.Stripe / window.StripeOnramp presence checks. -->
+<script src="https://js.stripe.com/v3/"></script>
+<script src="https://crypto-js.stripe.com/crypto-onramp-outer.js"></script>
 <title>Buy USDC · Enclave</title>
 <link rel="icon" href="favicon.ico" sizes="48x48 32x32 16x16" />
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
