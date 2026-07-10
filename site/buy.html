@@ -100,7 +100,7 @@ try {
      flows; while a provider iframe (Stripe card fields) has the screen there
      is no amount input in our DOM and the guard idles. Degrades safely: if
      Privy's DOM changes, worst case is no guard. */
-  const MIN_USD = 5;
+  const MIN_USD = 1;
   function startMinimumGuard(){
     setInterval(() => {
       const amt = [...document.querySelectorAll("input")].find(i =>

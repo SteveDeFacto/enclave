@@ -291,7 +291,7 @@ export async function ethBalanceOf(addr){
 // straight into checkout.
 export function openBuyModal(){
   if (!Enclave.address) return;
-  const w = window.open("/buy.html?v=7", "enclaveBuy", "popup,width=480,height=780");
+  const w = window.open("/buy.html?v=8", "enclaveBuy", "popup,width=480,height=780");
   if (!w){ showToast("Popup blocked - allow popups for this site and try again."); return; }
   showToast("Complete your purchase in the checkout window.");
 }
