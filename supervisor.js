@@ -2796,11 +2796,17 @@ async function acmeAccount() {
   } catch (e) { _acmeAccount = null; throw e; }
   return _acmeAccount;
 }
-// TXT push/cleanup through the platform DNS daemon; the body HMAC (the shared
-// enclave SECRET) is what stops randoms from planting _acme-challenge records.
+// TXT push/cleanup through the platform DNS daemon. The body HMAC uses a
+// DERIVED key, never the raw SECRET: SECRET mints session JWTs, and the DNS
+// daemon lives on the relay box, which by design holds no platform secrets —
+// it gets only HMAC(SECRET, "enclave dns-txt v1"), which authorizes TXT
+// pushes and nothing else. The daemon's env SECRET= is that derived hex:
+//   node -e 'console.log(require("node:crypto").createHmac("sha256",
+//     process.argv[1]).update("enclave dns-txt v1").digest("hex"))' "$SECRET"
+const DNS_TXT_KEY = SECRET ? createHmac("sha256", SECRET).update("enclave dns-txt v1").digest("hex") : "";
 async function dnsTxt(method, name, value) {
   const body = JSON.stringify({ name, value, ttlSec: 300 });
-  const sig  = createHmac("sha256", SECRET).update(body).digest("hex");
+  const sig  = createHmac("sha256", DNS_TXT_KEY).update(body).digest("hex");
   const r = await fetch(`${DNS_API}/v1/txt`, { method, headers: { "content-type": "application/json", "x-relay-sig": sig }, body });
   if (!r.ok) throw new Error(`DNS_API ${method} ${name}: HTTP ${r.status}`);
 }
