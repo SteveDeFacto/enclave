@@ -89,6 +89,13 @@ containers:
       # (fleet-aware) SNI relay routes stock-TLS clients to whichever enclave
       # owns the deployment. Empty disables the /tls/ bridge on this flavor.
       - TLS_BRIDGE_DOMAIN: "tcp.enclave.host"
+      # in-enclave browser TLS for public HTTP apps: ACME (ZeroSSL) certs for
+      # <label>.APP_CERT_DOMAIN minted INSIDE the CVM, served through the SNI
+      # relay's /x/:id/https passthrough. DNS-01 TXT records publish to the
+      # platform DNS daemon (nan-relay box), HMAC'd with SECRET. The feature
+      # activates only when the ACME_EAB_* secrets below are ALSO set.
+      - APP_CERT_DOMAIN: "app.enclave.host"
+      - DNS_API: "http://46.62.128.36:8153"              # dns-relay TXT push API (nan-relay box)
     volumes:
       - /mnt/ramdisk/enclave-state:/var/lib/enclave
     secrets:
@@ -96,6 +103,8 @@ containers:
       - ADMIN_TOKEN              # operator token for POST /v1/admin/deployments/:id/provision
       - REGISTRY_PRIVATE_KEY     # EnclaveRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
       - EGRESS_RELAY_TOKEN       # shared secret with the egress-relay box; same value fleet-wide (like SECRET). Unset = egress off.
+      - ACME_EAB_KID             # ZeroSSL External Account Binding pair (ZeroSSL Developer page).
+      - ACME_EAB_HMAC            # Fleet-wide like SECRET; unset = in-enclave app TLS stays off.
     command: ["node", "supervisor.js"]
 
   # --- wasm manager: tenant apps via `wasmtime serve` --------------------------
