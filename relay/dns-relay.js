@@ -61,6 +61,10 @@ if (!CFG.registryAddress && !CFG.staticList.length) {
 const fleet     = createFleet(CFG, (m) => console.log("[dns-relay]", m));
 const IP_ZONE   = fqdn(need("IP_ZONE"));
 const APP_ZONE  = fqdn(need("APP_ZONE"));
+// zone 3 (optional): the SNI relay's TLS namespace — same wildcard-to-one-box
+// shape as the app zone, delegated here so in-enclave ACME can answer dns-01
+// for <label>.tcp.* names too. Unset = zone off (Cloudflare keeps serving it).
+const TCP_ZONE  = process.env.TCP_ZONE ? fqdn(process.env.TCP_ZONE.trim()) : null;
 const NS_NAME   = fqdn(need("NS_NAME"));
 // hostmaster at the NS name's parent (ns1.enclave.host -> hostmaster.enclave.host)
 const RNAME     = "hostmaster." + (NS_NAME.includes(".") ? NS_NAME.slice(NS_NAME.indexOf(".") + 1) : NS_NAME);
@@ -119,6 +123,10 @@ const APP_A = process.env.APP_A ? ipv4Bytes(process.env.APP_A.trim()) : null;
 if (process.env.APP_A && !APP_A) { console.error("fatal: APP_A is not a valid IPv4 address"); process.exit(1); }
 const APP_AAAA = process.env.APP_AAAA ? ipv6Bytes(process.env.APP_AAAA.trim()) : null;
 if (process.env.APP_AAAA && !APP_AAAA) { console.error("fatal: APP_AAAA is not a valid IPv6 address"); process.exit(1); }
+const TCP_A = process.env.TCP_A ? ipv4Bytes(process.env.TCP_A.trim()) : null;
+if (process.env.TCP_A && !TCP_A) { console.error("fatal: TCP_A is not a valid IPv4 address"); process.exit(1); }
+const TCP_AAAA = process.env.TCP_AAAA ? ipv6Bytes(process.env.TCP_AAAA.trim()) : null;
+if (process.env.TCP_AAAA && !TCP_AAAA) { console.error("fatal: TCP_AAAA is not a valid IPv6 address"); process.exit(1); }
 
 // ---- fleet state (zone 1's data) -------------------------------------------
 
@@ -243,21 +251,23 @@ function resolveIp(qname, qtype) {
   return NODATA(IP_ZONE);   // A and everything else: the name exists, but v6-only
 }
 
-function resolveApp(qname, qtype) {
-  if (qname === APP_ZONE) return apex(APP_ZONE, qtype);
+function resolveWildcard(qname, qtype, zone, a4, a6) {
+  if (qname === zone) return apex(zone, qtype);
   const an = [];
-  if ((qtype === T.A    || qtype === T.ANY) && APP_A)    an.push(rr(qname, T.A,    300, APP_A));
-  if ((qtype === T.AAAA || qtype === T.ANY) && APP_AAAA) an.push(rr(qname, T.AAAA, 300, APP_AAAA));
+  if ((qtype === T.A    || qtype === T.ANY) && a4) an.push(rr(qname, T.A,    300, a4));
+  if ((qtype === T.AAAA || qtype === T.ANY) && a6) an.push(rr(qname, T.AAAA, 300, a6));
   if ((qtype === T.TXT  || qtype === T.ANY) && qname.startsWith("_acme-challenge."))
     for (const value of txtValues(qname)) an.push(txtRR(qname, value));
-  return an.length ? HIT(an) : NODATA(APP_ZONE);   // wildcard zone: every name exists
+  return an.length ? HIT(an) : NODATA(zone);   // wildcard zone: every name exists
 }
 
 function answer(q) {
   if (q.opcode !== 0) return EMPTY(RC.NOTIMP);
   if (q.qclass !== 1 && q.qclass !== T.ANY) return EMPTY(RC.REFUSED);
   if (q.qname === IP_ZONE  || q.qname.endsWith("." + IP_ZONE))  return resolveIp(q.qname, q.qtype);
-  if (q.qname === APP_ZONE || q.qname.endsWith("." + APP_ZONE)) return resolveApp(q.qname, q.qtype);
+  if (q.qname === APP_ZONE || q.qname.endsWith("." + APP_ZONE)) return resolveWildcard(q.qname, q.qtype, APP_ZONE, APP_A, APP_AAAA);
+  if (TCP_ZONE && (q.qname === TCP_ZONE || q.qname.endsWith("." + TCP_ZONE)))
+    return resolveWildcard(q.qname, q.qtype, TCP_ZONE, TCP_A, TCP_AAAA);
   return EMPTY(RC.REFUSED);   // not our zone — we're authoritative, not a resolver
 }
 
@@ -386,7 +396,7 @@ const api = http.createServer((req, res) => {
   if (req.method === "GET" && u.pathname === "/health") {
     let txtRecords = 0;
     for (const name of [...txtStore.keys()]) txtRecords += txtValues(name).length;
-    return json(200, { ok: true, zones: { ip: IP_ZONE, app: APP_ZONE },
+    return json(200, { ok: true, zones: { ip: IP_ZONE, app: APP_ZONE, tcp: TCP_ZONE },
                        deployments: deployments.length, txtRecords });
   }
   if (u.pathname !== "/v1/txt" || (req.method !== "POST" && req.method !== "DELETE"))
@@ -402,8 +412,9 @@ const api = http.createServer((req, res) => {
     let body; try { body = JSON.parse(raw.toString("utf8")); } catch { return json(400, { error: "bad_json" }); }
     const name = typeof body?.name === "string" ? fqdn(body.name) : "";
     const value = typeof body?.value === "string" ? body.value : "";
-    if (!name.startsWith("_acme-challenge.") || !name.endsWith("." + APP_ZONE) || name.length > 253)
-      return json(400, { error: "bad_name", message: "name must be _acme-challenge.<name>." + APP_ZONE });
+    const zoneOk = name.endsWith("." + APP_ZONE) || (TCP_ZONE && name.endsWith("." + TCP_ZONE));
+    if (!name.startsWith("_acme-challenge.") || !zoneOk || name.length > 253)
+      return json(400, { error: "bad_name", message: "name must be _acme-challenge.<name> under the app or tcp zone" });
     if (!value || value.length > 1024) return json(400, { error: "bad_value" });
 
     if (req.method === "POST") {
@@ -428,5 +439,5 @@ api.listen(API_PORT, API_BIND, () => console.log(`[dns-relay] challenge-push api
 await fleet.start();
 await poll();
 setInterval(poll, POLL_MS);
-console.log(`[dns-relay] authoritative for ${IP_ZONE} + ${APP_ZONE} (ns ${NS_NAME}, serial ${SERIAL}); ` +
+console.log(`[dns-relay] authoritative for ${IP_ZONE} + ${APP_ZONE}${TCP_ZONE ? " + " + TCP_ZONE : ""} (ns ${NS_NAME}, serial ${SERIAL}); ` +
             `polling /v1/net-map across the fleet every ${POLL_MS / 1000}s`);

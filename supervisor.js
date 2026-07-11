@@ -2739,6 +2739,18 @@ const appCertName  = (id) => `${appCertLabel(id)}.${APP_CERT_DOMAIN}`;
 // "serves HTTP" = empty firewall (classic wasi:http serve mode) or an explicit
 // http:N entry; tcp/udp-only apps get no browser subdomain cert.
 const servesHttp   = (rec) => { const fw = rec.firewall || []; return fw.length === 0 || fw.some((x) => String(x).startsWith("http")); };
+// Deployments with declared tcp ports ALSO earn a CA-signed cert for their
+// <label>.TLS_BRIDGE_DOMAIN name, so validating TLS clients (psql
+// sslmode=verify-full, redis-cli --tls, ...) work through the SNI relay with
+// no fingerprint pinning — the self-signed pair stays as the fallback for
+// anything unissued. Same label as the app zone; the SNI hook picks per-name.
+const tcpCertName  = (rec) => TLS_BRIDGE_DOMAIN ? `${appCertLabel(rec.id)}.${TLS_BRIDGE_DOMAIN}` : null;
+const desiredCertNames = (rec) => {
+  const names = [];
+  if (servesHttp(rec)) names.push(appCertName(rec.id));
+  if (fwTcpPorts(rec).length && TLS_BRIDGE_DOMAIN) names.push(tcpCertName(rec));
+  return names;
+};
 
 // --- ACME protocol plumbing (network; every entry point is ACME_ENABLED-gated
 //     via startAcme/acmeReconcileSoon, so none of this runs unconfigured) -----
@@ -2878,11 +2890,12 @@ function acmeReconcile() {
   if (!ACME_ENABLED) return;
   const now = Date.now();
   for (const r of deployments.values()) {
-    if (!(r.public && r.status === "running" && servesHttp(r))) continue;
-    const name = appCertName(r.id);
-    if (acmeCerts.get(name)?.renewAt > now) continue;         // held and still fresh
-    if (acmeRetry.get(name)?.nextAt > now)  continue;         // failing; wait out the backoff
-    if (!acmeQueue.includes(name)) acmeQueue.push(name);
+    if (!(r.public && r.status === "running")) continue;
+    for (const name of desiredCertNames(r)) {
+      if (acmeCerts.get(name)?.renewAt > now) continue;       // held and still fresh
+      if (acmeRetry.get(name)?.nextAt > now)  continue;       // failing; wait out the backoff
+      if (!acmeQueue.includes(name)) acmeQueue.push(name);
+    }
   }
   if (acmeQueue.length) acmePump();
 }
