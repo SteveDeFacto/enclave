@@ -19,8 +19,8 @@ echo "== nan-relay: tcp (SNI) + tcp6 (dedicated-IP) + udp + egress relays"
 # shared with the enclave's egress.js); scp follows it and ships the content.
 # fleet.mjs is the shared fleet discovery (REGISTRY_ADDRESS / ENCLAVES) the
 # tcp6/udp/egress relays use to follow an arbitrary, changing set of enclaves.
-scp relay.js tcp6-relay.js udp-relay.js egress-relay.js fleet.mjs net-guard.mjs package.json nan-relay:/opt/nan-relay/
-scp systemd/enclave-tcp-relay.service systemd/enclave-tcp6-relay.service systemd/enclave-udp-relay.service systemd/enclave-egress-relay.service nan-relay:/etc/systemd/system/
+scp relay.js tcp6-relay.js udp-relay.js egress-relay.js dns-relay.js fleet.mjs net-guard.mjs package.json nan-relay:/opt/nan-relay/
+scp systemd/enclave-tcp-relay.service systemd/enclave-tcp6-relay.service systemd/enclave-udp-relay.service systemd/enclave-egress-relay.service systemd/enclave-dns.service nan-relay:/etc/systemd/system/
 # The egress relay only runs once /etc/nan-relay/egress-relay.env exists
 # (REGISTRY_ADDRESS or ENCLAVES + EGRESS_RELAY_TOKEN + EGRESS_PREFIX=<same
 # /64>). Until then its restart is a no-op failure; enable it explicitly when
@@ -38,7 +38,11 @@ ssh nan-relay 'for u in nan-tcp-relay nan-tcp6-relay nan-udp-relay nan-egress-re
   && if [ -f /etc/nan-relay/egress-relay.env ]; then \
        systemctl enable --now enclave-egress-relay && systemctl restart enclave-egress-relay \
        && systemctl is-active enclave-egress-relay; \
-     else echo "enclave-egress-relay: no /etc/nan-relay/egress-relay.env yet — skipped"; fi'
+     else echo "enclave-egress-relay: no /etc/nan-relay/egress-relay.env yet — skipped"; fi \
+  && if [ -f /etc/nan-relay/dns.env ]; then \
+       systemctl enable --now enclave-dns && systemctl restart enclave-dns \
+       && systemctl is-active enclave-dns; \
+     else echo "enclave-dns: no /etc/nan-relay/dns.env yet — skipped (authoritative DNS for app./ip. zones)"; fi'
 
 echo "== api relay (site box)"
 scp api-relay.js package.json nan:/opt/nan-relay/

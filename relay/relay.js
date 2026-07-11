@@ -16,6 +16,15 @@
 // Config (env):
 //   RELAY_DOMAIN            required  SNI suffix, e.g. "tcp.enclave.host"
 //                                     (point *.tcp.enclave.host at this box)
+//   APP_DOMAIN              optional  app-subdomain SNI suffix(es), e.g.
+//                                     "app.enclave.host". Port 443 connections
+//                                     whose SNI ends here route to the owner
+//                                     enclave's /x/<label>/https - the
+//                                     IN-ENCLAVE browser-TLS path (ACME cert
+//                                     minted in the CVM), so this box never
+//                                     holds app-site keys either. Unset = off
+//                                     (today's Caddy termination keeps serving
+//                                     until the *.app DNS is repointed here).
 //   REGISTRY_ADDRESS        required* EnclaveRegistry on Base: FLEET discovery — the
 //                                     relay routes each SNI'd deployment to the
 //                                     enclave that OWNS it (learned from every
@@ -64,6 +73,9 @@ const need = (k) => {
 const DOMAINS   = need("RELAY_DOMAIN").toLowerCase().split(",")
   .map(s => s.trim().replace(/^\.+|\.+$/g, "")).filter(Boolean);
 const DOMAIN    = DOMAINS[0];
+// App-subdomain suffixes (in-enclave browser TLS). Optional; empty = feature off.
+const APP_DOMAINS = (process.env.APP_DOMAIN || "").toLowerCase().split(",")
+  .map(s => s.trim().replace(/^\.+|\.+$/g, "")).filter(Boolean);
 // FLEET discovery (REGISTRY_ADDRESS / ENCLAVES / legacy ENCLAVE_URL): the relay
 // learns which enclave owns each deployment from their /v1/net-map, so one box
 // serves the whole fleet and follows enclaves as they come and go.
@@ -189,6 +201,21 @@ function handle(client, logicalPort) {
     const sni = sniFromClientHello(buf);
     if (sni === null) { if (buf.length > 20000) { clearTimeout(timer); client.destroy(); } return; }
     client.off("data", onData); clearTimeout(timer);
+    // App-subdomain names ride the same passthrough but land on the enclave's
+    // /x/<label>/https path (in-enclave ACME cert + the app's normal HTTP
+    // serving) instead of a tenant TCP port. Browsers only: 443.
+    const appDom = (sni !== false) && APP_DOMAINS.find(d => sni.endsWith("." + d));
+    if (appDom) {
+      if (logicalPort !== 443) return client.destroy();
+      const label = sni.slice(0, -(appDom.length + 1));
+      if (!/^[a-z0-9-]{1,64}$/.test(label)) return client.destroy();
+      client.pause();
+      appOwnerOf(label).then((origin) => {
+        if (!origin || client.destroyed) return client.destroy();
+        splice(client, origin, label, `/x/${encodeURIComponent(label)}/https`, buf);
+      });
+      return;
+    }
     const dom = (sni !== false) && DOMAINS.find(d => sni.endsWith("." + d));
     if (!dom) return client.destroy();
     // Deployment ids are "dep_<base36>", but "_" is not a valid hostname label
@@ -201,18 +228,38 @@ function handle(client, logicalPort) {
     const r = resolve(label);
     if (!r) return client.destroy();                       // unknown / not-public / ambiguous
     client.pause();
-    splice(client, r.origin, r.id, logicalPort, buf);
+    splice(client, r.origin, r.id, `/x/${encodeURIComponent(r.id)}/tls/${logicalPort}`, buf);
   };
   client.on("data", onData);
 }
 
-function splice(client, origin, dep, port, hello) {
-  const ws = new WebSocket(`${wsOrigin(origin)}/x/${encodeURIComponent(dep)}/tls/${port}`,
-                           { perMessageDeflate: false });
+// Which enclave owns an app-subdomain label. HTTP-mode apps never appear in
+// /v1/net-map (they declare no tcp/udp ports), so the tcp-zone index above
+// can't answer - probe /x/<label> on each origin instead (the supervisor's
+// HTTP path resolves hex prefixes; any non-404 = "lives here") and cache.
+const APP_OWNER = new Map();                               // label -> { origin, at }
+const APP_OWNER_TTL_MS = 5 * 60_000;
+async function appOwnerOf(label) {
+  const hit = APP_OWNER.get(label);
+  if (hit && Date.now() - hit.at < APP_OWNER_TTL_MS && fleet.origins().includes(hit.origin)) return hit.origin;
+  const found = await Promise.all(fleet.origins().map(async (o) => {
+    try {
+      const r = await fetch(`${o}/x/${encodeURIComponent(label)}`,
+                            { method: "HEAD", signal: AbortSignal.timeout(4000) });
+      return r.status !== 404 ? o : null;
+    } catch { return null; }
+  }));
+  const origin = found.find(Boolean) || null;
+  if (origin) APP_OWNER.set(label, { origin, at: Date.now() });
+  return origin;
+}
+
+function splice(client, origin, dep, path, hello) {
+  const ws = new WebSocket(wsOrigin(origin) + path, { perMessageDeflate: false });
   const wsStream = createWebSocketStream(ws);
   const close = () => { client.destroy(); try { ws.terminate(); } catch {} };
   ws.on("unexpected-response", (_req, res) => {
-    console.log(`[relay] ${dep} tcp:${port} refused by enclave (HTTP ${res.statusCode})`);
+    console.log(`[relay] ${dep} ${path} refused by enclave (HTTP ${res.statusCode})`);
     close();
   });
   client.on("error", close); client.on("close", close);

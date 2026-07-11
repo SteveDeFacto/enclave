@@ -1,0 +1,24 @@
+[Unit]
+Description=Enclave authoritative DNS (app + ip zones)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/nan-relay/dns.env
+WorkingDirectory=/opt/nan-relay
+ExecStart=/usr/bin/node /opt/nan-relay/dns-relay.js
+Restart=always
+RestartSec=2
+DynamicUser=yes
+# bind :53 (udp + tcp) without running as root; the challenge-push API port is
+# unprivileged and needs nothing extra
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

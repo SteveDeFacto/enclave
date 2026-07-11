@@ -21,7 +21,7 @@ import https from "node:https";
 import net from "node:net";
 import tls from "node:tls";
 import dgram from "node:dgram";
-import { createHash, randomBytes, X509Certificate } from "node:crypto";
+import { createHash, createHmac, randomBytes, generateKeyPairSync, sign as cryptoSign, verify as cryptoVerify, X509Certificate } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -275,6 +275,157 @@ let SSH_HOST_KEY_PATH = null;
 let SSH_HOST_KEY_FP   = "SHA256:<pending-boot>";
 
 function need(n){ const v = process.env[n]; if(!v){ console.error("FATAL: missing env", n); process.exit(1);} return v; }
+
+// ============================================================================
+// in-enclave ACME (RFC 8555) - PURE HALF: crypto/DER/JOSE helpers, no network,
+// no state. Browsers reaching <label>.APP_CERT_DOMAIN should terminate TLS
+// INSIDE this CVM, not at the relay's Caddy - which means the enclave itself
+// must hold a CA-signed cert for each app subdomain. So the supervisor speaks
+// ACME directly: ZeroSSL by default (its External Account Binding means one
+// EAB credential pair works forever, with no per-boot account approval), the
+// dns-01 challenge (the enclave serves no port 80, and the TXT record is
+// pushed through the platform DNS daemon), and a hand-built PKCS#10 CSR
+// (Node can mint keys but not CSRs; the ~90 lines of DER below are the whole
+// gap, same spirit as the hand-rolled ABI/DER encodings elsewhere).
+//
+// CVMs have no disk, so certs live in memory and re-issue on every boot -
+// that is deliberate (ZeroSSL has no rate ceilings that bite at our scale,
+// and a key that never touches storage is a key nobody can exfiltrate).
+//
+// The runtime half (account, orders, issuance queue, SNI contexts) lives next
+// to the TLS bridge below. These helpers sit up here, before ANY boot side
+// effect, so ACME_SELFTEST can exercise them and exit: this monolith exports
+// nothing, so `ACME_SELFTEST=csr node supervisor.js` IS the test seam
+// (test/acme.test.mjs validates the outputs with openssl and jose).
+// ----------------------------------------------------------------------------
+// Feature is OFF unless ALL of the required envs are set (everything below
+// no-ops gracefully when disabled):
+const ACME_DIRECTORY  = (process.env.ACME_DIRECTORY || "https://acme.zerossl.com/v2/DV90").replace(/\/+$/, "");
+const ACME_EAB_KID    = (process.env.ACME_EAB_KID  || "").trim();   // ZeroSSL EAB key id
+const ACME_EAB_HMAC   = (process.env.ACME_EAB_HMAC || "").trim();   // ZeroSSL EAB HMAC key (base64url)
+const APP_CERT_DOMAIN = (process.env.APP_CERT_DOMAIN || "").trim().replace(/^\*?\./, "").replace(/\.$/, "").toLowerCase(); // e.g. "app.enclave.host"
+const DNS_API         = (process.env.DNS_API || "").trim().replace(/\/+$/, "");  // platform DNS daemon's TXT push API
+const ACME_ENABLED    = !!(ACME_EAB_KID && ACME_EAB_HMAC && APP_CERT_DOMAIN && DNS_API);
+
+// base64url without padding - the encoding EVERYTHING in JOSE/ACME speaks.
+const b64u     = (b) => Buffer.from(b).toString("base64url");
+const b64uJson = (o) => b64u(JSON.stringify(o));
+
+// RFC 7638 JWK thumbprint: sha256 over the canonical JSON of the REQUIRED
+// members only, keys in lexicographic order - for an EC key that is exactly
+// {"crv","kty","x","y"}, no whitespace, nothing else. Building the string by
+// hand (not JSON.stringify of the object) is the point: member order in the
+// source object must not matter. (Cross-checked against jose in the tests.)
+function jwkThumbprint(jwk) {
+  return b64u(createHash("sha256").update(`{"crv":"${jwk.crv}","kty":"${jwk.kty}","x":"${jwk.x}","y":"${jwk.y}"}`).digest());
+}
+
+// dns-01 proof: keyAuthorization = token "." thumbprint; the TXT value the CA
+// looks for is base64url(sha256(keyAuthorization)) (RFC 8555 §8.4).
+const dns01TxtValue = (token, thumbprint) => b64u(createHash("sha256").update(`${token}.${thumbprint}`).digest());
+
+// One flat-format JWS, ES256 (all ACME envelope signatures). The signature is
+// raw R||S (ieee-p1363), NOT the DER that ECDSA usually emits - JOSE's one
+// deviation. payload === null -> "" (POST-as-GET, RFC 8555 §6.3).
+function jwsSignEs256(protectedHeader, payload, privateKey) {
+  const prot = b64uJson(protectedHeader);
+  const body = payload === null ? "" : b64uJson(payload);
+  const sig  = cryptoSign("sha256", Buffer.from(`${prot}.${body}`), { key: privateKey, dsaEncoding: "ieee-p1363" });
+  return { protected: prot, payload: body, signature: b64u(sig) };
+}
+
+// External Account Binding (RFC 8555 §7.3.4): an INNER JWS proving we hold the
+// CA-issued EAB credential. HS256 with the base64url-DECODED HMAC key; the
+// payload is our ACME account's public JWK; url = the newAccount URL. It rides
+// inside the newAccount payload, not the envelope.
+function eabJws(kid, hmacB64u, accountJwk, newAccountUrl) {
+  const prot    = b64uJson({ alg: "HS256", kid, url: newAccountUrl });
+  const payload = b64uJson(accountJwk);
+  const sig     = createHmac("sha256", Buffer.from(hmacB64u, "base64url")).update(`${prot}.${payload}`).digest();
+  return { protected: prot, payload, signature: b64u(sig) };
+}
+
+// ---- minimal DER writer + PKCS#10 CSR builder ------------------------------
+// Just enough ASN.1 to emit one CSR: TLV with long-form lengths, OIDs, and the
+// handful of universal types a CertificationRequest touches. Everything is a
+// Buffer in, Buffer out; structures compose by concatenation.
+function derLen(n) {
+  if (n < 0x80) return Buffer.from([n]);
+  const b = []; for (let x = n; x > 0; x >>>= 8) b.unshift(x & 0xff);
+  return Buffer.from([0x80 | b.length, ...b]);
+}
+const derTlv   = (tag, ...body) => { const b = Buffer.concat(body); return Buffer.concat([Buffer.from([tag]), derLen(b.length), b]); };
+const derSeq   = (...p) => derTlv(0x30, ...p);
+const derSet   = (...p) => derTlv(0x31, ...p);
+const derInt0  = ()     => derTlv(0x02, Buffer.from([0]));            // INTEGER 0 (the only integer a CSR needs: version)
+const derOctet = (b)    => derTlv(0x04, b);
+const derBits  = (b)    => derTlv(0x03, Buffer.from([0]), b);          // BIT STRING, 0 unused bits
+const derUtf8  = (s)    => derTlv(0x0c, Buffer.from(s, "utf8"));
+const derCtx   = (n, constructed, ...body) => derTlv((constructed ? 0xa0 : 0x80) | n, ...body);
+function derOid(oid) {
+  const a = oid.split(".").map(Number), body = [40 * a[0] + a[1]];
+  for (const v of a.slice(2)) {
+    const enc = [v & 0x7f];
+    for (let x = Math.floor(v / 128); x > 0; x = Math.floor(x / 128)) enc.unshift((x & 0x7f) | 0x80);
+    body.push(...enc);
+  }
+  return derTlv(0x06, Buffer.from(body));
+}
+const pemWrap = (label, der) =>
+  `-----BEGIN ${label}-----\n${der.toString("base64").match(/.{1,64}/g).join("\n")}\n-----END ${label}-----\n`;
+
+// Build a CSR for ONE dns name: fresh P-256 pair, subject CN=name (cosmetic -
+// CAs read the SAN), and an extensionRequest attribute carrying subjectAltName
+// with that single dNSName. Signed ecdsa-with-SHA256; crypto.sign with
+// dsaEncoding "der" already emits the DER ECDSA-Sig-Value the BIT STRING wants.
+function buildCsr(name) {
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const spki = publicKey.export({ type: "spki", format: "der" });        // already a full DER SubjectPublicKeyInfo
+  const san  = derSeq(derCtx(2, false, Buffer.from(name, "ascii")));     // GeneralNames: [2] dNSName (context-primitive IA5 bytes)
+  const ext  = derSeq(derOid("2.5.29.17"), derOctet(san));               // Extension: id-ce-subjectAltName, extnValue OCTET STRING
+  const attr = derSeq(derOid("1.2.840.113549.1.9.14"), derSet(derSeq(ext))); // pkcs-9-at-extensionRequest { SET { Extensions } }
+  const cri  = derSeq(                                                   // CertificationRequestInfo
+    derInt0(),                                                           //   version 0
+    derSeq(derSet(derSeq(derOid("2.5.4.3"), derUtf8(name)))),            //   subject: CN=name
+    spki,                                                                //   subjectPKInfo
+    derCtx(0, true, attr));                                              //   attributes [0] IMPLICIT SET OF Attribute
+  const sig  = cryptoSign("sha256", cri, { key: privateKey, dsaEncoding: "der" });
+  const csr  = derSeq(cri, derSeq(derOid("1.2.840.10045.4.3.2")), derBits(sig)); // + ecdsa-with-SHA256 (params absent per RFC 5758)
+  return { csrDer: csr, csrPem: pemWrap("CERTIFICATE REQUEST", csr),
+           keyPem: privateKey.export({ type: "pkcs8", format: "pem" }) };
+}
+
+// ---- self-test seam ---------------------------------------------------------
+// ACME_SELFTEST=csr|vectors prints the helpers' outputs as one JSON line and
+// exits BEFORE any boot side effect (nothing above this point opens a socket
+// or touches state). Driven by test/acme.test.mjs; also handy in a CVM shell.
+// Never active in production - the var appears in no env file.
+if (process.env.ACME_SELFTEST) {
+  if (process.env.ACME_SELFTEST === "csr") {
+    const name = process.env.ACME_SELFTEST_NAME || "test.app.enclave.host";
+    const { csrPem, keyPem } = buildCsr(name);
+    console.log(JSON.stringify({ name, csrPem, keyPem }));
+  } else {
+    // RFC 7515 Appendix A.3's P-256 key: the fixed vector the tests compare
+    // against an independent RFC 7638 implementation (jose).
+    const vec = { kty: "EC", crv: "P-256", x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU", y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0" };
+    const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const ownJwk = publicKey.export({ format: "jwk" });
+    const jws = jwsSignEs256({ alg: "ES256", nonce: "nonce", url: "https://ca/x" }, { hello: 1 }, privateKey);
+    console.log(JSON.stringify({
+      thumbprint: jwkThumbprint(vec),
+      thumbprintScrambled: jwkThumbprint({ y: vec.y, x: vec.x, kty: vec.kty, crv: vec.crv, extra: "ignored" }),
+      ownThumbprintStable: jwkThumbprint(ownJwk) === jwkThumbprint({ ...ownJwk }),
+      b64uRoundtrip: Buffer.from(b64u(Buffer.from([0, 251, 255, 62, 63])), "base64url").equals(Buffer.from([0, 251, 255, 62, 63])),
+      b64uNoPad: !/[=+/]/.test(b64u(randomBytes(33))),
+      jwsVerifies: cryptoVerify("sha256", Buffer.from(`${jws.protected}.${jws.payload}`),
+                                { key: publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(jws.signature, "base64url")),
+      dns01: dns01TxtValue("token", jwkThumbprint(vec)),
+      eab: eabJws("kid1", b64u(Buffer.from("secret")), vec, "https://ca/newAccount"),
+    }));
+  }
+  process.exit(0);
+}
 
 // ---- resource model: EXACT RESOURCES -> TWO CALCULATED SHARES ---------------
 // Apps specify EXACT resources on four axes: vramGb + gpuTflops of one GPU card
@@ -1252,16 +1403,22 @@ const egress = (DEP_ADDR_PREFIX && EGRESS_RELAY_TOKEN)
     })
   : null;
 
-app.use("/x/:id", async (req, res) => {
-  let rec = deployments.get(req.params.id);
-  // On-chain ids are bytes32, and a full 64-hex id exceeds DNS's 63-char label
-  // limit - app subdomains carry a hex PREFIX of the id instead, resolved here
-  // (unique match only; the canonical label is the FIRST 8 CHARS = 32 bits,
-  // any longer prefix works too).
-  if (!rec && /^0x[0-9a-f]{8,64}$/.test(req.params.id)) {
-    const hits = [...deployments.keys()].filter(k => k.startsWith(req.params.id));
+// On-chain ids are bytes32, and a full 64-hex id exceeds DNS's 63-char label
+// limit - app subdomains carry a hex PREFIX of the id instead, resolved here
+// (unique match only; the canonical label is the FIRST 8 CHARS = 32 bits,
+// any longer prefix works too). Shared by the HTTP data path and the
+// /x/:id/https upgrade path (browser TLS terminated in-enclave).
+function depByIdOrPrefix(id) {
+  let rec = deployments.get(id);
+  if (!rec && /^0x[0-9a-f]{8,64}$/.test(id)) {
+    const hits = [...deployments.keys()].filter(k => k.startsWith(id));
     if (hits.length === 1) rec = deployments.get(hits[0]);
   }
+  return rec || null;
+}
+
+app.use("/x/:id", async (req, res) => {
+  const rec = depByIdOrPrefix(req.params.id);
   if (!rec) return fail(res, 404, "not_found", "Unknown deployment.");
   // Ownership probe: the relay (and the TLS-issuance gate) asks HEAD /x/<id>
   // to learn which enclave serves an id. That is OUR knowledge, not the
@@ -1969,6 +2126,7 @@ async function provisionTenant(rec) {
     if (sp.portMap) rec.portMap = sp.portMap;   // logical -> actual (public: clients see their mapping)
     if (!rec.startedAt) rec.startedAt = Date.now();
     rec.status = "running"; rec.paused = false; rec.pauseReason = null; rec._lastTickAt = Date.now();
+    acmeReconcileSoon();   // public+http deployments earn a browser cert for <label>.APP_CERT_DOMAIN (no-op unless ACME is configured)
     return true;
   } catch (e) {
     rec.status = "failed"; rec.error = e.message;
@@ -2492,6 +2650,245 @@ function initTlsBridge() {
 initTlsBridge();
 if (TLS_BRIDGE_CTX) console.log(`[tls-bridge] in-enclave TLS termination enabled (/x/:id/tls/:port) · ${TLS_BRIDGE_INFO.fingerprint256}`);
 
+// ============================================================================
+// in-enclave ACME - RUNTIME HALF (the pure helpers live up top, next to the
+// self-test seam). One ACME account per boot, one cert per public HTTP app at
+// <label>.APP_CERT_DOMAIN, all held in memory: { keyPem, certPem, ctx }. The
+// SNI hook below slots these contexts into the SAME TLS bridge that serves the
+// self-signed pair, so a browser hitting /x/:id/https (or a validating client
+// on /tls/) gets a CA-signed cert whose key never left this CVM.
+// ============================================================================
+const acmeCerts = new Map();   // name -> { keyPem, certPem, ctx, expiresAt, renewAt }
+const acmeRetry = new Map();   // name -> { failures, nextAt } (per-name backoff)
+const acmeQueue = [];          // names awaiting issuance, FIFO, deduped
+let _acmeDir = null, _acmeAccount = null, _acmeNonce = null, _acmePumping = false;
+const sleepMs = (ms) => new Promise((r) => { const t = setTimeout(r, ms); if (t.unref) t.unref(); });
+
+// The relay's canonical app label (MUST mirror relay/api-relay.js depFromHost):
+// on-chain 0x ids -> the first 8 hex chars (32 bits; collisions are fantasy);
+// a retired-era dep_ id -> the id minus its redundant dep_ prefix.
+const appCertLabel = (id) => { const s = String(id).toLowerCase(); return s.startsWith("0x") ? s.slice(2, 10) : s.replace(/^dep[-_]/, ""); };
+const appCertName  = (id) => `${appCertLabel(id)}.${APP_CERT_DOMAIN}`;
+// "serves HTTP" = empty firewall (classic wasi:http serve mode) or an explicit
+// http:N entry; tcp/udp-only apps get no browser subdomain cert.
+const servesHttp   = (rec) => { const fw = rec.firewall || []; return fw.length === 0 || fw.some((x) => String(x).startsWith("http")); };
+
+// --- ACME protocol plumbing (network; every entry point is ACME_ENABLED-gated
+//     via startAcme/acmeReconcileSoon, so none of this runs unconfigured) -----
+async function acmeDir() {
+  if (!_acmeDir) {
+    const r = await fetch(ACME_DIRECTORY);
+    if (!r.ok) { throw new Error(`directory fetch ${r.status}`); }
+    _acmeDir = await r.json();
+  }
+  return _acmeDir;
+}
+async function takeNonce() {
+  if (_acmeNonce) { const n = _acmeNonce; _acmeNonce = null; return n; }
+  const r = await fetch((await acmeDir()).newNonce, { method: "HEAD" });
+  const n = r.headers.get("replay-nonce");
+  if (!n) throw new Error("newNonce returned no replay-nonce");
+  return n;
+}
+// Signed POST (the only verb ACME knows): ES256 JWS envelope, jwk before the
+// account exists / kid after, fresh-nonce retry ONCE on badNonce (RFC 8555
+// §6.5 - a stale cached nonce is routine, not an error). payload null =
+// POST-as-GET. Returns { status, headers, data } with data json-or-text.
+async function acmePost(url, payload, { useJwk = false } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const nonce = await takeNonce();
+    const prot  = { alg: "ES256", nonce, url, ...(useJwk ? { jwk: _acmeAccount.jwk } : { kid: _acmeAccount.kid }) };
+    const r = await fetch(url, { method: "POST", headers: { "content-type": "application/jose+json" },
+                                 body: JSON.stringify(jwsSignEs256(prot, payload, _acmeAccount.key)) });
+    _acmeNonce = r.headers.get("replay-nonce") || _acmeNonce;   // every reply carries the next nonce
+    const isJson = /json/.test(r.headers.get("content-type") || "");
+    const data = isJson ? await r.json().catch(() => null) : await r.text();
+    if (r.status >= 400) {
+      if (attempt === 0 && data && /badNonce/.test(data.type || "")) continue;
+      throw new Error(`ACME ${r.status} at ${url}: ${isJson ? `${data?.type || "?"} ${data?.detail || ""}`.trim() : String(data).slice(0, 200)}`);
+    }
+    return { status: r.status, headers: r.headers, data };
+  }
+}
+// One account per boot (in-memory key; CVMs have no disk and ZeroSSL's EAB
+// makes re-registration free). The EAB inner JWS binds our fresh key to the
+// CA-issued credential; the Location header is the kid all later JWS use.
+async function acmeAccount() {
+  if (_acmeAccount?.kid) return _acmeAccount;
+  const dir = await acmeDir();
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const j = publicKey.export({ format: "jwk" });
+  _acmeAccount = { key: privateKey, jwk: { crv: j.crv, kty: j.kty, x: j.x, y: j.y }, thumbprint: jwkThumbprint(j), kid: null };
+  try {
+    const r = await acmePost(dir.newAccount,
+      { termsOfServiceAgreed: true, externalAccountBinding: eabJws(ACME_EAB_KID, ACME_EAB_HMAC, _acmeAccount.jwk, dir.newAccount) },
+      { useJwk: true });
+    _acmeAccount.kid = r.headers.get("location");
+    if (!_acmeAccount.kid) throw new Error("newAccount returned no Location (account kid)");
+    console.log(`[acme] account registered at ${_acmeAccount.kid}`);
+  } catch (e) { _acmeAccount = null; throw e; }
+  return _acmeAccount;
+}
+// TXT push/cleanup through the platform DNS daemon; the body HMAC (the shared
+// enclave SECRET) is what stops randoms from planting _acme-challenge records.
+async function dnsTxt(method, name, value) {
+  const body = JSON.stringify({ name, value, ttlSec: 300 });
+  const sig  = createHmac("sha256", SECRET).update(body).digest("hex");
+  const r = await fetch(`${DNS_API}/v1/txt`, { method, headers: { "content-type": "application/json", "x-relay-sig": sig }, body });
+  if (!r.ok) throw new Error(`DNS_API ${method} ${name}: HTTP ${r.status}`);
+}
+// Poll an authz/order URL (POST-as-GET) until ok/bad/timeout, gentle backoff.
+async function acmePoll(url, what, isOk, isBad, timeoutMs = 90_000) {
+  const t0 = Date.now();
+  for (let delay = 2000; ; delay = Math.min(Math.round(delay * 1.5), 10_000)) {
+    const { data } = await acmePost(url, null);
+    if (isOk(data)) return data;
+    if (isBad(data)) {
+      const errs = data.error || (data.challenges || []).map((c) => c.error).filter(Boolean);
+      throw new Error(`${what} became ${data.status}: ${JSON.stringify(errs).slice(0, 300)}`);
+    }
+    if (Date.now() - t0 > timeoutMs) throw new Error(`${what} still ${data.status} after ${Math.round(timeoutMs / 1000)}s`);
+    await sleepMs(delay);
+  }
+}
+// The full dns-01 dance for one name: order -> TXT -> challenge -> CSR ->
+// finalize -> download. The TXT record is deleted win or lose.
+async function acmeIssue(name) {
+  const acct = await acmeAccount();
+  const dir  = await acmeDir();
+  const order = await acmePost(dir.newOrder, { identifiers: [{ type: "dns", value: name }] });
+  const orderUrl = order.headers.get("location");
+  const authzUrl = order.data.authorizations[0];
+  const authz = await acmePost(authzUrl, null);
+  // CAs reuse fresh authorizations across orders (renewals often land inside
+  // the reuse window): an already-valid authz means no TXT dance at all.
+  let txtName = null, txtValue = null;
+  if (authz.data.status !== "valid") {
+    const chal = (authz.data.challenges || []).find((c) => c.type === "dns-01");
+    if (!chal) throw new Error(`no dns-01 challenge offered for ${name}`);
+    txtName  = `_acme-challenge.${name}`;
+    txtValue = dns01TxtValue(chal.token, acct.thumbprint);
+    await dnsTxt("POST", txtName, txtValue);
+  }
+  try {
+    if (txtName) {
+      const chal = authz.data.challenges.find((c) => c.type === "dns-01");
+      await sleepMs(5000);                                    // let the DNS daemon start answering before the CA looks
+      await acmePost(chal.url, {});                           // {} = "I'm ready" (RFC 8555 §7.5.1)
+      await acmePoll(authzUrl, `authz for ${name}`, (a) => a.status === "valid",
+                     (a) => ["invalid", "revoked", "deactivated", "expired"].includes(a.status));
+    }
+    const { csrDer, keyPem } = buildCsr(name);
+    await acmePost(order.data.finalize, { csr: b64u(csrDer) });
+    const done = await acmePoll(orderUrl, `order for ${name}`, (o) => o.status === "valid" && o.certificate,
+                                (o) => o.status === "invalid");
+    const cert = await acmePost(done.certificate, null);      // POST-as-GET; body = PEM chain
+    const certPem = String(cert.data);
+    const leaf = new X509Certificate(certPem);                // parses the first (leaf) cert of the chain
+    const nb = new Date(leaf.validFrom).getTime(), na = new Date(leaf.validTo).getTime();
+    return { keyPem, certPem, expiresAt: na,
+             renewAt: nb + Math.round((na - nb) * 2 / 3),     // renew past 2/3 of lifetime
+             ctx: tls.createSecureContext({ key: keyPem, cert: certPem }) };
+  } finally {                                                 // cleanup is best-effort: a leftover TXT is cosmetic
+    if (txtName) dnsTxt("DELETE", txtName, txtValue).catch((e) => console.warn(`[acme] TXT cleanup failed for ${txtName}: ${e.message}`));
+  }
+}
+
+// --- coverage + lifecycle ----------------------------------------------------
+// Desired set = every public+running deployment that serves HTTP. Reconcile
+// diffs desired-vs-held (missing, or past renewAt) into the queue; the pump
+// drains it strictly serially with 2s spacing (CA politeness) and per-name
+// exponential backoff on failure (5 min doubling, capped at 1h). Reconcile
+// runs at boot, every 10 min, and is poked whenever a deployment flips to
+// running (provisionTenant).
+function acmeReconcile() {
+  if (!ACME_ENABLED) return;
+  const now = Date.now();
+  for (const r of deployments.values()) {
+    if (!(r.public && r.status === "running" && servesHttp(r))) continue;
+    const name = appCertName(r.id);
+    if (acmeCerts.get(name)?.renewAt > now) continue;         // held and still fresh
+    if (acmeRetry.get(name)?.nextAt > now)  continue;         // failing; wait out the backoff
+    if (!acmeQueue.includes(name)) acmeQueue.push(name);
+  }
+  if (acmeQueue.length) acmePump();
+}
+let _acmeSoonTimer = null;
+function acmeReconcileSoon() {                                // the status->running hook (cheap, debounced)
+  if (!ACME_ENABLED || _acmeSoonTimer) return;
+  _acmeSoonTimer = setTimeout(() => { _acmeSoonTimer = null; acmeReconcile(); }, 1000);
+  if (_acmeSoonTimer.unref) _acmeSoonTimer.unref();
+}
+async function acmePump() {
+  if (_acmePumping) return;
+  _acmePumping = true;
+  try {
+    while (acmeQueue.length) {
+      const name = acmeQueue.shift();
+      if (acmeCerts.get(name)?.renewAt > Date.now()) continue;  // became fresh while queued (double-enqueue race)
+      try {
+        const issued = await acmeIssue(name);
+        acmeCerts.set(name, issued);
+        acmeRetry.delete(name);
+        console.log(`[acme] issued ${name} (expires ${new Date(issued.expiresAt).toISOString()})`);
+      } catch (e) {
+        const failures = (acmeRetry.get(name)?.failures || 0) + 1;
+        const backoff  = Math.min(3600_000, 300_000 * 2 ** (failures - 1));
+        acmeRetry.set(name, { failures, nextAt: Date.now() + backoff });
+        console.error(`[acme] failed ${name}: ${e.message} (retry #${failures} in ${Math.round(backoff / 60_000)}m)`);
+      }
+      await sleepMs(2000);
+    }
+  } finally { _acmePumping = false; }
+}
+function startAcme() {                                        // called at the bottom, with the other boot starters
+  if (!ACME_ENABLED) {
+    if (ACME_EAB_KID || ACME_EAB_HMAC || APP_CERT_DOMAIN || DNS_API)
+      console.warn("[acme] partially configured - needs ALL of ACME_EAB_KID, ACME_EAB_HMAC, APP_CERT_DOMAIN, DNS_API; app-subdomain TLS stays off");
+    return;
+  }
+  acmeReconcile();                                            // boot coverage (loadState already ran)
+  const t = setInterval(acmeReconcile, 600_000);              // renewals + anything the running-hook missed
+  if (t.unref) t.unref();
+  console.log(`[acme] in-enclave issuance on: <label>.${APP_CERT_DOMAIN} via ${ACME_DIRECTORY} (dns-01 through ${DNS_API})`);
+}
+
+// --- SNI selection -----------------------------------------------------------
+// One lookup shared by every in-enclave TLS termination point: a managed ACME
+// cert wins when the client's SNI names it; otherwise the self-signed bridge
+// pair (pin-verified via /v1/tls-bridge) serves, exactly as before.
+const acmeCtxFor = (servername) => acmeCerts.get(String(servername || "").toLowerCase())?.ctx || null;
+const sniSelect  = (servername, cb) => cb(null, acmeCtxFor(servername) || TLS_BRIDGE_CTX || undefined);
+
+// --- /x/:id/https - browser HTTPS terminated in-enclave -----------------------
+// The passthrough relay forwards a browser's raw TLS bytes here (same WS
+// transport as /tls/); we unwrap them with the deployment's ACME cert and feed
+// the plaintext into the express app THROUGH a real (non-listening) http.Server
+// - so keep-alive, chunked bodies and pipelining all ride Node's own HTTP
+// parser, zero hand-rolled parsing. The handler pins every inner request to the
+// deployment resolved AT UPGRADE TIME by prefixing its /x/<fullId>; because the
+// prefix is ALWAYS applied, a smuggled inner "/x/other/..." merely becomes
+// "/x/<id>/x/other/..." - a subpath inside the same deployment, harmless.
+const internalAppServer = http.createServer((req, res) => {
+  const fullId = req.socket._appDepId;
+  if (!fullId) { res.writeHead(500); return res.end(); }      // unreachable: only our emit('connection') feeds this server
+  req.url = `/x/${fullId}${req.url.startsWith("/") ? "" : "/"}${req.url}`;
+  app(req, res);                                              // the express app is a plain (req,res) function
+});
+internalAppServer.keepAliveTimeout = 180_000;                 // match the data path's idle allowance
+internalAppServer.headersTimeout   = 185_000;                 // must exceed keepAliveTimeout (Node's slowloris guard)
+internalAppServer.requestTimeout   = 0;                       // streaming request/response bodies can be long-lived
+function wsHttpsBridge(req, socket, head, fullId) {
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    const wsStream = createWebSocketStream(ws);
+    const tlsSock  = new tls.TLSSocket(wsStream, { isServer: true, secureContext: TLS_BRIDGE_CTX || undefined, SNICallback: sniSelect });
+    tlsSock._appDepId = fullId;                               // the internal server reads this to pin req.url
+    const close = () => { try { ws.close(); } catch {} try { tlsSock.destroy(); } catch {} };
+    wsStream.on("error", close); wsStream.on("close", close); tlsSock.on("error", close);
+    internalAppServer.emit("connection", tlsSock);            // Node parses HTTP off the decrypted stream
+  });
+}
+
 // bridge a WebSocket to a local TCP port, binary frames both ways
 function wsTcpBridge(req, socket, head, port) {
   wss.handleUpgrade(req, socket, head, (ws) => {
@@ -2512,7 +2909,9 @@ function wsTcpBridge(req, socket, head, port) {
 function wsTlsBridge(req, socket, head, port) {
   wss.handleUpgrade(req, socket, head, (ws) => {
     const wsStream = createWebSocketStream(ws);
-    const tlsSock  = new tls.TLSSocket(wsStream, { isServer: true, secureContext: TLS_BRIDGE_CTX });
+    // SNI naming a managed ACME cert gets THAT cert (CA-signed, browser-green);
+    // everything else keeps the pin-verified self-signed bridge pair.
+    const tlsSock  = new tls.TLSSocket(wsStream, { isServer: true, secureContext: TLS_BRIDGE_CTX, SNICallback: sniSelect });
     const tcp = net.connect(port, "127.0.0.1");
     const close = () => { try { ws.close(); } catch {} try { tlsSock.destroy(); } catch {} try { tcp.destroy(); } catch {} };
     tlsSock.pipe(tcp); tcp.pipe(tlsSock);
@@ -2546,6 +2945,21 @@ server.on("upgrade", async (req, socket, head) => {
   // per-connection data streams (/x/egress/<cid>). Both are relay-token gated
   // inside handleUpgrade; it returns true once it owns the path.
   if (egress && egress.handleUpgrade(req, socket, head)) return;
+
+  // ---- app HTTPS: /x/:id/https — the browser's TLS, terminated IN-ENCLAVE ----
+  // The passthrough relay tunnels the raw TLS bytes of <label>.APP_CERT_DOMAIN
+  // sessions here. Prefix ids resolve like the HTTP path (the subdomain label
+  // IS a prefix); public websites only — private deployments keep the
+  // token-gated relay-terminated path, so nothing is lost by the 403.
+  const hx = (req.url || "").match(/^\/x\/([^/?]+)\/https(?:\?|$)/);
+  if (hx) {
+    const rec = depByIdOrPrefix(hx[1]);
+    if (!rec)                                   return deny("404 Not Found");
+    if (!rec.public)                            return deny("403 Forbidden");
+    if (rec.status !== "running")               return deny("409 Conflict");
+    if (!TLS_BRIDGE_CTX && !acmeCerts.size)     return deny("503 Service Unavailable"); // no context could complete a handshake
+    return wsHttpsBridge(req, socket, head, rec.id);
+  }
 
   // ---- app TCP ports: /x/:id/(tcp|tls)/:port — the declared-firewall data path ----
   // Auth follows the deployment's `public` flag (like the HTTP path). Two gates
@@ -3203,4 +3617,8 @@ startBillingTicker();
 // portable deployments: claim/renew/release on-chain leases (opt-in; see
 // contracts/DEPLOYMENTS.md). Requires registry advertising + DEPLOYMENTS_ADDRESS.
 startClaimLoop();
+
+// in-enclave ACME: issue + renew per-app browser certs for <label>.APP_CERT_DOMAIN
+// (opt-in; a warning-then-no-op unless EAB + domain + DNS API are all configured).
+startAcme();
 
