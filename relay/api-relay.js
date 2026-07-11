@@ -45,6 +45,8 @@
 
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
+import tls from "node:tls";
 import { createHash } from "node:crypto";
 
 let   REGISTRY_ADDRESS  = (process.env.REGISTRY_ADDRESS || "").trim();   // env fallback; the address book (below) overrides
@@ -762,6 +764,59 @@ const server = http.createServer((req, res) => {
       json(res, 502, { error: "gateway_error", message: e.message, updatedAt }, req));
 
   json(res, 404, { error: "not_found", routes: ["/health", "/enclaves", "/route?gpuShare=0.25&cpuShare=0.05", "/v1/* /x/* /availability (fleet-routed to the enclaves)"] }, req);
+});
+
+// WebSocket upgrades. Node hands Upgrade requests to an 'upgrade' listener, not
+// the request handler — without one the relay silently ate the enclaves' WS
+// surfaces (the /x/:id/tcp/:port raw-TCP bridge, any app's own websockets) and
+// bridge clients had to bypass the gateway for the enclave origin. Routing
+// mirrors the request path: an app subdomain maps onto the owner's /x/<id>
+// data path, a gateway /x/<id>/... URL passes through verbatim. The relay
+// forwards the handshake bytes untouched and splices sockets after it — it
+// never speaks WS itself, so anything the enclave upgrades to just works.
+const UPGRADE_IDLE_MS = 180000;                              // match the /x data path's window
+// The supervisor's WS bridges look deployments up by EXACT id (deployments.get),
+// unlike its HTTP /x path which resolves hex prefixes — so a subdomain label
+// (8-hex prefix) must be canonicalized to the full ledger id before proxying.
+// Falls back to the given id when the ledger can't answer or the prefix is
+// ambiguous; full-id URLs then still work exactly as before.
+async function fullDepId(id) {
+  if (!/^0x[0-9a-f]{8,63}$/.test(id)) return id;             // full 64-hex (or non-ledger-shaped): pass through
+  try {
+    const hits = (await ledgerRows()).filter((d) => String(d.id).toLowerCase().startsWith(id));
+    if (hits.length === 1) return String(hits[0].id).toLowerCase();
+  } catch {}
+  return id;
+}
+server.on("upgrade", async (req, socket, head) => {
+  socket.on("error", () => socket.destroy());               // dead client mid-handshake must not throw
+  const refuse = (code, text) => { try { socket.write(`HTTP/1.1 ${code} ${text}\r\nConnection: close\r\n\r\n`); } catch {} socket.destroy(); };
+  try {
+    const depHost = depFromHost(req.headers["x-forwarded-host"] || req.headers.host);
+    const x = depHost ? null : (req.url || "").match(X_PATH_RE);
+    if (!depHost && !x) return refuse(404, "Not Found");
+    const id = await fullDepId(depHost || x[1]);
+    const owner = await xOwnerOf(id);
+    if (!owner) return refuse(404, "Not Found");
+    const rest = depHost ? (req.url === "/" ? "/" : req.url) : req.url.slice(3 + (x[1].length));  // after "/x/<id>"
+    const path = "/x/" + id + rest;
+    const target = new URL(owner.replace(/\/+$/, "") + path);
+    const secure = target.protocol === "https:";
+    const up = (secure ? tls : net).connect({
+      host: target.hostname, port: +target.port || (secure ? 443 : 80),
+      ...(secure ? { servername: target.hostname } : {}),
+    }, () => {
+      let raw = `${req.method} ${target.pathname}${target.search} HTTP/1.1\r\n`;
+      for (let i = 0; i < req.rawHeaders.length; i += 2)     // rawHeaders keeps order, casing, duplicates
+        raw += `${req.rawHeaders[i]}: ${/^host$/i.test(req.rawHeaders[i]) ? target.host : req.rawHeaders[i + 1]}\r\n`;
+      up.write(raw + "\r\n");
+      if (head?.length) up.write(head);
+      socket.pipe(up); up.pipe(socket);
+    });
+    const drop = () => { socket.destroy(); up.destroy(); };
+    up.setTimeout(UPGRADE_IDLE_MS, drop); socket.setTimeout(UPGRADE_IDLE_MS, drop);
+    up.on("error", drop); up.on("close", drop); socket.on("close", drop);
+  } catch (e) { refuse(502, "Bad Gateway"); }
 });
 
 await pollRegistry();
