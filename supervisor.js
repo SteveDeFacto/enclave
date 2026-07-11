@@ -427,6 +427,68 @@ if (process.env.ACME_SELFTEST) {
   process.exit(0);
 }
 
+// ---- reachability watchdog — pure half --------------------------------------
+// The 2026-07-11 kryptos failure: a CVM whose public DNS record vanished (the
+// whole front went with it) but whose OUTBOUND still worked kept claiming and
+// renewing on-chain work for six hours — tenants paid for apps nobody could
+// reach. Detection keys on ONE precise signal: the advertised hostname
+// disappearing from public DNS, affirmed by EVERY configured DoH resolver,
+// REACH_DNS_STRIKES checks in a row. DNS-over-HTTPS because it needs no
+// hairpin route (a self-request through our own front might) and no trust in
+// the CVM's local resolver; a resolver outage reads as SERVFAIL/timeout ->
+// "error" -> the strike count HOLDS, so third-party trouble never trips it.
+// Any positive answer resets everything. The impure half (DoH fetch, the
+// trip/abandon actions) lives with the claim loop; these helpers sit up here,
+// before any boot side effect, for the REACH_SELFTEST seam below.
+
+// The hostname worth watching in an advertised endpoint, or null when DNS has
+// nothing to lose: IP literals, localhost, mDNS names, single labels (dev
+// setups) resolve outside public DNS or not at all.
+function reachHostname(endpoint) {
+  let host; try { host = new URL(endpoint).hostname; } catch { return null; }
+  host = host.replace(/^\[|\]$/g, "").toLowerCase();          // URL keeps IPv6 brackets
+  if (net.isIP(host) || !host.includes(".") || host.endsWith(".local")) return null;
+  return host;
+}
+
+// One DoH JSON body -> "resolves" | "gone" | "error". "gone" only when the
+// resolver AFFIRMED the absence: NXDOMAIN (Status 3), or NOERROR with an empty
+// answer section. Any record of any type (a CNAME counts: the zone still knows
+// the name) is proof of life. Anything else — SERVFAIL, REFUSED, junk — is
+// "error" and must never advance the trip counter.
+function dohVerdict(body) {
+  if (!body || typeof body.Status !== "number") return "error";
+  if (body.Status === 0 && Array.isArray(body.Answer) && body.Answer.length) return "resolves";
+  if (body.Status === 0 || body.Status === 3) return "gone";
+  return "error";
+}
+
+// Fold one round of per-resolver verdicts into the next watchdog state. Pure —
+// the caller owns fetching and the trip side effects. ANY resolver seeing the
+// name = healthy (full reset, clears a trip); EVERY resolver affirming "gone"
+// = one strike, tripping at `strikes`; a mixed or errored round holds still.
+function reachStep(state, verdicts, strikes) {
+  if (!verdicts.length || verdicts.some((v) => v === "resolves")) return { strikes: 0, tripped: false };
+  if (verdicts.every((v) => v === "gone")) {
+    const n = state.strikes + 1;
+    return { strikes: n, tripped: state.tripped || n >= strikes };
+  }
+  return { strikes: state.strikes, tripped: state.tripped };
+}
+
+// REACH_SELFTEST='{"hosts":[...],"bodies":[...],"steps":[{state,verdicts,strikes}]}'
+// prints each helper mapped over its inputs as one JSON line and exits — same
+// contract as ACME_SELFTEST above (test/reach.test.mjs drives it).
+if (process.env.REACH_SELFTEST) {
+  const cases = JSON.parse(process.env.REACH_SELFTEST);
+  console.log(JSON.stringify({
+    hosts: (cases.hosts || []).map(reachHostname),
+    verdicts: (cases.bodies || []).map(dohVerdict),
+    steps: (cases.steps || []).map((c) => reachStep(c.state, c.verdicts, c.strikes)),
+  }));
+  process.exit(0);
+}
+
 // ---- resource model: EXACT RESOURCES -> TWO CALCULATED SHARES ---------------
 // Apps specify EXACT resources on four axes: vramGb + gpuTflops of one GPU card
 // (both 0 = CPU-only app) and memMb + cpuGflops of the node. CPU compute is
@@ -1511,7 +1573,12 @@ async function authed(req, res, next) {
 app.get("/v1/health", (_req, res) => res.json({ status: "ok", deployments: deployments.size,
   // watcher freshness is billing-critical: while it's stale, funded clocks are frozen
   watcher: FORWARDER_ADDRESS ? { lastPollOkAt: _lastPollOkAt ? new Date(_lastPollOkAt).toISOString() : null,
-                                 fresh: (Date.now() - _lastPollOkAt) < WATCHER_STALE_SEC * 1000 } : null }));
+                                 fresh: (Date.now() - _lastPollOkAt) < WATCHER_STALE_SEC * 1000 } : null,
+  // reachability watchdog: "unreachable" = our advertised hostname is gone from
+  // public DNS — claiming paused, held work released (see the claim loop)
+  reach: (CLAIM_READY && REACH_DNS_STRIKES) ? { state: _reach.tripped ? "unreachable" : "ok",
+    strikes: _reach.strikes, host: _reach.host,
+    checkedAt: _reach.checkedAt ? new Date(_reach.checkedAt).toISOString() : null } : null }));
 app.get("/v1/version", (_req, res) => res.json({ service: "enclave-supervisor/0.1.0", contract: "enclave-openapi/1.0.0", chainId: CHAIN_ID,
   // a big-model flavor advertises the attested platform model it serves at
   // /v1/chat/completions (OpenAI-compatible; auth-gated when a key is set)
@@ -3047,6 +3114,72 @@ const CPU_CLAIM_GRACE_SEC = parseInt(process.env.CPU_CLAIM_GRACE_SEC || "120", 1
 const CLAIM_PAGE = 100;
 const CLAIM_READY = CLAIM_ENABLED && !!(DEPLOYMENTS_ADDRESS && REGISTRY_READY && PROVISION_BACKEND === "vm");
 
+// ---- reachability watchdog — impure half ------------------------------------
+// (verdict logic + rationale sit with the REACH_SELFTEST seam up top.) Runs as
+// the claim tick's first stage: while the advertised hostname is affirmed gone
+// from public DNS, this enclave stops claiming, stops renewing, and hands back
+// everything it holds so a REACHABLE enclave re-claims it within a sweep. A
+// positive resolve clears the trip and the sweep takes work again by itself.
+const REACH_DNS_STRIKES = parseInt(process.env.REACH_DNS_STRIKES || "5", 10);   // consecutive "gone" rounds to trip; 0 disables
+const REACH_DOH_RESOLVERS = (process.env.REACH_DOH_RESOLVERS
+  || "https://cloudflare-dns.com/dns-query,https://dns.google/resolve")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+const _reach = { strikes: 0, tripped: false, checkedAt: null, host: null };
+
+async function dohQuery(resolver, host, type) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const r = await fetch(`${resolver}?name=${encodeURIComponent(host)}&type=${type}`,
+      { headers: { accept: "application/dns-json" }, signal: ctrl.signal });
+    if (!r.ok) return "error";
+    return dohVerdict(await r.json());
+  } catch { return "error"; }
+  finally { clearTimeout(t); }
+}
+
+// A resolver affirms "gone" only when BOTH address families are absent; one
+// live record of either kind proves public DNS still knows the name.
+async function resolverVerdict(resolver, host) {
+  const [a, aaaa] = await Promise.all([dohQuery(resolver, host, "A"), dohQuery(resolver, host, "AAAA")]);
+  if (a === "resolves" || aaaa === "resolves") return "resolves";
+  if (a === "gone" && aaaa === "gone") return "gone";
+  return "error";
+}
+
+async function reachTick() {
+  if (!REACH_DNS_STRIKES || !_advertisedEndpoint) return;
+  const host = reachHostname(_advertisedEndpoint);
+  if (!host) return;
+  const verdicts = await Promise.all(REACH_DOH_RESOLVERS.map((r) => resolverVerdict(r, host)));
+  const was = _reach.tripped;
+  Object.assign(_reach, reachStep(_reach, verdicts, REACH_DNS_STRIKES), { checkedAt: Date.now(), host });
+  if (_reach.tripped && !was) {
+    console.warn(`[reach] ${host} is GONE from public DNS (${REACH_DNS_STRIKES} consecutive rounds, all resolvers agree): `
+               + `unreachable by name — releasing on-chain work and pausing claims`);
+    await abandonClaims("runner unreachable: its advertised endpoint vanished from public DNS");
+  } else if (!_reach.tripped && was) {
+    console.log(`[reach] ${host} resolves again — resuming claims`);
+  } else if (!_reach.tripped && _reach.strikes) {
+    console.warn(`[reach] ${host}: public DNS affirms no records (strike ${_reach.strikes}/${REACH_DNS_STRIKES})`);
+  }
+}
+
+// Hand back EVERYTHING held on-chain — the same teardown the audit applies to
+// a lost lease. The work re-queues the moment the release lands; keeping an
+// app alive behind a dead front only burns its owner's balance. "expired" is
+// CLAIM_TERMINAL, so once DNS returns the sweep may re-claim it right here.
+async function abandonClaims(why) {
+  for (const rec of [...deployments.values()]) {
+    if (!rec._onchain || !["running", "claimed"].includes(rec.status)) continue;
+    try { await stopContainer(rec); } catch {}
+    if (rec._gpu) { releaseGpu(rec._gpu); rec._gpu = null; }
+    rec.status = "expired"; rec.error = why;      // the owner's evidence (console polls the record)
+    releaseLease(rec.id, why).catch(() => {});
+  }
+  saveStateSoon();
+}
+
 // mirrors EnclaveDeployments.Deployment (field order must match the struct exactly)
 const DEPLOYMENT_COMPONENTS = [
   { name: "id", type: "bytes32" }, { name: "owner", type: "address" },
@@ -3164,6 +3297,11 @@ async function releaseLease(id, why) {
 // the lease runs out — "processed until there is no more time left"), anything
 // else retries next pass (margin >> poll interval).
 async function renewLeases() {
+  // Unreachable: let stragglers lapse instead of paying to extend them. (A
+  // hint-claim provisioning in the background when the watchdog tripped can
+  // finish AFTER abandonClaims swept — this catches that record too; the
+  // lease runs out within one quantum and the reaper tears it down.)
+  if (_reach.tripped) return;
   for (const rec of deployments.values()) {
     if (!rec._onchain || rec.status !== "running" || rec._renewing) continue;
     if (rec._leaseUntil * 1000 - Date.now() > RENEW_MARGIN_SEC * 1000) continue;
@@ -3341,6 +3479,9 @@ async function claimSweep(ledger) {
 async function considerClaim(d, { hinted = false, background = false } = {}) {
   const ex = deployments.get(d.id);
   if (ex && !CLAIM_TERMINAL.has(ex.status)) return "already serving it here (status " + ex.status + ")";
+  // Unreachable enclaves take no work — resumes included: re-provisioning an
+  // app behind a dead front burns the owner's lease for service nobody gets.
+  if (_reach.tripped) return "this enclave's advertised endpoint is gone from public DNS (unreachable); not claiming";
   if (!d.active) return "deployment is deactivated (owner setActive(false))";
   // A live lease held by OUR OWN enclaveId with no local record = a previous
   // life of this enclave (an update reboot wipes local state and cannot
@@ -3562,6 +3703,7 @@ function startClaimLoop() {
     if (_claimBusy || !_enclaveId) return;   // not advertised yet, or a slow pass is still running
     _claimBusy = true;
     try {
+      await stage("reach", reachTick);       // first: renew/sweep below consult the verdict
       await stage("renew", renewLeases);
       let ledger = null;
       try { ledger = await fetchLedger(); }

@@ -34,6 +34,16 @@ At-most-one-runner-at-a-time is enforced by the chain (a live lease blocks
 `claim`), not by any operator. A dead runner needs no detection protocol: its
 silence *is* the signal, because the lease it stopped renewing expires.
 
+A *half*-dead runner — outbound chain access intact, public front gone — is
+the one case silence doesn't catch: it would happily claim and renew work
+nobody can reach (observed 2026-07-11: a CVM lost its DNS record and front
+routing but kept renewing for six hours). Runners close that hole themselves
+with a reachability watchdog: each claim tick they ask public DoH resolvers
+for their own advertised hostname, and once every resolver has *affirmed* the
+name gone several rounds in a row they release everything they hold, stop
+claiming, and stop renewing until the name resolves again (supervisor
+`reachTick`; `REACH_DNS_STRIKES=0` disables).
+
 ## What changes, what doesn't
 
 | | today (EnclavePay path) | portable (EnclaveDeployments path) |
