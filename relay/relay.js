@@ -17,14 +17,15 @@
 //   RELAY_DOMAIN            required  SNI suffix, e.g. "tcp.enclave.host"
 //                                     (point *.tcp.enclave.host at this box)
 //   APP_DOMAIN              optional  app-subdomain SNI suffix(es), e.g.
-//                                     "app.enclave.host". Port 443 connections
-//                                     whose SNI ends here route to the owner
-//                                     enclave's /x/<label>/https - the
-//                                     IN-ENCLAVE browser-TLS path (ACME cert
-//                                     minted in the CVM), so this box never
-//                                     holds app-site keys either. Unset = off
-//                                     (today's Caddy termination keeps serving
-//                                     until the *.app DNS is repointed here).
+//                                     "app.enclave.host" - the ONE-hostname
+//                                     surface. A DECLARED tcp port routes to
+//                                     the tenant's socket via the in-enclave
+//                                     /tls/ terminator (443 included, if
+//                                     declared); undeclared 443 routes to
+//                                     /x/<label>/https (the browser bridge
+//                                     into the app's HTTP surface). All TLS
+//                                     terminates in-CVM with ACME certs; this
+//                                     box never holds keys. Unset = off.
 //   REGISTRY_ADDRESS        required* EnclaveRegistry on Base: FLEET discovery — the
 //                                     relay routes each SNI'd deployment to the
 //                                     enclave that OWNS it (learned from every
@@ -207,22 +208,24 @@ function handle(client, logicalPort) {
     // serving) instead of a tenant TCP port. Browsers only: 443.
     const appDom = (sni !== false) && APP_DOMAINS.find(d => sni.endsWith("." + d));
     if (appDom) {
-      if (logicalPort !== 443) return client.destroy();
       const label = sni.slice(0, -(appDom.length + 1));
       if (!/^[a-z0-9-]{1,64}$/.test(label)) return client.destroy();
       // the subdomain label spells hex ids WITHOUT the 0x (DNS-friendly), but
       // the supervisor resolves 0x-prefixed ids - restore it (depFromHost does
       // the same on the api-relay). Legacy dep- labels map back to dep_.
       const dep = /^[0-9a-f]{8,64}$/.test(label) ? "0x" + label : label.replace(/^dep-/, "dep_");
-      // A deployment that DECLARES tcp:443 owns its app-subdomain's 443: the
-      // connection goes to the tenant's socket (via the in-enclave /tls/
-      // terminator), not the platform HTTPS bridge. Declared port wins - the
-      // app's plain-HTTP surface stays reachable through the api gateway.
+      // ONE hostname per deployment: every DECLARED tcp port routes to the
+      // tenant's socket (via the in-enclave /tls/ terminator) - including 443
+      // if they declared it (their socket outranks the platform HTTPS bridge).
+      // Undeclared 443 = the HTTPS bridge into the app's HTTP surface;
+      // undeclared anything-else = nothing there. The tcp.<domain> zone keeps
+      // serving as a deprecated alias of the declared-port half of this.
       const owned = resolve(label);
-      if (owned && owned.tcp.has(443)) {
+      if (owned && owned.tcp.has(logicalPort)) {
         client.pause();
-        return splice(client, owned.origin, owned.id, `/x/${encodeURIComponent(owned.id)}/tls/443`, buf);
+        return splice(client, owned.origin, owned.id, `/x/${encodeURIComponent(owned.id)}/tls/${logicalPort}`, buf);
       }
+      if (logicalPort !== 443) return client.destroy();
       client.pause();
       appOwnerOf(dep).then((origin) => {
         if (!origin || client.destroyed) return client.destroy();

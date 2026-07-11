@@ -2747,10 +2747,13 @@ const servesHttp   = (rec) => { const fw = rec.firewall || []; return fw.length 
 const tcpCertName  = (rec) => TLS_BRIDGE_DOMAIN ? `${appCertLabel(rec.id)}.${TLS_BRIDGE_DOMAIN}` : null;
 const desiredCertNames = (rec) => {
   const names = [];
-  // A declared tcp:443 means the tenant OWNS its app-subdomain's port 443
-  // (the relay routes it to their socket instead of the HTTPS bridge) — the
-  // name still needs its CA-signed cert for the in-enclave /tls/ terminator.
-  if (servesHttp(rec) || fwTcpPorts(rec).includes(443)) names.push(appCertName(rec.id));
+  // ONE hostname per deployment: on <label>.APP_CERT_DOMAIN, port 443 is the
+  // HTTP surface (unless the tenant declared tcp:443 — their socket wins) and
+  // every other DECLARED tcp port is the tenant's socket, all behind the same
+  // in-enclave /tls/ terminator — so any http-serving OR tcp-declaring
+  // deployment needs the app-zone cert. <label>.TLS_BRIDGE_DOMAIN stays
+  // issued as a deprecated alias of the declared-port half.
+  if (servesHttp(rec) || fwTcpPorts(rec).length) names.push(appCertName(rec.id));
   if (fwTcpPorts(rec).length && TLS_BRIDGE_DOMAIN) names.push(tcpCertName(rec));
   return names;
 };
