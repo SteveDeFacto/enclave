@@ -209,10 +209,14 @@ function handle(client, logicalPort) {
       if (logicalPort !== 443) return client.destroy();
       const label = sni.slice(0, -(appDom.length + 1));
       if (!/^[a-z0-9-]{1,64}$/.test(label)) return client.destroy();
+      // the subdomain label spells hex ids WITHOUT the 0x (DNS-friendly), but
+      // the supervisor resolves 0x-prefixed ids - restore it (depFromHost does
+      // the same on the api-relay). Legacy dep- labels map back to dep_.
+      const dep = /^[0-9a-f]{8,64}$/.test(label) ? "0x" + label : label.replace(/^dep-/, "dep_");
       client.pause();
-      appOwnerOf(label).then((origin) => {
+      appOwnerOf(dep).then((origin) => {
         if (!origin || client.destroyed) return client.destroy();
-        splice(client, origin, label, `/x/${encodeURIComponent(label)}/https`, buf);
+        splice(client, origin, dep, `/x/${encodeURIComponent(dep)}/https`, buf);
       });
       return;
     }
