@@ -161,24 +161,25 @@ async function poll() {
     ({ o, map: await fetchJson(o + "/v1/net-map") })));
   for (const { o, map } of results) {
     if (!map) continue;                                    // unreachable -> keep last-known
-    if (!map.enabled) { originDeps.set(o, new Set()); continue; }
-    originDeps.set(o, new Set((map.deployments || []).map((d) => d.id)));
+    if (!map.enabled) { originDeps.set(o, new Map()); continue; }
+    originDeps.set(o, new Map((map.deployments || []).map((d) => [d.id, new Set(d.tcp || [])])));
   }
   for (const o of [...originDeps.keys()]) if (!live.has(o)) originDeps.delete(o);
 }
 
-// Resolve a SNI label to { origin, id }. Matches an exact id, or (for on-chain
-// bytes32 ids) a unique hex prefix; ambiguous prefixes are refused.
+// Resolve a SNI label to { origin, id, tcp } (tcp = the deployment's declared
+// tcp ports). Matches an exact id, or (for on-chain bytes32 ids) a unique hex
+// prefix; ambiguous prefixes are refused.
 function resolve(label) {
   const l = label.toLowerCase().replace(/^dep[_-]/, "").replace(/^0x/, "");
   let hit = null;
   for (const [origin, deps] of originDeps) {
-    for (const id of deps) {
+    for (const [id, tcp] of deps) {
       const n = id.toLowerCase().replace(/^0x/, "");
       if (id.toLowerCase() === label.toLowerCase() || n === l || ("dep_" + l) === id.toLowerCase()
           || (l.length >= 6 && n.startsWith(l))) {
         if (hit && hit.id !== id) return null;             // ambiguous -> refuse
-        hit = { origin, id };
+        hit = { origin, id, tcp };
       }
     }
   }
@@ -213,6 +214,15 @@ function handle(client, logicalPort) {
       // the supervisor resolves 0x-prefixed ids - restore it (depFromHost does
       // the same on the api-relay). Legacy dep- labels map back to dep_.
       const dep = /^[0-9a-f]{8,64}$/.test(label) ? "0x" + label : label.replace(/^dep-/, "dep_");
+      // A deployment that DECLARES tcp:443 owns its app-subdomain's 443: the
+      // connection goes to the tenant's socket (via the in-enclave /tls/
+      // terminator), not the platform HTTPS bridge. Declared port wins - the
+      // app's plain-HTTP surface stays reachable through the api gateway.
+      const owned = resolve(label);
+      if (owned && owned.tcp.has(443)) {
+        client.pause();
+        return splice(client, owned.origin, owned.id, `/x/${encodeURIComponent(owned.id)}/tls/443`, buf);
+      }
       client.pause();
       appOwnerOf(dep).then((origin) => {
         if (!origin || client.destroyed) return client.destroy();
