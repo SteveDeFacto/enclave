@@ -269,12 +269,18 @@ exists.
 ## TCP relay (SNI, shared-port)
 
 Gives service apps (declared `tcp:N` firewall ports) a **normal public TCP
-endpoint** — `irssi -c dep_abc123.tcp.enclave.host -p 6667 --tls`, `psql
-"host=dep_xyz.tcp.enclave.host sslmode=require"` — with the enclave's guarantees
-fully intact. No per-user websocat, no app-side TLS code. Multiplexes every
-deployment onto shared public ports, demuxed by the TLS SNI, and terminates
-TLS in-enclave on the platform cert. The dedicated-IP relay above is the newer,
-protocol-agnostic path; this one is the v4-reachable, TLS-terminated fallback.
+endpoint** on the deployment's ONE hostname — `irssi -c abc12345.app.enclave.host
+-p 6667 --tls`, `psql "host=abc12345.app.enclave.host sslmode=verify-full"` —
+with the enclave's guarantees fully intact. No per-user websocat, no app-side
+TLS code, and (via the in-enclave ACME issuer) a publicly-trusted cert, so
+verify-full just works. Multiplexes every deployment onto shared public ports,
+demuxed by the TLS SNI: a DECLARED tcp port routes to the tenant's socket
+(443 included, if declared — the tenant's socket outranks the platform HTTPS
+bridge); undeclared 443 is the browser bridge into the app's HTTP surface.
+The dedicated-IP relay above is the protocol-agnostic raw path; this one is
+the v4-reachable, TLS-terminated path. (The old `tcp.<domain>` zone is
+SUNSET — `APP_DOMAIN` is the one surface; `RELAY_DOMAIN` lingers only for
+stragglers with cached DNS.)
 
 ## How it stays trustless
 
@@ -302,22 +308,24 @@ against your enclaves.
 ## Setup
 
 1. **Domain** (once, platform-wide): set the supervisor's `TLS_BRIDGE_DOMAIN`
-   env to the SNI suffix (e.g. `tcp.enclave.host`, plain config in
-   `tinfoil-config.yml`). At boot the enclave mints its own key + self-signed
-   cert for `*.tcp.enclave.host` — no ACME, no secrets, no renewals; the key never
-   exists outside the CVM, let alone on the relay box.
-2. **DNS**: `*.tcp.enclave.host  A  <relay ip>` (repeat per relay for round-robin).
+   env to the app zone (e.g. `app.enclave.host`, plain config in
+   `tinfoil-config.yml`). At boot the enclave mints a self-signed fallback
+   pair for `*.<that zone>` (served when no ACME cert exists for a name);
+   with the ACME envs configured it also issues real per-name certs in-CVM —
+   either way no key ever exists outside the CVM, let alone on the relay box.
+2. **DNS**: the app zone is served by the platform DNS daemon (`dns-relay.js`
+   above) — its `APP_A` points at this relay.
 3. **Relay**:
 
 ```bash
 cd relay && npm install
-RELAY_DOMAIN=tcp.enclave.host \
+APP_DOMAIN=app.enclave.host \
 ENCLAVE_URL=https://enclave1.nan.containers.tinfoil.dev \
 RELAY_PORTS=6667,5432 \
 node relay.js
 ```
 
-Clients then reach a deployment at `<deploymentId>.tcp.enclave.host:<port>` with
+Clients then reach a deployment at `<label>.app.enclave.host:<port>` with
 plain TLS. The deployment must be `public: true` (the bridge enforces the same
 auth as `/x/:id/tcp/:port`; a relay has no owner token, so private deployments
 stay unreachable through it — by design).
@@ -326,7 +334,7 @@ stay unreachable through it — by design).
 
 The bridge cert is self-signed — CA validation was never the trust anchor
 here (a CA cert would only prove you reached *someone* holding a
-`*.tcp.enclave.host` cert, not that the key lives inside an attested enclave —
+platform cert, not that the key lives inside an attested enclave —
 and its key would have to exist outside the enclave to be issued at all).
 Instead the supervisor publishes the cert **over the attested origin** at
 `GET /v1/tls-bridge` (`fingerprint256`, `spkiPinSha256`, the PEM). A
@@ -340,8 +348,8 @@ verifying client:
 
 ```bash
 curl -s https://<enclave>/v1/tls-bridge | jq -r .fingerprint256
-openssl s_client -connect dep-abc123.tcp.enclave.host:6667 \
-  -servername dep-abc123.tcp.enclave.host </dev/null 2>/dev/null \
+openssl s_client -connect abc12345.app.enclave.host:6667 \
+  -servername abc12345.app.enclave.host </dev/null 2>/dev/null \
   | openssl x509 -noout -fingerprint -sha256      # must match
 ```
 
@@ -349,7 +357,7 @@ With the pin, a MITM relay fails outright — the private key it would need
 never left the CVM — so the session is transitively bound to the measured
 enclave. Strict clients can also use the published PEM as their sole trust
 root (`psql sslmode=verify-full sslrootcert=bridge.pem`; the SAN covers
-`*.tcp.enclave.host`). Casual clients that don't validate certs (`sslmode=require`,
+the fallback pair). Casual clients that don't validate certs (`sslmode=require`,
 `irssi --tls`) connect unchanged, with the same what-any-router-sees exposure
 they always had.
 
@@ -369,7 +377,7 @@ TLS on 6697 while the app declares `tcp:6667`) and for colocated testing.
 ## Notes
 
 - **Hostnames spell the deployment id with a hyphen**: deployment `dep_abc123`
-  is reached at `dep-abc123.tcp.enclave.host`. Underscores aren't valid hostname
+  is reached at `dep-abc123.app.enclave.host`. Underscores aren't valid hostname
   label characters, and OpenSSL refuses to wildcard-match them — strict
   clients (psql, python) would reject the cert. The relay maps a leading
   `dep-` back to the canonical `dep_` id.

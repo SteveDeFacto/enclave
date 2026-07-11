@@ -454,12 +454,12 @@ nc 127.0.0.1 7000                                # → your app, end to end
 
 # 2. Direct public TLS via the relay: stock clients, no websocat. Public deployments
 #    only; hostname = deployment id with its underscore hyphenated (dep_abc123 → dep-abc123)
-psql "host=dep-abc123.tcp.enclave.host port=5432 sslmode=require"
-irssi -c dep-abc123.tcp.enclave.host -p 6667 --tls</code></pre></c-code>
+psql "host=abc12345.app.enclave.host port=5432 sslmode=verify-full"
+irssi -c abc12345.app.enclave.host -p 6667 --tls</code></pre></c-code>
           <p>Your app does <b>nothing</b> for the TLS path: keep speaking plain TCP on the assigned port. The platform mints its key + cert <i>inside the enclave</i> at boot; the untrusted relay only routes ciphertext by SNI, and the session terminates in-enclave at <code>/x/{id}/tls/{port}</code>. Verifying clients can bind the session to the attestation by pinning the cert published over the attested origin:</p>
           <c-code fn="terminal · pin the bridge cert"><pre><code>curl -s https://&lt;enclave-host&gt;/v1/tls-bridge | jq -r .fingerprint256
-openssl s_client -connect dep-abc123.tcp.enclave.host:6667 \
-  -servername dep-abc123.tcp.enclave.host &lt;/dev/null 2&gt;/dev/null \
+openssl s_client -connect abc12345.app.enclave.host:6667 \
+  -servername abc12345.app.enclave.host &lt;/dev/null 2&gt;/dev/null \
   | openssl x509 -noout -fingerprint -sha256       # must match</code></pre></c-code>
         </article>
 

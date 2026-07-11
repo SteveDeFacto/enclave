@@ -165,7 +165,7 @@ containers:
       # origin so clients can pin the relay-path session to the enclave; being
       # plain (measured) config, the domain itself is attested too. Empty =
       # the /tls/ bridge is disabled.
-      - TLS_BRIDGE_DOMAIN: "tcp.enclave.host"
+      - TLS_BRIDGE_DOMAIN: "app.enclave.host"   # tcp.* SUNSET: the fallback pair + /tls/ gate live on the unified app zone now
       # in-enclave browser TLS for public HTTP apps: ACME (ZeroSSL) certs for
       # <label>.APP_CERT_DOMAIN minted INSIDE the CVM, served through the SNI
       # relay's /x/:id/https passthrough. DNS-01 TXT records publish to the

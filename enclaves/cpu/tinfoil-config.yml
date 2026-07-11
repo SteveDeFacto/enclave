@@ -88,7 +88,7 @@ containers:
       # SNI relay's /x/:id/tls/:port bridge. Same suffix as the GPU flavor so the
       # (fleet-aware) SNI relay routes stock-TLS clients to whichever enclave
       # owns the deployment. Empty disables the /tls/ bridge on this flavor.
-      - TLS_BRIDGE_DOMAIN: "tcp.enclave.host"
+      - TLS_BRIDGE_DOMAIN: "app.enclave.host"   # tcp.* SUNSET: the fallback pair + /tls/ gate live on the unified app zone now
       # in-enclave browser TLS for public HTTP apps: ACME (ZeroSSL) certs for
       # <label>.APP_CERT_DOMAIN minted INSIDE the CVM, served through the SNI
       # relay's /x/:id/https passthrough. DNS-01 TXT records publish to the

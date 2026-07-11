@@ -14,8 +14,11 @@
 // $3 VPS, run several behind round-robin DNS, or let strangers run their own.
 //
 // Config (env):
-//   RELAY_DOMAIN            required  SNI suffix, e.g. "tcp.enclave.host"
-//                                     (point *.tcp.enclave.host at this box)
+//   RELAY_DOMAIN            optional  LEGACY SNI suffix(es) (the retired
+//                                     tcp.* zone). Kept only so stragglers
+//                                     with cached DNS keep working during the
+//                                     sunset tail; new config sets APP_DOMAIN
+//                                     and leaves this unset.
 //   APP_DOMAIN              optional  app-subdomain SNI suffix(es), e.g.
 //                                     "app.enclave.host" - the ONE-hostname
 //                                     surface. A DECLARED tcp port routes to
@@ -71,9 +74,9 @@ const need = (k) => {
 
 // Comma-separated: during a domain cutover both the new and the old SNI suffix
 // route (e.g. "tcp.enclave.host,tcp.nan.host"); the first entry is primary.
-const DOMAINS   = need("RELAY_DOMAIN").toLowerCase().split(",")
-  .map(s => s.trim().replace(/^\.+|\.+$/g, "")).filter(Boolean);
-const DOMAIN    = DOMAINS[0];
+const DOMAINS   = (process.env.RELAY_DOMAIN || "").toLowerCase().split(",")
+  .map(s => s.trim().replace(/^\.+|\.+$/g, "")).filter(Boolean);   // legacy tcp.* suffixes; empty = none
+const DOMAIN    = DOMAINS[0] || null;
 // App-subdomain suffixes (in-enclave browser TLS). Optional; empty = feature off.
 const APP_DOMAINS = (process.env.APP_DOMAIN || "").toLowerCase().split(",")
   .map(s => s.trim().replace(/^\.+|\.+$/g, "")).filter(Boolean);

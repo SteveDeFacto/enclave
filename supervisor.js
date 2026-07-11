@@ -2739,22 +2739,16 @@ const appCertName  = (id) => `${appCertLabel(id)}.${APP_CERT_DOMAIN}`;
 // "serves HTTP" = empty firewall (classic wasi:http serve mode) or an explicit
 // http:N entry; tcp/udp-only apps get no browser subdomain cert.
 const servesHttp   = (rec) => { const fw = rec.firewall || []; return fw.length === 0 || fw.some((x) => String(x).startsWith("http")); };
-// Deployments with declared tcp ports ALSO earn a CA-signed cert for their
-// <label>.TLS_BRIDGE_DOMAIN name, so validating TLS clients (psql
-// sslmode=verify-full, redis-cli --tls, ...) work through the SNI relay with
-// no fingerprint pinning — the self-signed pair stays as the fallback for
-// anything unissued. Same label as the app zone; the SNI hook picks per-name.
-const tcpCertName  = (rec) => TLS_BRIDGE_DOMAIN ? `${appCertLabel(rec.id)}.${TLS_BRIDGE_DOMAIN}` : null;
 const desiredCertNames = (rec) => {
   const names = [];
   // ONE hostname per deployment: on <label>.APP_CERT_DOMAIN, port 443 is the
   // HTTP surface (unless the tenant declared tcp:443 — their socket wins) and
   // every other DECLARED tcp port is the tenant's socket, all behind the same
   // in-enclave /tls/ terminator — so any http-serving OR tcp-declaring
-  // deployment needs the app-zone cert. <label>.TLS_BRIDGE_DOMAIN stays
-  // issued as a deprecated alias of the declared-port half.
+  // deployment needs the app-zone cert. The tcp.<domain> zone is SUNSET: no
+  // per-name certs are issued under it anymore; TLS_BRIDGE_DOMAIN now only
+  // names the self-signed fallback pair and gates the /tls/ path.
   if (servesHttp(rec) || fwTcpPorts(rec).length) names.push(appCertName(rec.id));
-  if (fwTcpPorts(rec).length && TLS_BRIDGE_DOMAIN) names.push(tcpCertName(rec));
   return names;
 };
 
