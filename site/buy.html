@@ -220,7 +220,7 @@ try {
   // self-hosted bundle (site/privy/, built by esbuild from @privy-io/react-auth
   // + react) - no CDN at runtime; lazy screens load as local chunks
   const mod = await import("/privy/entry.js");
-  const { React, createRoot, PrivyProvider, usePrivy, useFiatOnramp, useWallets, getAccessToken } = mod;
+  const { React, createRoot, PrivyProvider, usePrivy, useFiatOnramp, getAccessToken } = mod;
   const h = React.createElement;
 
   /* Privy's amount screen doesn't enforce a minimum (a $0 continues to the
@@ -264,8 +264,6 @@ try {
   function App(){
     const { ready, authenticated, user } = usePrivy();
     const { fund } = useFiatOnramp();
-    const { wallets } = useWallets();
-    const walletsRef = React.useRef(wallets); walletsRef.current = wallets;   // effect closure sees live list
     const started = React.useRef(false);
     React.useEffect(() => {
       console.info("[buy-diag] privy state: ready=" + ready + " authenticated=" + authenticated);
@@ -332,38 +330,10 @@ try {
       );
       setInterval(freshToken, 120000);
 
-      /* Wallet ownership signature. Stripe verifies OWNERSHIP of self-custody
-         destination wallets; an embedded wallet that can't sign in this popup
-         fails the transaction at the very end with a generic "couldn't
-         complete". Signing up front proves the wallet is operational BEFORE
-         money is on the line, and [buy-diag] records the outcome either way.
-         Not a hard gate: if signing fails we continue, so the provider's own
-         error still surfaces. */
-      const signOwnership = async () => {
-        let w = null;
-        for (let i = 0; i < 30 && !w; i++){   // wallets hydrate async after auth
-          const list = walletsRef.current || [];
-          w = list.find(x => x.walletClientType === "privy" && (x.address || "").toLowerCase() === address.toLowerCase())
-           || list.find(x => x.walletClientType === "privy");
-          if (!w) await new Promise(r => setTimeout(r, 250));
-        }
-        if (!w) throw new Error("embedded wallet not available in this window");
-        const provider = await w.getEthereumProvider();
-        const text = "Enclave · verify wallet for card checkout\n" + w.address;
-        const hex = "0x" + Array.from(new TextEncoder().encode(text), b => b.toString(16).padStart(2, "0")).join("");
-        const sig = await provider.request({ method: "personal_sign", params: [hex, w.address] });
-        console.info("[buy-diag] wallet ownership signature ok: " + String(sig).slice(0, 20) + "…");
-      };
-
       const startCheckout = async () => {
         if (!await freshToken()){
           msg("Your session has expired.<br/>Close this window, sign in again on the main page, then retry.");
           return;
-        }
-        try { await signOwnership(); }
-        catch(e){
-          console.warn("[buy-diag] wallet ownership signature FAILED:", e);
-          errToast("Wallet signature failed: " + String(e && (e.message || e)).slice(0, 140));
         }
         fund({
           source: { defaultAsset: "usd" },
