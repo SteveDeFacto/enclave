@@ -191,9 +191,69 @@ window.addEventListener("error", (e) => {
   }
 }, true);
 
+/* Stale-Link-session recovery. Privy keeps the user's saved onramp cards
+   server-side (GET /onramp/stripe/customer/payment_tokens) and, when any
+   exist, jumps straight to its saved-card screens - which drive Stripe RPCs
+   (getPlatformSettings / createPaymentToken) that REQUIRE the Link consumer
+   session stored in the browser to still be 1FA-authenticated. Link sessions
+   expire on their own schedule, and Stripe's handler for these calls throws a
+   raw "User is not authenticated" with NO re-auth fallback - the checkout
+   dies before (or at submit of) a card the user can see. The fresh-user path
+   never breaks: with no saved tokens Privy routes through Link's own
+   email+OTP screens, which mint a fresh consumer session. So on that exact
+   rejection, retry ONCE with the saved-token list suppressed (the bundle
+   treats an empty list as "no saved cards"): the user re-authenticates Link
+   and still gets their saved cards back - Link keeps them server-side. */
+let suppressSavedTokens = false;
+let linkAuthRetried = false;
+let staleLinkSeen = false;
+/* Detection is two-pronged because Privy rewrites some rejections (its init
+   catch replaces the cause with a generic "Something went wrong setting up
+   checkout") - but it always console.error()s the RAW error under the
+   "[FiatOnramp:Stripe]" prefix first. Tap that as the reliable signal; the
+   rejection-message regex below stays as the fallback for paths that keep
+   the original message. */
+/* Privy's provider-error screen keeps the fund() promise PENDING ("Something
+   went wrong" + Try again/Close) - the rejection only fires when the user
+   closes it. So recovery starts from the console signal itself: flip the
+   suppression on and press Privy's own Try again once - the retry re-runs
+   init inside the same fund() call, now sees zero saved tokens, and takes
+   the working fresh-Link path. DOM-hack like the min-guard: if Privy's
+   markup changes, worst case the user clicks Try again / Close themselves
+   (the rejection branch below then restarts the checkout). */
+function autoTryAgain(){
+  if (linkAuthRetried) return;
+  const root = document.querySelector("#privy-modal-content") || document.querySelector('[role="dialog"]') || document;
+  const btn = [...root.querySelectorAll("button")].find(b => /^try again$/i.test((b.textContent || "").trim()));
+  if (btn){
+    linkAuthRetried = true;
+    console.warn("[buy-diag] auto-retrying via Privy's Try again button");
+    btn.click();
+  }
+}
+const _cerror = console.error.bind(console);
+console.error = (...args) => {
+  try {
+    if (String(args[0]).startsWith("[FiatOnramp:Stripe]") &&
+        args.some(a => /not authenticated/i.test(String((a && a.message) || a)))){
+      staleLinkSeen = true;
+      if (!suppressSavedTokens){
+        suppressSavedTokens = true;
+        console.warn("[buy-diag] stale Link session detected - saved-card fast path disabled for this window");
+        errToast("Your saved Link sign-in expired - retrying; Link may ask you to verify your email again.");
+        setTimeout(autoTryAgain, 800);
+      }
+    }
+  } catch(_){}
+  return _cerror(...args);
+};
 const _fetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url = String((input && input.url) || input || "");
+  if (suppressSavedTokens && /\/onramp\/stripe\/customer\/payment_tokens/.test(url)){
+    console.warn("[buy-diag] suppressing saved-payment-tokens fetch (stale-Link recovery)");
+    return new Response('{"data":[]}', { status: 200, headers: { "content-type": "application/json" } });
+  }
   // Stripe's own chunks requested from OUR origin = the blocked-frame fallback
   if (/\/crypto-onramp\/v1\//.test(url) && url.indexOf(location.origin) === 0) blockedFrameHelp();
   const res = await _fetch(input, init);
@@ -349,6 +409,12 @@ try {
           (e) => {
             const s = String(e && (e.message || e));
             console.warn("[buy-diag] fiat onramp rejected:", e);
+            if ((staleLinkSeen || /not authenticated/i.test(s)) && !isCancel(s) && !linkAuthRetried){
+              linkAuthRetried = true; suppressSavedTokens = true; staleLinkSeen = false;
+              console.warn("[buy-diag] stale Link session - restarting checkout without saved payment tokens");
+              errToast("Your saved Link session expired - restarting checkout so you can sign in to Link again.");
+              startCheckout(); return;
+            }
             if (isCancel(s)){
               if (accidentalDismiss()){ console.warn("[buy-diag] dismiss after backdrop click - reopening checkout"); startCheckout(); return; }
               dismissed(startCheckout); return;
