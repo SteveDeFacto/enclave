@@ -1379,8 +1379,12 @@
             "type": "boolean"
           },
           "vmTechnology": {
-            "type": "string",
-            "example": "intel-tdx"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CPU-TEE technology, detected from the enclave's own attestation document (amd-sev-snp on today's fleet; intel-tdx verifies through the same pipeline). null only in the brief window before the enclave has fetched its own document.",
+            "example": "amd-sev-snp"
           },
           "gpuTechnology": {
             "type": [
@@ -1679,7 +1683,8 @@
         "properties": {
           "technology": {
             "type": "string",
-            "example": "intel-tdx"
+            "description": "Detected from the attestation document's format: amd-sev-snp (today's fleet) or intel-tdx.",
+            "example": "amd-sev-snp"
           },
           "quote": {
             "type": "string",
@@ -1690,6 +1695,7 @@
               "integer",
               "null"
             ],
+            "description": "DCAP quote version - Intel TDX only; absent for AMD SEV-SNP reports.",
             "example": 4
           },
           "measurements": {
@@ -1763,7 +1769,7 @@
             "properties": {
               "format": {
                 "type": "string",
-                "example": "https://tinfoil.sh/predicate/tdx-guest/v2"
+                "example": "https://tinfoil.sh/predicate/sev-snp-guest/v2"
               },
               "body": {
                 "type": "string",

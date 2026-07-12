@@ -1156,6 +1156,21 @@ function parseRad(doc) {
   return { technology: fmt, quote: raw.toString("base64"), measurements: null, reportData: null };
 }
 
+// The CPU-TEE technology as DETECTED from this enclave's own attestation
+// document - never asserted from config or hardcoded (the fleet has moved
+// silicon before, and a hardcoded value in every deployment record is exactly
+// the kind of unverifiable claim this platform exists to avoid). null until
+// the first RAD fetch lands; a miss kicks a background fetch so the next
+// caller reads the real answer.
+let _vmTech = null;
+function vmTech() {
+  if (_vmTech) return _vmTech;
+  if (_radCache?.doc) {
+    try { _vmTech = parseRad(_radCache.doc).technology || null; } catch {}
+  } else fetchEnclaveRad().catch(() => {});
+  return _vmTech;
+}
+
 // GPU evidence comes from the worker manager (the container that holds the card):
 // NVML's conf-compute attestation report, signed by the GPU, over OUR nonce.
 async function fetchGpuEvidence(nonceHex, timeoutMs = 30000) {
@@ -1895,6 +1910,10 @@ const view = (rec) => {
   for (const k of ["_port", "_gpu", "_gpuSpec", "rate", "_sshPort", "_sshKeySource", "_authorizedKey", "_payTimer",
                    "remainingMs", "consumedMs", "_lastTickAt", "_respawnAt", "_respawnBackoffMs", "_respawning",
                    "_onchain", "_leaseUntil", "_renewing", "_balance6"]) delete o[k];
+  // vmTechnology reflects what this enclave's OWN attestation document says
+  // today, not what the record stored at create time (records persisted by
+  // older builds carry a hardcoded guess; detection self-heals them).
+  if (o.attestation) o.attestation = { ...o.attestation, vmTechnology: vmTech() ?? o.attestation.vmTechnology ?? null };
   o.ssh = sshAccessOf(rec);
   o.ratePerSecondUsdc = (rec.rate || 0).toFixed(7);
   o.spentUsdc = spentOf(rec);
@@ -2152,7 +2171,7 @@ app.post("/v1/deployments", authed, async (req, res) => {
       ? { gpuShare: 0, cpuShare: slice.cpuShare }
       : { gpuShare: slice.gpuShare, cpuShare: slice.cpuShare, cardId: gpu.cardId },
     network: { port: appPort, protocol: "https", endpoint: `${originOf(req)}/x/${id}` },
-    attestation: { available: true, vmTechnology: "intel-tdx", gpuTechnology: IS_GPU ? "nvidia-cc" : null, href: `/v1/deployments/${id}/attestation` },
+    attestation: { available: true, vmTechnology: vmTech(), gpuTechnology: IS_GPU ? "nvidia-cc" : null, href: `/v1/deployments/${id}/attestation` },
     region: "tinfoil", createdAt: new Date().toISOString(), startedAt: null,
     // fair-billing clock: a funded BALANCE (null = unlimited pilot) drained only
     // on healthy ticks - see startBillingTicker. paused surfaces a frozen clock.
@@ -3651,7 +3670,7 @@ async function adopt(d, g, firewall, slice) {
       ? { gpuShare: 0, cpuShare: slice.cpuShare }
       : { gpuShare: slice.gpuShare, cpuShare: slice.cpuShare, cardId: gpu.cardId },
     network: { port: appPort, protocol: "https", endpoint: `${_advertisedEndpoint}/x/${d.id}` },
-    attestation: { available: true, vmTechnology: "intel-tdx", gpuTechnology: IS_GPU ? "nvidia-cc" : null, href: `/v1/deployments/${d.id}/attestation` },
+    attestation: { available: true, vmTechnology: vmTech(), gpuTechnology: IS_GPU ? "nvidia-cc" : null, href: `/v1/deployments/${d.id}/attestation` },
     region: "tinfoil", createdAt: new Date(Number(d.createdAt) * 1000).toISOString(), startedAt: null,
     // the local clock only mirrors the CURRENT lease; the chain holds the rest
     remainingMs: Number(d.leaseUntil) * 1000 - Date.now(), consumedMs: 0,
@@ -3761,6 +3780,9 @@ function onchainPaymentInstructions(rec) {
 server.listen(PORT, () => console.log(`enclave supervisor on :${PORT} · ${IS_GPU
   ? `${GPU_COUNT}×GPU @ ${CARD_VRAM_GB}GB (arbitrary split)`
   : `CPU-only enclave (${NODE_VCPUS} vCPU / ${NODE_RAM_GB}GB, node-share split)`} · ssh host key ${SSH_HOST_KEY_FP}`));
+// warm the CPU-TEE detection (shim loopback) so the first deployment record
+// created after boot already reports the real silicon, not null
+fetchEnclaveRad().then(() => console.log(`[attest] CPU TEE detected: ${vmTech()}`)).catch(() => {});
 if (egress) { egress.start(); console.log(`[egress] dedicated-IP egress on (SOCKS 127.0.0.1:${EGRESS_SOCKS_PORT}); awaiting relay control channel`); }
 
 // advertise this enclave on-chain (opt-in, non-blocking, never fatal)
