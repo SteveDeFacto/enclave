@@ -14,6 +14,7 @@ import { APP_CATALOG_ADDRESS } from "./config.js";
 import { catConfigured, appCount, catGetAppsPage, catGetVersions, catOwner, APPROVAL } from "./chain.js";
 import { lsGet, lsSet, emit, on } from "./util.js";
 import { minPctsOf } from "./pricing.js";
+import { Enclave } from "./api.js";
 
 export const STORE = { apps:[], byId:{}, sel:{}, owner:null, filter:"all", loaded:false, loading:false };
 
@@ -68,13 +69,29 @@ export async function loadCatalog(force){
 }
 
 /* ---- version selection helpers ---- */
-export function defaultIdx(app){                                   // newest non-yanked release, else newest
-  for (let i = app.versions.length - 1; i >= 0; i--) if (!app.versions[i].yanked) return i;
-  return app.versions.length - 1;
+// Yanked and rejected releases are the publisher's cleanup and the owner's
+// moderation surface, not the store's: normal browsers never see them (the
+// enclave refuses to deploy them anyway - resolveAppRef below). The app's
+// publisher and the catalog owner see everything, since these states are
+// exactly what they act on (yank/approve/reject buttons).
+export const appPrivileged = (app) => {
+  const me = (Enclave.address || "").toLowerCase();
+  return !!me && (app.publisher.toLowerCase() === me || me === STORE.owner);
+};
+export const verVisible = (app, v) => appPrivileged(app) || (!v.yanked && v.approval !== APPROVAL.rejected);
+// indices into app.versions the viewer may see - callers keep the REAL index
+// (catalog:// refs and card-action idx are positions in the on-chain list)
+export const visibleVerIdxs = (app) =>
+  app.versions.reduce((idxs, v, i) => (verVisible(app, v) && idxs.push(i), idxs), []);
+export function defaultIdx(app){         // newest visible non-yanked release, else newest visible; -1 = none to show
+  const vs = app.versions;
+  for (let i = vs.length - 1; i >= 0; i--) if (!vs[i].yanked && verVisible(app, vs[i])) return i;
+  for (let i = vs.length - 1; i >= 0; i--) if (verVisible(app, vs[i])) return i;
+  return -1;
 }
 export function selIdx(app){
   const s = STORE.sel[app.appId];
-  return (s != null && s >= 0 && s < app.versions.length) ? s : defaultIdx(app);
+  return (s != null && s >= 0 && s < app.versions.length && verVisible(app, app.versions[s])) ? s : defaultIdx(app);
 }
 // platform-published apps: publisher wallet == the catalog contract deployer
 export const appOfficial = (app) => !!(STORE.owner && app.publisher.toLowerCase() === STORE.owner);

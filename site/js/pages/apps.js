@@ -15,7 +15,7 @@ import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, IPFS_UPLOAD_URL, IPFS_IMAGE_UPL
 import { Enclave, EnclaveError } from "../core/api.js";
 import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, rate6Of, waitReceipt, catSchemaRev } from "../core/chain.js";
 import { connectWallet, authenticate, ensureBaseChain, sendTx, usdcBalanceOf, openBuyModal } from "../core/wallet.js";
-import { STORE, loadCatalog, selIdx, defaultIdx, appVerified, validPortsCsv, REF_CACHE, PORTS_CACHE, MINS_CACHE, CONFIG_CACHE, catalogRef, mediaOf, appMedia, stripMedia, withMedia } from "../core/catalog.js";
+import { STORE, loadCatalog, selIdx, defaultIdx, appVerified, visibleVerIdxs, validPortsCsv, REF_CACHE, PORTS_CACHE, MINS_CACHE, CONFIG_CACHE, catalogRef, mediaOf, appMedia, stripMedia, withMedia } from "../core/catalog.js";
 import { minPctsOf, shareRates } from "../core/pricing.js";
 import { navigate } from "../boot.js";
 
@@ -44,11 +44,16 @@ function renderApps(){
     // owner-only queue: active apps not yet endorsed, waiting to be verified.
     apps = STORE.apps.filter(a => a.versions.length && a.active && !appVerified(a));
   } else {
-    // public tabs (All / Verified): delisted apps are hidden from everyone here.
-    apps = STORE.apps.filter(a => a.versions.length && a.active);
+    // public tabs (All / Verified): delisted apps are hidden from everyone here,
+    // and an app whose every version is yanked/rejected has nothing to show a
+    // normal browser (its publisher and the owner still see it - all versions
+    // are visible to them, so the length check passes).
+    apps = STORE.apps.filter(a => a.versions.length && a.active && visibleVerIdxs(a).length);
     if (STORE.filter === "verified") apps = apps.filter(appVerified);
   }
-  if (q) apps = apps.filter(a => (a.name + " " + a.description + " " + a.slug + " " + a.publisher + " " + a.versions.map(v => v.cid + " " + v.version).join(" ")).toLowerCase().includes(q));
+  // search matches only what the viewer can see - a yanked version's CID must
+  // not surface an app to someone who'd then find no trace of that version
+  if (q) apps = apps.filter(a => (a.name + " " + a.description + " " + a.slug + " " + a.publisher + " " + visibleVerIdxs(a).map(i => a.versions[i].cid + " " + a.versions[i].version).join(" ")).toLowerCase().includes(q));
   apps.sort((x, y) => (Number(appVerified(y)) - Number(appVerified(x))) || (y.updatedAt - x.updatedAt));
   if (count) count.textContent = apps.length + (apps.length === 1 ? " app" : " apps") + (STORE.filter === "verified" ? " · verified" : STORE.filter === "unverified" ? " · unverified" : STORE.filter === "delisted" ? " · delisted" : "");
   if (!apps.length){
@@ -619,7 +624,9 @@ function renderDetail(appId){
   if (!catConfigured()){ host.innerHTML = '<div class="store-note">The on-chain catalog isn’t wired up on this deployment yet.</div>'; return; }
   if (!STORE.loaded){ host.innerHTML = '<div class="loading" role="status">reading catalog from Base…</div>'; return; }
   const app = STORE.byId[appId] || (STORE.apps || []).find(a => a.appId === appId);
-  if (!app){ host.innerHTML = '<div class="store-note">That app isn’t in the catalog. <a href="apps">← all apps</a></div>'; document.title = "Apps · Enclave"; return; }
+  // a direct link to an app with nothing the viewer may see (every version
+  // yanked/rejected) reads as absent, same as the grid - not as an empty page
+  if (!app || !visibleVerIdxs(app).length){ host.innerHTML = '<div class="store-note">That app isn’t in the catalog. <a href="apps">← all apps</a></div>'; document.title = "Apps · Enclave"; return; }
   document.title = app.name + " · Enclave";
   let el = host.querySelector("c-app-detail");
   if (!el){ host.innerHTML = ""; el = document.createElement("c-app-detail"); host.appendChild(el); }

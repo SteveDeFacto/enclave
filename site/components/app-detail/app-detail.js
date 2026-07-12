@@ -14,7 +14,7 @@ import { esc, short, copyText } from "../../js/core/util.js";
 import { IPFS_GATEWAY, IPFS_IMG_GATEWAY } from "../../js/core/config.js";
 import { Enclave } from "../../js/core/api.js";
 import { APPROVAL } from "../../js/core/chain.js";
-import { STORE, selIdx, appOfficial, mediaOf } from "../../js/core/catalog.js";
+import { STORE, selIdx, appOfficial, mediaOf, verVisible, visibleVerIdxs } from "../../js/core/catalog.js";
 import { minPctsOf } from "../../js/core/pricing.js";
 
 class AppDetail extends EnclaveElement {
@@ -58,15 +58,17 @@ class AppDetail extends EnclaveElement {
       : '<span class="app-badge del" title="Delisted: hidden from the public store; only you (its publisher) and the catalog owner see it. Relist to restore it, or publish a new version to this slug (that relists it automatically).">delisted</span>';
     this.querySelector(".app-badges").innerHTML = officialBadge + badge + apBadge + delistBadge;
 
+    const nVis = visibleVerIdxs(app).length;   // yanked/rejected count only for the publisher + owner
     this.querySelector(".appd-meta").innerHTML =
       '<span title="slug (stable id in the publisher’s namespace)">' + esc(app.slug) + '</span><span>·</span>'
       + '<span title="publisher (msg.sender)">' + short(app.publisher) + '</span><span>·</span>'
-      + '<span>' + app.versions.length + (app.versions.length === 1 ? ' version' : ' versions') + '</span>';
+      + '<span>' + nVis + (nVis === 1 ? ' version' : ' versions') + '</span>';
 
     this.querySelector(".appd-desc").innerHTML = app.description ? esc(app.description) : '<span class="dim">no description</span>';
 
     const apLabel = (vv) => vv.approval === APPROVAL.rejected ? ' (rejected)' : vv.approval !== APPROVAL.approved ? ' (pending)' : '';
-    const opts = app.versions.map((vv, idx) =>
+    // options keep the REAL on-chain index; versions the viewer may not see emit nothing
+    const opts = app.versions.map((vv, idx) => !verVisible(app, vv) ? '' :
       '<option value="' + idx + '"' + (idx === i ? ' selected' : '') + '>' + esc(vv.version) + (vv.verified ? ' ✓' : '') + (vv.yanked ? ' (yanked)' : '') + apLabel(vv) + '</option>').join('');
     const m = minPctsOf(v);
     this.querySelector(".app-verrow").innerHTML =
