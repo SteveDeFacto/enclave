@@ -220,6 +220,26 @@ let staleLinkSeen = false;
    unless it sees the real "active" - so only the next read may lie. */
 let freshCustomerSpoofs = 0;
 let autoRetries = 0;
+/* Third stage (Steven, 2026-07-12 live): the relink itself works, but the
+   CONTINUATION after an in-place re-auth is unreliable - the flow context
+   was initialized from the spoofed "none" lookup (no cryptoCustomerId, no
+   kyc fields), so the post-OTP screens error out. Once Link is freshly
+   authenticated the right state is a clean page: reload, and the native
+   returning-customer flow works end to end against the new credentials.
+   Detect completion by the post-auth exchange_tokens call (preempts the
+   broken continuation) with any later [FiatOnramp:Stripe] error as the
+   fallback trigger; capped via sessionStorage so it can never loop. */
+let linkReauthStarted = false;
+function reloadAfterRelink(){
+  let n = 0;
+  try { n = +sessionStorage.getItem("buyRelinkReloads") || 0; } catch(_){}
+  if (n >= 2){ console.warn("[buy-diag] relink reload cap reached - staying on this page"); return; }
+  try { sessionStorage.setItem("buyRelinkReloads", String(n + 1)); } catch(_){}
+  console.warn("[buy-diag] Link re-auth finished - reloading for a clean checkout flow");
+  errToast("Link reconnected - reloading checkout…");
+  msg("Link reconnected - restarting checkout…");
+  setTimeout(() => location.reload(), 700);
+}
 /* Detection is two-pronged because Privy rewrites some rejections (its init
    catch replaces the cause with a generic "Something went wrong setting up
    checkout") - but it always console.error()s the RAW error under the
@@ -263,14 +283,19 @@ window.addEventListener("message", (e) => {
 const _cerror = console.error.bind(console);
 console.error = (...args) => {
   try {
-    if (String(args[0]).startsWith("[FiatOnramp:Stripe]") &&
-        args.some(a => /not authenticated/i.test(String((a && a.message) || a)))){
-      staleLinkSeen = true;
-      suppressSavedTokens = true;
-      freshCustomerSpoofs = 1;   // re-armed on every recurrence: each retry consumes one
-      console.warn("[buy-diag] stale Link session detected - next attempt takes the Link re-auth path");
-      errToast("Your saved Link sign-in expired - retrying; Link will ask you to verify your email again.");
-      setTimeout(autoTryAgain, 800);
+    if (String(args[0]).startsWith("[FiatOnramp:Stripe]")){
+      if (linkReauthStarted){
+        // ANY provider error after the user just re-authenticated Link =
+        // the half-initialized continuation - a clean reload fixes it
+        reloadAfterRelink();
+      } else if (args.some(a => /not authenticated/i.test(String((a && a.message) || a)))){
+        staleLinkSeen = true;
+        suppressSavedTokens = true;
+        freshCustomerSpoofs = 1;   // re-armed on every recurrence: each retry consumes one
+        console.warn("[buy-diag] stale Link session detected - next attempt takes the Link re-auth path");
+        errToast("Your saved Link sign-in expired - retrying; Link will ask you to verify your email again.");
+        setTimeout(autoTryAgain, 800);
+      }
     }
   } catch(_){}
   return _cerror(...args);
@@ -287,10 +312,19 @@ window.fetch = async (input, init) => {
     console.warn("[buy-diag] presenting as fresh crypto customer for this lookup (stale-Link recovery)");
     return new Response('{"data":{"status":"none"}}', { status: 200, headers: { "content-type": "application/json" } });
   }
+  if (suppressSavedTokens && /\/onramp\/stripe\/create_link_auth_intent/.test(url)){
+    linkReauthStarted = true;   // the user is heading into Link's email/OTP re-auth
+  }
   // Stripe's own chunks requested from OUR origin = the blocked-frame fallback
   if (/\/crypto-onramp\/v1\//.test(url) && url.indexOf(location.origin) === 0) blockedFrameHelp();
   const res = await _fetch(input, init);
   try {
+    // post-OTP token exchange succeeding = the relink is DONE; reload before
+    // the half-initialized continuation can error (the response has landed,
+    // so Link's fresh credentials are already persisted)
+    if (linkReauthStarted && res.ok && /\/onramp\/stripe\/exchange_tokens/.test(url)){
+      reloadAfterRelink();
+    }
     if (!res.ok){
       const body = await res.clone().text();
       console.warn("[buy-diag]", res.status, url, body.slice(0, 400));   // EVERY failing call logs
