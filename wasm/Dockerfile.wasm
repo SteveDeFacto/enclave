@@ -26,6 +26,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 ca-certificates curl gdb libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
+# rclone: the encrypted-volumes engine (crypt over S3, driven by the manager's
+# /encvol unlock/sync/lock plane). Official static build, pinned by sha256 like
+# every other input; extracted with python3's zipfile so no unzip rides along.
+ARG RCLONE_VERSION=v1.67.0
+ARG RCLONE_SHA256=07c23d21a94d70113d949253478e13261c54d14d72023bb14d96a8da5f3e7722
+RUN curl -fsSL -o /tmp/rclone.zip \
+      "https://downloads.rclone.org/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-linux-amd64.zip" \
+    && echo "${RCLONE_SHA256}  /tmp/rclone.zip" | sha256sum -c - \
+    && python3 -c "import zipfile; zipfile.ZipFile('/tmp/rclone.zip').extract('rclone-${RCLONE_VERSION}-linux-amd64/rclone', '/tmp')" \
+    && install -m 0755 "/tmp/rclone-${RCLONE_VERSION}-linux-amd64/rclone" /usr/local/bin/rclone \
+    && rm -rf /tmp/rclone.zip "/tmp/rclone-${RCLONE_VERSION}-linux-amd64" \
+    && rclone version
+
 # wasmtime CLI with wasi-nn (ONNX Runtime backend, CUDA EP) + the ORT dylibs it
 # links. ldconfig registers /usr/local/lib so the dynamic linker finds them; the
 # CUDA provider .so is dlopened by libonnxruntime from the same directory.

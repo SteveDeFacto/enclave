@@ -18,6 +18,9 @@ backend, so the supervisor needs no change:
   DELETE /vms/:id        -> {id, deleted: true}
   GET    /vms/:id | /vms | /health | /capacity | /catalog | /debug/env
 
+Plus the encrypted-volume tenant plane (per-deployment token, NOT the control
+token; see the ENC_* block): GET /encvol/:id, POST /encvol/:id/{unlock|sync|lock}.
+
 Notes:
 - `image` is reinterpreted as a Wasm APP REFERENCE:
     * `ipfs://<cid>` — the normal (and, through the supervisor, the ONLY) form:
@@ -259,6 +262,35 @@ DEF_STORAGE_MB = int(os.environ.get("WASM_APP_STORAGE_MB", "256"))              
 if FS_ENABLED:
     FS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Encrypted volumes (rclone crypt over S3): user-held-key confidential storage,
+# the simplified successor to enclave-vault (no wallets, no on-chain ACL). The
+# owner encrypts a directory CLIENT-SIDE with `rclone crypt` and pushes the
+# ciphertext to any S3-compatible bucket; the version's config (encVolumes)
+# names the endpoint/bucket - never a key. The tenant starts immediately with
+# an EMPTY /enc/<name> preopen (same ramdisk mechanism as /data) plus a
+# per-deployment bearer token (ENCLAVE_ENC_TOKEN + ENCLAVE_ENC_API), and the
+# app itself delivers the crypt password over the in-enclave-terminated TLS:
+# POST /encvol/<vid>/unlock runs rclone (env-configured, secrets never in
+# argv) to pull + decrypt into the preopen. Plaintext exists only on the
+# CVM's encrypted ramdisk; the host/bucket only ever saw ciphertext. /sync
+# pushes local edits back (creds held in RAM from unlock; readOnly opts out),
+# /lock wipes. Caps: --max-transfer on the pull, then the storage audit
+# polices post-unlock growth per volume (same kill policy as /data).
+ENC_ENABLED    = os.environ.get("WASM_ENC", "1").lower() not in ("0", "false", "no")
+ENC_DIR        = pathlib.Path(os.environ.get("WASM_ENC_DIR", "/tmp/enclave-wasm-enc"))  # per-deployment staging (ramdisk)
+ENC_GUEST_ROOT = os.environ.get("WASM_ENC_GUEST", "/enc")                # /enc/<name> inside the guest
+ENC_DEF_MB     = int(os.environ.get("WASM_ENC_DEF_MB", "1024"))          # per-volume plaintext ceiling default
+ENC_MAX_MB     = int(os.environ.get("WASM_ENC_MAX_MB", "4096"))          # what a config maxMb may ask up to
+ENC_MAX_VOLS   = int(os.environ.get("WASM_ENC_MAX_VOLS", "8"))
+ENC_SYNC_SECS  = float(os.environ.get("WASM_ENC_SYNC_TIMEOUT", "1800"))  # one rclone pull/push budget
+RCLONE_BIN     = os.environ.get("RCLONE_BIN", "rclone")
+# test hook: lets an endpoint of "local:/abs/path" use rclone's local backend
+# instead of S3 so the whole pipeline runs without a bucket. NEVER set in the
+# enclave configs - a local source would read the manager's own filesystem.
+ENC_ALLOW_LOCAL = os.environ.get("WASM_ENC_LOCAL_SRC", "").lower() in ("1", "true", "on")
+if ENC_ENABLED:
+    ENC_DIR.mkdir(parents=True, exist_ok=True)
+
 _lock = threading.Lock()
 _apps = {}    # id -> record
 
@@ -331,6 +363,195 @@ def _validate_config(text: str) -> str:
     except Exception as e:
         raise ValueError(f"config is not valid JSON: {e}")
     return text
+
+
+# --- encrypted volumes (rclone crypt over S3) -------------------------------- #
+_ENC_BUCKET_RE   = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+_ENC_FILENAME_ENC = ("standard", "off", "obfuscate")
+
+
+def _parse_enc_volumes(cfg: dict) -> list:
+    """Validate the config's encVolumes into internal specs. Every field here is
+    NON-SECRET (it rides the approved, public version config): where the
+    ciphertext lives and how it was packed. The crypt password and any S3
+    credentials only ever arrive at unlock time, straight into RAM."""
+    entries = cfg.get("encVolumes")
+    if not entries:
+        return []
+    if not ENC_ENABLED:
+        raise ValueError("encrypted volumes are disabled on this node (WASM_ENC=0)")
+    if shutil.which(RCLONE_BIN) is None:
+        raise ValueError("encrypted volumes unavailable: this build has no rclone")
+    if not isinstance(entries, list) or len(entries) > ENC_MAX_VOLS:
+        raise ValueError(f"encVolumes must be a list of at most {ENC_MAX_VOLS} entries")
+    specs, seen = [], set()
+    for e in entries:
+        if not isinstance(e, dict):
+            raise ValueError("encVolumes entries must be objects")
+        name = str(e.get("name") or "").strip()
+        if not _VOL_NAME_RE.match(name):
+            raise ValueError(f"encVolumes: bad volume name '{name}' (want {_VOL_NAME_RE.pattern})")
+        if name in seen:
+            raise ValueError(f"encVolumes: duplicate volume '{name}'")
+        seen.add(name)
+        endpoint = str(e.get("endpoint") or "").strip().rstrip("/")
+        if endpoint.startswith("local:"):
+            if not ENC_ALLOW_LOCAL:
+                raise ValueError(f"encVolumes '{name}': local: endpoints are a test hook (WASM_ENC_LOCAL_SRC), not deployable")
+        elif not (endpoint.startswith("https://") or endpoint.startswith("http://")):
+            raise ValueError(f"encVolumes '{name}': endpoint must be an http(s) S3 endpoint URL")
+        bucket = str(e.get("bucket") or "").strip().strip("/")
+        if not _ENC_BUCKET_RE.match(bucket):
+            raise ValueError(f"encVolumes '{name}': bad bucket name")
+        path = str(e.get("path") or "").strip().strip("/")
+        if path and any(seg in ("", ".", "..") for seg in path.split("/")):
+            raise ValueError(f"encVolumes '{name}': bad path prefix")
+        fenc = str(e.get("filenameEncryption") or "standard").strip()
+        if fenc not in _ENC_FILENAME_ENC:
+            raise ValueError(f"encVolumes '{name}': filenameEncryption must be one of {_ENC_FILENAME_ENC}")
+        try:
+            max_mb = int(e.get("maxMb") or ENC_DEF_MB)
+        except (TypeError, ValueError):
+            raise ValueError(f"encVolumes '{name}': maxMb must be an integer")
+        if not 1 <= max_mb <= ENC_MAX_MB:
+            raise ValueError(f"encVolumes '{name}': maxMb must be 1..{ENC_MAX_MB}")
+        specs.append({"name": name, "endpoint": endpoint, "bucket": bucket, "path": path,
+                      "provider": str(e.get("provider") or "Other").strip() or "Other",
+                      "region": str(e.get("region") or "").strip(),
+                      "filenameEncryption": fenc,
+                      "directoryNameEncryption": bool(e.get("directoryNameEncryption", True)),
+                      "maxMb": max_mb, "readOnly": bool(e.get("readOnly", False))})
+    return specs
+
+
+def _rclone_obscure(secret: str) -> str:
+    """rclone config wants password fields OBSCURED (its reversible masking).
+    Piped via stdin - never argv - and verified to roundtrip byte-exact."""
+    r = subprocess.run([RCLONE_BIN, "obscure", "-"], input=secret.encode(),
+                       capture_output=True, timeout=30)
+    if r.returncode != 0 or not r.stdout.strip():
+        raise ValueError(f"rclone obscure failed: {(r.stderr or b'').decode('utf-8', 'replace').strip()[:200]}")
+    return r.stdout.decode().strip()
+
+
+def _enc_rclone_env(spec: dict, creds: dict) -> dict:
+    """The rclone process environment for one volume: two env-defined remotes
+    (encsrc = the S3 backend, encvol = crypt layered on it). Everything secret
+    rides the ENVIRONMENT of the child, nothing in argv, nothing on disk
+    (RCLONE_CONFIG=/dev/null keeps rclone from reading or writing a config)."""
+    env = dict(os.environ)
+    env["RCLONE_CONFIG"] = "/dev/null"
+    if spec["endpoint"].startswith("local:"):        # test hook (ENC_ALLOW_LOCAL)
+        env["RCLONE_CONFIG_ENCSRC_TYPE"] = "local"
+        remote = f"encsrc:{spec['endpoint'][len('local:'):]}/{spec['bucket']}"
+    else:
+        env["RCLONE_CONFIG_ENCSRC_TYPE"] = "s3"
+        env["RCLONE_CONFIG_ENCSRC_PROVIDER"] = spec["provider"]
+        env["RCLONE_CONFIG_ENCSRC_ENDPOINT"] = spec["endpoint"]
+        if spec["region"]:
+            env["RCLONE_CONFIG_ENCSRC_REGION"] = spec["region"]
+        if creds.get("accessKeyId"):
+            env["RCLONE_CONFIG_ENCSRC_ACCESS_KEY_ID"] = str(creds["accessKeyId"])
+            env["RCLONE_CONFIG_ENCSRC_SECRET_ACCESS_KEY"] = str(creds.get("secretAccessKey") or "")
+            if creds.get("sessionToken"):
+                env["RCLONE_CONFIG_ENCSRC_SESSION_TOKEN"] = str(creds["sessionToken"])
+        else:
+            env["RCLONE_CONFIG_ENCSRC_ENV_AUTH"] = "false"   # anonymous: public-read bucket
+        remote = f"encsrc:{spec['bucket']}"
+    if spec["path"]:
+        remote += "/" + spec["path"]
+    env["RCLONE_CONFIG_ENCVOL_TYPE"] = "crypt"
+    env["RCLONE_CONFIG_ENCVOL_REMOTE"] = remote
+    env["RCLONE_CONFIG_ENCVOL_PASSWORD"] = _rclone_obscure(str(creds["password"]))
+    if creds.get("salt"):
+        env["RCLONE_CONFIG_ENCVOL_PASSWORD2"] = _rclone_obscure(str(creds["salt"]))
+    env["RCLONE_CONFIG_ENCVOL_FILENAME_ENCRYPTION"] = spec["filenameEncryption"]
+    env["RCLONE_CONFIG_ENCVOL_DIRECTORY_NAME_ENCRYPTION"] = "true" if spec["directoryNameEncryption"] else "false"
+    return env
+
+
+def _enc_rclone_sync(src: str, dst: str, env: dict, max_mb: int = 0) -> tuple:
+    """One rclone sync. Returns (ok, error_message). Two failure shapes:
+    a nonzero exit (network, auth, content MAC mismatch), and - crucially -
+    exit 0 with 'Skipping undecryptable' NOTICEs: under encrypted file names a
+    WRONG PASSWORD decrypts nothing and rclone happily syncs an empty set, so
+    undecryptable names must fail the unlock, not silently produce an empty
+    volume."""
+    cmd = [RCLONE_BIN, "sync", src, dst, "--transfers", "8", "--checkers", "8",
+           "--retries", "2", "--contimeout", "15s"]
+    if max_mb:
+        cmd += ["--max-transfer", f"{max_mb}M"]
+    try:
+        r = subprocess.run(cmd, env=env, capture_output=True, timeout=ENC_SYNC_SECS,
+                           stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return False, f"rclone sync timed out after {int(ENC_SYNC_SECS)}s"
+    err = (r.stderr or b"").decode("utf-8", "replace")
+    if "undecryptable" in err.lower():
+        return False, "volume did not decrypt (wrong password/salt, or filenameEncryption doesn't match how it was pushed)"
+    if r.returncode != 0:
+        tail = err.strip()[-800:] or f"rclone exited {r.returncode}"
+        return False, tail
+    return True, ""
+
+
+def _enc_public(rec: dict) -> list:
+    """Refresh + return the public per-volume view (rides the /vms record and
+    GET /encvol/<vid>). Sizes are refreshed lazily here rather than per-write."""
+    enc = rec.get("_enc")
+    if not enc:
+        return []
+    for name, vol in enc["vols"].items():
+        if vol["pub"]["status"] in ("unlocked", "pushing"):
+            vol["pub"]["bytes"] = _dir_size(vol["dir"])
+    return [v["pub"] for v in enc["vols"].values()]
+
+
+def _enc_wipe_dir(vol: dict):
+    """Drop a volume's plaintext but KEEP the directory inode: it is a live
+    wasi preopen - the guest holds an fd to it - so we empty it, never rm it."""
+    d = pathlib.Path(vol["dir"])
+    for child in d.iterdir() if d.exists() else []:
+        try:
+            shutil.rmtree(child) if child.is_dir() else child.unlink()
+        except OSError:
+            pass
+
+
+def _enc_unlock_worker(rec: dict, vol: dict, creds: dict):
+    """Background pull: rclone fetches the ciphertext from the bucket and
+    decrypts into the volume's preopened dir. On ANY failure the dir is wiped -
+    a partial plaintext tree that LOOKS unlocked is worse than an empty one."""
+    spec = vol["spec"]
+    try:
+        env = _enc_rclone_env(spec, creds)
+    except (ValueError, subprocess.TimeoutExpired, OSError) as e:
+        with _lock:
+            vol["pub"]["status"], vol["pub"]["error"] = "locked", str(e)
+        return
+    ok, err = _enc_rclone_sync("encvol:", vol["dir"], env, spec["maxMb"])
+    with _lock:
+        if ok:
+            vol["pub"]["status"], vol["pub"]["error"] = "unlocked", None
+            vol["pub"]["bytes"] = _dir_size(vol["dir"])
+            # keep the rclone env in RAM for /sync push-back; readOnly drops it
+            vol["env"] = None if spec["readOnly"] else env
+        else:
+            _enc_wipe_dir(vol)
+            vol["pub"]["status"], vol["pub"]["error"] = "locked", err
+    print(f"[enc] {rec['id']}/{spec['name']} unlock {'ok' if ok else 'failed'}", flush=True)
+
+
+def _enc_push_worker(rec: dict, vol: dict):
+    """Background push: sync the (possibly app-edited) plaintext back to the
+    bucket through the same crypt remote. Local data stays intact either way."""
+    ok, err = _enc_rclone_sync(vol["dir"], "encvol:", vol["env"])
+    with _lock:
+        vol["pub"]["status"] = "unlocked"
+        vol["pub"]["error"] = None if ok else err
+        if ok:
+            vol["pub"]["lastPush"] = time.time()
+    print(f"[enc] {rec['id']}/{vol['spec']['name']} push {'ok' if ok else 'failed'}", flush=True)
 
 
 # --- attached model volumes ------------------------------------------------ #
@@ -1213,7 +1434,8 @@ def _alloc_ports(pspec) -> dict:
 
 
 def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdir=None,
-               nn=False, enclave_config=None, vol_mounts=None, egress=None, egress_transparent=None):
+               nn=False, enclave_config=None, vol_mounts=None, egress=None, egress_transparent=None,
+               enc=None):
     """The wasmtime invocation for a ports spec. Returns (cmd, host_port, wait_ports).
 
     serve mode: `wasmtime serve` owns the one HTTP listener; no sockets granted.
@@ -1263,6 +1485,19 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
         vol_args += ["--dir", f"{host_path}::{VOL_GUEST_ROOT}/{name}"]
     if vol_mounts:
         vol_args += ["--env", "ENCLAVE_MODELS=" + ",".join(vol_mounts.keys())]
+    # encrypted volumes: preopen each (initially empty) staging dir as
+    # /enc/<name> - a LIVE preopen, so the plaintext rclone decrypts into it
+    # after unlock appears to the guest with no restart. ENCLAVE_ENC lists the
+    # names; ENCLAVE_ENC_API + ENCLAVE_ENC_TOKEN are how the app (the only
+    # holder of the token besides this manager) drives unlock/sync/lock over
+    # loopback. Like ENCLAVE_CONFIG, the token is guest-only env.
+    if enc:
+        enc_mounts, enc_api, enc_token = enc
+        for name, host_path in enc_mounts.items():
+            vol_args += ["--dir", f"{host_path}::{ENC_GUEST_ROOT}/{name}"]
+        vol_args += ["--env", "ENCLAVE_ENC=" + ",".join(enc_mounts.keys()),
+                     "--env", "ENCLAVE_ENC_API=" + enc_api,
+                     "--env", "ENCLAVE_ENC_TOKEN=" + enc_token]
     # GGUF volumes double as HOST-PRELOADED wasi-nn graphs (the ggml/llama.cpp
     # backend in our wasmtime): -S nn-graph=ggml::<dir> loads the model ONCE at
     # process start, registered under the dir BASENAME; the guest load_by_name()s
@@ -1426,9 +1661,44 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
             vol_mounts[name] = have[name]["path"]
     rec["volumes"] = list(vol_mounts.keys())
 
+    # encrypted volumes (rclone crypt over S3): stage an EMPTY dir per volume
+    # and spawn right away - the app itself (or anything holding the
+    # per-deployment token) unlocks over loopback and the plaintext appears
+    # under the already-preopened /enc/<name>. Unlike /data, a failure to
+    # stage is a failed LAUNCH: an app deployed around an encrypted volume
+    # must not silently run without the mount.
+    enc = None
+    if enclave_config:
+        try:
+            enc_specs = _parse_enc_volumes(json.loads(enclave_config))
+        except ValueError as e:
+            rec["status"], rec["error"] = "failed", str(e)
+            return rec
+        if enc_specs:
+            base = ENC_DIR / vid
+            try:
+                vols = {}
+                for spec in enc_specs:
+                    d = base / spec["name"]
+                    d.mkdir(parents=True, exist_ok=True)
+                    vols[spec["name"]] = {
+                        "spec": spec, "dir": str(d), "env": None,
+                        "pub": {"name": spec["name"], "status": "locked", "error": None,
+                                "bytes": 0, "maxMb": spec["maxMb"], "readOnly": spec["readOnly"],
+                                "endpoint": spec["endpoint"], "bucket": spec["bucket"],
+                                "path": spec["path"]}}
+            except OSError as e:
+                rec["status"], rec["error"] = "failed", f"encrypted volume staging failed: {e}"
+                shutil.rmtree(base, ignore_errors=True)
+                return rec
+            rec["_enc"] = {"token": os.urandom(24).hex(), "dir": str(base), "vols": vols}
+            rec["encVolumes"] = _enc_public(rec)
+            enc = ({name: v["dir"] for name, v in vols.items()},
+                   f"http://{HOST_IP}:{PORT}/encvol/{vid}", rec["_enc"]["token"])
+
     ctx = {"pspec": pspec, "wasm": wasm, "port": port, "port_map": port_map, "fsdir": fsdir,
            "nn": nn, "enclave_config": enclave_config, "vol_mounts": vol_mounts, "gpu_share": gpu_share,
-           "log_path": log_path, "egress": egress}
+           "log_path": log_path, "egress": egress, "enc": enc}
     return _spawn_and_wait(rec, ctx)
 
 
@@ -1472,8 +1742,7 @@ def _fire_warmup(host_port: int, path: str, log_path):
 
 def _spawn_and_wait(rec, ctx):
     """Build the wasmtime command from a prepared context and spawn it, waiting
-    for readiness. Shared by launch() (no encrypted volumes) and unlock() (after
-    every user-held-key volume is decrypted + mounted)."""
+    for readiness."""
     pspec, wasm, port, port_map, fsdir, nn, enclave_config, vol_mounts, gpu_share, log_path = (
         ctx["pspec"], ctx["wasm"], ctx["port"], ctx["port_map"], ctx["fsdir"], ctx["nn"],
         ctx["enclave_config"], ctx["vol_mounts"], ctx["gpu_share"], ctx["log_path"])
@@ -1495,7 +1764,8 @@ def _spawn_and_wait(rec, ctx):
     # can grow) - the real per-app memory ceiling, enforced by the runtime.
     mem_bytes = max(rec["mem_mb"], 1) * 1024 * 1024
     cmd, host_port, wait_ports = _build_cmd(pspec, wasm, port, mem_bytes, port_map, fsdir, nn,
-                                            enclave_config, vol_mounts, egress, egress_transparent)
+                                            enclave_config, vol_mounts, egress, egress_transparent,
+                                            ctx.get("enc"))
     rec["hostPort"] = host_port
     rec["endpoint"] = f"http://{HOST_IP}:{host_port}" if host_port else None
     # GPU tenants: the wasmtime process itself is the CUDA process (ORT holds the
@@ -1637,6 +1907,28 @@ def _audit_storage(rec):
         _kill(rec)
 
 
+def _audit_enc(rec):
+    """Enforce each encrypted volume's plaintext ceiling. The rclone pull is
+    already capped by --max-transfer; this polices what the app WRITES into
+    the live /enc/<name> preopen afterwards - same measure-and-kill shape as
+    /data (a sized tmpfs is not available in the enclave)."""
+    enc = rec.get("_enc")
+    if not enc:
+        return
+    for name, vol in enc["vols"].items():
+        if vol["pub"]["status"] == "locked":
+            continue
+        used = _dir_size(vol["dir"])
+        vol["pub"]["bytes"] = used
+        if used > vol["spec"]["maxMb"] * 1024 * 1024:
+            rec["status"] = "failed"
+            rec["error"] = (f"storage: encrypted volume '{name}' holds {used // (1024*1024)}MiB, over its "
+                            f"{vol['spec']['maxMb']}MiB cap (encVolumes maxMb); app killed.")
+            print(f"[audit] {rec['id']} killed: enc volume {name} {used} bytes > {vol['spec']['maxMb']}MiB", flush=True)
+            _kill(rec)
+            return
+
+
 def _audit_sweep():
     while True:
         time.sleep(AUDIT_SECS)
@@ -1647,6 +1939,8 @@ def _audit_sweep():
                 _audit_rec(r)
                 if r["status"] == "running":
                     _audit_storage(r)
+                if r["status"] == "running":
+                    _audit_enc(r)
             except Exception:
                 pass
 
@@ -1692,6 +1986,12 @@ def _rm_fsdir(rec):
     d = rec.get("_fsdir")
     if d:
         shutil.rmtree(d, ignore_errors=True)   # ephemeral scratch: nothing to preserve
+    enc = rec.get("_enc")
+    if enc:
+        # plaintext + any retained rclone credentials die with the deployment
+        for vol in enc["vols"].values():
+            vol["env"] = None
+        shutil.rmtree(enc["dir"], ignore_errors=True)
 
 
 
@@ -1723,7 +2023,12 @@ def _refresh_status(rec: dict) -> None:
 
 def _public(rec: dict) -> dict:
     _refresh_status(rec)
+    if rec.get("_enc"):
+        _enc_public(rec)                    # refresh per-volume sizes in place
     return {k: v for k, v in rec.items() if not k.startswith("_")}
+
+
+_ENC_ROUTE_RE = re.compile(r"^/encvol/([^/?]+)(?:/(unlock|sync|lock))?$")
 
 
 # ---- HTTP contract --------------------------------------------------------- #
@@ -1759,6 +2064,75 @@ class Handler(http.server.BaseHTTPRequestHandler):
             tok = m.group(1) if m else ""
         return hmac.compare_digest(tok, VMMGR_TOKEN)
 
+    # --- encrypted volumes: the tenant plane ------------------------------- #
+    # /encvol/<vid>[/<action>] is NOT control-plane: it authenticates with the
+    # deployment's own token (ENCLAVE_ENC_TOKEN), which only the guest holds -
+    # the same posture as the old /enc data plane. The password/credentials in
+    # an unlock body exist in RAM for the duration of the request + the rclone
+    # child's environment; they are never logged, never persisted.
+    def _enc_route(self):
+        """Match an /encvol route; returns (rec, action) after auth, or None
+        after having already sent the error response."""
+        m = _ENC_ROUTE_RE.match(self.path)
+        if not m:
+            return None
+        vid, action = m.group(1), m.group(2)
+        with _lock:
+            rec = _apps.get(vid)
+        enc = rec.get("_enc") if rec else None
+        if not enc:
+            self._json(404, {"error": "no such deployment or no encrypted volumes"})
+            return None
+        tok = self.headers.get("X-Enc-Token") or ""
+        if not tok:
+            b = re.match(r"^Bearer\s+(\S+)$", self.headers.get("Authorization") or "")
+            tok = b.group(1) if b else ""
+        if not hmac.compare_digest(tok, enc["token"]):
+            self._json(401, {"error": "volume token required"})
+            return None
+        return rec, action
+
+    def _enc_post(self, rec, action):
+        b = self._body()
+        enc = rec["_enc"]
+        name = str(b.get("name") or "").strip()
+        vol = enc["vols"].get(name)
+        if not vol:
+            return self._json(404, {"error": f"no encrypted volume '{name}' on this deployment"})
+        pub = vol["pub"]
+        if action == "unlock":
+            password = b.get("password")
+            if not isinstance(password, str) or not password:
+                return self._json(400, {"error": "password required"})
+            creds = {"password": password, "salt": b.get("salt"),
+                     "accessKeyId": b.get("accessKeyId"),
+                     "secretAccessKey": b.get("secretAccessKey"),
+                     "sessionToken": b.get("sessionToken")}
+            with _lock:
+                if pub["status"] in ("syncing", "pushing"):
+                    return self._json(409, {"error": f"volume is busy ({pub['status']})"})
+                pub["status"], pub["error"] = "syncing", None
+                vol["env"] = None
+            threading.Thread(target=_enc_unlock_worker, args=(rec, vol, creds), daemon=True).start()
+            return self._json(202, {"name": name, "status": "syncing"})
+        if action == "sync":
+            with _lock:
+                if pub["status"] != "unlocked":
+                    return self._json(409, {"error": f"volume is {pub['status']}, not unlocked"})
+                if vol["spec"]["readOnly"] or not vol["env"]:
+                    return self._json(403, {"error": "read-only volume: no credentials retained for push"})
+                pub["status"] = "pushing"
+            threading.Thread(target=_enc_push_worker, args=(rec, vol), daemon=True).start()
+            return self._json(202, {"name": name, "status": "pushing"})
+        # lock: wipe the plaintext + drop retained credentials
+        with _lock:
+            if pub["status"] in ("syncing", "pushing"):
+                return self._json(409, {"error": f"volume is busy ({pub['status']})"})
+            _enc_wipe_dir(vol)
+            vol["env"] = None
+            pub["status"], pub["error"], pub["bytes"] = "locked", None, 0
+        return self._json(200, {"name": name, "status": "locked"})
+
 
 
     def do_GET(self):
@@ -1771,6 +2145,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                        if NODE_HAS_GPU else {}),
                                     "volumes": _volumes_public(),
                                     "capacity": _capacity()})
+        if _ENC_ROUTE_RE.match(self.path):                 # tenant plane: own token
+            hit = self._enc_route()
+            if hit:
+                rec, _action = hit
+                with _lock:
+                    vols = _enc_public(rec)
+                self._json(200, {"id": rec["id"], "volumes": vols})
+            return None
         if not self._ctrl_authed():
             return self._json(401, {"error": "control token required"})
         if self.path == "/capacity":
@@ -1827,6 +2209,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        if _ENC_ROUTE_RE.match(self.path):                 # tenant plane: own token
+            hit = self._enc_route()
+            if hit:
+                rec, action = hit
+                if not action:
+                    return self._json(405, {"error": "POST /encvol/<vid>/{unlock|sync|lock}"})
+                self._enc_post(rec, action)
+            return None
         if not self._ctrl_authed():
             return self._json(401, {"error": "control token required"})
         # Prefetch: resolve + verify + cache an app's bytes WITHOUT launching.
@@ -1952,7 +2342,9 @@ def _debug_env() -> dict:
            "nn_probe": dict(_NN_PROBE), "gpu_vram_gb": GPU_VRAM_GB, "gpu_vram_source": GPU_VRAM_SRC,
            "mps_pipe": MPS_PIPE_DIR if (NN_ENABLED and NODE_HAS_GPU) else None,
            "fs": FS_ENABLED, "fs_guest": FS_GUEST_PATH if FS_ENABLED else None,
-           "default_storage_mb": DEF_STORAGE_MB if FS_ENABLED else 0}
+           "default_storage_mb": DEF_STORAGE_MB if FS_ENABLED else 0,
+           "enc": ENC_ENABLED and shutil.which(RCLONE_BIN) is not None,
+           "enc_guest": ENC_GUEST_ROOT if ENC_ENABLED else None}
     try:
         out["uname"] = " ".join(os.uname())
     except Exception as e:
@@ -1972,6 +2364,10 @@ def main():
     # and a manager restart has already lost track of any prior deployments.
     if FS_ENABLED:
         for child in FS_DIR.iterdir() if FS_DIR.exists() else []:
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+    if ENC_ENABLED:
+        for child in ENC_DIR.iterdir() if ENC_DIR.exists() else []:
             if child.is_dir():
                 shutil.rmtree(child, ignore_errors=True)
     httpd = http.server.ThreadingHTTPServer((HOST_IP if HOST_IP else "0.0.0.0", PORT), Handler)
