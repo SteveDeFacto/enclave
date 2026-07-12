@@ -23,8 +23,8 @@ Beyond plain web apps: GPU inference via `wasi-nn` (ONNX, plus GGUF through a bu
 | path | what it is |
 |---|---|
 | `supervisor.js` | the in-enclave service: REST API, deployment lifecycle, metering, attestation endpoints, platform-model proxy |
-| `wasm/` | wasm-manager sidecar: the wasmtime sandbox that runs tenant apps |
-| `worker/` | GPU worker: `wasi-nn` ONNX inference on MPS-capped GPU slices |
+| `wasm/` | wasm-manager sidecar: the wasmtime sandbox that runs tenant apps, incl. `wasi-nn` inference (ONNX Runtime + llama.cpp/GGUF) on MPS-capped GPU slices |
+| `worker/` | GPU worker: per-tenant MPS-capped GPU processes for raw PTX submission |
 | `mps-daemon/` | NVIDIA MPS control daemon (fractional GPU shares) |
 | `vllm/` | the 8×GPU platform-model image (vLLM) |
 | `contracts/` | Solidity on Base: `EnclaveRegistry`, `EnclaveAppCatalog`, `EnclaveDeployments` |
