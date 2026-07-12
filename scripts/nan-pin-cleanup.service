@@ -1,0 +1,13 @@
+[Unit]
+Description=nan IPFS pin cleanup — unpin delisted/unapproved app wasm from the catalog
+After=network-online.target ipfs.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# BASE_RPC + ADDRESS_BOOK_ADDRESS come from the relay env (reused, not duplicated).
+EnvironmentFile=-/etc/nan-relay/api-relay.env
+EnvironmentFile=-/etc/nan-pin-cleanup.env
+ExecStart=/usr/bin/node /opt/enclave-gateway/nan-pin-cleanup.mjs
+# Cleanup is best-effort; a failure must not wedge the timer.
+SuccessExitStatus=0 1

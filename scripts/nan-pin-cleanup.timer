@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the nan IPFS pin cleanup once a day
+
+[Timer]
+# Once daily, a few minutes past a quiet hour; catch up if the box was off.
+OnCalendar=*-*-* 04:17:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
