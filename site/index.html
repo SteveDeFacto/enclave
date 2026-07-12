@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="dark" />
 <meta name="theme-color" content="#070A0F" />
 <title>Enclave · Trustless Confidential Compute</title>
-<meta name="description" content="Trustless on-demand confidential GPU compute. Deploy a WebAssembly app onto a confidential enclave equipped with an H200 GPU, straight from your browser: pay in ETH or USDC, and verify the enclave yourself. CORS-friendly API." />
+<meta name="description" content="Trustless on-demand confidential GPU compute. Deploy a WebAssembly app onto a confidential enclave equipped with an H200 GPU, straight from your browser: pay in ETH or USDC, and verify the enclave yourself. CORS-friendly API. Built and operated by Enclave Host, Inc." />
 <link rel="icon" href="favicon.ico" sizes="48x48 32x32 16x16" />
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
@@ -209,6 +209,40 @@
       </table>
       </div>
       <p class="mig-note">Example points on a continuous scale, not a fixed menu - the dials move in whole-percent steps. A <b>Full GPU</b> deployment (100%) is the option when you want no co-tenants on the card at all: it's the only configuration where isolation from other tenants is also hardware-enforced. On a shared card, tenants are isolated from each other at the sandbox-and-process level (<a href="#isolation">how →</a>) and always isolated from the operator by confidential computing.</p>
+    </div>
+  </div>
+</section>
+<!-- ===================== ABOUT ===================== -->
+<section id="about" data-view="overview" style="background:var(--bg-1);border-top:1px solid var(--line-soft);" aria-label="About the company">
+  <div class="wrap">
+    <c-section-head eyebrow="The company" heading="Who's behind this.">
+      <p>Enclave is designed so you never have to take the operator's word for anything - but you should still know whose word you're not taking. Enclave is built and operated by <b>Enclave Host,&nbsp;Inc.</b></p>
+    </c-section-head>
+
+    <div class="cards about-cards">
+      <div class="card jade">
+        <span class="tag">the operator</span>
+        <h3>Enclave Host, Inc.</h3>
+        <p>The company behind Enclave. It builds the enclave stack, operates the fleet, signs the releases, and publishes the source of every build it runs. Payments forward to it on-chain in the open, and its enclaves prove what they're running before you send them a byte - the whole point is that "trust us" never has to enter the conversation.</p>
+        <div class="about-links">
+          <a class="btn btn-ghost" href="https://github.com/EnclaveHost/enclave" target="_blank" rel="noopener">Source on GitHub <span class="arr">↗</span></a>
+          <a class="btn btn-ghost" href="mailto:support@enclave.host">support@enclave.host</a>
+        </div>
+      </div>
+      <div class="card iris">
+        <span class="tag">the founder</span>
+        <div class="founder-id">
+          <span class="f-ava" aria-hidden="true">SB</span>
+          <div>
+            <h3>Steven Batchelor</h3>
+            <span class="f-role">Founder &amp; CEO</span>
+          </div>
+        </div>
+        <p>An application architect by background - AWS, .NET, and the Salesforce platform - Steven designs and builds Enclave hands-on: the attested enclave stack, the on-chain contracts, and the site you're reading. Based in Arizona.</p>
+        <div class="about-links">
+          <a class="btn btn-ghost" href="https://www.linkedin.com/in/steven-batchelor-50791627/" target="_blank" rel="noopener">LinkedIn <span class="arr">↗</span></a>
+        </div>
+      </div>
     </div>
   </div>
 </section>
