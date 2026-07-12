@@ -13,7 +13,7 @@ import { APP_DOMAIN, DEPLOYMENTS_ADDRESS } from "../../js/core/config.js";
 import { Enclave } from "../../js/core/api.js";
 import { pad32, encUint, DEP_SEL, depPrices6, rate6Of, waitReceipt } from "../../js/core/chain.js";
 import { authenticate, connectWallet, refreshWallet, saveSession, ensureBaseChain, sendTx } from "../../js/core/wallet.js";
-import { slugOfRef } from "../../js/core/catalog.js";
+import { slugOfRef, artOfRef, loadCatalog } from "../../js/core/catalog.js";
 import { vspecOf, verifyEnclaveInBrowser } from "../../js/core/verify.js";
 import { runlog, paintLine } from "../../js/core/runlog.js";
 import { payForRuntime } from "../../js/core/fund.js";
@@ -145,6 +145,16 @@ class Deployments extends EnclaveElement {
     const cuts = runlog.interrupted();
     if (cuts.length) import("../../js/pages/deploy.js")
       .then(m => cuts.forEach(r => m.resumeDeployWatch(r))).catch(() => {});
+    // rows show their app's cover art, resolved from the catalog - kick the
+    // read here too (no-op when loaded; the localStorage copy paints first)
+    // and repaint once the live catalog lands, unless a panel is open (same
+    // clobber rule as _onAuth; the regular poll catches up after it closes).
+    loadCatalog();
+    this._onCat = () => {
+      if (this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden])")) return;
+      if (this._list) this._renderRows(this._list);
+    };
+    document.addEventListener("enclave:catalog", this._onCat);
     this.refresh();
   }
   disconnectedCallback() {
@@ -154,7 +164,8 @@ class Deployments extends EnclaveElement {
     if (this._onAuth) document.removeEventListener("enclave:auth", this._onAuth);
     if (this._onWallet) document.removeEventListener("enclave:wallet", this._onWallet);
     if (this._onLog) document.removeEventListener("enclave:runlog", this._onLog);
-    this._wired = false; this._onAuth = null; this._onWallet = null; this._onLog = null;
+    if (this._onCat) document.removeEventListener("enclave:catalog", this._onCat);
+    this._wired = false; this._onAuth = null; this._onWallet = null; this._onLog = null; this._onCat = null;
   }
 
   /* ---- live-deploy strips: one per run streaming with no row to live in ---- */
@@ -265,13 +276,18 @@ class Deployments extends EnclaveElement {
       // work can be topped up, and awaiting_payment/unfunded are Top up's
       // whole point (unfunded = drained; a top-up is what un-sticks it)
       const live = ["running", "provisioning", "queued", "pending", "claiming", "claimed", "awaiting_payment", "unfunded"].indexOf(st) !== -1;
+      // the row's app identity, shared by the cover-art chip and the meta line
+      const appLbl = (d.app && d.app.slug ? d.app.slug + ":" + d.app.version : null)
+        || (d.image && d.image.reference ? slugOfRef(d.image.reference) || shortImg(d.image.reference) : null);
+      const art = artOfRef(d.image && d.image.reference, appLbl || d.id);
       return '<div class="enc-row' + (highlight && d.id === highlight ? " enc-new" : "") + '">' +
         '<div class="enc-main">' +
+          '<span class="enc-thumb" style="background-image:' + art + '" aria-hidden="true"></span>' +
           '<span class="ap-badge ' + statusCls(st) + '">' + esc(st) + '</span>' +
           '<span class="ap-badge ' + (d.public ? 'ep-public' : 'ep-private') + '" title="' + (d.public ? 'anyone can reach the app endpoint' : 'only your wallet token can reach the app') + '">' + (d.public ? 'public' : 'private') + '</span>' +
           '<button class="enc-id" data-copy="' + esc(d.id) + '">' + esc(d.id) + ' ⧉</button>' +
           '<span class="enc-br" aria-hidden="true"></span>' +
-          '<span class="enc-meta">' + esc(encTier(d)) + ((d.app || (d.image && d.image.reference)) ? ' · <span class="dim">' + esc((d.app && d.app.slug ? d.app.slug + ":" + d.app.version : null) || slugOfRef(d.image.reference) || shortImg(d.image.reference)) + '</span>' : '') + '</span>' +
+          '<span class="enc-meta">' + esc(encTier(d)) + (appLbl ? ' · <span class="dim">' + esc(appLbl) + '</span>' : '') + '</span>' +
           '<span class="enc-spend">' + bud + '</span>' +
           '<span class="enc-acts">' +
             '<button class="btn btn-sm enc-outbtn" data-id="' + esc(d.id) + '">Output</button>' +

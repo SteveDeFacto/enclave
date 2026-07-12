@@ -27,6 +27,7 @@ c-deployments{display:contents;}
 .enc-row:hover{border-color:#33465c;}
 .enc-row.enc-new{border-color:var(--jade-dim);box-shadow:0 0 0 1px var(--jade-deep) inset;background:rgba(47,230,168,.04);}
 .enc-main{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.enc-thumb{flex:none;width:48px;aspect-ratio:16/9;border-radius:var(--radius-sm);border:1px solid var(--line-soft);background:var(--bg-1) center/cover no-repeat;}   /* the app's cover art (store thumbnail or generated stand-in) */
 .enc-br{flex-basis:100%;height:0;}   /* hard wrap after the instance id: tier/app/spend start the next line */
 .enc-id{background:none;border:0;color:var(--jade-2);font-family:var(--font-mono);font-size:.84rem;cursor:pointer;padding:0;}
 .enc-meta{font-family:var(--font-mono);font-size:.76rem;color:var(--text);} .enc-meta .dim{color:var(--text-muted);}

@@ -10,9 +10,9 @@
    Load progress is announced with `enclave:catalog` events (detail.type:
    loading | loaded | error) - pages render, this module doesn't.
    ============================================================ */
-import { APP_CATALOG_ADDRESS } from "./config.js";
+import { APP_CATALOG_ADDRESS, IPFS_IMG_GATEWAY } from "./config.js";
 import { catConfigured, appCount, catGetAppsPage, catGetVersions, catOwner, APPROVAL } from "./chain.js";
-import { lsGet, lsSet, emit, on } from "./util.js";
+import { lsGet, lsSet, emit, on, esc } from "./util.js";
 import { minPctsOf } from "./pricing.js";
 import { Enclave } from "./api.js";
 
@@ -199,24 +199,62 @@ on("enclave:addresses", ({ changed }) => {
   }
 });
 
-// deployment rows show the human app name (slug:version) resolved EXACTLY from
-// the row's catalog://<appId>/<idx> reference - from the live STORE or the
-// localStorage catalog cache. Legacy ipfs:// rows return null (the caller
-// falls back to the truncated reference): a CID can belong to several versions
-// with different approved configs, so naming one would be a guess.
-export function slugOfRef(ref){
-  const cr = parseCatalogRef(ref);
-  if (!cr) return null;
+// deployment rows resolve their catalog://<appId>/<idx> reference to the app
+// record - from the live STORE or the localStorage catalog cache (either may
+// be populated first, depending on which page the visitor landed on).
+function appOfRef(cr){
   const lists = [];
   if (Array.isArray(STORE.apps) && STORE.apps.length) lists.push(STORE.apps);
   try {
     const raw = lsGet("enclave_catalog_" + APP_CATALOG_ADDRESS);
     if (raw){ const j = JSON.parse(raw); if (j && Array.isArray(j.apps)) lists.push(j.apps); }
   } catch(e){}
-  for (const apps of lists) for (const a of apps){
-    if (!a || a.appId !== cr.appId) continue;
-    const v = (a.versions || [])[cr.index];
-    return a.slug + (v && v.version != null ? ":" + v.version : "#" + cr.index);
-  }
+  for (const apps of lists) for (const a of apps)
+    if (a && a.appId === cr.appId) return { app: a, v: (a.versions || [])[cr.index] || null };
   return null;
+}
+// the human app name (slug:version) for a deployment row. Legacy ipfs:// rows
+// return null (the caller falls back to the truncated reference): a CID can
+// belong to several versions with different approved configs - naming one
+// would be a guess.
+export function slugOfRef(ref){
+  const cr = parseCatalogRef(ref);
+  const hit = cr && appOfRef(cr);
+  if (!hit) return null;
+  return hit.app.slug + (hit.v && hit.v.version != null ? ":" + hit.v.version : "#" + cr.index);
+}
+
+/* ---- generated stand-in art ----
+   For apps that ship no thumbnail (store tiles AND dashboard rows): an accent
+   from the site palette keyed off `key`, the enclave corner brackets, and the
+   app's initial. Inline SVG data URI - nothing to fetch, can never 404; the
+   same key always yields the same art, so a deployment's chip matches its
+   store tile. */
+const ART_ACCENTS = ["#2fe6a8", "#8fa2ff", "#ff914d", "#57d7ff", "#c08aff", "#e66bd2"];
+export function placeholderArt(key, initial){
+  key = String(key || "?");
+  let h = 5381; for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) >>> 0;
+  const c = ART_ACCENTS[h % ART_ACCENTS.length];
+  const ch = esc(String(initial || "?").trim().charAt(0).toUpperCase() || "?");
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180">'
+    + '<rect width="320" height="180" fill="#0b0f16"/>'
+    + '<circle cx="160" cy="90" r="115" fill="' + c + '" opacity=".05"/>'
+    + '<circle cx="160" cy="90" r="62" fill="' + c + '" opacity=".07"/>'
+    + '<path d="M26 42v-18h18M294 42v-18h-18M26 138v18h18M294 138v18h-18" stroke="' + c + '" stroke-width="2" fill="none" opacity=".55"/>'
+    + '<text x="160" y="92" text-anchor="middle" dominant-baseline="central" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="64" font-weight="600" fill="' + c + '" opacity=".9">' + ch + '</text>'
+    + '</svg>';
+  return "url('data:image/svg+xml," + encodeURIComponent(svg) + "')";
+}
+// CSS background-image for a deployment row's app chip: the referenced
+// version's real thumbnail when the catalog knows it, else placeholder art
+// keyed by the appId (so it matches the store tile). `label` seeds the art
+// for legacy ipfs:// rows the catalog can't name.
+export function artOfRef(ref, label){
+  const cr = parseCatalogRef(ref);
+  const hit = cr && appOfRef(cr);
+  const m = hit && hit.v ? mediaOf(hit.v) : {};
+  if (m.thumbnail) return "url('" + IPFS_IMG_GATEWAY + encodeURIComponent(m.thumbnail) + "')";
+  const name = (hit && (hit.app.name || hit.app.slug)) || String(label || "?");
+  return placeholderArt((cr && cr.appId) || ref || label, name);
 }

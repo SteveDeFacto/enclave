@@ -13,28 +13,7 @@ import { esc } from "../../js/core/util.js";
 import { IPFS_IMG_GATEWAY } from "../../js/core/config.js";
 import { Enclave } from "../../js/core/api.js";
 import { APPROVAL } from "../../js/core/chain.js";
-import { STORE, selIdx, appOfficial, appMedia } from "../../js/core/catalog.js";
-
-/* deterministic placeholder art for apps published without a thumbnail: an
-   accent from the site palette keyed off the appId, the enclave corner
-   brackets, and the app's initial - unbranded tiles look deliberate and no
-   two neighbors look alike. Inline SVG data URI: nothing extra to fetch. */
-const THUMB_ACCENTS = ["#2fe6a8", "#8fa2ff", "#ff914d", "#57d7ff", "#c08aff", "#e66bd2"];
-function placeholderThumb(app){
-  const key = String(app.appId || app.slug || "?");
-  let h = 5381; for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) >>> 0;
-  const c = THUMB_ACCENTS[h % THUMB_ACCENTS.length];
-  const ch = esc(((app.name || app.slug || "?").trim()[0] || "?").toUpperCase());
-  const svg =
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180">'
-    + '<rect width="320" height="180" fill="#0b0f16"/>'
-    + '<circle cx="160" cy="90" r="115" fill="' + c + '" opacity=".05"/>'
-    + '<circle cx="160" cy="90" r="62" fill="' + c + '" opacity=".07"/>'
-    + '<path d="M26 42v-18h18M294 42v-18h-18M26 138v18h18M294 138v18h-18" stroke="' + c + '" stroke-width="2" fill="none" opacity=".55"/>'
-    + '<text x="160" y="92" text-anchor="middle" dominant-baseline="central" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="64" font-weight="600" fill="' + c + '" opacity=".9">' + ch + '</text>'
-    + '</svg>';
-  return "url('data:image/svg+xml," + encodeURIComponent(svg) + "')";
-}
+import { STORE, selIdx, appOfficial, appMedia, placeholderArt } from "../../js/core/catalog.js";
 
 class AppCard extends EnclaveElement {
   static properties = { app: null };
@@ -57,7 +36,7 @@ class AppCard extends EnclaveElement {
     thumb.hidden = false;
     thumb.style.backgroundImage = media.thumbnail
       ? "url('" + IPFS_IMG_GATEWAY + encodeURIComponent(media.thumbnail) + "')"
-      : placeholderThumb(app);
+      : placeholderArt(app.appId || app.slug, app.name || app.slug);
 
     this.querySelector("h3").textContent = app.name;
 
