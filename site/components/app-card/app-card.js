@@ -48,7 +48,7 @@ class AppCard extends EnclaveElement {
       ? '<span class="app-badge rej" title="Rejected by the catalog owner; deploys are refused">✕ rejected</span>'
       : '<span class="app-badge unv" title="Awaiting catalog-owner approval; deploys are refused until then">pending</span>';
     const officialBadge = isOfficial
-      ? '<span class="app-badge" title="Published by the platform (the catalog deployer wallet)">★ official</span>' : "";
+      ? '<span class="app-badge" title="Published by Enclave Host, Inc. (the catalog deployer wallet)">★ by Enclave</span>' : "";
     const delistBadge = app.active ? ''
       : '<span class="app-badge del" title="Delisted: hidden from the public store; only you (its publisher) and the catalog owner see it.">delisted</span>';
     this.querySelector(".app-badges").innerHTML = officialBadge + badge + apBadge + delistBadge;
