@@ -10,8 +10,14 @@ c-deployments{display:contents;}
 .enc-segs button{flex:none;padding:.5em .95em;}
 .enc-segs b{font-weight:400;color:var(--text-dim);margin-left:5px;font-size:.72rem;}
 .enc-segs button.on b{color:var(--jade-dim);}
-.enc-search{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font-family:var(--font-mono);font-size:.78rem;padding:.55em .8em;min-width:210px;}
+/* with the count gone, the search fills the gap between the seg and refresh/CTA */
+.enc-search{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font-family:var(--font-mono);font-size:.78rem;padding:.55em .8em;flex:1 1 auto;min-width:210px;}
 .enc-search:focus{outline:none;border-color:var(--jade-dim);}
+
+/* pager: 5 deployments per page */
+.enc-pager{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px;}
+.enc-pg-info{font-family:var(--font-mono);font-size:.74rem;color:var(--text-dim);font-variant-numeric:tabular-nums;}
+.enc-pg[disabled]{opacity:.4;cursor:default;}
 .enc-empty{padding:34px 0;text-align:center;font-family:var(--font-mono);font-size:.8rem;color:var(--text-muted);}
 .enc-body{display:grid;gap:14px;}
 .enc-err{margin-top:8px;padding:.5em .7em;border:1px solid var(--amber-dim);border-radius:8px;background:rgba(255,145,77,.06);color:var(--amber);font-family:var(--font-mono);font-size:.72rem;line-height:1.5;word-break:break-word;}

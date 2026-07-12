@@ -96,6 +96,7 @@ class Deployments extends EnclaveElement {
   renderedCallback() {
     if (this._wired) return;
     this._wired = true;
+    this._page = 0;                            // current deployments page (5 per page)
     this._logPolls = {};                       // open Output panels' log timers, by id
     this._strips = new Map();                  // live-deploy strips, keyed by run record
     this.querySelector(".enc-refresh").addEventListener("click", () => this.refresh({ spinner: true }));
@@ -109,11 +110,12 @@ class Deployments extends EnclaveElement {
         this._filter = b.dataset.bucket;
         lsSet(FILTER_KEY, JSON.stringify(this._filter));
         $$(".enc-segs button", this).forEach(x => x.classList.toggle("on", x === b));
+        this._page = 0;                        // a new filter starts at the first page
         this._renderRows(this._list || []);
       });
     });
     const q = this.querySelector(".enc-search");
-    if (q) q.addEventListener("input", () => { this._q = q.value.trim().toLowerCase(); this._renderRows(this._list || []); });
+    if (q) q.addEventListener("input", () => { this._q = q.value.trim().toLowerCase(); this._page = 0; this._renderRows(this._list || []); });
     // document-level listeners must be removable: the soft-nav router mounts a
     // fresh instance per visit, and detached ones must not keep refreshing.
     // A sign-in mid-view (the lazy log/attestation unlock) must NOT clobber
@@ -203,13 +205,13 @@ class Deployments extends EnclaveElement {
 
   async refresh(opts) {
     opts = opts || {};
-    const body = this.querySelector(".enc-body"), count = this.querySelector(".enc-count");
+    const body = this.querySelector(".enc-body");
     if (!body) return;
     this._paintedFor = Enclave.address;   // what this paint reflects (see _onWallet)
-    const setCount = t => { if (count) count.textContent = t || ""; };
     const hideBar = () => { const tb = this.querySelector(".enc-toolbar"); if (tb) tb.hidden = true; };
     if (!Enclave.address){
-      setCount(""); this._stopPoll(); hideBar();
+      this._stopPoll(); hideBar();
+      const pager = this.querySelector(".enc-pager"); if (pager){ pager.hidden = true; pager.innerHTML = ""; }
       body.innerHTML = '<div class="enc-empty">Connect your wallet (above) to see your enclaves.</div>'; return;
     }
     // NO sign-in wall: a connected wallet is enough - the list is public
@@ -231,7 +233,7 @@ class Deployments extends EnclaveElement {
   }
 
   _renderRows(list, highlight) {
-    const body = this.querySelector(".enc-body"), count = this.querySelector(".enc-count");
+    const body = this.querySelector(".enc-body");
     list = (list || []).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
     this._list = list;
     const counts = { all: list.length, running: 0, queued: 0, ended: 0, failed: 0 };
@@ -240,12 +242,20 @@ class Deployments extends EnclaveElement {
     let shown = this._filter === "all" ? list.slice() : list.filter(d => bucketOf(d.status) === this._filter);
     if (this._q) shown = shown.filter(d =>
       (d.id + " " + ((d.image && d.image.reference) || "") + " " + (d.status || "")).toLowerCase().includes(this._q));
-    if (count) count.textContent = list.length
-      ? (counts.running + " running · " + list.length + " total" + (shown.length !== list.length ? " · " + shown.length + " shown" : ""))
-      : "";
-    if (!list.length){ body.innerHTML = '<div class="enc-empty">No apps yet. <a href="apps">Deploy one →</a></div>'; return; }
-    if (!shown.length){ body.innerHTML = '<div class="enc-empty">Nothing here - pick another status tab or clear the search.</div>'; return; }
-    body.innerHTML = shown.map(d => {
+    const pager = this.querySelector(".enc-pager");
+    const clearPager = () => { if (pager){ pager.hidden = true; pager.innerHTML = ""; } };
+    if (!list.length){ body.innerHTML = '<div class="enc-empty">No apps yet. <a href="apps">Deploy one →</a></div>'; clearPager(); return; }
+    if (!shown.length){ body.innerHTML = '<div class="enc-empty">Nothing here - pick another status tab or clear the search.</div>'; clearPager(); return; }
+    // paginate: 5 rows per page (the list grows unbounded; keep the panel short).
+    // The page persists across the 10s poll; a just-deployed (highlighted) row
+    // pulls the view to whichever page it lands on; clamp when the list shrinks.
+    const PER_PAGE = 5;
+    const pages = Math.max(1, Math.ceil(shown.length / PER_PAGE));
+    if (highlight){ const hi = shown.findIndex(d => d.id === highlight); if (hi >= 0) this._page = Math.floor(hi / PER_PAGE); }
+    if (this._page >= pages) this._page = pages - 1;
+    if (!(this._page >= 0)) this._page = 0;
+    const pageRows = shown.slice(this._page * PER_PAGE, this._page * PER_PAGE + PER_PAGE);
+    body.innerHTML = pageRows.map(d => {
       const ep = appEndpoint(d), st = d.status || "–";
       const bud = (d.paidUsdc != null)
         ? (esc(d.paidUsdc) + " USDC paid" + (d.timeRemainingSec > 0 ? " · " + esc(fmtDur(d.timeRemainingSec)) + " left" : "")
@@ -285,6 +295,7 @@ class Deployments extends EnclaveElement {
     $$(".enc-fundbtn", body).forEach(b => b.addEventListener("click", () => this._fund(b.dataset.id, b)));
     $$(".enc-verify", body).forEach(b => b.addEventListener("click", () => this._verify(b.dataset.id, b)));
     $$(".enc-kill", body).forEach(b => b.addEventListener("click", () => this._kill(b.dataset.id, b)));
+    this._renderPager(pages, shown.length, PER_PAGE);
     // finished runs' strips yield to their rows the moment those render
     [...this._strips.keys()].forEach(r => this._retireStrip(r));
     // a just-deployed row opens its Output panel so the narrative continues in place
@@ -292,6 +303,24 @@ class Deployments extends EnclaveElement {
       const b = body.querySelector('.enc-outbtn[data-id="' + highlight + '"]');
       if (b && runlog.runFor(highlight)) this._output(highlight, b);
     }
+  }
+
+  /* ---- pager: prev · "x–y of N" · next. Hidden for a single page. ---- */
+  _renderPager(pages, total, per) {
+    const pager = this.querySelector(".enc-pager"); if (!pager) return;
+    if (pages <= 1){ pager.hidden = true; pager.innerHTML = ""; return; }
+    const p = this._page, first = p * per + 1, last = Math.min(total, (p + 1) * per);
+    pager.hidden = false;
+    pager.innerHTML =
+      '<button class="btn btn-sm enc-pg" data-pg="prev" type="button"' + (p <= 0 ? " disabled" : "") + '>← prev</button>' +
+      '<span class="enc-pg-info">' + first + '–' + last + ' of ' + total + ' · page ' + (p + 1) + ' of ' + pages + '</span>' +
+      '<button class="btn btn-sm enc-pg" data-pg="next" type="button"' + (p >= pages - 1 ? " disabled" : "") + '>next →</button>';
+    $$(".enc-pg", pager).forEach(b => b.addEventListener("click", () => {
+      this._page += b.dataset.pg === "next" ? 1 : -1;
+      this._renderRows(this._list || []);
+      const top = this.querySelector(".enc-body");
+      if (top) top.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }));
   }
 
   /* ---- per-row Top up: extend a deployment's runtime in place. One amount,
