@@ -61,6 +61,8 @@ containers:
       timeout: 5s
       retries: 10
       start_period: 60s
+    secrets:
+      - WORKER_TOKEN             # shared bearer with the supervisor (SAME Tinfoil secret); gates the worker control plane (/tenants, /run, ...). Unset = loopback-only + auth OFF.
 
   # --- supervisor: control plane (no GPU), public ingress -----------------------
   - name: "supervisor"
@@ -193,6 +195,7 @@ containers:
     secrets:
       - SECRET
       - ADMIN_TOKEN              # operator token for POST /v1/admin/deployments/:id/provision
+      - WORKER_TOKEN             # shared bearer with the worker container (SAME Tinfoil secret); the supervisor sends it on worker-manager calls. Unset = not sent.
       - REGISTRY_PRIVATE_KEY     # EnclaveRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
       - EGRESS_RELAY_TOKEN       # shared secret with the egress-relay box; same value fleet-wide (like SECRET). Unset = egress off.
       - ACME_EAB_KID             # ZeroSSL External Account Binding pair (ZeroSSL Developer page).
