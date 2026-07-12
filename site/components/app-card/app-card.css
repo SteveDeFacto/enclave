@@ -16,7 +16,7 @@ c-app-card{display:contents;}
 .app-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
 .app-head h3{margin:0;font-size:1.02rem;line-height:1.3;word-break:break-word;}
 .app-badges{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;margin-left:auto;}
-.app-badge{flex:none;font-family:var(--font-mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;
+.app-badge{flex:none;font-family:var(--font-mono);font-size:.68rem;letter-spacing:.04em;
   padding:3px 8px;border-radius:999px;border:1px solid var(--jade-dim);color:var(--jade);background:var(--jade-deep);white-space:nowrap;}
 .app-badge.unv{border-color:var(--line);color:var(--text-dim);background:transparent;}
 .app-badge.comm{border-color:var(--amber);color:var(--amber);background:transparent;}
