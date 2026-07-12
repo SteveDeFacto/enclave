@@ -6,7 +6,7 @@ c-app-card{display:contents;}
 /* the tile is a button that opens the app's page - compact: thumbnail, name,
    badges, description (everything else lives on the detail page) */
 .app-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
-  display:flex;flex-direction:column;position:relative;cursor:pointer;text-align:left;
+  min-height:280px;display:flex;flex-direction:column;position:relative;cursor:pointer;text-align:left;
   transition:border-color .2s var(--ease),transform .2s var(--ease);}
 .app-card:hover{border-color:var(--jade-dim);transform:translateY(-2px);}
 .app-card:focus-visible{outline:none;border-color:var(--jade-dim);box-shadow:0 0 0 2px var(--jade-deep);}
