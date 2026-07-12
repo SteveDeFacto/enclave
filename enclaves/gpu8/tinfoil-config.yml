@@ -136,7 +136,13 @@ containers:
       - DEPLOYMENTS_ADDRESS: "0x267f7F792CA84482698b2f6774B028522247B6CD"                          # set by scripts/deploy-deployments.mjs
       # - CLAIM_POLL_SEC: "60"                           # optional: queue sweep / lease audit cadence
       # - RENEW_MARGIN_SEC: "300"                        # optional: renew when less lease than this remains
-      # - CPU_CLAIM_GRACE_SEC: "120"                     # optional: how long CPU-only work waits for a CPU enclave before we bid on it
+      # CPU-only work waits this long for a CPU enclave before a GPU enclave bids on
+      # it (from its leftover CPU pool) via the SWEEP path. Lowered from the 120s
+      # default: while the fleet is GPU-only there is no CPU enclave to defer to, so
+      # 120s was pure Queued time on every CPU deploy. The /v1/claim-hint fast path
+      # (console deploys) skips this grace entirely — this only bounds the slower
+      # sweep backstop. Raise it back toward 120 once a CPU enclave rejoins the fleet.
+      - CPU_CLAIM_GRACE_SEC: "30"
       - GPU_COUNT: "8"
       - GPU_VRAM_GB: "141"                               # FALLBACK until probed: the supervisor adopts the wasm-manager's nvidia-smi total via /health (this container has no GPU), so a share's VRAM cap tracks the real card
       - GPU_TFLOPS: "989"                                # GPU compute per card (H200 FP16 dense); exact gpuTflops asks divide by this
