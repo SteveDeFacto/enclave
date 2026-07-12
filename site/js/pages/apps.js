@@ -31,19 +31,25 @@ function renderApps(){
   // the catalog owner) still see them - that's the only path back: relist, or
   // publish a new version to the slug (which auto-relists).
   const me = (Enclave.address || "").toLowerCase();
-  const canSeeDelisted = (a) => me && (a.publisher.toLowerCase() === me || (STORE.owner && me === STORE.owner));
-  syncDelistedTab(me);
+  const isOwner = !!(STORE.owner && me && me === STORE.owner);
+  const myApp = (a) => !!me && a.publisher.toLowerCase() === me;
+  syncModTabs(me, isOwner);
   let apps;
   if (STORE.filter === "delisted"){
-    // the catalog owner's moderation view: EVERY delisted app, any publisher
-    apps = STORE.apps.filter(a => a.versions.length && !a.active);
+    // moderation view: the catalog owner sees EVERY delisted app; a publisher
+    // sees only their own - their one path back (relist, or republish the slug).
+    apps = STORE.apps.filter(a => a.versions.length && !a.active && (isOwner || myApp(a)));
+  } else if (STORE.filter === "unverified"){
+    // owner-only queue: active apps not yet endorsed, waiting to be verified.
+    apps = STORE.apps.filter(a => a.versions.length && a.active && !appVerified(a));
   } else {
-    apps = STORE.apps.filter(a => a.versions.length && (a.active || canSeeDelisted(a)));
+    // public tabs (All / Verified): delisted apps are hidden from everyone here.
+    apps = STORE.apps.filter(a => a.versions.length && a.active);
     if (STORE.filter === "verified") apps = apps.filter(appVerified);
   }
   if (q) apps = apps.filter(a => (a.name + " " + a.description + " " + a.slug + " " + a.publisher + " " + a.versions.map(v => v.cid + " " + v.version).join(" ")).toLowerCase().includes(q));
   apps.sort((x, y) => (Number(appVerified(y)) - Number(appVerified(x))) || (y.updatedAt - x.updatedAt));
-  if (count) count.textContent = apps.length + (apps.length === 1 ? " app" : " apps") + (STORE.filter === "verified" ? " · verified" : STORE.filter === "delisted" ? " · delisted" : "");
+  if (count) count.textContent = apps.length + (apps.length === 1 ? " app" : " apps") + (STORE.filter === "verified" ? " · verified" : STORE.filter === "unverified" ? " · unverified" : STORE.filter === "delisted" ? " · delisted" : "");
   if (!apps.length){
     grid.innerHTML = '<div class="store-note">' + (STORE.apps.length ? "No apps match your filter." : "No apps published yet. Be the first with <b>+ Publish app</b>.") + '</div>';
     return;
@@ -55,14 +61,19 @@ function renderApps(){
   }));
 }
 
-/* The Delisted tab is the CONTRACT DEPLOYER's moderation surface (the
-   catalog owner wallet); everyone else never sees it. Publishers still find
-   their own delisted apps inline in the store - their path back to relist. */
-function syncDelistedTab(me){
-  const b = document.querySelector('#storeFilter button[data-filter="delisted"]'); if (!b) return;
-  const isOwner = !!(STORE.owner && me && me === STORE.owner);
-  b.hidden = !isOwner;
-  if (!isOwner && STORE.filter === "delisted"){
+/* The Unverified and Delisted tabs are the catalog owner's moderation surface.
+   Unverified (the queue of active-but-unendorsed apps) is owner-only. Delisted is
+   owner-visible always, and ALSO shown to a publisher who has delisted an app of
+   their own - only their own appears there, their path back to relist. Everyone
+   else never sees either; a tab that just became hidden falls back to All. */
+function syncModTabs(me, isOwner){
+  const delisted = document.querySelector('#storeFilter button[data-filter="delisted"]');
+  const unverified = document.querySelector('#storeFilter button[data-filter="unverified"]');
+  const hasOwnDelisted = !!me && STORE.apps.some(a => a.versions.length && !a.active && a.publisher.toLowerCase() === me);
+  if (delisted) delisted.hidden = !(isOwner || hasOwnDelisted);
+  if (unverified) unverified.hidden = !isOwner;
+  const cur = document.querySelector('#storeFilter button[data-filter="' + STORE.filter + '"]');
+  if (cur && cur.hidden){
     STORE.filter = "all";
     $$("#storeFilter button").forEach(x => x.classList.toggle("on", x.dataset.filter === "all"));
   }
