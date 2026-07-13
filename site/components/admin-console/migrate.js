@@ -104,7 +104,7 @@ const CHUNK = { deployments: 12, apps: 20, versions: 25, volumes: 30, members: 1
 // schema and drop the field, so the import always encodes the rev-2 tuple.
 async function depRevOf(addr) {
   const sel = CONTRACTS.EnclaveDeployments.sel;
-  try { return wNum(await call(addr, "0x" + sel.deploymentsSchema), 1) || 1; }
+  try { return wNum(await call(addr, "0x" + sel.deploymentsSchema), 0) || 1; }   // word 0 of the return
   catch (e) { return 1; }
 }
 async function readDeployments(source) {
@@ -133,7 +133,12 @@ const depCmp = (a, b) => DEP_SCHEMA.every((f) => ["runner", "runnerOperator", "l
 const VER_SCHEMA_V2 = VER_SCHEMA.filter((f) => f.k !== "config");
 async function catalogRevOf(addr) {
   const sel = CONTRACTS.EnclaveAppCatalog.sel;
-  try { return wNum(await call(addr, "0x" + sel.catalogSchema), 2) || 2; }
+  // wNum's 2nd arg is the WORD INDEX (the return is one word at index 0) -
+  // it was 2, so this always fell back to rev 2 and readCatalog prefix-
+  // decoded rev-4 versions config-LESS: a silent config drop the verify pass
+  // couldn't see (both sides dropped it). Deployments hit the loud version
+  // of the same bug (mid-struct field -> every row garbled, 0/N verify).
+  try { return wNum(await call(addr, "0x" + sel.catalogSchema), 0) || 2; }
   catch (e) { return 2; }
 }
 async function readCatalog(source) {
