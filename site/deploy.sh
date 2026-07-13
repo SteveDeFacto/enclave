@@ -58,3 +58,9 @@ ssh nan '{ cp -pn /opt/nan-chunk-archive/js/chunks/* /opt/nan-site/js/chunks/ 2>
 
 ssh nan 'chown -R ipfs:ipfs /opt/nan-site && \
   sudo -u ipfs IPFS_PATH=/var/lib/ipfs /usr/local/bin/nan-deploy.sh /opt/nan-site'
+
+# ---- CLI installers: Caddy serves these from /opt/enclave-get on
+# enclave.host/install.{sh,ps1} and get.enclave.host (curl|sh one-liners) ----
+tar -C ../cli -czf - install.sh install.ps1 | \
+  ssh nan 'mkdir -p /opt/enclave-get && tar -C /opt/enclave-get -xzf - && chmod 0644 /opt/enclave-get/install.*'
+echo "[deploy] installers shipped to /opt/enclave-get"

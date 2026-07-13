@@ -3,7 +3,8 @@
 # superseded in the concurrency queue are never lost), then each surface deploys
 # only when its files changed:
 #
-#   site/**                                  -> scp to the site box + IPFS publish (site/deploy.sh)
+#   site/** | cli/install.{sh,ps1}           -> scp to the site box + IPFS publish (site/deploy.sh;
+#                                               the installers land in /opt/enclave-get for Caddy)
 #   relay/**                                 -> scp to the relay box + systemd restart (relay/deploy.sh)
 #   contracts/<Name>.sol                     -> deploy that contract to Base (scripts/deploy-*.mjs),
 #                                               gated on the `contract-deploy` environment approval,
@@ -114,6 +115,7 @@ jobs:
             case "$f" in
               site/deploy.sh|relay/deploy.sh) ;;   # deploy tooling runs from a fresh checkout; nothing to redeploy
               site/*)                  site=true ;;
+              cli/install.sh|cli/install.ps1) site=true ;;   # served from /opt/enclave-get (curl|sh installers)
               relay/*)                 relay=true ;;
               contracts/EnclaveRegistry.sol)    registry=true ;;
               contracts/EnclaveDeployments.sol) deployments=true ;;

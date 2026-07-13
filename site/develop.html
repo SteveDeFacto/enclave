@@ -692,13 +692,17 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
           <p>One executable file, wallet-native - your wallet is your account. Point it at a key and every operation on this page becomes a one-liner; state lives in <code>~/.config/enclave/</code> and nothing else touches your machine.</p>
 
           <h4>Install &amp; authenticate</h4>
-          <c-code fn="install · any OS"><pre><code># needs node ≥ 20; npm puts the `enclave` command on your PATH
+          <c-code fn="install · any OS"><pre><code># one-line install (Linux/macOS): fetches the repo source, builds the CLI locally; needs node ≥ 20
+curl -fsSL https://enclave.host/install.sh | sh
+
+# Windows (PowerShell)
+irm https://enclave.host/install.ps1 | iex
+
+# or from a clone: npm puts the `enclave` command on your PATH
 git clone https://github.com/EnclaveHost/enclave
 cd enclave/cli
 npm i
-npm i -g .
-
-# curl -fsSL https://get.enclave.host | sh  # one-line install, coming soon; get.enclave.host is not live yet, use the clone above</code></pre></c-code>
+npm i -g .</code></pre></c-code>
           <c-code fn="bring a wallet"><pre><code># generate fresh, or import the key you already use
 enclave key new                    # prints the address; fund it with USDC on Base
 enclave key import                 # reads a private key from stdin; or ENCLAVE_KEY env

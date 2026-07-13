@@ -1,23 +1,25 @@
-# enclave CLI installer (Windows) — PowerShell counterpart of install.sh, the
-# future target of `irm https://get.enclave.host/install.ps1 | iex`. Until that
-# host serves a prebuilt bundle, it installs from a checkout: bundles
-# cli/enclave.mjs (deps inlined, ~1 MB) into %LOCALAPPDATA%\enclave\bin and
-# creates an `enclave` command shim. Needs node >= 20 on PATH.
+# enclave CLI installer (Windows) — PowerShell counterpart of install.sh.
+# Two ways in, same artifact out:
 #
-#   .\cli\install.ps1        (from PowerShell; or: powershell -ExecutionPolicy Bypass -File cli\install.ps1)
+#   irm https://enclave.host/install.ps1 | iex          # hosted one-liner (also: get.enclave.host/install.ps1)
+#   .\cli\install.ps1                                   # from a checkout
+#     (or: powershell -ExecutionPolicy Bypass -File cli\install.ps1)
 #
+# Either way it bundles cli/enclave.mjs (deps inlined, ~1 MB, exact versions
+# from the checked-in package-lock.json) into %LOCALAPPDATA%\enclave\bin and
+# creates an `enclave` command shim. The hosted mode downloads the source
+# zipball of EnclaveHost/enclave@main from GitHub over TLS and builds it
+# locally - no prebuilt binary is ever downloaded, so what you run is what's
+# in the repo. (If a prebuilt-bundle path is ever added, pin its sha256/
+# signature here BEFORE shipping it: this is a key-holding signing binary.)
+#
+# Needs node >= 20 on PATH.
 # No-script alternative that works on every OS: npm install -g .\cli
 # (npm generates the .cmd shim itself; the CLI is plain node either way).
-#
-# FUTURE (hosted `irm ... | iex`): before running a downloaded bundle, verify it
-# against a pinned digest/signature, e.g.
-#   $ExpectedSha256 = "<pin the release hash here>"
-#   if ((Get-FileHash enclave.mjs -Algorithm SHA256).Hash -ne $ExpectedSha256) { Fail "bundle hash mismatch" }
-# so a compromised CDN can't ship a key-stealing binary. (No download URL is
-# wired yet — this is a placeholder, not a live check.)
 $ErrorActionPreference = "Stop"
 
-function Fail($msg) { Write-Host "error: $msg" -ForegroundColor Red; exit 1 }
+# throw, not exit: under `irm | iex` an exit would close the user's terminal
+function Fail($msg) { Write-Host "error: $msg" -ForegroundColor Red; throw $msg }
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   Fail "node is required (https://nodejs.org, v20 or newer)"
@@ -25,9 +27,22 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 $major = [int](node -p "parseInt(process.versions.node)")
 if ($major -lt 20) { Fail "node >= 20 required (found $(node -v))" }
 
+# checkout mode: this script sits in cli\ next to enclave.mjs. Piped through
+# `irm | iex` there is no script path, so fetch the repo and build from that.
 $cliDir = $PSScriptRoot
+$tmp = $null
 if (-not $cliDir -or -not (Test-Path (Join-Path $cliDir "enclave.mjs"))) {
-  Fail "run this from a checkout: git clone https://github.com/EnclaveHost/enclave; .\enclave\cli\install.ps1"
+  $zipUrl = "https://github.com/EnclaveHost/enclave/archive/refs/heads/main.zip"
+  $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("enclave-install-" + [System.IO.Path]::GetRandomFileName())
+  New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  Write-Host "fetching $zipUrl"
+  $zip = Join-Path $tmp "enclave.zip"
+  Invoke-WebRequest -Uri $zipUrl -OutFile $zip -UseBasicParsing
+  Expand-Archive -Path $zip -DestinationPath $tmp
+  $repo = Get-ChildItem -Directory -Path $tmp -Filter "enclave-*" | Select-Object -First 1
+  if (-not $repo) { Fail "download did not contain the repo" }
+  $cliDir = Join-Path $repo.FullName "cli"
+  if (-not (Test-Path (Join-Path $cliDir "enclave.mjs"))) { Fail "download did not contain cli/enclave.mjs" }
 }
 
 # bundle deps: the repo root has them; a bare checkout of cli/ installs its own
@@ -68,5 +83,9 @@ if (($userPath -split ";") -notcontains $binDir) {
 
 node $bundle version | Out-Null
 if ($LASTEXITCODE -ne 0) { Fail "installed bundle failed its smoke test" }
+
+# hosted mode leaves nothing behind but the install itself
+if ($tmp) { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+
 Write-Host "installed $shim"
 Write-Host "try: enclave help"
