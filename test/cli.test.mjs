@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { decodeFunctionData, encodeFunctionResult, parseTransaction, verifyMessage } from "viem";
+import { decodeFunctionData, encodeFunctionResult, parseTransaction, verifyMessage, recoverMessageAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -89,6 +89,14 @@ function apiServer() {
     if (u.pathname === "/availability")
       return json(200, { aggregate: true, enclaves: 2, gpuShareFree: 0.5, cpuShareFree: 0.9 });
     if (u.pathname === "/v1/claim-hint") { S.claimed = true; return json(200, { accepted: true, status: "sweeping" }); }
+    if (u.pathname === "/v1/apps/upload-token" && req.method === "POST") {
+      // wallet-signed upload authorization: recover the signer from the
+      // enclave-upload:<sha256>:<expiry> message and hand back a one-time token,
+      // exactly as api-relay does before the IPFS gateway will accept the bytes.
+      const { hash, expiry, signature } = JSON.parse(body);
+      const address = await recoverMessageAddress({ message: `enclave-upload:${hash}:${expiry}`, signature });
+      return json(200, { token: `upload-${hash.slice(0, 16)}`, address, expiry });
+    }
     if (u.pathname === "/v1/account")
       return authed ? json(200, { address: OWNER, chainId: 8453,
         payment: { forwarder: "0x" + "aa".repeat(20), usdc: USDC, assets: ["USDC", "ETH"] },
