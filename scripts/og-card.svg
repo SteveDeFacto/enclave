@@ -48,7 +48,7 @@
   <!-- footer: url -->
   <circle cx="79" cy="556" r="5" fill="#2FE6A8"/>
   <text x="96" y="564" font-family="DejaVu Sans Mono" font-size="24" fill="#2FE6A8">enclave.host</text>
-  <text x="278" y="564" font-family="DejaVu Sans Mono" font-size="24" fill="#5E7284">· no account · no KYC</text>
+  <text x="278" y="564" font-family="DejaVu Sans Mono" font-size="24" fill="#5E7284">· your wallet is your account</text>
 
   <!-- big mark, right -->
   <g transform="translate(880,180) scale(8.4)" fill="none" stroke="#2FE6A8" opacity="0.9">

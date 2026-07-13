@@ -7,7 +7,7 @@
 - **REST API:** https://api.enclave.host/v1 (CORS-enabled; drive it from a browser)
 - **Deployed apps:** `https://<id>.app.enclave.host` (the deployment id's first 8 hex chars), TLS terminated in-enclave
 
-There are no accounts and no KYC: an Ethereum wallet is the identity.
+Your wallet is your account: an Ethereum wallet is the identity, and paying is an on-chain transaction.
 
 ## How it works
 

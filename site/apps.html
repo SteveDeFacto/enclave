@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="dark" />
 <meta name="theme-color" content="#070A0F" />
 <title>App Store — Deploy Wasm Apps on Confidential GPUs · Enclave</title>
-<meta name="description" content="Browse ready-to-run WebAssembly apps and deploy any of them on confidential H200 GPU enclaves in a couple of clicks — pay from your wallet, no account. Every app is a wasi:http component on IPFS, listed in the on-chain EnclaveAppCatalog on Base; publishing is one transaction." />
+<meta name="description" content="Browse ready-to-run WebAssembly apps and deploy any of them on confidential H200 GPU enclaves in a couple of clicks — pay from your wallet, which is your account. Every app is a wasi:http component on IPFS, listed in the on-chain EnclaveAppCatalog on Base; publishing is one transaction." />
 <link rel="canonical" href="https://enclave.host/apps/" />
 <meta name="robots" content="index,follow,max-image-preview:large" />
 <meta property="og:site_name" content="Enclave" />
@@ -14,7 +14,7 @@
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://enclave.host/apps/" />
 <meta property="og:title" content="App Store — Deploy Wasm Apps on Confidential GPUs" />
-<meta property="og:description" content="Browse ready-to-run WebAssembly apps and deploy any of them on confidential H200 GPU enclaves in a couple of clicks — pay from your wallet, no account needed." />
+<meta property="og:description" content="Browse ready-to-run WebAssembly apps and deploy any of them on confidential H200 GPU enclaves in a couple of clicks — pay from your wallet, which is your account." />
 <meta property="og:image" content="https://enclave.host/assets/og.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
@@ -56,7 +56,7 @@
        (apps.html#publish) - apps.js toggles them; not a header tab -->
   <div class="wrap" id="storeView">
     <c-section-head eyebrow="App store" heading="Simply pick an app and deploy it.">
-      <p>Browse ready-to-run apps and launch any of them on <b>private, confidential hardware</b> in a couple of clicks. Pay from your wallet for exactly the time you use - <b>no account, no setup, no subscription</b>. And everything here is open: an app's code and listing can't be swapped out from under you, and you can <b>verify what you're running</b> yourself, before it touches your data. Built something of your own? <a href="#publish">Publishing it</a> takes a minute.</p>
+      <p>Browse ready-to-run apps and launch any of them on <b>private, confidential hardware</b> in a couple of clicks. Pay from your wallet for exactly the time you use - <b>your wallet is your account: no setup, no subscription</b>. And everything here is open: an app's code and listing can't be swapped out from under you, and you can <b>verify what you're running</b> yourself, before it touches your data. Built something of your own? <a href="#publish">Publishing it</a> takes a minute.</p>
     </c-section-head>
 
     <div class="store-toolbar">
@@ -172,14 +172,14 @@
 <section id="deploy" data-view="deploy" aria-label="Deploy console" hidden>
   <div class="wrap">
     <c-section-head eyebrow="Deploy · live on Base" heading="Deploy an app.">
-      <p>Deploying is deliberately simple: pick an app from the <a href="apps">store</a>, set two dials - a GPU share and a CPU share - and fund it from your wallet. Hit <span class="mono">Deploy</span> and a confidential enclave claims the work, boots your app, and hands back its URL in seconds - the provisioning output and your running apps live on your <a href="dashboard">Dashboard</a>. No account, no servers, no lock-in: it's one call to the public REST API, shown here exactly as it goes out, and <span class="mono">Dry run</span> lets you inspect everything before spending anything. Building your own app? The <a href="develop#docs">developer guide</a> walks you through it.</p>
+      <p>Deploying is deliberately simple: pick an app from the <a href="apps">store</a>, set two dials - a GPU share and a CPU share - and fund it from your wallet. Hit <span class="mono">Deploy</span> and a confidential enclave claims the work, boots your app, and hands back its URL in seconds - the provisioning output and your running apps live on your <a href="dashboard">Dashboard</a>. Your wallet is your account - no servers, no lock-in: it's one call to the public REST API, shown here exactly as it goes out, and <span class="mono">Dry run</span> lets you inspect everything before spending anything. Building your own app? The <a href="develop#docs">developer guide</a> walks you through it.</p>
       <div class="endpoint-row">
         <label for="apiBase">API endpoint</label>
         <input type="text" id="apiBase" spellcheck="false" autocapitalize="off" autocomplete="off" readonly />
         <span class="dim" aria-hidden="true">·</span>
         <span class="ep-state" id="epState"></span>
       </div>
-      <p class="dim" style="font-family:var(--font-mono);font-size:.7rem;margin:.2em 0 0;">Connect your wallet from the header. It's used only to sign in &amp; pay, with no account or KYC.</p>
+      <p class="dim" style="font-family:var(--font-mono);font-size:.7rem;margin:.2em 0 0;">Connect your wallet from the header. It's used only to sign in &amp; pay - your wallet is your account.</p>
     </c-section-head>
     <div class="console">
       <!-- config -->

@@ -1,6 +1,6 @@
 # The `enclave` CLI
 
-One file, wallet-native, no accounts. Every command maps 1:1 onto the
+One file, wallet-native — your wallet is your account. Every command maps 1:1 onto the
 [public API](https://enclave.host/#api) and the on-chain contracts on Base —
 full reference in the site's [Develop → CLI](https://enclave.host/#cli) chapter,
 or `enclave help`.

@@ -246,7 +246,7 @@ const appsNested = fs.readFileSync(path.join(DIST, "apps.html"), "utf8")
 const VIEW_HEAD = {
   deploy: {
     title: "Deploy an App on a Confidential GPU · Enclave",
-    desc: "Launch a WebAssembly app on an attested H200 enclave straight from your browser: set a GPU share and a CPU share, pay per second in ETH or USDC from your wallet, and watch the live provisioning log. No account, no KYC.",
+    desc: "Launch a WebAssembly app on an attested H200 enclave straight from your browser: set a GPU share and a CPU share, pay per second in ETH or USDC from your wallet, and watch the live provisioning log. Your wallet is your account.",
     url: "https://enclave.host/apps/deploy",
     crumb: "Deploy",
   },

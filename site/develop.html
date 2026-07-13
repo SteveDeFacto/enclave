@@ -250,7 +250,7 @@ wasmtime serve -Scli -Shttp -Sp3 \
           <p>Unlisted CIDs can't deploy: the catalog listing carries everything a deploy needs on-chain - the resource specs that floor the dials, the open ports, and the owner's approval of that exact CID. Built something new? Publish it first (<a href="#docs-publish">chapter 04</a>), then deploy the slug.</p>
           <p>The easy path is the <a href="apps/deploy">Deploy console</a>: your published app's card even has a <b>Use in Deploy</b> button that prefills the reference and open ports. Tick <b>Dry run</b> to inspect every call before spending anything. The console speaks the same public API you can drive yourself:</p>
 
-          <h4>Sign in: an Ethereum signature, no account</h4>
+          <h4>Sign in: an Ethereum signature - your wallet is your account</h4>
           <c-code fn="deploy.js · SIWE handshake"><pre><code>const API = "https://api.enclave.host/v1";
 
 const addr  = (await ethereum.request({ method: "eth_requestAccounts" }))[0];
@@ -689,7 +689,7 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
     <div class="docs-main" style="max-width:920px;">
         <article class="doc" id="docs-cli">
           <h3>The <code>enclave</code> CLI</h3>
-          <p>One executable file, wallet-native, no accounts. Point it at a key and every operation on this page becomes a one-liner; state lives in <code>~/.config/enclave/</code> and nothing else touches your machine.</p>
+          <p>One executable file, wallet-native - your wallet is your account. Point it at a key and every operation on this page becomes a one-liner; state lives in <code>~/.config/enclave/</code> and nothing else touches your machine.</p>
 
           <h4>Install &amp; authenticate</h4>
           <c-code fn="install · any OS"><pre><code># needs node ≥ 20; npm puts the `enclave` command on your PATH

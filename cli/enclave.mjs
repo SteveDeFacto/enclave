@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// enclave — the Enclave platform CLI. One file, wallet-native, no accounts.
+// enclave — the Enclave platform CLI. One file, wallet-native; your wallet is your account.
 //
 // Every command maps 1:1 onto the public HTTP API (https://api.enclave.host/v1)
 // and the on-chain contracts on Base — the CLI holds the pieces, it owns
