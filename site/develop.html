@@ -701,10 +701,6 @@ cd enclave/cli
 npm i
 npm i -g .</code></pre></c-code>
           </c-code-tabs>
-          <div class="doc-note">
-            <span class="nt">Shipped</span>
-            <p>The one-liners fetch the repo source from GitHub and build a single ~1&nbsp;MB dependency-free executable on your PATH; no prebuilt binary is downloaded, so what you run is what is in the repo. The npm route does the same from a clone, with npm shims instead of one file. Every command maps 1:1 onto the <a href="#api">public API</a> and the on-chain contracts, so anything it does can be replayed with <code>curl</code> and your wallet - run any command with <code>-x</code> to watch.</p>
-          </div>
 
           <h4>Authenticate</h4>
           <p>No signup step: the CLI authenticates with whatever key you point it at. Generate a fresh one or import the wallet you already use; commands that spend need USDC on Base under that address.</p>
