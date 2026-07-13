@@ -275,7 +275,7 @@ async function confirm(what) {
   // These prompts guard spending/teardown; silently answering "yes" for a pipe
   // is how a cron job drains a wallet. --yes is the explicit opt-in.
   if (!stdin.isTTY || !stdout.isTTY)
-    throw new Error(`refusing to proceed without a confirmation in a non-interactive session — re-run with --yes to approve (${what})`);
+    throw new Error(`refusing to proceed without a confirmation in a non-interactive session; re-run with --yes to approve (${what})`);
   const rl = rlSync.createInterface({ input: stdin, output: stdout });
   const ans = await new Promise((r) => rl.question(what + " [y/N] ", (a) => { rl.close(); r(a.trim()); }));
   return /^y(es)?$/i.test(ans);
@@ -298,7 +298,7 @@ async function sendTx(account, { address, abi, functionName, args: a, value }) {
                  [DEFAULTS.APP_CATALOG_ADDRESS]: "EnclaveAppCatalog" }[address] || address;
   trace(`tx ${name}.${functionName}(${a.map(fmtArg).join(", ")})${value ? ` value=${formatUnits(value, 18)} ETH` : ""}`);
   const hash = await wallet(account).writeContract({ address, abi, functionName, args: a, ...(value ? { value } : {}) });
-  trace(`tx sent ${hash} — waiting for receipt`);
+  trace(`tx sent ${hash}, waiting for receipt`);
   const rcpt = await pub().waitForTransactionReceipt({ hash });
   if (rcpt.status !== "success") throw new Error(`transaction reverted: ${hash}`);
   return rcpt;
@@ -426,7 +426,7 @@ async function chainDeployments(owner) { // owner=null -> all
 // (several versions can share bytes and differ entirely in approved config).
 async function resolveAppRef(input) {
   if (/^ipfs:\/\//i.test(input) || /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|baf[a-z0-9]{20,})$/.test(input))
-    throw new Error(`CIDs can't deploy — a CID names bytes, not a version. Deploy a [publisher/]slug:version from the catalog (enclave apps)`);
+    throw new Error(`CIDs can't deploy: a CID names bytes, not a version. Deploy a [publisher/]slug:version from the catalog (enclave apps)`);
   const m = input.match(/^(?:([0-9a-zA-Z.]+|0x[0-9a-fA-F]{40})\/)?([a-z0-9][a-z0-9-]*)(?::(.+))?$/);
   if (!m) throw new Error(`"${input}" is not an app reference ([publisher/]slug[:version])`);
   const [, pubFilter, slug, verLabel] = m;
@@ -434,7 +434,7 @@ async function resolveAppRef(input) {
   if (pubFilter) apps = apps.filter((a) => a.publisher.toLowerCase() === pubFilter.toLowerCase());
   if (!apps.length) throw new Error(`no active catalog app with slug "${slug}"${pubFilter ? ` by ${pubFilter}` : ""}`);
   if (apps.length > 1 && !pubFilter)
-    throw new Error(`slug "${slug}" is published by ${apps.length} publishers — disambiguate as <publisher>/${slug}`);
+    throw new Error(`slug "${slug}" is published by ${apps.length} publishers; disambiguate as <publisher>/${slug}`);
   const app = apps[0];
   const versions = await readVersions(app.appId, app.versionCount);
   let vi;
@@ -447,7 +447,7 @@ async function resolveAppRef(input) {
   }
   const ver = versions[vi];
   if (Number(ver.approval) !== 1)
-    throw new Error(`${slug}:${ver.version} is ${APPROVAL_WORD[Number(ver.approval)]} — runners only claim approved versions`);
+    throw new Error(`${slug}:${ver.version} is ${APPROVAL_WORD[Number(ver.approval)]}; runners only claim approved versions`);
   return { ref: `catalog://${app.appId}/${vi}`, ver, app };
 }
 let _appsCache = null;
@@ -484,10 +484,10 @@ async function fundUsdc(account, id, amountUsd) {
   if (amountUsd > 0 && amountUsd < 0.01)
     throw new Error(`minimum USDC funding is $0.01 (got $${amountUsd}); amounts are billed in whole cents`);
   if (amountUsd > 0 && Math.abs(cents - Math.round(cents)) > 1e-9)
-    throw new Error(`USDC funding is billed in whole cents — $${amountUsd} isn't a whole number of cents (nearest is $${(Math.round(cents) / 100).toFixed(2)})`);
+    throw new Error(`USDC funding is billed in whole cents: $${amountUsd} isn't a whole number of cents (nearest is $${(Math.round(cents) / 100).toFixed(2)})`);
   const value = BigInt(Math.round(cents)) * 10000n;             // whole cents -> 6dp
   const bal = await read(DEFAULTS.USDC_ADDRESS, ERC20_ABI, "balanceOf", [account.address]);
-  if (bal < value) throw new Error(`wallet holds ${usd6(bal)} USDC on Base, needs ${usd6(value)} — fund ${account.address}`);
+  if (bal < value) throw new Error(`wallet holds ${usd6(bal)} USDC on Base, needs ${usd6(value)}; fund ${account.address}`);
   // The EIP-712 domain is PINNED, never taken from the API: a forged domain
   // could coax a valid ReceiveWithAuthorization signature over a different
   // token/chain/contract. Base USDC (Circle native) domain = {"USD Coin","2"}.
@@ -518,7 +518,7 @@ async function fundUsdc(account, id, amountUsd) {
 async function verifyEnclaveOrigin(origin, repo) {
   let Verifier;
   try { ({ Verifier } = await import("@tinfoilsh/verifier")); }
-  catch { throw new Error("@tinfoilsh/verifier is not installed — reinstall the CLI (npm i -g enclave-cli)"); }
+  catch { throw new Error("@tinfoilsh/verifier is not installed; reinstall the CLI (npm i -g enclave-cli)"); }
   trace(`verify ${origin} against ${repo} (@tinfoilsh/verifier: quote -> vendor root, Sigstore provenance, measurement match, TLS binding)`);
   const v = new Verifier({ serverURL: origin, configRepo: repo });
   let failure = null;
@@ -538,15 +538,15 @@ function printVerdict(r, origin, repo) {
   kv([["enclave", origin], ["repo", repo],
       ...Object.entries(r.steps).map(([k, v]) => ["  " + k, v]),
       ["release", r.release], ["measurement", r.measurement]]);
-  say(r.pass ? `verdict     PASS — this enclave's quote matches the signed ${EXPECTED_REPO} release and TLS terminates inside it (trust rests on the pinned repo + the verifier's vendor/Sigstore roots)`
-             : `verdict     FAIL — do not send data${r.error ? ` (${r.error})` : ""}`);
+  say(r.pass ? `verdict     PASS: this enclave's quote matches the signed ${EXPECTED_REPO} release and TLS terminates inside it (trust rests on the pinned repo + the verifier's vendor/Sigstore roots)`
+             : `verdict     FAIL: do not send data${r.error ? ` (${r.error})` : ""}`);
 }
 // The verification target repo is PINNED to EXPECTED_REPO, never the API's own
 // claim. If the API names a different repo we refuse — a gateway that could pick
 // the repo could pick one whose (attacker-controlled) release the quote matches.
 function pinnedRepo(apiRepo) {
   if (apiRepo && String(apiRepo).toLowerCase() !== EXPECTED_REPO.toLowerCase())
-    throw new Error(`attestation names repo "${apiRepo}", but this CLI only verifies against ${EXPECTED_REPO} — refusing (a chosen repo can carry a chosen release the quote would match)`);
+    throw new Error(`attestation names repo "${apiRepo}", but this CLI only verifies against ${EXPECTED_REPO}; refusing (a chosen repo can carry a chosen release the quote would match)`);
   return EXPECTED_REPO;
 }
 async function attestDeployment(account, id) {
@@ -563,7 +563,7 @@ async function cmdKey(rest) {
   if (sub === "new") {
     const f = flags(rest.slice(1), { bool: ["--force"] });
     if (fs.existsSync(KEY_FILE) && !f.force)
-      throw new Error(`${KEY_FILE} already exists — pass --force to overwrite it (this abandons the old address!)`);
+      throw new Error(`${KEY_FILE} already exists; pass --force to overwrite it (this abandons the old address!)`);
     const pk = generatePrivateKey();
     saveKey(pk);
     const a = privateKeyToAccount(pk);
@@ -647,7 +647,7 @@ async function cmdStatus(rest) {
   kv([
     ["id", id],
     ["app", rec?.image?.reference || chainRec?.appRef],
-    ["status", rec?.status || (chainRec ? (!chainRec.active ? "stopped" : leased ? "claimed (no live enclave record yet)" : claimable ? "queued — waiting for an enclave to claim" : "unfunded — spent its funding; a top-up re-queues it (enclave fund)") : null)],
+    ["status", rec?.status || (chainRec ? (!chainRec.active ? "stopped" : leased ? "claimed (no live enclave record yet)" : claimable ? "queued: waiting for an enclave to claim" : "unfunded: spent its funding; a top-up re-queues it (enclave fund)") : null)],
     ["visibility", (rec ? rec.public : chainRec?.isPublic) ? "public" : "private (owner bearer required)"],
     rec?.resources ? ["shares", `gpu ${Math.round((rec.resources.gpuShare || 0) * 100)}% · cpu ${Math.round((rec.resources.cpuShare || 0) * 100)}%`]
                    : chainRec ? ["shares", `gpu ${Number(chainRec.gpuMilli) / 10}% · cpu ${Number(chainRec.cpuMilli) / 10}%`] : null,
@@ -706,7 +706,7 @@ async function cmdFund(rest) {
   }
   const fresh = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, DEPLOYMENTS_ABI, "get", [id]);
   if (opt.json) return jout({ id, balance6: fresh.balance6, fundableSec: fresh.rate > 0n ? Number(fresh.balance6 / fresh.rate) : 0 });
-  say(`balance ${usd6(fresh.balance6)} — ${dur(fresh.rate > 0n ? Number(fresh.balance6 / fresh.rate) : 0)} of runtime at ${usd6(fresh.rate * 3600n)}/h`);
+  say(`balance ${usd6(fresh.balance6)}: ${dur(fresh.rate > 0n ? Number(fresh.balance6 / fresh.rate) : 0)} of runtime at ${usd6(fresh.rate * 3600n)}/h`);
 }
 
 async function cmdAttest(rest) {
@@ -755,7 +755,7 @@ async function cmdStop(rest) {
   // its next sweep; DELETE just makes it immediate)
   const r = await api("DELETE", `/v1/deployments/${id}`, { auth: account, ok404: true });
   if (opt.json) return jout(r || { id, status: "stopped", note: "ledger item deactivated; no live enclave record" });
-  say(r ? `${r.status}${r.ranSeconds ? ` after ${dur(r.ranSeconds)}` : ""}${r.note ? ` — ${r.note}` : ""}`
+  say(r ? `${r.status}${r.ranSeconds ? ` after ${dur(r.ranSeconds)}` : ""}${r.note ? ` (${r.note})` : ""}`
         : "deactivated on-chain; no enclave was serving it");
 }
 
@@ -808,11 +808,11 @@ async function cmdDeploy(rest) {
   const fundUsd = f.fund !== undefined ? numFlag(f.fund, "--fund") : 0;
   const fundEth = f["fund-eth"] !== undefined ? numFlag(f["fund-eth"], "--fund-eth") : 0;
   if (!fundUsd && !fundEth)
-    throw new Error(`nothing to fund it with — add --fund <usd> (rate is ${usd6(rate * 3600n)}/h; runners skip unfunded work)`);
+    throw new Error(`nothing to fund it with: add --fund <usd> (rate is ${usd6(rate * 3600n)}/h; runners skip unfunded work)`);
   const eth = await pub().getBalance({ address: account.address });
-  if (eth === 0n) throw new Error(`${account.address} has no Base ETH for transaction gas — bridge a little first`);
+  if (eth === 0n) throw new Error(`${account.address} has no Base ETH for transaction gas; bridge a little first`);
   const buys = fundUsd ? dur(fundUsd * 1e6 / Number(rate)) : `(ETH at the live rate)`;
-  if (!(await confirm(`deploy ${f._[0]} — gpu ${gpuMilli / 10}% cpu ${cpuMilli / 10}% at ${usd6(rate * 3600n)}/h, `
+  if (!(await confirm(`deploy ${f._[0]}: gpu ${gpuMilli / 10}% cpu ${cpuMilli / 10}% at ${usd6(rate * 3600n)}/h, `
                     + `fund ${fundUsd ? "$" + fundUsd.toFixed(2) : fundEth + " ETH"} ≈ ${buys}?`))) return say("aborted");
 
   // 1. create — the id is minted on-chain, read back from the Created event
@@ -821,7 +821,7 @@ async function cmdDeploy(rest) {
     args: [ref, gpuMilli, cpuMilli, appPort, portsCsv, isPublic, sshPubKey, ""] });
   const log = (rcpt.logs || []).find((l) => l.topics?.[0] === DEP_CREATED_TOPIC
     && l.address.toLowerCase() === DEFAULTS.DEPLOYMENTS_ADDRESS.toLowerCase());
-  if (!log) throw new Error("create succeeded but no Created event in the receipt — inspect tx " + rcpt.transactionHash);
+  if (!log) throw new Error("create succeeded but no Created event in the receipt; inspect tx " + rcpt.transactionHash);
   const id = log.topics[1];
   say(`created ${id}`);
 
@@ -833,7 +833,7 @@ async function cmdDeploy(rest) {
   } catch (e) {
     // Echo back the asset the user actually chose (don't flip ETH -> USDC).
     const hint = fundUsd ? `--usdc ${fundUsd}` : `--eth ${fundEth}`;
-    throw new Error(`created but NOT funded (${e.message}) — top up later: enclave fund ${id} ${hint}`);
+    throw new Error(`created but NOT funded (${e.message}); top up later: enclave fund ${id} ${hint}`);
   }
   say(`funded ${fundUsd ? "$" + fundUsd.toFixed(2) : fundEth + " ETH"}`);
 
@@ -843,7 +843,7 @@ async function cmdDeploy(rest) {
     if (h.accepted === false && h.reason) say(`claim-hint declined: ${h.reason} (the sweep may still claim it)`);
   } catch {}
 
-  if (f["no-wait"]) return say(opt.json ? JSON.stringify({ id, url: appUrl(id) }) : `not waiting — check: enclave status ${id}`);
+  if (f["no-wait"]) return say(opt.json ? JSON.stringify({ id, url: appUrl(id) }) : `not waiting; check: enclave status ${id}`);
 
   // 4. wait: ledger lease first, then the runner's own status
   say("waiting for an enclave to claim…");
@@ -853,7 +853,7 @@ async function cmdDeploy(rest) {
     const d = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, DEPLOYMENTS_ABI, "get", [id]).catch(() => null);
     if (d && !/^0x0+$/.test(d.runner) && Number(d.leaseUntil) * 1000 > Date.now()) claimed = d;
   }
-  if (!claimed) throw new Error(`no enclave claimed it yet (still queued; funded work is retried every sweep) — watch: enclave status ${id}`);
+  if (!claimed) throw new Error(`no enclave claimed it yet (still queued; funded work is retried every sweep); watch: enclave status ${id}`);
   say(`claimed by ${short(claimed.runner)} (operator ${claimed.runnerOperator})`);
   const done = { running: 1, failed: 1, terminated: 1, expired: 1 };
   let rec = null;
@@ -863,9 +863,9 @@ async function cmdDeploy(rest) {
     await sleep(2500);
   }
   if (!rec || rec.status !== "running")
-    throw new Error(`deployment is "${rec?.status || "unknown"}" — logs: enclave logs ${id}`);
+    throw new Error(`deployment is "${rec?.status || "unknown"}"; logs: enclave logs ${id}`);
   if (opt.json) return jout({ id, status: rec.status, url: appUrl(id) });
-  say(`running — ${appUrl(id)}`);
+  say(`running at ${appUrl(id)}`);
   say(`verify before sending data: enclave attest ${id}`);
 }
 
@@ -887,7 +887,7 @@ async function cmdPublish(rest) {
   if (bytes.length < 8 || bytes.readUInt32LE(0) !== 0x6d736100)
     throw new Error(`${file} is not a wasm binary (bad magic)`);
   const layer = bytes[6] | (bytes[7] << 8);
-  if (layer === 0) throw new Error(`${file} is a core wasm module, not a component — build for wasm32-wasip2 (cargo component / componentize)`);
+  if (layer === 0) throw new Error(`${file} is a core wasm module, not a component; build for wasm32-wasip2 (cargo component / componentize)`);
   if (layer !== 1) throw new Error(`${file} has unrecognized wasm layer ${layer} (expected a component)`);
 
   // version defaults to the next integer for your app (labels are free-form, matched exactly on deploy)
@@ -928,7 +928,7 @@ async function cmdPublish(rest) {
     functionName: "publishVersion", args });
   if (opt.json) return jout({ slug: f.slug, version, cid, appId, tx: rcpt.transactionHash, approval: "pending" });
   say(`published ${f.slug}:${version} (tx ${rcpt.transactionHash})`);
-  say(`approval is pending — runners only claim approved versions; deploy once approved:`);
+  say(`approval is pending (runners only claim approved versions); deploy once approved:`);
   say(`  enclave deploy ${f.slug}:${version} --fund 2`);
 }
 
@@ -941,7 +941,7 @@ async function cmdApps(rest) {
     const versions = a.versionCount ? await readVersions(a.appId, a.versionCount) : [];
     const latest = [...versions].reverse().find((v) => !v.yanked);
     rows.push({ slug: a.slug, name: a.name, publisher: a.publisher.slice(0, 10) + "…",
-                version: latest ? latest.version : "—",
+                version: latest ? latest.version : "-",
                 approval: latest ? APPROVAL_WORD[Number(latest.approval)] : "",
                 active: a.active ? "" : "inactive",
                 versions, app: a });
@@ -950,7 +950,7 @@ async function cmdApps(rest) {
     versions: versions.map((v) => ({ version: v.version, cid: v.cid, approval: APPROVAL_WORD[Number(v.approval)], yanked: v.yanked })) })) });
   table(rows, [{ h: "app", f: (r) => r.slug + ":" + r.version }, { h: "name", k: "name" },
                { h: "publisher", k: "publisher" }, { h: "approval", k: "approval" }, { h: "", k: "active" }]);
-  if (apps.length > 50) say(`(+${apps.length - 50} more — narrow with: enclave apps <query>)`);
+  if (apps.length > 50) say(`(+${apps.length - 50} more; narrow with: enclave apps <query>)`);
 }
 
 async function cmdPricing() {
@@ -994,7 +994,7 @@ async function cmdGpu() {
     if (/404/.test(e.message)) return null;
     throw e;
   });
-  if (!g) return say("this enclave has no GPU (CPU-only) — try --base against the GPU enclave, or `enclave availability`");
+  if (!g) return say("this enclave has no GPU (CPU-only); try --base against the GPU enclave, or `enclave availability`");
   if (opt.json) return jout(g);
   const c = g.capacity || {};
   kv([["role", g.role], ["mps", g.mpsActive ? "active" : "off"],
@@ -1017,7 +1017,7 @@ async function cmdAccount() {
 }
 
 // ---- help + dispatch ---------------------------------------------------------------
-const HELP = `enclave ${VERSION} — confidential compute from your terminal (https://enclave.host)
+const HELP = `enclave ${VERSION} · confidential compute from your terminal (https://enclave.host)
 
 usage: enclave <command> [args]  [--json] [-x] [-y|--yes] [--base URL] [--rpc URL]
 
@@ -1031,7 +1031,7 @@ deployments
          [--gpu 0..1] [--cpu 0..1]      shares of one card / one node (default: app minimums)
          [--fund-eth <eth>] [--private] [--port N] [--ports CSV]
          [--ssh-key FILE] [--no-wait]
-  ls                         your deployments — live, queued and unfunded
+  ls                         your deployments: live, queued and unfunded
   status <id>                one deployment: state, lease, balance, URL
   logs <id> [-f] [--tail N]  the app's stdout/stderr (-f polls)
   fund <id> --usdc 5|--eth 0.002   top up runtime by the second
@@ -1047,7 +1047,7 @@ platform
   pricing | availability | gpu | account
 
 <app>  is  [publisher/]slug[:version] from the on-chain catalog (CIDs can't
-       deploy: a CID names bytes, not a version — config differs per version)
+       deploy: a CID names bytes, not a version; config differs per version)
 <id>   is  the bytes32 deployment id (0x…), any unique 0x-prefix of it, or a legacy dep_… id
 
 Global: --json machine output · -x print every REST call + transaction ·
@@ -1087,7 +1087,7 @@ async function resolveAddressBook() {
 const cmd = args.shift();
 if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") { say(HELP); exit(0); }
 if (cmd === "version" || cmd === "--version") { say(VERSION); exit(0); }
-if (!COMMANDS[cmd]) die(`unknown command "${cmd}" — run: enclave help`);
+if (!COMMANDS[cmd]) die(`unknown command "${cmd}"; run: enclave help`);
 // `key new`/`key import` are purely local (no chain, no API), so skip the
 // address-book resolve — no reason to make offline key setup wait on an RPC.
 const OFFLINE = cmd === "key";

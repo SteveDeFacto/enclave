@@ -43,7 +43,7 @@
 
   <!-- subline -->
   <text x="72" y="448" font-family="DejaVu Sans" font-size="25" fill="#93A8B8">Deploy WebAssembly on attested H200 enclaves</text>
-  <text x="72" y="486" font-family="DejaVu Sans" font-size="25" fill="#93A8B8">from your browser — pay per second in ETH or USDC.</text>
+  <text x="72" y="486" font-family="DejaVu Sans" font-size="25" fill="#93A8B8">from your browser. Pay per second in ETH or USDC.</text>
 
   <!-- footer: url -->
   <circle cx="79" cy="556" r="5" fill="#2FE6A8"/>

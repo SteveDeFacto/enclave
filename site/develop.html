@@ -18,7 +18,7 @@
 <meta property="og:image" content="https://enclave.host/assets/og.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="Enclave — trustless confidential GPU compute on attested H200 enclaves" />
+<meta property="og:image:alt" content="Enclave: trustless confidential GPU compute on attested H200 enclaves" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:image" content="https://enclave.host/assets/og.png" />
 <link rel="icon" href="favicon.ico" sizes="48x48 32x32 16x16" />
@@ -50,7 +50,7 @@
   "@context": "https://schema.org",
   "@type": "WebAPI",
   "name": "Enclave API",
-  "description": "CORS-enabled REST API for deploying WebAssembly apps onto attested confidential GPU enclaves: create and fund deployments, stream logs, fetch attestation — all callable from front-end JavaScript.",
+  "description": "CORS-enabled REST API for deploying WebAssembly apps onto attested confidential GPU enclaves: create and fund deployments, stream logs, fetch attestation, all callable from front-end JavaScript.",
   "documentation": "https://enclave.host/develop#api",
   "termsOfService": "https://enclave.host/terms",
   "provider": { "@type": "Organization", "name": "Enclave Host, Inc.", "url": "https://enclave.host/" }
@@ -60,7 +60,7 @@
 <body>
 <c-header current="develop"></c-header>
 <main>
-<h1 class="sr-only">Develop for Enclave — WebAssembly app guide, CLI, and API reference</h1>
+<h1 class="sr-only">Develop for Enclave: WebAssembly app guide, CLI, and API reference</h1>
 <section id="develop-home" data-view="develop" aria-label="Developer documentation" style="padding:84px 0 0;">
   <a id="develop"></a>
   <div class="wrap">
@@ -698,7 +698,7 @@ cd enclave/cli
 npm i
 npm i -g .
 
-# curl -fsSL https://get.enclave.host | sh  # one-line install — coming soon; get.enclave.host is not live yet, use the clone above</code></pre></c-code>
+# curl -fsSL https://get.enclave.host | sh  # one-line install, coming soon; get.enclave.host is not live yet, use the clone above</code></pre></c-code>
           <c-code fn="bring a wallet"><pre><code># generate fresh, or import the key you already use
 enclave key new                    # prints the address; fund it with USDC on Base
 enclave key import                 # reads a private key from stdin; or ENCLAVE_KEY env

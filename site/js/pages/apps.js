@@ -264,7 +264,7 @@ async function putWasm(file, onProgress){
    the wasm upload and the image (thumbnail/banner) uploads. */
 async function signedUploadToken(bytes){
   if (!Enclave.address){ try { await connectWallet(); } catch(_){} }
-  if (!Enclave.address || !Enclave.provider) throw new EnclaveError("Connect your wallet to upload — your signature authorizes the pin.", 0);
+  if (!Enclave.address || !Enclave.provider) throw new EnclaveError("Connect your wallet to upload; your signature authorizes the pin.", 0);
   const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(b => b.toString(16).padStart(2, "0")).join("");
   const expiry = Math.floor(Date.now() / 1000) + 300;
   try {

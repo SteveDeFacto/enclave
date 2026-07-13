@@ -1,7 +1,7 @@
 # The `enclave` CLI
 
-One file, wallet-native — your wallet is your account. Every command maps 1:1 onto the
-[public API](https://enclave.host/#api) and the on-chain contracts on Base —
+One file, wallet-native; your wallet is your account. Every command maps 1:1 onto the
+[public API](https://enclave.host/#api) and the on-chain contracts on Base;
 full reference in the site's [Develop → CLI](https://enclave.host/#cli) chapter,
 or `enclave help`.
 
@@ -30,18 +30,18 @@ cd cli && npm install && npm install -g .   # any OS: npm makes the platform shi
 ```
 
 (npm symlinks a local-directory global install, so the deps have to exist in
-`cli/node_modules` — hence the `npm install` first.)
+`cli/node_modules`, hence the `npm install` first.)
 
 Dependencies are pinned in `cli/package-lock.json`; the installers use `npm ci`
-(exact locked versions) rather than resolving the caret ranges fresh — this is a
+(exact locked versions) rather than resolving the caret ranges fresh: this is a
 key-holding binary, so its supply chain is locked, not floated.
 
-or run it straight from a checkout (`node cli/enclave.mjs …` — deps resolve
+or run it straight from a checkout (`node cli/enclave.mjs …`; deps resolve
 from the repo's `node_modules`). Both installers share `cli/build.mjs` for the
 esbuild bundling step.
 
 On Windows the key file lands in `%USERPROFILE%\.config\enclave\key` (override
-with `XDG_CONFIG_HOME`); note the 0600 tightening is a POSIX permission — on
+with `XDG_CONFIG_HOME`); note the 0600 tightening is a POSIX permission; on
 NTFS the file is only as private as your user profile.
 
 ## How it holds your trust
@@ -50,7 +50,7 @@ NTFS the file is only as private as your user profile.
   machine. API auth signs a one-time SIWE challenge; create/fund/publish sign
   Base transactions locally and broadcast to `--rpc`.
 - **Payment**: `fundWithAuthorization` is an EIP-3009 `ReceiveWithAuthorization`
-  signature over USDC, its nonce bound to the deployment id's first 16 bytes —
+  signature over USDC, its nonce bound to the deployment id's first 16 bytes, so
   the money can land on that deployment's balance and nowhere else.
 - **Attestation**: `enclave attest` runs Tinfoil's verifier *locally* (hardware
   quote → vendor root, Sigstore code provenance, measurement match, TLS
@@ -61,6 +61,6 @@ NTFS the file is only as private as your user profile.
 Contract addresses are pinned in `enclave.mjs` (`DEFAULTS`) and kept in
 lockstep with the enclave configs by `scripts/sync-contract-addresses.sh`.
 
-Tests: `node --test test/cli.test.mjs` from the repo root — an offline double
+Tests: `node --test test/cli.test.mjs` from the repo root: an offline double
 of the platform (stub API with real SIWE verification + stub Base RPC that
 decodes the CLI's actually-signed transactions).
