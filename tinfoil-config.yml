@@ -1,0 +1,154 @@
+# Enclave enclave — CPU-ONLY flavor (no GPU attached, no GPU containers).
+#
+# Two containers share one confidential VM (shared localhost network, shared
+# /mnt/ramdisk volume):
+#
+#   supervisor    - control plane (auth, billing, quota, routing). Public via shim.
+#   wasm-manager  - tenant apps via `wasmtime serve` (all CPU; no GPU interface).
+#
+# GPU_COUNT=0 puts the supervisor in CPU-enclave mode: deployments buy a
+# cpuShare of the node (gpuShare is refused with a 422), floored at the
+# minimum the app's catalog specs imply. Routing: GPU work runs only on GPU
+# enclaves; CPU-only work lands here FIRST — GPU enclaves bid on it only after
+# CPU_CLAIM_GRACE_SEC, out of their leftover CPU pool.
+#
+# Released separately from the GPU flavor: tag CPU releases as v<X.Y.Z>-cpu via
+# the "Tinfoil Release (CPU)" workflow. The Tinfoil dashboard only reads the
+# DEFAULT config path (tinfoil-config.yml at the repo root), so the workflow
+# copies THIS file there in the release-tag commit and the measurement covers
+# that copy - point the dashboard at a -cpu tag to get this flavor. Image
+# digests are pinned by scripts/release.sh / the workflow, same as the GPU
+# flavor (enclaves/gpu/tinfoil-config.yml).
+cvm-version: 0.7.5
+cpus: 16
+memory: 65536      # 64 GiB
+
+containers:
+  # --- supervisor: control plane (no GPU), public ingress -----------------------
+  - name: "supervisor"
+    image: "ghcr.io/enclavehost/enclave-supervisor@sha256:69b035fabd7c3d8fa613beabf28cccd9abeaa7180382f991abf61acfe29741d4"
+    restart: always
+    env:
+      - PORT: "8080"
+      # CPU-enclave mode: no cards. The supervisor refuses gpuShare > 0 and
+      # allocates node shares; the claim loop only adopts on-chain deployments
+      # created with gpuMilli=0.
+      - GPU_COUNT: "0"
+      - NODE_VCPUS: "16"
+      - NODE_RAM_GB: "64"
+      - NODE_GFLOPS: "1000"                              # CPU compute per node in GFLOPS (16 vCPU ≈ 1 TFLOPS); exact cpuGflops asks divide by this
+      # tenant-app hosting: the wasm-manager runs each app as a `wasmtime serve` process.
+      - PROVISION_BACKEND: "vm"                          # required on a CPU enclave (no GPU worker exists)
+      - VMMGR_URL: "http://localhost:8091"               # the wasm-manager (container below)
+      - PUBLIC_URL: ""                                  # empty: supervisor advertises its own attested shim-cert SAN (Host header not trusted for identity)
+      - SIWE_DOMAIN: "enclave.host"
+      - SIWE_URI: "https://enclave.host"
+      - CHAIN_ID: "8453"
+      - CORS_ORIGINS: "https://enclave.host"
+      - BASE_RPC: "https://mainnet.base.org"
+      # pay-per-deploy (no custody): same EnclavePay forwarder as the GPU flavor.
+      - FORWARDER_ADDRESS: "0x9487322262F4ED763C1a0880ECD5E996094fb81C"
+      - USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"   # USDC on Base
+      # app approval gate: same EnclaveAppCatalog as the GPU flavor.
+      - APP_CATALOG_ADDRESS: "0x21F2798A51F5970dD43A5D8fAdA48b1b8D59cc67"
+      - PAYMENT_WINDOW_SEC: "600"
+      - GRACE_SEC: "90"
+      - PAY_POLL_SEC: "12"
+      - SESSION_TTL: "43200"
+      # Session JWTs are ES256-signed by a key MINTED IN-ENCLAVE at boot (persisted
+      # to /mnt/ramdisk/enclave-session tmpfs, never host disk), so the operator —
+      # who provisions the fleet SECRET below — CANNOT forge a session token. The
+      # public half is published at /v1/session-jwks and inside /v1/attestation.
+      # There is NO HS256/SECRET fallback: a token that isn't ES256 over this key
+      # is rejected, so nothing the operator holds can mint or verify a session.
+      # attestation: CPU releases are measured from THIS config under -cpu tags
+      # on the same repo. NOTE: verifiers that fetch the repo's LATEST release
+      # (tinfoil-cli default) will see the GPU flavor's measurement — point them
+      # at the matching -cpu release explicitly.
+      - ENCLAVE_REPO: "EnclaveHost/enclave"
+      # on-chain discovery: same registry; a CPU enclave advertises like any
+      # other and callers learn it is CPU-only from its /availability.
+      - REGISTRY_ENABLED: "1"
+      - ADDRESS_BOOK_ADDRESS: "0xab214342d5A490150A4A977063A2f88E21F80907"                                                            # set by scripts/deploy-address-book.mjs; "" = baked addresses only; when set the supervisor resolves + polls the contract addresses below from the on-chain EnclaveAddressBook
+      - REGISTRY_ADDRESS: "0xCB65f487eba6564D57FfB860cF9aE701584cB4a2"
+      # Portable deployments: the claim loop adopts ONLY CPU deployments
+      # (EnclaveDeployments records created with gpu=false).
+      - CLAIM_ENABLED: "1"
+      - DEPLOYMENTS_ADDRESS: "0x267f7F792CA84482698b2f6774B028522247B6CD"
+      # dedicated per-deployment IPv6 (tcp + udp): the relay box's routed /64
+      # (shared with the GPU flavor — one relay box, one /64; deployment ids are
+      # unique fleet-wide so derived addresses never collide). Empty keeps ports
+      # in-enclave-only. UDP_ADDR_PREFIX is the accepted legacy alias. See
+      # relay/README.md.
+      - DEP_ADDR_PREFIX: "2a01:4f9:c013:9b52::/64"
+      # dedicated-IP EGRESS (the outbound half): with DEP_ADDR_PREFIX set, app
+      # outbound leaves FROM its own IPv6 via ENCLAVE_EGRESS. EGRESS_RELAY_TOKEN is a
+      # shared secret matching the egress-relay box's env — delivered via
+      # `secrets:` below (NOT a plaintext env, which would pin it empty and
+      # shadow the injected secret). Optional EGRESS_SOCKS_PORT (default 1080).
+      - EGRESS_SOCKS_PORT: "1080"
+      # manual-billing / pilot controls, same semantics as the GPU flavor.
+      - AUTO_PROVISION: ""
+      - AUTO_PROVISION_HOURS: "0"
+      # public-TCP relay support: mints the in-enclave platform cert for the
+      # SNI relay's /x/:id/tls/:port bridge. Same suffix as the GPU flavor so the
+      # (fleet-aware) SNI relay routes stock-TLS clients to whichever enclave
+      # owns the deployment. Empty disables the /tls/ bridge on this flavor.
+      - TLS_BRIDGE_DOMAIN: "app.enclave.host"   # tcp.* SUNSET: the fallback pair + /tls/ gate live on the unified app zone now
+      # in-enclave browser TLS for public HTTP apps: ACME (ZeroSSL) certs for
+      # <label>.APP_CERT_DOMAIN minted INSIDE the CVM, served through the SNI
+      # relay's /x/:id/https passthrough. DNS-01 TXT records publish to the
+      # platform DNS daemon (nan-relay box), HMAC'd with SECRET. The feature
+      # activates only when the ACME_EAB_* secrets below are ALSO set.
+      - APP_CERT_DOMAIN: "app.enclave.host"
+      - DNS_API: "http://46.62.128.36:8153"              # dns-relay TXT push API (nan-relay box)
+    # STATE_FILE (/var/lib/enclave/state.json) MAY be pointed at host-backed
+    # storage for billing persistence. The in-enclave TLS-bridge PRIVATE KEY must
+    # never touch host-backed disk, so it is minted on its OWN tmpfs path
+    # (TLS_BRIDGE_DIR, default /mnt/ramdisk/enclave-tls), independent of STATE_FILE.
+    # Keep that TLS key dir memory-backed even if STATE_FILE moves to a host volume.
+    volumes:
+      - /mnt/ramdisk/enclave-state:/var/lib/enclave
+    secrets:
+      - SECRET                   # manager control-token (VMMGR_TOKEN) + DNS-push HMAC seed; NO LONGER signs session JWTs (those use the in-enclave ES256 key). Fleet-wide.
+      - ADMIN_TOKEN              # operator token for POST /v1/admin/deployments/:id/provision
+      - REGISTRY_PRIVATE_KEY     # EnclaveRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
+      - EGRESS_RELAY_TOKEN       # shared secret with the egress-relay box; same value fleet-wide (like SECRET). Unset = egress off.
+      - ACME_EAB_KID             # ZeroSSL External Account Binding pair (ZeroSSL Developer page).
+      - ACME_EAB_HMAC            # Fleet-wide like SECRET; unset = in-enclave app TLS stays off.
+    command: ["node", "supervisor.js"]
+
+  # --- wasm manager: tenant apps via `wasmtime serve` --------------------------
+  # Identical to the GPU flavor's wasm-manager except NODE_HAS_GPU=0: catalog
+  # apps marked `gpu: true` are refused at launch (a CPU node cannot serve them).
+  - name: "wasm-manager"
+    image: "ghcr.io/enclavehost/enclave-wasm-manager@sha256:5dd7694a4e9247f7783054791d43a093bc0fd8d0d4a5a6df91601474291b6189"
+    restart: always
+    env:
+      - WASM_MANAGER_PORT: "8091"
+      - NODE_VCPUS: "16"
+      - NODE_RAM_GB: "64"
+      - NODE_HAS_GPU: "0"           # refuse catalog apps that declare vram_mb > 0
+      # each app's memory cap is its deployment's cpuShare × NODE_RAM_GB
+      # (>= the mem_mb its specs declare); WASM_APP_MIN_MEM_MB (64) is the floor
+    # SECRET doubles as the manager's control-plane token (VMMGR_TOKEN): tenants
+    # hold outbound HTTP to loopback, so the control API on :8091 must reject
+    # calls that don't carry it (the supervisor sends X-Vmmgr-Token). The tenant
+    # data plane (/enc/*) and /health use their own auth / stay open.
+    secrets:
+      - SECRET
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+# Single ingress → supervisor. Only these paths are reachable from outside.
+shim:
+  upstream-port: 8080
+  paths:
+    - /health
+    - /v1/*
+    - /availability
+    - /x/*
