@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <!-- Source of the social-share card (assets/og.png). Regenerate with:
+       rsvg-convert -w 1200 -h 630 scripts/og-card.svg -o site/assets/og.png
+       Text uses DejaVu Sans (rendered to pixels at generation time, so the
+       PNG is what ships - the svg itself is not served). -->
+  <defs>
+    <radialGradient id="glow" cx="0.82" cy="0.5" r="0.75">
+      <stop offset="0" stop-color="#2FE6A8" stop-opacity="0.10"/>
+      <stop offset="0.55" stop-color="#2FE6A8" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#2FE6A8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2FE6A8" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#2FE6A8" stop-opacity="0"/>
+    </linearGradient>
+    <mask id="wmk"><rect width="148" height="20" fill="#fff"/><rect y="6.4" width="148" height="1.2" fill="#000"/><rect y="12.4" width="148" height="1.2" fill="#000"/></mask>
+  </defs>
+
+  <rect width="1200" height="630" fill="#070A0F"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <!-- faint blueprint grid -->
+  <g stroke="#1A2634" stroke-width="1" opacity="0.35">
+    <path d="M0 157.5H1200M0 315H1200M0 472.5H1200"/>
+    <path d="M200 0V630M400 0V630M600 0V630M800 0V630M1000 0V630"/>
+  </g>
+  <!-- top accent line -->
+  <rect x="0" y="0" width="1200" height="3" fill="url(#edge)"/>
+
+  <!-- brand: mark + wordmark -->
+  <g transform="translate(72,58) scale(2.2)" fill="none" stroke="#2FE6A8">
+    <path d="M16 2 28 9v14L16 30 4 23V9z" stroke-width="1.6"/>
+    <path d="M16 7.333 24 12v8L16 24.667 8 20v-8z" stroke-width="1.2" opacity=".55"/>
+    <circle cx="16" cy="12.55" r="2.45" stroke-width="1.6"/>
+    <path d="M16 15v6.6M16 21.6h2M16 19.4h1.5" stroke-width="1.6" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(164,71) scale(2.3)" fill="#E8F4EF">
+    <path mask="url(#wmk)" d="M0 0h16v4h-16zM0 8h12v4h-12zM0 16h16v4h-16zM0 0h4v20h-4zM22 20V0h4.4l7.2 11V0h4.4v20h-4.4l-7.2-11v11zM44 0h16v4h-16zM44 16h16v4h-16zM44 0h4v20h-4zM66 0h4v20h-4zM66 16h16v4h-16zM88 0h16v4h-16zM88 0h4v20h-4zM100 0h4v20h-4zM92 9h8v4h-8zM110 0h4.4l3.6 13.4 3.6-13.4H126l-5.6 20h-4.8zM132 0h16v4h-16zM132 8h12v4h-12zM132 16h16v4h-16zM132 0h4v20h-4z"/>
+  </g>
+
+  <!-- headline -->
+  <text x="72" y="308" font-family="DejaVu Sans" font-size="58" font-weight="bold" fill="#E8F4EF">Trustless compute</text>
+  <text x="72" y="384" font-family="DejaVu Sans" font-size="58" font-weight="bold" fill="#E8F4EF">you can actually <tspan fill="#2FE6A8">verify</tspan>.</text>
+
+  <!-- subline -->
+  <text x="72" y="448" font-family="DejaVu Sans" font-size="25" fill="#93A8B8">Deploy WebAssembly on attested H200 enclaves</text>
+  <text x="72" y="486" font-family="DejaVu Sans" font-size="25" fill="#93A8B8">from your browser — pay per second in ETH or USDC.</text>
+
+  <!-- footer: url -->
+  <circle cx="79" cy="556" r="5" fill="#2FE6A8"/>
+  <text x="96" y="564" font-family="DejaVu Sans Mono" font-size="24" fill="#2FE6A8">enclave.host</text>
+  <text x="278" y="564" font-family="DejaVu Sans Mono" font-size="24" fill="#5E7284">· no account · no KYC</text>
+
+  <!-- big mark, right -->
+  <g transform="translate(880,180) scale(8.4)" fill="none" stroke="#2FE6A8" opacity="0.9">
+    <path d="M16 2 28 9v14L16 30 4 23V9z" stroke-width="1.1"/>
+    <path d="M16 7.333 24 12v8L16 24.667 8 20v-8z" stroke-width="0.8" opacity=".55"/>
+    <circle cx="16" cy="12.55" r="2.45" stroke-width="1.1"/>
+    <path d="M16 15v6.6M16 21.6h2M16 19.4h1.5" stroke-width="1.1" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,8 @@
+# enclave.host — the canonical host (nan.host and public IPFS gateways mirror
+# this same tree; rel=canonical on every page points search engines here).
+# Session-gated pages (dashboard, admin, buy) carry meta noindex instead of a
+# Disallow, so crawlers can fetch them and see the directive.
+User-agent: *
+Allow: /
+
+Sitemap: https://enclave.host/sitemap.xml

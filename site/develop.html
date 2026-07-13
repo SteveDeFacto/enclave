@@ -5,8 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="color-scheme" content="dark" />
 <meta name="theme-color" content="#070A0F" />
-<title>Develop · Enclave</title>
-<meta name="description" content="Build your first Wasm app for Enclave: the developer guide, the enclave CLI, and the full API reference." />
+<title>Developer Guide, CLI & API Reference · Enclave</title>
+<meta name="description" content="Build and ship your first WebAssembly app for Enclave's confidential GPU cloud: the wasi:http developer guide, the enclave CLI, and the full CORS-enabled REST API reference with OpenAPI spec." />
+<link rel="canonical" href="https://enclave.host/develop" />
+<meta name="robots" content="index,follow,max-image-preview:large" />
+<meta property="og:site_name" content="Enclave" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://enclave.host/develop" />
+<meta property="og:title" content="Developer Guide, CLI & API Reference · Enclave" />
+<meta property="og:description" content="Build and ship your first WebAssembly app for Enclave's confidential GPU cloud: the developer guide, the enclave CLI, and the full API reference." />
+<meta property="og:image" content="https://enclave.host/assets/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Enclave — trustless confidential GPU compute on attested H200 enclaves" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://enclave.host/assets/og.png" />
 <link rel="icon" href="favicon.ico" sizes="48x48 32x32 16x16" />
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
@@ -23,12 +37,30 @@
   });
 })();
 </script>
+<link rel="preconnect" href="https://mainnet.base.org" crossorigin />
 <link rel="stylesheet" href="css/site.css" />
 <script type="module" blocking="render" src="js/boot.js"></script>
+<script type="application/ld+json" data-breadcrumb>
+{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Enclave","item":"https://enclave.host/"},
+{"@type":"ListItem","position":2,"name":"Develop","item":"https://enclave.host/develop"}]}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebAPI",
+  "name": "Enclave API",
+  "description": "CORS-enabled REST API for deploying WebAssembly apps onto attested confidential GPU enclaves: create and fund deployments, stream logs, fetch attestation — all callable from front-end JavaScript.",
+  "documentation": "https://enclave.host/develop#api",
+  "termsOfService": "https://enclave.host/terms",
+  "provider": { "@type": "Organization", "name": "Enclave Host, Inc.", "url": "https://enclave.host/" }
+}
+</script>
 </head>
 <body>
 <c-header current="develop"></c-header>
 <main>
+<h1 class="sr-only">Develop for Enclave — WebAssembly app guide, CLI, and API reference</h1>
 <section id="develop-home" data-view="develop" aria-label="Developer documentation" style="padding:84px 0 0;">
   <a id="develop"></a>
   <div class="wrap">

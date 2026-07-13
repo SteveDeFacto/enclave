@@ -5,8 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="color-scheme" content="dark" />
 <meta name="theme-color" content="#070A0F" />
-<title>Enclave · Trustless Confidential Compute</title>
+<title>Enclave · Trustless Confidential GPU Compute (H200)</title>
 <meta name="description" content="Trustless on-demand confidential GPU compute. Deploy a WebAssembly app onto a confidential enclave equipped with an H200 GPU, straight from your browser: pay in ETH or USDC, and verify the enclave yourself. CORS-friendly API. Built and operated by Enclave Host, Inc." />
+<link rel="canonical" href="https://enclave.host/" />
+<meta name="robots" content="index,follow,max-image-preview:large" />
+<meta property="og:site_name" content="Enclave" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://enclave.host/" />
+<meta property="og:title" content="Enclave · Trustless Confidential GPU Compute" />
+<meta property="og:description" content="Deploy a WebAssembly app onto an attested confidential enclave with an H200 GPU, straight from your browser. Pay per second in ETH or USDC. Verify the enclave yourself before sending a byte." />
+<meta property="og:image" content="https://enclave.host/assets/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Enclave — trustless confidential GPU compute on attested H200 enclaves" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://enclave.host/assets/og.png" />
 <link rel="icon" href="favicon.ico" sizes="48x48 32x32 16x16" />
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
@@ -35,8 +49,64 @@
   });
 })();
 </script>
+<link rel="preconnect" href="https://mainnet.base.org" crossorigin />
+<link rel="dns-prefetch" href="https://api.enclave.host" />
 <link rel="stylesheet" href="css/site.css" />
 <script type="module" blocking="render" src="js/boot.js"></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://enclave.host/#org",
+      "name": "Enclave Host, Inc.",
+      "alternateName": "Enclave",
+      "url": "https://enclave.host/",
+      "logo": { "@type": "ImageObject", "url": "https://enclave.host/assets/logo-1024.png", "width": 1024, "height": 1024 },
+      "email": "support@enclave.host",
+      "sameAs": ["https://github.com/EnclaveHost/enclave"],
+      "founder": {
+        "@type": "Person",
+        "name": "Steven Batchelor",
+        "jobTitle": "Founder & CEO",
+        "image": "https://enclave.host/assets/steven.png",
+        "sameAs": ["https://www.linkedin.com/in/steven-batchelor-50791627/"]
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://enclave.host/#website",
+      "url": "https://enclave.host/",
+      "name": "Enclave",
+      "description": "Trustless on-demand confidential GPU compute: deploy WebAssembly apps onto attested enclaves with H200 GPUs, paid per second in ETH or USDC.",
+      "publisher": { "@id": "https://enclave.host/#org" }
+    },
+    {
+      "@type": "Service",
+      "@id": "https://enclave.host/#service",
+      "name": "Enclave confidential GPU compute",
+      "serviceType": "Confidential computing (GPU cloud)",
+      "provider": { "@id": "https://enclave.host/#org" },
+      "url": "https://enclave.host/",
+      "areaServed": "Worldwide",
+      "description": "On-demand attested enclaves (AMD SEV-SNP + NVIDIA confidential computing) running WebAssembly apps with H200 GPU shares, metered per second and paid on-chain in ETH or USDC.",
+      "offers": [
+        {
+          "@type": "Offer",
+          "name": "GPU / VRAM share",
+          "priceSpecification": { "@type": "UnitPriceSpecification", "price": 6, "priceCurrency": "USD", "unitText": "hour, per full H200 GPU" }
+        },
+        {
+          "@type": "Offer",
+          "name": "CPU / RAM share",
+          "priceSpecification": { "@type": "UnitPriceSpecification", "price": 1, "priceCurrency": "USD", "unitText": "hour, per whole CPU node" }
+        }
+      ]
+    }
+  ]
+}
+</script>
 </head>
 <body>
 <c-header current="overview"></c-header>

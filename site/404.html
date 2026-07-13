@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#070A0F" />
+<title>Page Not Found · Enclave</title>
+<meta name="robots" content="noindex" />
+<meta name="description" content="That page doesn't exist on enclave.host." />
+<!-- served AT whatever missing path was requested (the _redirects catch-all
+     keeps the URL), so every relative URL below must resolve from the root -->
+<base href="/" />
+<link rel="icon" href="favicon.ico" sizes="48x48 32x32 16x16" />
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+<link rel="stylesheet" href="css/site.css" />
+</head>
+<body>
+<c-header current=""></c-header>
+<main>
+<section class="hero" aria-label="Not found">
+  <div class="wrap">
+    <div class="hero-copy">
+      <span class="eyebrow">404 · not found</span>
+      <h1>This page doesn't <span class="hl">exist</span>.</h1>
+      <p class="lede">The address may be mistyped, out of date, or pointing at something that moved. Everything real is one click away.</p>
+      <div class="hero-cta">
+        <a href="./" class="btn btn-primary">Home <span class="arr">→</span></a>
+        <a href="apps" class="btn btn-ghost">Browse apps</a>
+        <a href="develop" class="btn btn-ghost">Developer docs</a>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+<c-footer></c-footer>
+</body>
+</html>

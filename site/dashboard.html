@@ -6,6 +6,8 @@
 <meta name="color-scheme" content="dark" />
 <meta name="theme-color" content="#070A0F" />
 <title>Dashboard · Enclave</title>
+<!-- session-gated page: nothing indexable renders without a signed-in wallet -->
+<meta name="robots" content="noindex" />
 <meta name="description" content="Your running Enclave deployments: status, spend, endpoints, in-browser attestation checks, and the live provisioning output of your deploys." />
 <link rel="icon" href="favicon.ico" sizes="48x48 32x32 16x16" />
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
@@ -29,6 +31,7 @@
 <body>
 <c-header current="dashboard"></c-header>
 <main>
+<h1 class="sr-only">Your Enclave deployments</h1>
 <section id="dashboard" data-view="dashboard" aria-label="Dashboard">
   <div class="wrap">
     <div class="dash-head">

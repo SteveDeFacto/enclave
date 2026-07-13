@@ -21,3 +21,9 @@
 /apps/publish  /apps/publish.html  200
 /deploy        /apps.html          200
 /publish       /apps.html          200
+# Everything else absent from the DAG: the branded 404 page with a real 404
+# status (404.html carries <base href="/"> because it serves AT the missing
+# path). Absent OLD chunk hashes now serve this HTML instead of the gateway
+# error page - module loading fails identically either way (skew-heal covers
+# the mixed-edge window), so the union-archive protection is unaffected.
+/* /404.html 404

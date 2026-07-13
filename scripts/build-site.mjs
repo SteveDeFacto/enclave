@@ -193,7 +193,7 @@ for (const [outFile, o] of Object.entries(outs)) {
   preloads[PAGE_HTML[page]] = [...files]
     .map(c => `<link rel="modulepreload" href="${path.relative(DIST, path.resolve(ROOT, c)).replace(/\\/g, "/")}" />`).join("\n");
 }
-for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "dashboard.html", "admin.html", "terms.html", "privacy.html", "buy.html", "openapi.json"]) {
+for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "dashboard.html", "admin.html", "terms.html", "privacy.html", "buy.html", "404.html", "openapi.json"]) {
   let s = fs.readFileSync(path.join(SITE, f), "utf8");
   if (f.endsWith(".html") && f !== "buy.html") {
     s = bake(s);
@@ -216,6 +216,19 @@ for (const d of ["assets", "privy", ".well-known"])
   fs.cpSync(path.join(SITE, d), path.join(DIST, d), { recursive: true });
 // pretty URLs: the gateway's rewrite rules ride the pin itself
 fs.copyFileSync(path.join(SITE, "_redirects"), path.join(DIST, "_redirects"));
+fs.copyFileSync(path.join(SITE, "robots.txt"), path.join(DIST, "robots.txt"));
+/* sitemap: the canonical pretty URLs only (noindex pages excluded); lastmod =
+   the last commit that touched site/, so a rebuild doesn't fake freshness */
+const LASTMOD = (() => {
+  try { return gitOut(["log", "-1", "--format=%cs", "--", "site"]); }
+  catch { return new Date().toISOString().slice(0, 10); }
+})();
+fs.writeFileSync(path.join(DIST, "sitemap.xml"),
+  '<?xml version="1.0" encoding="UTF-8"?>\n' +
+  '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+  ["", "apps", "apps/deploy", "apps/publish", "develop", "terms", "privacy"]
+    .map(u => `  <url><loc>https://enclave.host/${u}</loc><lastmod>${LASTMOD}</lastmod></url>`).join("\n") +
+  "\n</urlset>\n");
 // Google's favicon crawler needs a fetchable file, and legacy fetchers ask
 // for /favicon.ico blindly - it must exist at the site root
 fs.copyFileSync(path.join(SITE, "favicon.ico"), path.join(DIST, "favicon.ico"));
@@ -227,8 +240,41 @@ fs.copyFileSync(path.join(SITE, "favicon.ico"), path.join(DIST, "favicon.ico"));
 fs.mkdirSync(path.join(DIST, "apps"), { recursive: true });
 const appsNested = fs.readFileSync(path.join(DIST, "apps.html"), "utf8")
   .replace("<head>", '<head>\n<base href="../" />');
+/* each nested view is its own indexable page: retitle the copied document so
+   /apps/deploy and /apps/publish carry their own title/description/canonical/
+   OG and a three-level breadcrumb instead of the store's */
+const VIEW_HEAD = {
+  deploy: {
+    title: "Deploy an App on a Confidential GPU · Enclave",
+    desc: "Launch a WebAssembly app on an attested H200 enclave straight from your browser: set a GPU share and a CPU share, pay per second in ETH or USDC from your wallet, and watch the live provisioning log. No account, no KYC.",
+    url: "https://enclave.host/apps/deploy",
+    crumb: "Deploy",
+  },
+  publish: {
+    title: "Publish a Wasm App · Enclave",
+    desc: "List your wasi:http WebAssembly component in Enclave's on-chain app catalog: wasm pinned to IPFS, one transaction on Base, immutable versions. Publishing takes a minute from the browser.",
+    url: "https://enclave.host/apps/publish",
+    crumb: "Publish",
+  },
+};
+const retitle = (html, v) => html
+  .replace(/<title>[^<]*<\/title>/, () => `<title>${v.title}</title>`)
+  .replace(/(<meta name="description" content=")[^"]*(")/, (_, a, b) => a + v.desc + b)
+  .replace(/(<link rel="canonical" href=")[^"]*(")/, (_, a, b) => a + v.url + b)
+  .replace(/(<meta property="og:url" content=")[^"]*(")/, (_, a, b) => a + v.url + b)
+  .replace(/(<meta property="og:title" content=")[^"]*(")/, (_, a, b) => a + v.title + b)
+  .replace(/(<meta property="og:description" content=")[^"]*(")/, (_, a, b) => a + v.desc + b)
+  .replace(/<script type="application\/ld\+json" data-breadcrumb>[^]*?<\/script>/, () =>
+    '<script type="application/ld+json" data-breadcrumb>\n' + JSON.stringify({
+      "@context": "https://schema.org", "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Enclave", "item": "https://enclave.host/" },
+        { "@type": "ListItem", "position": 2, "name": "Apps", "item": "https://enclave.host/apps" },
+        { "@type": "ListItem", "position": 3, "name": v.crumb, "item": v.url },
+      ],
+    }) + "\n</script>");
 for (const v of ["deploy", "publish"])
-  fs.writeFileSync(path.join(DIST, "apps", v + ".html"), appsNested);
+  fs.writeFileSync(path.join(DIST, "apps", v + ".html"), retitle(appsNested, VIEW_HEAD[v]));
 // the apps/ DIRECTORY now exists in the DAG, which SHADOWS the /apps ->
 // /apps.html rewrite (_redirects only fires for absent paths): give the
 // directory an index so /apps resolves to the store, not a gateway listing
