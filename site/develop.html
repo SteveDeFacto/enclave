@@ -692,14 +692,10 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
           <p>One executable file, wallet-native - your wallet is your account. Point it at a key and every operation on this page becomes a one-liner; state lives in <code>~/.config/enclave/</code> and nothing else touches your machine.</p>
 
           <h4>Install &amp; authenticate</h4>
-          <c-code fn="install · any OS"><pre><code># one-line install (Linux/macOS): fetches the repo source, builds the CLI locally; needs node ≥ 20
-curl -fsSL https://get.enclave.host | sh
-
-# Windows (PowerShell)
-irm https://get.enclave.host/install.ps1 | iex
-
-# or from a clone: npm puts the `enclave` command on your PATH
-git clone https://github.com/EnclaveHost/enclave
+          <p>Three routes, same result: the <code>enclave</code> command on your PATH. Each needs node ≥ 20; pick the one that fits.</p>
+          <c-code fn="install · Linux / macOS"><pre><code>curl -fsSL https://get.enclave.host | sh</code></pre></c-code>
+          <c-code fn="install · Windows (PowerShell)"><pre><code>irm https://get.enclave.host/install.ps1 | iex</code></pre></c-code>
+          <c-code fn="install · from a clone, via npm (any OS)"><pre><code>git clone https://github.com/EnclaveHost/enclave
 cd enclave/cli
 npm i
 npm i -g .</code></pre></c-code>
@@ -709,7 +705,7 @@ enclave key import                 # reads a private key from stdin; or ENCLAVE_
 enclave whoami                     # address, USDC balance, running deployments</code></pre></c-code>
           <div class="doc-note">
             <span class="nt">Shipped</span>
-            <p>The one-liner fetches the repo source from GitHub and builds a single ~1&nbsp;MB dependency-free executable on your PATH; no prebuilt binary is downloaded, so what you run is what is in the repo. The npm route does the same from a clone, with npm shims instead of one file. Every command maps 1:1 onto the <a href="#api">public API</a> and the on-chain contracts, so anything it does can be replayed with <code>curl</code> and your wallet - run any command with <code>-x</code> to watch.</p>
+            <p>The one-liners fetch the repo source from GitHub and build a single ~1&nbsp;MB dependency-free executable on your PATH; no prebuilt binary is downloaded, so what you run is what is in the repo. The npm route does the same from a clone, with npm shims instead of one file. Every command maps 1:1 onto the <a href="#api">public API</a> and the on-chain contracts, so anything it does can be replayed with <code>curl</code> and your wallet - run any command with <code>-x</code> to watch.</p>
           </div>
           <p>Auth is SIWE under the hood: commands that need the API sign a one-time challenge (<code>GET /auth/nonce</code> → <code>POST /auth/login</code>) and cache the bearer token until it expires. On-chain commands (create, fund, publish) sign Base transactions with the same key - the CLI never sends your key anywhere.</p>
 
