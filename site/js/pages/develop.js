@@ -9,6 +9,7 @@ import "../../components/footer/footer.js";
 import "../../components/toast/toast.js";
 import "../../components/section-head/section-head.js";
 import "../../components/code/code.js";
+import "../../components/code-tabs/code-tabs.js";
 import "../../components/api-reference/api-reference.js";
 import { $, $$ } from "../core/util.js";
 import { downloadSpec } from "../../components/footer/footer.js";

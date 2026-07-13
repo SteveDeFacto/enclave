@@ -693,12 +693,14 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
 
           <h4>Install &amp; authenticate</h4>
           <p>Three routes, same result: the <code>enclave</code> command on your PATH. Each needs node ≥ 20; pick the one that fits.</p>
-          <c-code fn="install · Linux / macOS"><pre><code>curl -fsSL https://get.enclave.host | sh</code></pre></c-code>
-          <c-code fn="install · Windows (PowerShell)"><pre><code>irm https://get.enclave.host/install.ps1 | iex</code></pre></c-code>
-          <c-code fn="install · from a clone, via npm (any OS)"><pre><code>git clone https://github.com/EnclaveHost/enclave
+          <c-code-tabs>
+            <c-code tab="Linux / macOS" os="linux mac" fn="install · Linux / macOS"><pre><code>curl -fsSL https://get.enclave.host | sh</code></pre></c-code>
+            <c-code tab="Windows" os="windows" fn="install · Windows (PowerShell)"><pre><code>irm https://get.enclave.host/install.ps1 | iex</code></pre></c-code>
+            <c-code tab="git + npm" fn="install · from a clone, via npm (any OS)"><pre><code>git clone https://github.com/EnclaveHost/enclave
 cd enclave/cli
 npm i
 npm i -g .</code></pre></c-code>
+          </c-code-tabs>
           <c-code fn="bring a wallet"><pre><code># generate fresh, or import the key you already use
 enclave key new                    # prints the address; fund it with USDC on Base
 enclave key import                 # reads a private key from stdin; or ENCLAVE_KEY env

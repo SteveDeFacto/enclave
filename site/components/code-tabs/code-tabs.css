@@ -1,0 +1,17 @@
+/* ============================================================
+   <c-code-tabs> - tab bar over a group of <c-code> panels.
+   Buttons echo the .copybtn chrome so the group reads as one
+   piece of code-block furniture. Pre-hydration (and no-JS) the
+   bar is empty/hidden and the panels stack with their own gaps;
+   .wired collapses them so the bar owns the top edge.
+   ============================================================ */
+c-code-tabs{display:contents;}
+.code-tabs{margin:14px 0;}
+.code-tabs .code{margin:12px 0 0;}
+.code-tabs.wired .code{margin:0;}
+.code-tabs-bar{display:flex;flex-wrap:wrap;gap:6px;}
+.code-tabs-bar:empty{display:none;}
+.code-tabs-bar{margin-bottom:8px;}
+.code-tabs-bar button{font-family:var(--font-mono);font-size:.75rem;line-height:1.5;color:var(--text-muted);border:1px solid var(--line);background:var(--surface);padding:.32em .8em;border-radius:6px;cursor:pointer;transition:.15s;}
+.code-tabs-bar button:hover{color:var(--text);border-color:#33465c;}
+.code-tabs-bar button.on{color:var(--jade);border-color:rgba(47,230,168,.4);background:rgba(47,230,168,.07);}

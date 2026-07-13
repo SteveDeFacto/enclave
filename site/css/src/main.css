@@ -68,6 +68,7 @@
 @import "../../components/toast/toast.css" layer(components);
 @import "../../components/section-head/section-head.css" layer(components);
 @import "../../components/code/code.css" layer(components);
+@import "../../components/code-tabs/code-tabs.css" layer(components);
 @import "../../components/enclave-panel/enclave-panel.css" layer(components);
 @import "../../components/ticker/ticker.css" layer(components);
 @import "../../components/flow/flow.css" layer(components);
