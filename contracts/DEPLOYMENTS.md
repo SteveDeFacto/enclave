@@ -14,7 +14,7 @@ for good, the deployment — including paid, unconsumed runtime — dies with it
 transactions waiting to be processed. The chain holds the three things a
 stranger enclave needs to take over:
 
-1. the **intent** — what to run (`appRef`), the two shares bought (GPU + CPU), ports, visibility, ssh key;
+1. the **intent** — what to run (`appRef`), the two shares bought (GPU + CPU), ports, visibility;
 2. the **balance** — funded runtime (USDC 6dp), credited by payments, burned by leases;
 3. the **lease** — who is serving it right now, and until when.
 
@@ -63,7 +63,9 @@ via transaction instead of via one enclave's API).
 
 ## Contract summary (`EnclaveDeployments.sol`)
 
-- **`create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid)`**
+- **`create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, configCid)`**
+  (schema rev 2 — rev-1 contracts carried an extra `sshPubKey` string here and in
+  the `Deployment` struct; consumers sniff `deploymentsSchema()` to pick the shape)
   — permissionless; inert until funded. `appRef` is `catalog://<appId>/<versionIndex>`,
   the on-chain record of the catalog VERSION to run (2026-07-09; CID refs are refused
   by runners — a CID names bytes, not a version). The record supplies the wasm,
@@ -251,7 +253,6 @@ async function adopt(d, resolvedRef) {
     rate: Number(d.rate) / 1e6, paidUsdc: Number(d.spent6) + Number(d.balance6),
     _onchain: true, _leaseUntil: Number(d.leaseUntil),
     _gpu: gpu, _gpuSpec: gpuShare > 0 ? { cardId: gpu.cardId, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare } : null,
-    _authorizedKey: (d.sshPubKey || "").trim(), _sshKeySource: "on-chain",
   };
   deployments.set(rec.id, rec); saveStateSoon();
   if (!(await provisionTenant(rec))) {                  // launch failed (bad wasm, OOM, ...):
@@ -347,10 +348,6 @@ the new enclave. This is the same no-trusted-gateway shape as discovery today.
   over attested enclave-to-enclave channels (same measurement ⇒ mutual trust);
   or the owner posts secrets to the runner via a SIWE-authed endpoint after
   each claim (trustless but manual).
-- **SSH host keys.** Each enclave generates its sandbox host key at boot
-  (RTMR-measured), so a failover changes the fingerprint; clients must re-pin.
-  Only user keys (`sshPubKey`) are portable — enclave-minted user keys are
-  deliberately not supported for portable deployments.
 - **UDP addressing.** The per-deployment IPv6 host bits derive from the id and
   survive failover, but the /64 prefix is per relay box; a takeover by an
   enclave behind a different relay changes the address. Client re-resolution

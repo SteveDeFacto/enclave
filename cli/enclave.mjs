@@ -60,10 +60,13 @@ const DEFAULTS = {
 
 // Minimal ABIs — mirror contracts/*.abi.json (checked in, re-emitted by the
 // deploy scripts); embedded so the installed binary is self-contained.
+// Deployment struct, schema rev 2. Rev-1 contracts carry a removed sshPubKey
+// string after ports (in the struct and in create); depAbi() sniffs which
+// shape the live ledger speaks, the same way catRev() sniffs the catalog.
 const DEPLOYMENT_TUPLE = [
   { name: "id", type: "bytes32" }, { name: "owner", type: "address" },
   { name: "appRef", type: "string" }, { name: "ports", type: "string" },
-  { name: "sshPubKey", type: "string" }, { name: "configCid", type: "string" },
+  { name: "configCid", type: "string" },
   { name: "gpuMilli", type: "uint16" }, { name: "cpuMilli", type: "uint16" },
   { name: "appPort", type: "uint32" }, { name: "isPublic", type: "bool" },
   { name: "active", type: "bool" }, { name: "createdAt", type: "uint64" },
@@ -71,12 +74,16 @@ const DEPLOYMENT_TUPLE = [
   { name: "spent6", type: "uint256" }, { name: "runner", type: "bytes32" },
   { name: "runnerOperator", type: "address" }, { name: "leaseUntil", type: "uint64" },
 ];
-const DEPLOYMENTS_ABI = [
+const DEPLOYMENT_TUPLE_V1 = [
+  ...DEPLOYMENT_TUPLE.slice(0, 4), { name: "sshPubKey", type: "string" }, ...DEPLOYMENT_TUPLE.slice(4),
+];
+const depsAbiFor = (tuple, rev) => [
   { type: "function", name: "create", stateMutability: "nonpayable",
     inputs: [{ name: "appRef", type: "string" }, { name: "gpuMilli", type: "uint16" },
              { name: "cpuMilli", type: "uint16" }, { name: "appPort", type: "uint32" },
              { name: "ports", type: "string" }, { name: "isPublic", type: "bool" },
-             { name: "sshPubKey", type: "string" }, { name: "configCid", type: "string" }],
+             ...(rev >= 2 ? [] : [{ name: "sshPubKey", type: "string" }]),
+             { name: "configCid", type: "string" }],
     outputs: [{ type: "bytes32" }] },
   { type: "function", name: "fundWithAuthorization", stateMutability: "nonpayable",
     inputs: [{ name: "id", type: "bytes32" }, { name: "from", type: "address" },
@@ -89,10 +96,10 @@ const DEPLOYMENTS_ABI = [
     inputs: [{ name: "id", type: "bytes32" }, { name: "active", type: "bool" }], outputs: [] },
   { type: "function", name: "get", stateMutability: "view",
     inputs: [{ name: "id", type: "bytes32" }],
-    outputs: [{ type: "tuple", components: DEPLOYMENT_TUPLE }] },
+    outputs: [{ type: "tuple", components: tuple }] },
   { type: "function", name: "getPage", stateMutability: "view",
     inputs: [{ name: "start", type: "uint256" }, { name: "n", type: "uint256" }],
-    outputs: [{ type: "tuple[]", components: DEPLOYMENT_TUPLE }] },
+    outputs: [{ type: "tuple[]", components: tuple }] },
   { type: "function", name: "count", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "secondsFundable", stateMutability: "view",
     inputs: [{ name: "id", type: "bytes32" }], outputs: [{ type: "uint256" }] },
@@ -101,6 +108,18 @@ const DEPLOYMENTS_ABI = [
              { name: "appRef", type: "string" }, { name: "gpuMilli", type: "uint16" },
              { name: "cpuMilli", type: "uint16" }, { name: "rate", type: "uint256" }] },
 ];
+// sniff once per run which shape the live contract speaks (mirrors catRev)
+let _depAbi = null;
+async function depAbi() {
+  if (_depAbi) return _depAbi;
+  let rev = 2;
+  try { rev = Number(await read(DEFAULTS.DEPLOYMENTS_ADDRESS,
+    [{ type: "function", name: "deploymentsSchema", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] }],
+    "deploymentsSchema", [])) || 2; }
+  catch (e) { rev = 1; }   // pre-getter contract: the call reverts
+  _depAbi = { rev, abi: depsAbiFor(rev >= 2 ? DEPLOYMENT_TUPLE : DEPLOYMENT_TUPLE_V1, rev) };
+  return _depAbi;
+}
 // keccak256("Created(bytes32,address,string,uint16,uint16,uint256)") — same
 // constant the deploy console uses to pull the minted id out of the receipt.
 const DEP_CREATED_TOPIC = "0x3b201eb11e77934b296f908775fc0a82679683fd83a1232579f1014bcf7d3239";
@@ -410,7 +429,7 @@ async function chainDeployments(owner) { // owner=null -> all
   if (!_pageCache) {
     _pageCache = [];
     for (let start = 0; ; start += 100) {
-      const page = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, DEPLOYMENTS_ABI, "getPage", [BigInt(start), 100n]);
+      const page = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, (await depAbi()).abi, "getPage", [BigInt(start), 100n]);
       _pageCache.push(...page);
       if (page.length < 100) break;
     }
@@ -508,7 +527,7 @@ async function fundUsdc(account, id, amountUsd) {
       { name: "validBefore", type: "uint256" }, { name: "nonce", type: "bytes32" }] },
     message,
   });
-  await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi: DEPLOYMENTS_ABI,
+  await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi: (await depAbi()).abi,
     functionName: "fundWithAuthorization",
     args: [id, account.address, value, 0n, validBefore, nonce, signature] });
   return value;
@@ -637,7 +656,7 @@ async function cmdStatus(rest) {
   const id = await resolveId(rest[0], account);
   const rec = await api("GET", `/v1/deployments/${id}`, { auth: account, ok404: true });
   let chainRec = null;
-  if (isB32(id)) try { chainRec = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, DEPLOYMENTS_ABI, "get", [id]); } catch {}
+  if (isB32(id)) try { chainRec = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, (await depAbi()).abi, "get", [id]); } catch {}
   if (!rec && !chainRec) throw new Error(`no deployment ${rest[0]} (not on any live enclave, not on the ledger)`);
   if (opt.json) return jout({ api: rec, chain: chainRec });
   const leased = chainRec && Number(chainRec.leaseUntil) * 1000 > Date.now();
@@ -691,7 +710,7 @@ async function cmdFund(rest) {
   if (!f._[0] || (!f.usdc && !f.eth)) throw new Error("usage: enclave fund <id> --usdc 5 | --eth 0.002");
   const id = await resolveId(f._[0], account);
   if (!isB32(id)) throw new Error("only on-chain deployments (bytes32 ids) are fundable by transaction");
-  const d = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, DEPLOYMENTS_ABI, "get", [id]);
+  const d = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, (await depAbi()).abi, "get", [id]);
   if (d.owner === "0x0000000000000000000000000000000000000000") throw new Error(`no deployment ${short(id)} on the ledger`);
   if (f.usdc) {
     const amt = numFlag(f.usdc, "--usdc");
@@ -701,10 +720,10 @@ async function cmdFund(rest) {
   } else {
     const amt = numFlag(f.eth, "--eth");
     if (!(await confirm(`fund ${short(id)} with ${amt} ETH (credited at the Chainlink ETH/USD rate)?`))) return say("aborted");
-    await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi: DEPLOYMENTS_ABI,
+    await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi: (await depAbi()).abi,
       functionName: "fundEth", args: [id], value: parseEther(String(amt)) });
   }
-  const fresh = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, DEPLOYMENTS_ABI, "get", [id]);
+  const fresh = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, (await depAbi()).abi, "get", [id]);
   if (opt.json) return jout({ id, balance6: fresh.balance6, fundableSec: fresh.rate > 0n ? Number(fresh.balance6 / fresh.rate) : 0 });
   say(`balance ${usd6(fresh.balance6)}: ${dur(fresh.rate > 0n ? Number(fresh.balance6 / fresh.rate) : 0)} of runtime at ${usd6(fresh.rate * 3600n)}/h`);
 }
@@ -746,9 +765,9 @@ async function cmdStop(rest) {
   if (!(await confirm(`stop ${short(id)}? (terminates the app; on-chain balance is spent, not refunded)`))) return say("aborted");
   if (isB32(id)) {
     // take the work item off the queue first so no enclave re-claims it…
-    const d = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, DEPLOYMENTS_ABI, "get", [id]).catch(() => null);
+    const d = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, (await depAbi()).abi, "get", [id]).catch(() => null);
     if (d && d.active && d.owner.toLowerCase() === account.address.toLowerCase())
-      await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi: DEPLOYMENTS_ABI,
+      await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi: (await depAbi()).abi,
         functionName: "setActive", args: [id, false] });
   }
   // …then tear down the running instance (the runner also notices ActiveSet on
@@ -762,7 +781,7 @@ async function cmdStop(rest) {
 async function cmdDeploy(rest) {
   const account = loadKey();
   const f = flags(rest, {
-    val: ["--gpu", "--cpu", "--fund", "--fund-eth", "--port", "--ports", "--ssh-key", "--config-cid"],
+    val: ["--gpu", "--cpu", "--fund", "--fund-eth", "--port", "--ports", "--config-cid"],
     bool: ["--private", "--public", "--no-wait"],
   });
   if (!f._[0]) throw new Error("usage: enclave deploy <app> [--gpu 0..1] [--cpu 0..1] --fund <usd> [flags]");
@@ -787,7 +806,6 @@ async function cmdDeploy(rest) {
   const appPort = f.port !== undefined ? parseInt(f.port, 10)
     : httpEntry ? parseInt(httpEntry.split(":")[1], 10) : 8080;
   const isPublic = f.private ? false : true;
-  const sshPubKey = f["ssh-key"] ? fs.readFileSync(f["ssh-key"], "utf8").trim() : "";
   // configCid is RETIRED: the appRef names the catalog version RECORD and the
   // enclave applies that version's config (approved with it) straight from the
   // chain. Runners refuse deployments that set a configCid.
@@ -816,9 +834,11 @@ async function cmdDeploy(rest) {
                     + `fund ${fundUsd ? "$" + fundUsd.toFixed(2) : fundEth + " ETH"} ≈ ${buys}?`))) return say("aborted");
 
   // 1. create — the id is minted on-chain, read back from the Created event
-  const rcpt = await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi: DEPLOYMENTS_ABI,
+  // (rev-1 contracts take a now-removed sshPubKey string before configCid)
+  const { rev: depRev, abi: depsAbi } = await depAbi();
+  const rcpt = await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi: depsAbi,
     functionName: "create",
-    args: [ref, gpuMilli, cpuMilli, appPort, portsCsv, isPublic, sshPubKey, ""] });
+    args: [ref, gpuMilli, cpuMilli, appPort, portsCsv, isPublic, ...(depRev >= 2 ? [] : [""]), ""] });
   const log = (rcpt.logs || []).find((l) => l.topics?.[0] === DEP_CREATED_TOPIC
     && l.address.toLowerCase() === DEFAULTS.DEPLOYMENTS_ADDRESS.toLowerCase());
   if (!log) throw new Error("create succeeded but no Created event in the receipt; inspect tx " + rcpt.transactionHash);
@@ -828,7 +848,7 @@ async function cmdDeploy(rest) {
   // 2. fund (separate tx — the deployment already exists; if this fails it's inert, not lost)
   try {
     if (fundUsd) await fundUsdc(account, id, fundUsd);
-    else await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi: DEPLOYMENTS_ABI,
+    else await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi: (await depAbi()).abi,
       functionName: "fundEth", args: [id], value: parseEther(String(fundEth)) });
   } catch (e) {
     // Echo back the asset the user actually chose (don't flip ETH -> USDC).
@@ -850,7 +870,7 @@ async function cmdDeploy(rest) {
   let claimed = null;
   for (let i = 0; i < 90 && !claimed; i++) {
     await sleep(2000);
-    const d = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, DEPLOYMENTS_ABI, "get", [id]).catch(() => null);
+    const d = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, (await depAbi()).abi, "get", [id]).catch(() => null);
     if (d && !/^0x0+$/.test(d.runner) && Number(d.leaseUntil) * 1000 > Date.now()) claimed = d;
   }
   if (!claimed) throw new Error(`no enclave claimed it yet (still queued; funded work is retried every sweep); watch: enclave status ${id}`);
@@ -1029,8 +1049,7 @@ identity
 deployments
   deploy <app> --fund <usd>  create + fund + wait until live; prints the URL
          [--gpu 0..1] [--cpu 0..1]      shares of one card / one node (default: app minimums)
-         [--fund-eth <eth>] [--private] [--port N] [--ports CSV]
-         [--ssh-key FILE] [--no-wait]
+         [--fund-eth <eth>] [--private] [--port N] [--ports CSV] [--no-wait]
   ls                         your deployments: live, queued and unfunded
   status <id>                one deployment: state, lease, balance, URL
   logs <id> [-f] [--tail N]  the app's stdout/stderr (-f polls)

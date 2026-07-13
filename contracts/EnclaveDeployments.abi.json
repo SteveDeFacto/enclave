@@ -93,12 +93,6 @@
       {
         "indexed": false,
         "internalType": "string",
-        "name": "sshPubKey",
-        "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "string",
         "name": "configCid",
         "type": "string"
       }
@@ -442,11 +436,6 @@
       },
       {
         "internalType": "string",
-        "name": "sshPubKey",
-        "type": "string"
-      },
-      {
-        "internalType": "string",
         "name": "configCid",
         "type": "string"
       }
@@ -460,6 +449,19 @@
       }
     ],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "deploymentsSchema",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -583,11 +585,6 @@
           },
           {
             "internalType": "string",
-            "name": "sshPubKey",
-            "type": "string"
-          },
-          {
-            "internalType": "string",
             "name": "configCid",
             "type": "string"
           },
@@ -695,11 +692,6 @@
           {
             "internalType": "string",
             "name": "ports",
-            "type": "string"
-          },
-          {
-            "internalType": "string",
-            "name": "sshPubKey",
             "type": "string"
           },
           {
@@ -817,11 +809,6 @@
           {
             "internalType": "string",
             "name": "ports",
-            "type": "string"
-          },
-          {
-            "internalType": "string",
-            "name": "sshPubKey",
             "type": "string"
           },
           {
@@ -1073,11 +1060,6 @@
         "internalType": "bytes32",
         "name": "id",
         "type": "bytes32"
-      },
-      {
-        "internalType": "string",
-        "name": "sshPubKey",
-        "type": "string"
       },
       {
         "internalType": "string",

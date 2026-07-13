@@ -18,16 +18,17 @@ const RELAY_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- ABI fixtures: EnclaveDeployments.count()/getPage() --------------
+// The stub plays a schema rev-2 ledger (17-field Deployment, no sshPubKey).
 const W = (v) => (typeof v === "string" ? v.replace(/^0x/, "").toLowerCase() : BigInt(v).toString(16)).padStart(64, "0");
 function tupleOf(d) {
-  const strs = [d.appRef, d.ports ?? "", d.sshPubKey ?? "", d.configCid ?? ""].map((s) => {
+  const strs = [d.appRef, d.ports ?? "", d.configCid ?? ""].map((s) => {
     const hex = Buffer.from(s, "utf8").toString("hex");
     return { body: W(hex.length / 2) + hex.padEnd(Math.ceil(hex.length / 64) * 64, "0"), words: 1 + Math.ceil(hex.length / 64) };
   });
-  let off = 18 * 32;
+  let off = 17 * 32;
   const strHeads = strs.map((s) => { const h = W(off); off += s.words * 32; return h; });
   return [
-    W(d.id), W(d.owner), strHeads[0], strHeads[1], strHeads[2], strHeads[3],
+    W(d.id), W(d.owner), strHeads[0], strHeads[1], strHeads[2],
     W(d.gpuMilli ?? 0), W(d.cpuMilli ?? 10), W(d.appPort ?? 8080), W(d.isPublic ? 1 : 0), W(d.active ? 1 : 0),
     W(d.createdAt ?? 1700000000), W(d.rate ?? 3), W(d.balance6 ?? 0), W(d.spent6 ?? 0),
     W(d.runner ?? "0x" + "0".repeat(64)), W(d.runnerOperator ?? "0x" + "0".repeat(40)), W(d.leaseUntil ?? 0),
@@ -72,7 +73,8 @@ function stubRpc(ledger = LEDGER) {
       const one = (m) => {
         if (m.method !== "eth_call") return "0x";
         const data = m.params[0].data;
-        if (data.length === 10) return "0x" + W(ledger.length);                       // count()
+        if (data.startsWith("0x5d1b72b6")) return "0x" + W(2);                        // deploymentsSchema() -> rev 2
+        if (data.startsWith("0x06661abd")) return "0x" + W(ledger.length);            // count()
         const start = Number(BigInt("0x" + data.slice(10, 74)));
         const n = Number(BigInt("0x" + data.slice(74, 138)));
         return encPage(ledger.slice(start, start + n));                               // getPage(start, n)

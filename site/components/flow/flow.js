@@ -28,7 +28,7 @@ class Flow extends EnclaveElement {
     if (!op) {   // on-chain steps aren't HTTP operations, so they have no spec entry
       h += '<div class="block-lbl" style="margin-top:0">On-chain · Base</div>'
         + '<div class="code"><pre style="margin:0;padding:13px 16px"><code>'
-        + hlCode('// one wallet transaction - no HTTP call\ncreate(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid)\n// appRef = catalog://<appId>/<versionIndex> (the version record; configCid stays "")\n// -> the receipt\'s Created event: topics[1] is your deployment id (bytes32)')
+        + hlCode('// one wallet transaction - no HTTP call\ncreate(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, configCid)\n// appRef = catalog://<appId>/<versionIndex> (the version record; configCid stays "")\n// -> the receipt\'s Created event: topics[1] is your deployment id (bytes32)')
         + "</code></pre></div></div>";
       this.querySelector(".flow-detail").innerHTML = h;
       return;

@@ -177,7 +177,6 @@ const AUTO_PROVISION_HOURS = parseFloat(process.env.AUTO_PROVISION_HOURS || "0")
 const ADMIN_TOKEN          = process.env.ADMIN_TOKEN || "";
 const BASE_RPC       = process.env.BASE_RPC || "https://mainnet.base.org";
 const SESSION_TTL    = parseInt(process.env.SESSION_TTL || "604800", 10); // 7d: SIWE is lazy now (only logs/attestation/private data need it) - make the one signature rare
-const SSH_USER       = process.env.SSH_USER || "instance"; // login user the supervisor's sshd drops into
 // --- platform model (vLLM tier) ---------------------------------------------
 // On a big-model flavor (e.g. 8xH200 serving GLM-5.2), a vLLM sidecar loads an
 // attested Modelwrap volume and serves the OpenAI API on loopback. The shim
@@ -187,7 +186,7 @@ const SSH_USER       = process.env.SSH_USER || "instance"; // login user the sup
 const PLATFORM_MODEL_URL  = (process.env.PLATFORM_MODEL_URL || "").replace(/\/+$/, "");
 const PLATFORM_MODEL_NAME = process.env.PLATFORM_MODEL_NAME || "";      // advertised id (informational)
 const PLATFORM_MODEL_KEY  = process.env.PLATFORM_MODEL_KEY || "";       // optional Bearer gate on the model API
-const DEFAULT_IMAGE  = process.env.DEFAULT_IMAGE || "debian:bookworm-slim"; // any stock image; sshd is hosted by the supervisor, not the image
+const DEFAULT_IMAGE  = process.env.DEFAULT_IMAGE || "debian:bookworm-slim"; // any stock image
 // --- worker launch: tenants run as the manager's wasmtime/CUDA processes ------
 const MPS_PIPE_DIR   = process.env.CUDA_MPS_PIPE_DIRECTORY || "/tmp/nvidia-mps";
 const ENABLE_MPS     = !/^(0|false|off)$/i.test(process.env.ENABLE_MPS || "1"); // MPS enforces BOTH the SM cap and the VRAM cap (validated under CC)
@@ -364,13 +363,6 @@ async function advertiseFromShimCert() {
     if (!_registered) await new Promise((r) => setTimeout(r, delaySec * 1000).unref());
   }
 }
-// The sandbox sshd host key is GENERATED ONCE AT BOOT inside the enclave and
-// measured into a TDX RTMR (see initSshHostKey) - so its fingerprint is
-// attestation-bound without baking a key into any image, and one fingerprint
-// covers every instance. These are set at runtime, never from env.
-let SSH_HOST_KEY_PATH = null;
-let SSH_HOST_KEY_FP   = "SHA256:<pending-boot>";
-
 function need(n){ const v = process.env[n]; if(!v){ console.error("FATAL: missing env", n); process.exit(1);} return v; }
 
 // ============================================================================
@@ -802,27 +794,6 @@ async function initMps() {
   }
 }
 
-async function initSshHostKey() {
-  // Generate the sandbox sshd host key ONCE, in-enclave. Every per-deployment
-  // sshd the supervisor starts uses THIS key, so a single fingerprint covers all
-  // instances and is verifiable against attestation. No key is baked into any
-  // image. Resilient: if ssh-keygen is absent (local dev), boot continues with a
-  // placeholder fingerprint.
-  try {
-    const dir  = mkdtempSync(join(tmpdir(), "enclave-hostkey-"));
-    const path = join(dir, "ssh_host_ed25519_key");
-    execFileSync("ssh-keygen", ["-t", "ed25519", "-N", "", "-q", "-C", "enclave-host", "-f", path]);
-    const out  = execFileSync("ssh-keygen", ["-lf", `${path}.pub`]).toString(); // "256 SHA256:… comment (ED25519)"
-    SSH_HOST_KEY_PATH = path;
-    SSH_HOST_KEY_FP   = (out.match(/SHA256:\S+/) || ["SHA256:<unknown>"])[0];
-    // Tinfoil exposes no guest RTMR-extend, so this key cannot be folded into a
-    // hardware register; getMeasurements() reports it as measured:false
-    // (asserted by attested code) rather than pretending otherwise.
-  } catch (e) {
-    console.warn("ssh host key not generated (ssh-keygen missing?):", e.message);
-  }
-}
-
 // Public RPCs rate-limit per IP and the claim loop's bursts run into it
 // (observed live 2026-07-05: "over rate limit" from mainnet.base.org killed
 // whole claim passes). Longer exponential retry absorbs a burst cap; the
@@ -934,47 +905,18 @@ function loadState() {
     + `(${running} running, ${waiting} awaiting payment) after ${Math.round(gapMs / 1000)}s down; clocks were frozen`);
 }
 
-// ---- SSH access ------------------------------------------------------------
-// Generate an ed25519 keypair in-enclave via ssh-keygen (correct OpenSSH format).
-// privateKey is surfaced to the user exactly ONCE, in the create response.
-function generateSshKeypair(label) {
-  const dir = mkdtempSync(join(tmpdir(), "enclave-ssh-"));
-  try {
-    const key = join(dir, "id");
-    execFileSync("ssh-keygen", ["-t", "ed25519", "-N", "", "-q", "-C", label || "enclave", "-f", key]);
-    return { privateKey: readFileSync(key, "utf8"), publicKey: readFileSync(key + ".pub", "utf8").trim() };
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-}
-// SSH rides the one attested origin over a WebSocket (no extra port): /x/:id/ssh.
-function sshCommandFor(endpoint) {
-  const wss = endpoint.replace(/^https:/i, "wss:") + "/ssh";
-  return `ssh -o ProxyCommand='websocat -b ${wss}' ${SSH_USER}@enclave`;
-}
-// public access shape (NEVER includes the private key)
-function sshAccessOf(rec) {
-  return { user: SSH_USER, command: sshCommandFor(rec.network.endpoint),
-           hostKeyFingerprint: SSH_HOST_KEY_FP, keySource: rec._sshKeySource || "generated" };
-}
-
 // ============================================================================
 // >>> IMPLEMENT THESE for your CVM launch mechanism (e.g. the app manager on
 //     VMMGR_URL). Contract: one ingress port, no sibling reach.
 //     Tinfoil exposes no guest RTMR-extend, so a launched image's digest cannot
 //     be folded into the hardware measurements; /attestation reports exactly
 //     that (per-app `coverage` in getMeasurements) instead of implying it.
-//     SSH: the sandbox runs ANY stock image and needs NO sshd of its own. The
-//     supervisor hosts sshd (measured host key from initSshHostKey); spawn starts
-//     a loopback sshd for this deployment using SSH_HOST_KEY_PATH, installs
-//     `authorizedKey`, and sets a ForceCommand that exec's into THIS sandbox's
-//     namespace. Return its loopback port as sshPort.
 // ============================================================================
 // ============================================================================
 // WORKER LAUNCH - one container per tenant. The process boundary is the ONLY
 // thing giving memory isolation + fault containment + VRAM scrub-on-exit at once
 // (all empirically confirmed). Compute + VRAM are capped by MPS, also confirmed
 // enforced under CC. Never co-locate two tenants in one process.
-//   STILL TODO (separate steps): SSH data-plane (returns sshPort 0 here
-//   - the HTTP data path is the real channel; SSH is unwired in this revision).
 //   Image digests are NOT RTMR-extended (no guest extend interface) - the
 //   attestation endpoint reports that coverage gap explicitly, never fakes it.
 // ============================================================================
@@ -1004,7 +946,7 @@ async function spawnContainer({ deploymentId, gpuShare, cpuShare, image, appPort
   // gpuShare sets the MPS cap.
   if (/^(1|true|on)$/i.test(process.env.MOCK_SPAWN || "")) {
     console.log(`[mock] ${PROVISION_BACKEND} tenant ${deploymentId}`);
-    return { internalPort: 0, sshPort: 0 };
+    return { internalPort: 0 };
   }
 
   if (PROVISION_BACKEND === "vm") {
@@ -1032,7 +974,7 @@ async function spawnContainer({ deploymentId, gpuShare, cpuShare, image, appPort
               + `vm=${r.body.id} hostPort=${r.body.hostPort} status=${r.body.status}`);
     // The VM boots asynchronously; the data path 502s until its server is up.
     // status carries the manager's state.
-    return { internalPort: r.body.hostPort || 0, sshPort: 0, vmId: r.body.id, hostPort: r.body.hostPort,
+    return { internalPort: r.body.hostPort || 0, vmId: r.body.id, hostPort: r.body.hostPort,
              portMap: r.body.portMap || {}, status: r.body.status };   // logical "tcp:5432" -> actual loopback bind
   }
 
@@ -1045,7 +987,7 @@ async function spawnContainer({ deploymentId, gpuShare, cpuShare, image, appPort
                   + `(sm_granted=${r.body.sm_granted ?? "?"})`);
   console.log(`[spawn] tenant=${deploymentId} gpuShare=${g.toFixed(3)} `
             + `sm_granted=${r.body.sm_granted} device=${r.body.device}`);
-  return { internalPort: 0, sshPort: 0, smGranted: r.body.sm_granted };
+  return { internalPort: 0, smGranted: r.body.sm_granted };
 }
 
 async function stopContainer(rec) {
@@ -1331,11 +1273,6 @@ async function getMeasurements(rec, { origin = PUBLIC_URL, nonce } = {}) {
       attestationEndpoint: (origin || "") + RAD_PATH,
     },
     tlsKeyFingerprint: null,
-    sshHostKeyFingerprint: SSH_HOST_KEY_FP,
-    sshHostKey: { fingerprint: SSH_HOST_KEY_FP, measured: false,
-                  note: "Generated at boot inside the enclave by the attested supervisor and served over "
-                      + "the attested origin, but NOT folded into a hardware register (Tinfoil exposes no "
-                      + "guest RTMR-extend), so it is asserted by measured code rather than measured itself." },
     app: rec ? appMeasurement(rec) : null,
     vm: null,
     gpu: null,
@@ -1555,8 +1492,7 @@ app.use("/x/:id", async (req, res) => {
     res.writeHead(204); return res.end();
   }
   // Public deployments serve anyone (websites/APIs). Private ones require the owner's
-  // token (checked before status so a private deployment's state isn't leaked). SSH
-  // (the WebSocket upgrade below) is ALWAYS owner-only, regardless of `public`.
+  // token (checked before status so a private deployment's state isn't leaked).
   if (!rec.public) {
     const addr = await addrFromAuth(req);
     if (!addr) return fail(res, 401, "unauthorized", "Missing or invalid token.");
@@ -2005,7 +1941,7 @@ const spentOf = (rec) => (((rec.consumedMs || 0) / 1000) * (rec.rate || 0)).toFi
 // Allowlist-shaped so a NEW internal field added to a record never leaks by
 // default — it has to be added here on purpose. This is the exact set the
 // denylist previously let through (creation + claim + provision + failure paths);
-// the computed fields below (ssh, rate/spent/paid/time/expires, payment, onchain,
+// the computed fields below (rate/spent/paid/time/expires, payment, onchain,
 // network) are layered on top just as before.
 const VIEW_FIELDS = ["id", "owner", "status", "public", "firewall", "image", "command",
   "app", "appWasm", "config", "resources", "network", "attestation", "region",
@@ -2018,7 +1954,6 @@ const view = (rec) => {
   // today, not what the record stored at create time (records persisted by
   // older builds carry a hardcoded guess; detection self-heals them).
   if (o.attestation) o.attestation = { ...o.attestation, vmTechnology: vmTech() ?? o.attestation.vmTechnology ?? null };
-  o.ssh = sshAccessOf(rec);
   o.ratePerSecondUsdc = (rec.rate || 0).toFixed(7);
   o.spentUsdc = spentOf(rec);
   o.paidUsdc = ((rec.paidUsdc || 0) / 1e6).toFixed(2);
@@ -2176,7 +2111,9 @@ app.post("/v1/deployments", authed, async (req, res) => {
              + "ledger holds the spec and balance, and runners hold expiring leases.",
       onchain: {
         contract: DEPLOYMENTS_ADDRESS || null, chainId: CHAIN_ID, usdc: USDC_ADDRESS,
-        createMethod: "create(string appRef, uint16 gpuMilli, uint16 cpuMilli, uint32 appPort, string ports, bool isPublic, string sshPubKey, string configCid) returns (bytes32 id) — appRef is catalog://<appId>/<versionIndex> (runners refuse CID refs: a CID names bytes, not a version); leave configCid EMPTY and ports/appPort informational (the version's approved record decides all three)",
+        createMethod: "create(string appRef, uint16 gpuMilli, uint16 cpuMilli, uint32 appPort, string ports, bool isPublic, "
+                    + (_depSchemaRev >= 2 ? "" : "string sshPubKey, ")
+                    + "string configCid) returns (bytes32 id) — appRef is catalog://<appId>/<versionIndex> (runners refuse CID refs: a CID names bytes, not a version); leave configCid EMPTY and ports/appPort informational (the version's approved record decides all three)",
         fundMethod: "fundWithAuthorization(bytes32 id, address from, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce, bytes signature)",
         fundEthMethod: "fundEth(bytes32 id) payable",
         hint: "POST /v1/claim-hint {\"id\": \"0x…\"}",
@@ -2208,7 +2145,7 @@ app.post("/v1/deployments", authed, async (req, res) => {
   }
   const appPort = Number(b.port) || 8080;
   // Public endpoint: anyone can reach the app's data path (hosting a website/API).
-  // Private (default): only the owner's SIWE token can. SSH/management stay owner-only
+  // Private (default): only the owner's SIWE token can. Management stays owner-only
   // either way. Confidentiality is unchanged — the TEE still hides the app from the
   // operator; "public" only governs who may send it requests.
   const isPublic = b.public === true || b.public === "true";
@@ -2219,8 +2156,6 @@ app.post("/v1/deployments", authed, async (req, res) => {
   let firewall;
   try { firewall = parseFirewall(b.firewall); }
   catch (e) { return fail(res, 422, "invalid_spec", e.message); }
-  if (b.sshPublicKey != null && !/^(ssh-ed25519|ssh-rsa|ecdsa-sha2-|sk-ssh-|sk-ecdsa-)/.test(String(b.sshPublicKey).trim()))
-    return fail(res, 422, "invalid_spec", "sshPublicKey must be an OpenSSH public key (ssh-ed25519 / ssh-rsa / ecdsa / sk-*).");
 
   // resource request: TWO SHARES, nothing else. resources.gpuShare (0..1 of one
   // GPU card: VRAM + compute together; 0 = CPU-only app) and resources.cpuShare
@@ -2267,14 +2202,6 @@ app.post("/v1/deployments", authed, async (req, res) => {
     rate = rateFor(slice.gpuShare, slice.cpuShare);
   }
 
-  // SSH: install the caller's key, or mint one in-enclave and return it ONCE (now, at create).
-  let keySource = "provided", authorizedKey = (b.sshPublicKey || "").trim(), oneTimePrivateKey = null;
-  if (!authorizedKey) {
-    try { const kp = generateSshKeypair(`enclave:${req.address.slice(0, 10)}`);
-          authorizedKey = kp.publicKey; oneTimePrivateKey = kp.privateKey; keySource = "generated"; }
-    catch (e) { releaseGpu(gpu); return fail(res, 500, "keygen_error", "Could not generate an SSH key: " + e.message); }
-  }
-
   const id = rid("dep_");
   const payRef = keccak256(stringToBytes(id));          // the bytes32 to pass to EnclavePay.payWithAuthorization()
   const rec = {
@@ -2293,7 +2220,7 @@ app.post("/v1/deployments", authed, async (req, res) => {
     payDeadline: Date.now() + PAYMENT_WINDOW_SEC * 1000,
     digest: image.digest || null, rate, payRef, paidUsdc: 0,
     _gpu: gpu, _gpuSpec: gpu.cpu ? null : { cardId: gpu.cardId, cardUuid: gpuCards[gpu.cardId]?.uuid || null, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare },
-    _port: 0, _sshPort: 0, _sshKeySource: keySource, _authorizedKey: authorizedKey, _payTimer: null,
+    _port: 0, _payTimer: null,
   };
   deployments.set(id, rec);
   payRefIndex.set(payRef.toLowerCase(), id);
@@ -2308,8 +2235,7 @@ app.post("/v1/deployments", authed, async (req, res) => {
               + `remaining=${rec.remainingMs != null ? Math.round(rec.remainingMs / 1000) + "s" : "unlimited"}`);
   }
 
-  const out = view(rec);                                  // includes payment instructions + ssh
-  if (oneTimePrivateKey) out.ssh.privateKey = oneTimePrivateKey; // shown once; never persisted
+  const out = view(rec);                                  // includes payment instructions
   res.status(201).json(out);
 });
 
@@ -2321,7 +2247,7 @@ async function provisionTenant(rec) {
       image: { reference: rec.appWasm || (rec.image && rec.image.reference) },
       appPort: rec.network.port, ports: rec.firewall,
       config: rec.config || "" });
-    rec._port = sp.internalPort; rec._sshPort = sp.sshPort;
+    rec._port = sp.internalPort;
     if (sp.vmId) { rec._vmId = sp.vmId; rec._vmHostPort = sp.hostPort; }
     if (sp.portMap) rec.portMap = sp.portMap;   // logical -> actual (public: clients see their mapping)
     if (!rec.startedAt) rec.startedAt = Date.now();
@@ -2498,7 +2424,7 @@ async function respawnTenant(rec) {
       image: { reference: rec.appWasm || (rec.image && rec.image.reference) },
       appPort: rec.network.port, ports: rec.firewall,
       config: rec.config || "" });
-    rec._port = sp.internalPort; rec._sshPort = sp.sshPort;
+    rec._port = sp.internalPort;
     if (sp.vmId) { rec._vmId = sp.vmId; rec._vmHostPort = sp.hostPort; }
     if (sp.portMap) rec.portMap = sp.portMap;
     rec._respawnAt = 0; rec._respawnBackoffMs = 0;
@@ -2786,19 +2712,15 @@ app.use((err, req, res, _next) => {
 if (IS_GPU) { await initGpu(); await initMps(); }        // CPU-only enclave: no cards to discover, no MPS
 else if (PROVISION_BACKEND !== "vm")
   console.warn("[cpu] GPU_COUNT=0 but PROVISION_BACKEND!=vm — a CPU enclave has no GPU worker; deploys will fail");
-await initSshHostKey();
 // restore persisted deployments/payment cursor BEFORE serving traffic or polling:
 // the downtime gap is frozen (never charged) and reservations shift by the gap.
 initStatePersistence();
 loadState();
 
 // ---------------------------------------------------------------------------
-// SSH TUNNEL - ssh rides the one attested origin as a WebSocket at /x/:id/ssh.
-// `websocat -b` carries the raw SSH byte stream; we bridge it to the per-
-// deployment sshd the SUPERVISOR hosts (measured host key from initSshHostKey;
-// the sandbox image needs no sshd). Same gate as the data path: session JWT
-// (Authorization header or ?token= for browsers/websocat) + ownership. No second
-// external port is opened.
+// WebSocket upgrades - the TCP/UDP/TLS bridges below ride the one attested
+// origin (no second external port). Gate: session JWT (Authorization header
+// or ?token= for browsers/websocat) + ownership where the route demands it.
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
@@ -2815,8 +2737,8 @@ async function authUpgrade(req) {
 // --- platform-terminated TLS for app TCP ports (/x/:id/tls/:port) -----------
 // The public relay (relay/relay.js, on any untrusted box) forwards a client's
 // raw TLS bytes into this bridge; the session terminates HERE, inside the
-// attested enclave. The key pair is MINTED IN-ENCLAVE at boot (like the ssh
-// host key) — never provisioned as a secret, so no operator, ACME account, or
+// attested enclave. The key pair is MINTED IN-ENCLAVE at boot — never
+// provisioned as a secret, so no operator, ACME account, or
 // secret store ever holds it and the relay stays a dumb ciphertext pipe. The
 // cert is self-signed for *.<TLS_BRIDGE_DOMAIN>; clients bind it to the
 // enclave via the fingerprints published over the attested origin at
@@ -3269,16 +3191,7 @@ server.on("upgrade", async (req, socket, head) => {
     return wsUdpBridge(req, socket, head, actual);
   }
 
-  // ---- SSH: always owner-only, regardless of `public` ----
-  const m = (req.url || "").match(/^\/x\/([^/?]+)\/ssh(?:\?|$)/);
-  if (!m) { socket.destroy(); return; }
-  const rec  = deployments.get(m[1]);
-  const addr = await authUpgrade(req);
-  if (!rec || !rec._sshPort)     return deny("404 Not Found");
-  if (!addr)                     return deny("401 Unauthorized");
-  if (rec.owner !== addr)        return deny("403 Forbidden");
-  if (rec.status !== "running")  return deny("409 Conflict");
-  wsTcpBridge(req, socket, head, rec._sshPort);
+  socket.destroy();
 });
 
 // ============================================================================
@@ -3370,11 +3283,12 @@ async function abandonClaims(why) {
   saveStateSoon();
 }
 
-// mirrors EnclaveDeployments.Deployment (field order must match the struct exactly)
+// mirrors EnclaveDeployments.Deployment (field order must match the struct
+// exactly; schema rev 2)
 const DEPLOYMENT_COMPONENTS = [
   { name: "id", type: "bytes32" }, { name: "owner", type: "address" },
   { name: "appRef", type: "string" }, { name: "ports", type: "string" },
-  { name: "sshPubKey", type: "string" }, { name: "configCid", type: "string" },
+  { name: "configCid", type: "string" },
   { name: "gpuMilli", type: "uint16" }, { name: "cpuMilli", type: "uint16" },
   { name: "appPort", type: "uint32" },
   { name: "isPublic", type: "bool" }, { name: "active", type: "bool" },
@@ -3382,7 +3296,11 @@ const DEPLOYMENT_COMPONENTS = [
   { name: "rate", type: "uint256" }, { name: "balance6", type: "uint256" }, { name: "spent6", type: "uint256" },
   { name: "runner", type: "bytes32" }, { name: "runnerOperator", type: "address" }, { name: "leaseUntil", type: "uint64" },
 ];
-const DEPLOYMENTS_ABI = [
+// rev-1 ledgers carry a removed sshPubKey string after ports (decoded, ignored)
+const DEPLOYMENT_COMPONENTS_V1 = [
+  ...DEPLOYMENT_COMPONENTS.slice(0, 4), { name: "sshPubKey", type: "string" }, ...DEPLOYMENT_COMPONENTS.slice(4),
+];
+const depsAbiFor = (components) => [
   { type: "function", name: "claim", stateMutability: "nonpayable",
     inputs: [{ name: "id", type: "bytes32" }, { name: "enclaveId", type: "bytes32" }], outputs: [] },
   { type: "function", name: "renew", stateMutability: "nonpayable",
@@ -3393,11 +3311,36 @@ const DEPLOYMENTS_ABI = [
     inputs: [{ name: "id", type: "bytes32" }], outputs: [{ type: "bool" }] },
   { type: "function", name: "get", stateMutability: "view",
     inputs: [{ name: "id", type: "bytes32" }],
-    outputs: [{ type: "tuple", components: DEPLOYMENT_COMPONENTS }] },
+    outputs: [{ type: "tuple", components }] },
   { type: "function", name: "getPage", stateMutability: "view",
     inputs: [{ name: "start", type: "uint256" }, { name: "n", type: "uint256" }],
-    outputs: [{ type: "tuple[]", components: DEPLOYMENT_COMPONENTS }] },
+    outputs: [{ type: "tuple[]", components }] },
 ];
+// Which struct shape the live ledger speaks. Default to rev 1 (today's
+// deployed contract) so claims work even before the sniff resolves; the
+// background sniff flips to rev 2 the moment the ledger reports it (revert =
+// definitively rev 1, transport errors retry). One eth_call, then settled.
+let DEPLOYMENTS_ABI = depsAbiFor(DEPLOYMENT_COMPONENTS_V1);
+let _depSchemaRev = 1;
+(async function sniffDeploymentsSchema() {
+  for (;;) {
+    try {
+      const rev = await chainClient.readContract({ address: getAddress(DEPLOYMENTS_ADDRESS),
+        abi: [{ type: "function", name: "deploymentsSchema", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] }],
+        functionName: "deploymentsSchema" });
+      if (Number(rev) >= 2) { DEPLOYMENTS_ABI = depsAbiFor(DEPLOYMENT_COMPONENTS); _depSchemaRev = Number(rev); }
+      console.log(`[claim] ledger struct schema rev ${_depSchemaRev}`);
+      return;
+    } catch (e) {
+      if (/revert|returned no data|zero data|0x$/i.test(e.shortMessage || e.message || "")) {
+        console.log("[claim] ledger struct schema rev 1 (pre-deploymentsSchema contract)");
+        return;                                        // rev-1 default already in place
+      }
+      console.warn("[claim] deploymentsSchema sniff failed, retrying:", e.shortMessage || e.message);
+      await new Promise((r) => setTimeout(r, 30_000).unref());
+    }
+  }
+})();
 // Claim/renew receipts carry the post-tx lease in their event - read it from
 // THERE, never from a follow-up eth_call: the public RPC's load balancer can
 // serve pre-tx state for a minute after confirmation (and rate-limit the read
@@ -3810,7 +3753,7 @@ async function tryClaim(d, g, firewall, slice, { hinted = false, resume = false 
 // rec.id IS the on-chain id, so the data path (/x/:id, tcp bridge, udp address)
 // and clients resolving id -> runner -> endpoint from chain state need no
 // mapping. rec.owner is the on-chain owner address — SIWE tokens already carry
-// an address, so owner-only routes (status, ssh, delete) work unchanged.
+// an address, so owner-only routes (status, delete) work unchanged.
 async function adopt(d, g, firewall, slice) {
   if (deployments.has(d.id)) deployments.delete(d.id);      // terminal leftover from an earlier lease
   const gpu = slice.cpu ? allocCpu(slice.cpuShare) : allocGpu(slice.vramGb, slice.computeShare, slice.cpuShare);
@@ -3846,7 +3789,7 @@ async function adopt(d, g, firewall, slice) {
     _balance6: Number(d.balance6),
     _onchain: true, _leaseUntil: Number(d.leaseUntil), _renewing: false,
     _gpu: gpu, _gpuSpec: gpu.cpu ? null : { cardId: gpu.cardId, cardUuid: gpuCards[gpu.cardId]?.uuid || null, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare },
-    _port: 0, _sshPort: 0, _sshKeySource: "on-chain", _authorizedKey: (d.sshPubKey || "").trim(), _payTimer: null,
+    _port: 0, _payTimer: null,
   };
   deployments.set(rec.id, rec); saveStateSoon();
   if (await provisionTenant(rec)) {
@@ -3943,7 +3886,7 @@ function onchainPaymentInstructions(rec) {
 
 server.listen(PORT, () => console.log(`enclave supervisor on :${PORT} · ${IS_GPU
   ? `${GPU_COUNT}×GPU @ ${CARD_VRAM_GB}GB (arbitrary split)`
-  : `CPU-only enclave (${NODE_VCPUS} vCPU / ${NODE_RAM_GB}GB, node-share split)`} · ssh host key ${SSH_HOST_KEY_FP}`));
+  : `CPU-only enclave (${NODE_VCPUS} vCPU / ${NODE_RAM_GB}GB, node-share split)`}`));
 // warm the CPU-TEE detection (shim loopback) so the first deployment record
 // created after boot already reports the real silicon, not null
 fetchEnclaveRad().then(() => console.log(`[attest] CPU TEE detected: ${vmTech()}`)).catch(() => {});

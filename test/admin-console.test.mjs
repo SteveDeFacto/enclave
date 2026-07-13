@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { encodeFunctionData, encodeDeployData, encodeAbiParameters, stringToHex, toFunctionSelector } from "viem";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { encCall, encAddr, decodeStructArray, DEP_SCHEMA, APP_SCHEMA, VER_SCHEMA, DEP_SEL } = await import(path.join(REPO, "site/js/core/chain.js"));
+const { encCall, encAddr, decodeStructArray, DEP_SCHEMA, DEP_SCHEMA_V1, APP_SCHEMA, VER_SCHEMA, DEP_SEL } = await import(path.join(REPO, "site/js/core/chain.js"));
 const { CONTRACTS } = await import(path.join(REPO, "site/js/gen/contract-artifacts.js"));
 const { encCallX } = await import(path.join(REPO, "site/components/admin-console/migrate.js"));
 const ABI = (name) => JSON.parse(fs.readFileSync(path.join(REPO, "contracts", name + ".abi.json"), "utf8"));
@@ -121,7 +121,7 @@ test("decodeBook round-trips a viem-encoded all() result (skipping retired keys)
 
 const DEP_ROW = {
   id: "0x" + "ab".repeat(32), owner: A1, appRef: "ipfs://bafyExample", ports: "tcp:15565,udp:9053",
-  sshPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 example", configCid: "bafyConfig",
+  configCid: "bafyConfig",
   gpuMilli: 250, cpuMilli: 100, appPort: 8080, isPublic: true, active: true, createdAt: 1751900000,
   rate: 417, balance6: 1500000, spent6: 250000,
   runner: "0x" + "0".repeat(64), runnerOperator: ZERO, leaseUntil: 0,
@@ -174,7 +174,7 @@ test("multicall wrapping encodes like viem", () => {
 test("migration round-trip: decode a getPage result, re-encode it for import, byte-equal to viem", () => {
   // what the SOURCE contract returns from getPage(...)
   const depAbi = ABI("EnclaveDeployments");
-  const rows = [DEP_ROW, { ...DEP_ROW, id: "0x" + "ef".repeat(32), sshPubKey: "", ports: "", isPublic: false, balance6: 0 }];
+  const rows = [DEP_ROW, { ...DEP_ROW, id: "0x" + "ef".repeat(32), ports: "", isPublic: false, balance6: 0 }];
   const encodedReturn = encodeAbiParameters(
     depAbi.find((f) => f.name === "getPage").outputs, [rows.map((r) => asTuple(DEP_SCHEMA, r))]);
   // the console decodes it with the schema...
@@ -183,6 +183,30 @@ test("migration round-trip: decode a getPage result, re-encode it for import, by
   // ...and replays it verbatim into importDeployments
   eq(encCallX(S("EnclaveDeployments").importDeployments, [{ t: "tuple[]", schema: DEP_SCHEMA, v: decoded }]),
     encodeFunctionData({ abi: depAbi, functionName: "importDeployments", args: [rows.map((r) => asTuple(DEP_SCHEMA, r))] }));
+});
+
+test("rev-1 source rows (extra sshPubKey string) decode with DEP_SCHEMA_V1 and strip clean", () => {
+  // a rev-1 ledger's getPage return: the 18-field Deployment with the removed
+  // sshPubKey string after ports - the migration reads it with DEP_SCHEMA_V1
+  // and drops the field before encoding the rev-2 import
+  const V1_COMPONENTS = [
+    { name: "id", type: "bytes32" }, { name: "owner", type: "address" },
+    { name: "appRef", type: "string" }, { name: "ports", type: "string" },
+    { name: "sshPubKey", type: "string" }, { name: "configCid", type: "string" },
+    { name: "gpuMilli", type: "uint16" }, { name: "cpuMilli", type: "uint16" },
+    { name: "appPort", type: "uint32" }, { name: "isPublic", type: "bool" }, { name: "active", type: "bool" },
+    { name: "createdAt", type: "uint64" }, { name: "rate", type: "uint256" },
+    { name: "balance6", type: "uint256" }, { name: "spent6", type: "uint256" },
+    { name: "runner", type: "bytes32" }, { name: "runnerOperator", type: "address" }, { name: "leaseUntil", type: "uint64" },
+  ];
+  const v1row = { ...DEP_ROW, sshPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 legacy" };
+  const encoded = encodeAbiParameters([{ type: "tuple[]", components: V1_COMPONENTS }],
+    [[asTuple(DEP_SCHEMA_V1, v1row)]]);
+  const [dec] = decodeStructArray(encoded, DEP_SCHEMA_V1);
+  assert.equal(dec.sshPubKey, v1row.sshPubKey);
+  const { sshPubKey, ...clean } = dec;
+  for (const f of DEP_SCHEMA)
+    assert.equal(String(clean[f.k]).toLowerCase(), String(DEP_ROW[f.k]).toLowerCase(), f.k);
 });
 
 test("artifacts stay in sync with contracts/*.sol (regenerate check)", () => {

@@ -27,16 +27,29 @@ export const hexBig = (h) => (!h || h === "0x") ? 0n : BigInt(h);
    (EIP-3009 USDC or ETH), and enclaves claim + serve it under expiring
    leases - so a deployment outlives any single enclave, its update, or
    its crash. */
-export const DEP_SEL = { create:"1a8e502a", fund:"e46bbc9e", fundAuth:"209c0069", fundEth:"9f33dca0", get:"8eaa6ac0",
-                         price:"1e897c58", cpuPrice:"3f6195cc", setActive:"6485d678" };
+export const DEP_SEL = { create:"11835efe", createV1:"1a8e502a", fund:"e46bbc9e", fundAuth:"209c0069", fundEth:"9f33dca0", get:"8eaa6ac0",
+                         price:"1e897c58", cpuPrice:"3f6195cc", setActive:"6485d678",
+                         deploymentsSchema:"5d1b72b6" };  // shape-revision marker (reverts on rev-1 contracts)
 export const DEP_CREATED_TOPIC = "0x3b201eb11e77934b296f908775fc0a82679683fd83a1232579f1014bcf7d3239"; // Created(bytes32,address,string,uint16,uint16,uint256)
-export const DEP_SCHEMA = [   // mirrors EnclaveDeployments.Deployment field order exactly
+export const DEP_SCHEMA = [   // mirrors EnclaveDeployments.Deployment field order exactly (schema rev 2)
   {k:"id",t:"bytes32"},{k:"owner",t:"addr"},{k:"appRef",t:"str"},{k:"ports",t:"str"},
-  {k:"sshPubKey",t:"str"},{k:"configCid",t:"str"},{k:"gpuMilli",t:"uint"},{k:"cpuMilli",t:"uint"},
+  {k:"configCid",t:"str"},{k:"gpuMilli",t:"uint"},{k:"cpuMilli",t:"uint"},
   {k:"appPort",t:"uint"},{k:"isPublic",t:"bool"},{k:"active",t:"bool"},{k:"createdAt",t:"uint"},
   {k:"rate",t:"uint"},{k:"balance6",t:"uint"},{k:"spent6",t:"uint"},
   {k:"runner",t:"bytes32"},{k:"runnerOperator",t:"addr"},{k:"leaseUntil",t:"uint"},
 ];
+// rev 1 carried an sshPubKey string (the removed owner-access channel); the
+// slot survives here only to read rev-1 contracts and is dropped on decode.
+export const DEP_SCHEMA_V1 = [...DEP_SCHEMA.slice(0, 4), {k:"sshPubKey",t:"str"}, ...DEP_SCHEMA.slice(4)];
+// Which struct/create shape the (book-resolved) deployments contract speaks:
+// one cached eth_call to deploymentsSchema(); rev-1 contracts revert -> 1.
+let _depRev = null;
+export async function depSchemaRev(){
+  if (_depRev) return _depRev;
+  try { const r = await depCall("0x" + DEP_SEL.deploymentsSchema); _depRev = Number(hexBig(r)) || 1; }
+  catch { _depRev = 1; }
+  return _depRev;
+}
 
 /* ---- EnclaveAppCatalog ---- */
 export const CAT_SEL = {
@@ -101,12 +114,13 @@ export async function depCall(data){
 // EnclaveDeployments.get(id) -> one Deployment struct (see DEP_SCHEMA). The tuple
 // contains dynamic strings, so the return is offset-prefixed like a dynamic type.
 export async function depGet(id){
+  const schema = (await depSchemaRev()) >= 2 ? DEP_SCHEMA : DEP_SCHEMA_V1;
   const hex = (await depCall("0x" + DEP_SEL.get + pad32(id.replace(/^0x/, "")))).replace(/^0x/, "");
   if (hex.length < 64) return null;
   const ru   = (o) => BigInt("0x" + hex.slice(o * 2, o * 2 + 64));
   const ts   = Number(ru(0));                                 // offset to the tuple head
   const obj = {};
-  DEP_SCHEMA.forEach((f, fi) => {
+  schema.forEach((f, fi) => {
     const w = ts + fi * 32;
     if (f.t === "str"){ const so = ts + Number(ru(w)); const len = Number(ru(so)); obj[f.k] = hexToUtf8(hex.slice((so + 32) * 2, (so + 32) * 2 + len * 2)); }
     else if (f.t === "uint") obj[f.k] = Number(ru(w));

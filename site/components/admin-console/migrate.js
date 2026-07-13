@@ -18,7 +18,7 @@
    plans; the component drives the wallet and paints progress.
    ============================================================ */
 import { baseRpc, pad32, encUint, encStr, encBytesTail, hexBig,
-         decodeStructArray, DEP_SCHEMA, APP_SCHEMA, VER_SCHEMA } from "../../js/core/chain.js";
+         decodeStructArray, DEP_SCHEMA, DEP_SCHEMA_V1, APP_SCHEMA, VER_SCHEMA } from "../../js/core/chain.js";
 import { CONTRACTS } from "../../js/gen/contract-artifacts.js";
 
 /* ---- codec: tuples + arrays on top of chain.js's word encoders ---- */
@@ -98,13 +98,23 @@ const PAGE = 50;
 const CHUNK = { deployments: 12, apps: 20, versions: 25, volumes: 30, members: 15 };
 
 /* -- deployments -- */
+// Struct-schema revision sniff (same idea as the catalog's): rev-1 sources
+// have no deploymentsSchema getter (the call reverts) and their Deployment
+// tuples carry the removed sshPubKey string - decode those with the v1
+// schema and drop the field, so the import always encodes the rev-2 tuple.
+async function depRevOf(addr) {
+  const sel = CONTRACTS.EnclaveDeployments.sel;
+  try { return wNum(await call(addr, "0x" + sel.deploymentsSchema), 1) || 1; }
+  catch (e) { return 1; }
+}
 async function readDeployments(source) {
   const sel = CONTRACTS.EnclaveDeployments.sel;
+  const schema = (await depRevOf(source)) >= 2 ? DEP_SCHEMA : DEP_SCHEMA_V1;
   const total = wNum(await call(source, "0x" + sel.count), 0);
   const rows = [];
   for (let s = 0; s < total; s += PAGE)
-    rows.push(...decodeStructArray(await call(source, encCallX(sel.getPage, [{ t: "uint", v: s }, { t: "uint", v: PAGE }])), DEP_SCHEMA));
-  return rows;
+    rows.push(...decodeStructArray(await call(source, encCallX(sel.getPage, [{ t: "uint", v: s }, { t: "uint", v: PAGE }])), schema));
+  return rows.map(({ sshPubKey, ...r }) => r);
 }
 const depKey = (d) => d.id;
 const depClean = (d) => ({ ...d, runner: "0x" + "0".repeat(64), runnerOperator: "0x" + "0".repeat(40), leaseUntil: 0 });

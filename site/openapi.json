@@ -255,7 +255,7 @@
         ],
         "operationId": "createDeployment",
         "summary": "Create a deployment (awaiting payment)",
-        "description": "RETIRED on Wasm enclaves - returns 410 `deploy_on_chain` with the on-chain coordinates. Deployments are created on the EnclaveDeployments contract (Base), not through this endpoint: the ledger holds the spec and the funded balance, so a deployment survives enclave updates and crashes (runners serve it under expiring leases; a dead runner's lease lapses and any enclave re-claims the work). Flow: (1) create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid) from YOUR wallet - appRef is catalog://<appId>/<versionIndex>, the on-chain record of the version to run (runners refuse CID refs: a CID names bytes, not a version); the version's record supplies the config, volumes and ports the owner approved, so leave configCid EMPTY (runners refuse deployments that set one) and ports/appPort ride along untrusted. msg.sender owns the record; the id is the Created event's first topic; shares are 1/1000ths and the app's catalog specs set the minimums runners will accept. (2) Fund it: fundWithAuthorization (EIP-3009 USDC ReceiveWithAuthorization signed to the contract, nonce prefixed with the id's first 16 bytes) or fundEth (credited at the contract's Chainlink ETH/USD read); funds forward to Enclave in the same tx, the credit lands in on-chain balance6. (3) Optionally POST /claim-hint {id} so the fleet claims immediately instead of on the ~60s sweep. Runners enforce the same catalog-approval gate (403-equivalent: unapproved CIDs are never claimed) and the same share minimums. GET /pricing carries the contract address, USDC EIP-712 domain, and an ETH/USD quote.",
+        "description": "RETIRED on Wasm enclaves - returns 410 `deploy_on_chain` with the on-chain coordinates. Deployments are created on the EnclaveDeployments contract (Base), not through this endpoint: the ledger holds the spec and the funded balance, so a deployment survives enclave updates and crashes (runners serve it under expiring leases; a dead runner's lease lapses and any enclave re-claims the work). Flow: (1) create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, configCid) from YOUR wallet - appRef is catalog://<appId>/<versionIndex>, the on-chain record of the version to run (runners refuse CID refs: a CID names bytes, not a version); the version's record supplies the config, volumes and ports the owner approved, so leave configCid EMPTY (runners refuse deployments that set one) and ports/appPort ride along untrusted. msg.sender owns the record; the id is the Created event's first topic; shares are 1/1000ths and the app's catalog specs set the minimums runners will accept. (2) Fund it: fundWithAuthorization (EIP-3009 USDC ReceiveWithAuthorization signed to the contract, nonce prefixed with the id's first 16 bytes) or fundEth (credited at the contract's Chainlink ETH/USD read); funds forward to Enclave in the same tx, the credit lands in on-chain balance6. (3) Optionally POST /claim-hint {id} so the fleet claims immediately instead of on the ~60s sweep. Runners enforce the same catalog-approval gate (403-equivalent: unapproved CIDs are never claimed) and the same share minimums. GET /pricing carries the contract address, USDC EIP-712 domain, and an ETH/USD quote.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1427,7 +1427,7 @@
           "public": {
             "type": "boolean",
             "default": false,
-            "description": "If true, anyone can reach the app's data path (`/x/{id}/*`) with no authentication, for hosting public websites, APIs, and servers. If false (default), only the owner's SIWE bearer token can reach it. SSH and management endpoints are always owner-only regardless. Confidentiality is unaffected: the TEE still hides the app from the operator; `public` only governs who may send it requests."
+            "description": "If true, anyone can reach the app's data path (`/x/{id}/*`) with no authentication, for hosting public websites, APIs, and servers. If false (default), only the owner's SIWE bearer token can reach it. Management endpoints are always owner-only regardless. Confidentiality is unaffected: the TEE still hides the app from the operator; `public` only governs who may send it requests."
           },
           "firewall": {
             "type": "object",
@@ -1478,7 +1478,7 @@
           },
           "public": {
             "type": "boolean",
-            "description": "Whether the app's data path is publicly reachable (no auth) or owner-only. SSH/management stay owner-only either way."
+            "description": "Whether the app's data path is publicly reachable (no auth) or owner-only. Management stays owner-only either way."
           },
           "image": {
             "$ref": "#/components/schemas/ImageRef"
@@ -1848,11 +1848,6 @@
           "app": {
             "type": "object",
             "description": "What app ran, with an honest `coverage` note: catalog apps are covered by the enclave measurement; ipfs apps are CID-verified by attested code but not in a hardware register.",
-            "additionalProperties": true
-          },
-          "sshHostKey": {
-            "type": "object",
-            "description": "Boot-generated in-enclave sshd host key fingerprint; asserted by attested code, not hardware-measured (measured: false).",
             "additionalProperties": true
           },
           "guideUrl": {

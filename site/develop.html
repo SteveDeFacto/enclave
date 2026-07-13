@@ -263,11 +263,11 @@ const { token }   = await (await fetch(`${API}/auth/login`, {
 
           <h4>Create the deployment: one transaction, you own the record</h4>
           <p>A deployment is an <b>on-chain work item</b>, not one enclave's private state. <code>create()</code> on the <code>EnclaveDeployments</code> contract records the intent - the app's <b>catalog version record</b> (<code>catalog://&lt;appId&gt;/&lt;versionIndex&gt;</code>), the two shares (in 1/1000ths), visibility - under <i>your</i> address, and mints the id (<code>keccak256(sender, nonce)</code>, the <code>Created</code> event's first topic). The reference names a <b>version</b>, never bytes: runners take the wasm, config and ports from that immutable record - exactly what the catalog owner approved. (CID references are refused: a CID names bytes, and several versions with different approved configs can share bytes.) Because the ledger holds the spec and the balance, the deployment <b>survives enclave updates and crashes</b>: runners serve it under expiring leases, and when a runner dies, any other enclave picks the work up. Nothing to sign in besides your wallet.</p>
-          <c-code fn="deploy.js · EnclaveDeployments.create()"><pre><code>// create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid)
+          <c-code fn="deploy.js · EnclaveDeployments.create()"><pre><code>// create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, configCid)
 // appRef = catalog://&lt;appId&gt;/&lt;versionIndex&gt; - the on-chain version record
 // shares are 1/1000ths: gpuShare 0.25 -&gt; 250; a GPU app needs gpuMilli &gt;= cpuMilli
 // appPort/ports ride along untrusted (the record decides); configCid must be ""
-create("catalog://0x06a4…c13/5", 250, 50, 8080, "", true, "", "")
+create("catalog://0x06a4…c13/5", 250, 50, 8080, "", true, "")
 // -&gt; the receipt's Created event: topics[1] is your deployment id (bytes32)</code></pre></c-code>
 
           <h4>Attach model volumes: big weights, attested, not in the wasm</h4>

@@ -117,7 +117,7 @@ function apiServer() {
 // ABIs, and accepts real signed transactions (decoded + recorded for asserts)
 function rpcServer() {
   const depRecord = () => ({
-    id: ID, owner: OWNER, appRef: "catalog://" + "0x" + "cd".repeat(32) + "/0", ports: "http:8088", sshPubKey: "", configCid: "",
+    id: ID, owner: OWNER, appRef: "catalog://" + "0x" + "cd".repeat(32) + "/0", ports: "http:8088", configCid: "",
     gpuMilli: 0, cpuMilli: 10, appPort: 8088, isPublic: true, active: true,
     createdAt: BigInt(Math.floor(Date.now() / 1000) - 60), rate: 6n,
     balance6: 2_000000n, spent6: 0n,
@@ -143,6 +143,7 @@ function rpcServer() {
       secondsFundable: () => [333333n],
       appCount: () => [1n],
       catalogSchema: () => [4n],   // the stub chain plays the current (rev-4) catalog
+      deploymentsSchema: () => [2n],   // ...and the rev-2 (post-sshPubKey) ledger
       getAppsPage: () => [Number(args[0]) === 0 ? [{ appId: APP_ID, publisher: OWNER, slug: "hello-world",
         name: "Hello World", description: "first app", versionCount: 1, createdAt: 1n, updatedAt: 1n, active: true }] : []],
       getVersionsPage: () => [Number(args[1]) === 0 ? [version] : []],

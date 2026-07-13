@@ -14,7 +14,7 @@ backend, so the supervisor needs no change:
 
   POST   /vms   {image, cpuShare, gpuShare?, gpuTflops?, cpuGflops?, name?, appPort?}
                  (cpuGflops in GFLOPS; legacy cpuTflops accepted as x1000)
-                 -> 201 {id, status, endpoint, hostPort, sshHostPort, ...}
+                 -> 201 {id, status, endpoint, hostPort, ...}
   DELETE /vms/:id        -> {id, deleted: true}
   GET    /vms/:id | /vms | /health | /capacity | /catalog | /debug/env
 
@@ -34,8 +34,6 @@ Notes:
       which the probe launches directly without going through this resolution).
     * an absolute path to a .wasm already under APPS_DIR (internal/debug; the
       supervisor's approval gate never forwards these).
-- `sshHostPort` is always 0. A Wasm app is not an OS; there is nothing to SSH
-  into. The supervisor already tolerates sshPort 0.
 - Apps must be wasi:http components (what `wasmtime serve` runs). A WASIX/wasmer
   socket-server launcher can be added behind the same LAUNCHER seam later.
 - Attached model volumes (MODEL_VOLUMES) that carry a GGUF are preloaded as
@@ -1856,7 +1854,7 @@ def launch(app_ref: str, name: str, cpu_share: float, gpu_share: float = 0.0,
     nn = NN_ENABLED and NODE_HAS_GPU and gpu_share > 0
     rec = {"id": vid, "name": name or vid, "app": app_ref,
            "cpuShare": cpu_share, "gpuShare": gpu_share, "nn": nn,
-           "hostPort": port, "sshHostPort": 0,
+           "hostPort": port,
            "endpoint": f"http://{HOST_IP}:{port}" if port else None, "status": "starting",
            "createdAt": time.time(), "_proc": None, "_log": str(log_path),
            "error": None, "mem_mb": mem_mb,   # exact guest memory cap (floor MIN_MEM_MB)

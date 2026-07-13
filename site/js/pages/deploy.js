@@ -21,7 +21,11 @@ import { $, $$, esc, short, wait, fmtNum, fmtDur, hlJson, hlCode, copyText, show
 import { APP_DOMAIN, DEPLOYMENTS_ADDRESS, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
 import { CARD_GB, NODE_VCPUS, NODE_RAM_GB, CARD_TFLOPS, NODE_GFLOPS, shareRates } from "../core/pricing.js";
-import { encCall, DEP_SEL, DEP_CREATED_TOPIC, APPROVAL, depGet, depRate6, depPrices6, rate6Of, waitReceipt } from "../core/chain.js";
+import { encCall, DEP_SEL, DEP_CREATED_TOPIC, APPROVAL, depGet, depRate6, depPrices6, depSchemaRev, rate6Of, waitReceipt } from "../core/chain.js";
+
+// create()'s shape on the live contract (rev 1 carried a removed sshPubKey
+// string): sniffed once at init; the samples and the real encode both use it.
+let depRev = 2;
 import { connectWallet, refreshWallet, ensureBaseChain, sendTx, usdcBalanceOf, ethBalanceOf, openBuyModal } from "../core/wallet.js";
 import { STORE, loadCatalog, REF_CACHE, PORTS_CACHE, MINS_CACHE, CONFIG_CACHE, looksFriendly, resolveAppRef, catalogRef } from "../core/catalog.js";
 
@@ -39,7 +43,7 @@ const dep = { gpuPct: 25, cpuPct: 5, minGpuPct: 0, minCpuPct: 1, asset: "USDC", 
 function renderAccessNote(){
   const el = $("#accessNote"); if (!el) return;
   el.innerHTML = dep.public
-    ? "anyone can reach the app endpoint, for websites, APIs, servers. SSH stays owner-only."
+    ? "anyone can reach the app endpoint, for websites, APIs, servers; management stays owner-only."
     : "only your wallet (SIWE token) can reach the app, for private/confidential jobs.";
 }
 
@@ -99,12 +103,12 @@ function deployFetch(b){
   return '// Deployments are ON-CHAIN work items (EnclaveDeployments on Base): the ledger\n'
     + '// holds the spec + funded balance, so they survive enclave updates and crashes.\n'
     + '// 1) create() from your wallet - one tx; msg.sender owns the record:\n'
-    + '//    create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, sshPubKey, configCid)\n'
+    + '//    create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, ' + (depRev >= 2 ? "" : "sshPubKey, ") + 'configCid)\n'
     + '//    appRef names the on-chain catalog VERSION record - it carries the wasm,\n'
     + '//    config (ENCLAVE_CONFIG + volumes) and ports the owner approved; CID refs\n'
     + '//    are refused, ports/appPort ride along untrusted, configCid must be "".\n'
     + 'const { id } = await createOnChain("' + DEPLOYMENTS_ADDRESS + '",\n'
-    + '  ["' + r + '", ' + g + ', ' + c + ', 8080, "", ' + !!b.public + ', "", ""]);\n'
+    + '  ["' + r + '", ' + g + ', ' + c + ', 8080, "", ' + !!b.public + ', ' + (depRev >= 2 ? '""' : '"", ""') + ']);\n'
     + '//    id = topics[1] of the Created event in the receipt\n'
     + '// 2) fund it - credited to the on-chain balance (funds forward to Enclave):\n'
     + '//    fundWithAuthorization(id, …EIP-3009 USDC sig…)  or  fundEth(id) payable\n'
@@ -206,7 +210,7 @@ async function runDeploy(){
     const plan = [["warn", "// dry run: nothing is sent"]];
     plan.push(["info", "0) config + volumes + ports ride the version's on-chain record (approved with it) - nothing is pinned or passed at deploy"]);
     plan.push(["p", "1) EnclaveDeployments.create(app, shares) - one wallet tx; you own the record"],
-      ["dimln", "   create(\"" + rref.reference + "\", " + gpuMilli + ", " + cpuMilli + ", " + appPort + ", \"" + portsCsv + "\", " + dep.public + ", \"\", \"\")"],
+      ["dimln", "   create(\"" + rref.reference + "\", " + gpuMilli + ", " + cpuMilli + ", " + appPort + ", \"" + portsCsv + "\", " + dep.public + (depRev >= 2 ? ", \"\")" : ", \"\", \"\")")],
       ["p", dep.asset === "ETH"
         ? "2) fundEth(id) with ≈ $" + fund + " of ETH - one wallet tx; credited on-chain"
         : "2) sign a " + fund + " USDC authorization (EIP-3009) + one fundWithAuthorization(id) tx - credited on-chain"],
@@ -286,10 +290,13 @@ export async function deployOnChain(spec){
     // them; configCid stays empty - enclaves refuse deployments that set one).
     w.line("p", "$ EnclaveDeployments.create(…)  (wallet · one tx · you own the record)");
     w.line("info", "[*] confirm the create transaction in your wallet…");
-    const cdata = encCall(DEP_SEL.create, [
+    // rev-1 contracts take a now-removed sshPubKey string before configCid;
+    // encode whichever shape the live contract speaks (depSchemaRev sniffs once)
+    const rev2 = (depRev = await depSchemaRev()) >= 2;
+    const cdata = encCall(rev2 ? DEP_SEL.create : DEP_SEL.createV1, [
       { t: "str", v: spec.reference }, { t: "uint", v: spec.gpuMilli }, { t: "uint", v: spec.cpuMilli },
       { t: "uint", v: appPort }, { t: "str", v: portsCsv }, { t: "bool", v: !!spec.isPublic },
-      { t: "str", v: "" }, { t: "str", v: "" },
+      ...(rev2 ? [] : [{ t: "str", v: "" }]), { t: "str", v: "" },
     ]);
     const chash = await sendTx(DEPLOYMENTS_ADDRESS, cdata);
     w.line("dimln", "  ↳ sent " + chash + " · waiting for confirmation…");
@@ -752,6 +759,7 @@ function initDeploy(){
 
   renderDeploy();
   depPrices6().then(p => { prices6 = p; renderDeploy(); }).catch(() => {});
+  depSchemaRev().then(r => { depRev = r; renderDeploy(); }).catch(() => {});
   startAvailPoll();
   checkHealth();
   applyUseInDeploy();

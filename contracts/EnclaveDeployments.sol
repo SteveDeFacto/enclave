@@ -94,8 +94,6 @@ contract EnclaveDeployments {
         address owner;          // the user: controls config + active, receives nothing (non-custodial)
         string  appRef;         // "catalog://<appId>/<versionIndex>" (raw "ipfs://<cid>" refs are refused by runners)
         string  ports;          // firewall CSV, same grammar as EnclaveAppCatalog Version.ports ("" = plain wasi:http)
-        string  sshPubKey;      // optional OpenSSH public key every runner installs ("" = ssh disabled;
-                                // enclave-minted keys are NOT portable — the private key would die with the runner)
         string  configCid;      // optional IPFS CID of a config blob ("" = none). NOTE: whatever it
                                 // points at is PUBLIC unless encrypted; see DEPLOYMENTS.md "secrets".
         uint16  gpuMilli;       // GPU/VRAM share bought, in 1/1000ths of a card (0 = CPU-only
@@ -124,7 +122,6 @@ contract EnclaveDeployments {
 
     uint256 private constant MAX_APPREF = 100;   // ipfs://<cid> fits
     uint256 private constant MAX_PORTS  = 96;    // mirrors EnclaveAppCatalog
-    uint256 private constant MAX_SSHKEY = 800;   // ed25519 ~100 chars; RSA-4096 ~740
     uint256 private constant MAX_CFG    = 100;   // a CID
     uint256 private constant FEED_MAX_AGE = 2 hours; // reject stale ETH/USD answers
 
@@ -141,13 +138,18 @@ contract EnclaveDeployments {
     uint256 public cpuPricePerSec6 = 278;  // USDC 6dp per second, FULL CPU node (cpuMilli = 1000): ~$1.00/hour
     uint64  public leaseSec = 1800;        // lease quantum: max claim/renew burn, max time lost to a dead runner
 
+    // Struct-shape revision, sniffed by consumers (site/CLI/relay/runners) the
+    // way catalogSchema is: rev 1 (no getter — the call reverts there) carried
+    // an sshPubKey string in Deployment/create/setConfig; rev 2 dropped it.
+    uint256 public constant deploymentsSchema = 2;
+
     bytes32[] private _ids;                                // every deployment ever created
     mapping(bytes32 => Deployment) private _deployments;
     mapping(bytes32 => bool) private _exists;
     mapping(address => uint64) private _nonces;            // per-creator id salt
 
     event Created(bytes32 indexed id, address indexed owner, string appRef, uint16 gpuMilli, uint16 cpuMilli, uint256 rate);
-    event ConfigSet(bytes32 indexed id, string sshPubKey, string configCid);
+    event ConfigSet(bytes32 indexed id, string configCid);
     event ActiveSet(bytes32 indexed id, bool active);
     event Funded(bytes32 indexed id, address indexed payer, uint256 amount6);
     event FundedEth(bytes32 indexed id, address indexed payer, uint256 amountWei, uint256 credited6);
@@ -195,7 +197,6 @@ contract EnclaveDeployments {
         uint32 appPort,
         string calldata ports,
         bool isPublic,
-        string calldata sshPubKey,
         string calldata configCid
     ) external returns (bytes32 id) {
         require(bytes(appRef).length > 0 && bytes(appRef).length <= MAX_APPREF, "appRef length");
@@ -204,7 +205,6 @@ contract EnclaveDeployments {
         require(gpuMilli == 0 || gpuMilli >= cpuMilli, "gpuShare < cpuShare");
         require(appPort > 0, "appPort range");
         require(bytes(ports).length <= MAX_PORTS, "ports length");
-        require(bytes(sshPubKey).length <= MAX_SSHKEY, "sshPubKey length");
         require(bytes(configCid).length <= MAX_CFG, "configCid length");
 
         // ids are creator-salted hashes; the loop guards the one collision path
@@ -219,7 +219,6 @@ contract EnclaveDeployments {
         d.owner = msg.sender;
         d.appRef = appRef;
         d.ports = ports;
-        d.sshPubKey = sshPubKey;
         d.configCid = configCid;
         _initScalars(d, appRef, gpuMilli, cpuMilli, appPort, isPublic);
     }
@@ -241,13 +240,11 @@ contract EnclaveDeployments {
     }
 
     /// @notice Update the portable config; runners apply it on the next (re)launch.
-    function setConfig(bytes32 id, string calldata sshPubKey, string calldata configCid) external {
+    function setConfig(bytes32 id, string calldata configCid) external {
         Deployment storage d = _requireOwned(id);
-        require(bytes(sshPubKey).length <= MAX_SSHKEY, "sshPubKey length");
         require(bytes(configCid).length <= MAX_CFG, "configCid length");
-        d.sshPubKey = sshPubKey;
         d.configCid = configCid;
-        emit ConfigSet(id, sshPubKey, configCid);
+        emit ConfigSet(id, configCid);
     }
 
     /// @notice Stop (or restart) a deployment. Stopping does NOT touch the current

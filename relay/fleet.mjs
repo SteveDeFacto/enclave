@@ -75,21 +75,24 @@ const ABI = [
 
 // EnclaveDeployments — only the fields the runner resolver needs; the full tuple
 // shape is required so viem can decode getPage()'s ABI-packed pages.
-const DEP_ABI = [
+const DEP_TUPLE = [   // Deployment struct, schema rev 2
+  { name: "id", type: "bytes32" }, { name: "owner", type: "address" },
+  { name: "appRef", type: "string" }, { name: "ports", type: "string" },
+  { name: "configCid", type: "string" },
+  { name: "gpuMilli", type: "uint16" }, { name: "cpuMilli", type: "uint16" },
+  { name: "appPort", type: "uint32" }, { name: "isPublic", type: "bool" },
+  { name: "active", type: "bool" }, { name: "createdAt", type: "uint64" },
+  { name: "rate", type: "uint256" }, { name: "balance6", type: "uint256" },
+  { name: "spent6", type: "uint256" }, { name: "runner", type: "bytes32" },
+  { name: "runnerOperator", type: "address" }, { name: "leaseUntil", type: "uint64" },
+];
+// rev-1 ledgers carry a removed sshPubKey string after ports (decoded, unused)
+const DEP_TUPLE_V1 = [...DEP_TUPLE.slice(0, 4), { name: "sshPubKey", type: "string" }, ...DEP_TUPLE.slice(4)];
+const depAbiFor = (components) => [
   { type: "function", name: "count", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "getPage", stateMutability: "view",
     inputs: [{ name: "start", type: "uint256" }, { name: "n", type: "uint256" }],
-    outputs: [{ type: "tuple[]", components: [
-      { name: "id", type: "bytes32" }, { name: "owner", type: "address" },
-      { name: "appRef", type: "string" }, { name: "ports", type: "string" },
-      { name: "sshPubKey", type: "string" }, { name: "configCid", type: "string" },
-      { name: "gpuMilli", type: "uint16" }, { name: "cpuMilli", type: "uint16" },
-      { name: "appPort", type: "uint32" }, { name: "isPublic", type: "bool" },
-      { name: "active", type: "bool" }, { name: "createdAt", type: "uint64" },
-      { name: "rate", type: "uint256" }, { name: "balance6", type: "uint256" },
-      { name: "spent6", type: "uint256" }, { name: "runner", type: "bytes32" },
-      { name: "runnerOperator", type: "address" }, { name: "leaseUntil", type: "uint64" },
-    ] }] },
+    outputs: [{ type: "tuple[]", components }] },
 ];
 const BOOK_KEY_DEPLOYMENTS = "0x6465706c6f796d656e7473" + "0".repeat(42); // "deployments" ascii, right-padded
 const ZERO32 = /^0x0+$/;
@@ -158,15 +161,31 @@ export function createFleet(cfg, log = () => {}) {
     }
     return _deploymentsAddress;
   }
+  // ledger struct shape, sniffed per address (rev-1 contracts revert the call)
+  let _depShape = { addr: null, abi: depAbiFor(DEP_TUPLE_V1) };
+  async function depAbi(c, addr) {
+    if (_depShape.addr === addr) return _depShape.abi;
+    try {
+      const rev = Number(await c.readContract({ address: addr,
+        abi: [{ type: "function", name: "deploymentsSchema", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] }],
+        functionName: "deploymentsSchema" }));
+      _depShape = { addr, abi: depAbiFor(rev >= 2 ? DEP_TUPLE : DEP_TUPLE_V1) };
+    } catch (e) {
+      if (/ContractFunction|CallExecution/.test(e?.name || "")) _depShape = { addr, abi: depAbiFor(DEP_TUPLE_V1) };
+      else return depAbiFor(DEP_TUPLE_V1);   // transport error: don't cache, retry next call
+    }
+    return _depShape.abi;
+  }
   async function ledgerRows() {
     if (Date.now() - _ledger.at < 10_000) return _ledger.rows;
     const c = await runnerClient();
     const addr = await deploymentsAddress(c);
     if (!addr) return [];
-    const total = Number(await c.readContract({ address: addr, abi: DEP_ABI, functionName: "count" }));
+    const abi = await depAbi(c, addr);
+    const total = Number(await c.readContract({ address: addr, abi, functionName: "count" }));
     const rows = [];
     for (let start = 0; start < total; start += 50)
-      rows.push(...await c.readContract({ address: addr, abi: DEP_ABI,
+      rows.push(...await c.readContract({ address: addr, abi,
         functionName: "getPage", args: [BigInt(start), 50n] }));
     _ledger = { rows, at: Date.now() };
     return rows;

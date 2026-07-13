@@ -229,22 +229,44 @@ async function readRegistry() {
 // too. Resolved from the address book like the registry; paged eth_calls (no
 // log scans - public RPCs cap those), cached briefly.
 const BOOK_KEY_DEPLOYMENTS = "0x6465706c6f796d656e7473" + "0".repeat(42);   // "deployments" ascii right-padded
-const DEP_ABI = [
+const DEP_TUPLE = [   // Deployment struct, schema rev 2
+  { name: "id", type: "bytes32" }, { name: "owner", type: "address" },
+  { name: "appRef", type: "string" }, { name: "ports", type: "string" },
+  { name: "configCid", type: "string" },
+  { name: "gpuMilli", type: "uint16" }, { name: "cpuMilli", type: "uint16" },
+  { name: "appPort", type: "uint32" }, { name: "isPublic", type: "bool" },
+  { name: "active", type: "bool" }, { name: "createdAt", type: "uint64" },
+  { name: "rate", type: "uint256" }, { name: "balance6", type: "uint256" },
+  { name: "spent6", type: "uint256" }, { name: "runner", type: "bytes32" },
+  { name: "runnerOperator", type: "address" }, { name: "leaseUntil", type: "uint64" },
+];
+// rev-1 ledgers carry a removed sshPubKey string after ports (decoded, unused)
+const DEP_TUPLE_V1 = [...DEP_TUPLE.slice(0, 4), { name: "sshPubKey", type: "string" }, ...DEP_TUPLE.slice(4)];
+const depAbiFor = (components) => [
   { type: "function", name: "count", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "getPage", stateMutability: "view",
     inputs: [{ name: "start", type: "uint256" }, { name: "n", type: "uint256" }],
-    outputs: [{ type: "tuple[]", components: [
-      { name: "id", type: "bytes32" }, { name: "owner", type: "address" },
-      { name: "appRef", type: "string" }, { name: "ports", type: "string" },
-      { name: "sshPubKey", type: "string" }, { name: "configCid", type: "string" },
-      { name: "gpuMilli", type: "uint16" }, { name: "cpuMilli", type: "uint16" },
-      { name: "appPort", type: "uint32" }, { name: "isPublic", type: "bool" },
-      { name: "active", type: "bool" }, { name: "createdAt", type: "uint64" },
-      { name: "rate", type: "uint256" }, { name: "balance6", type: "uint256" },
-      { name: "spent6", type: "uint256" }, { name: "runner", type: "bytes32" },
-      { name: "runnerOperator", type: "address" }, { name: "leaseUntil", type: "uint64" },
-    ] }] },
+    outputs: [{ type: "tuple[]", components }] },
 ];
+// Which shape the ledger at DEPLOYMENTS_ADDRESS speaks: deploymentsSchema()
+// reverts on rev-1 contracts (that IS the answer); cached per address so an
+// address-book repoint re-sniffs. Transport errors don't cache - this round
+// reads rev 1 and the next call retries the sniff.
+let _depShape = { addr: null, abi: depAbiFor(DEP_TUPLE_V1) };
+async function depAbi(c) {
+  if (_depShape.addr === DEPLOYMENTS_ADDRESS) return _depShape.abi;
+  try {
+    const rev = Number(await c.readContract({ address: DEPLOYMENTS_ADDRESS,
+      abi: [{ type: "function", name: "deploymentsSchema", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] }],
+      functionName: "deploymentsSchema" }));
+    _depShape = { addr: DEPLOYMENTS_ADDRESS, abi: depAbiFor(rev >= 2 ? DEP_TUPLE : DEP_TUPLE_V1) };
+  } catch (e) {
+    const definitive = /ContractFunction|CallExecution/.test(e?.name || "");
+    if (definitive) _depShape = { addr: DEPLOYMENTS_ADDRESS, abi: depAbiFor(DEP_TUPLE_V1) };
+    else return depAbiFor(DEP_TUPLE_V1);
+  }
+  return _depShape.abi;
+}
 async function resolveDeployments() {
   if (!ADDRESS_BOOK) return;
   try {
@@ -265,10 +287,11 @@ async function ledgerRows() {
   _ledger.inflight = (async () => {
     try {
       const c = await chain();
-      const total = Number(await c.readContract({ address: DEPLOYMENTS_ADDRESS, abi: DEP_ABI, functionName: "count" }));
+      const abi = await depAbi(c);
+      const total = Number(await c.readContract({ address: DEPLOYMENTS_ADDRESS, abi, functionName: "count" }));
       const rows = [];
       for (let start = 0; start < total; start += 50)
-        rows.push(...await c.readContract({ address: DEPLOYMENTS_ADDRESS, abi: DEP_ABI,
+        rows.push(...await c.readContract({ address: DEPLOYMENTS_ADDRESS, abi,
           functionName: "getPage", args: [BigInt(start), 50n] }));
       _ledger.rows = rows; _ledger.at = Date.now();
       return rows;
@@ -354,8 +377,8 @@ function ledgerNetwork(d, status) {
   return net;
 }
 // Shape a ledger record like the enclaves' own rows (supervisor view()), so
-// dashboards/CLIs treat both alike. `ledger: true` marks the synthesis - logs,
-// ssh and attestation exist only once a runner hosts it.
+// dashboards/CLIs treat both alike. `ledger: true` marks the synthesis - logs
+// and attestation exist only once a runner hosts it.
 function ledgerView(d) {
   const rate6 = Number(d.rate);                               // per-second price, 6dp USDC
   // remaining runtime = the live lease's prepaid tail + what the balance still
@@ -791,7 +814,7 @@ const ownerScope = (u, req) =>
   || ((o) => /^0x[0-9a-fA-F]{40}$/.test(o) ? o.toLowerCase() : null)(u.searchParams.get("owner") || "");
 
 // One wallet, one list: fan out to the live fleet (hosted rows carry live
-// status/network/ssh - only for token holders; enclaves verify), then merge
+// status/network - only for token holders; enclaves verify), then merge
 // in the LEDGER's rows for the wallet - every on-chain deployment appears
 // whether or not an enclave hosts it right now.
 async function listDeployments(u, req, res) {
@@ -824,7 +847,7 @@ async function listDeployments(u, req, res) {
 }
 
 // Bare record read: for token holders the owning enclave has the live view
-// (status transitions, network, ssh) - prefer it; tokenless reads (and any id
+// (status transitions, network) - prefer it; tokenless reads (and any id
 // no live enclave hosts) answer from the ledger, so watchers keep working
 // across enclave restarts, for still-queued work, and with no session at all.
 async function getDeployment(id, u, req, res) {

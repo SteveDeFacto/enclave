@@ -67,7 +67,7 @@ export const Enclave = {
     });
   },
   /* Deployments. List/get are PUBLIC ledger reads: a session token gives the
-     enclaves' live view (status/network/ssh), but a connected wallet alone is
+     enclaves' live view (status/network), but a connected wallet alone is
      enough - the relay scopes by ?owner= (on-chain records are public data;
      SIWE stays for what's actually private: logs, attestation, private apps). */
   createDeployment(body){ return this._req("POST", "/deployments", { auth: true, body }); },
