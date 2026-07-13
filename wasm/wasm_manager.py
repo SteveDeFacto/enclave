@@ -741,6 +741,23 @@ def _split_family(gguf):
     return parts if count >= 1 and all(x.is_file() for x in parts) else None
 
 
+def _onnx_volume(host_path) -> bool:
+    """True when the volume carries ONNX graphs the wasmtime toolchain can
+    preload (-S nn-graph=onnx::<dir> registers EVERY *.onnx up to 3 levels
+    deep as "<volume>/<component>" named graphs - diffusers layouts carry
+    several models per volume). Depth-capped for the same layouts the
+    toolchain walks: model.onnx / sub/model.onnx / sub/dir/file.onnx."""
+    p = pathlib.Path(host_path)
+    try:
+        for pat in ("*.onnx", "*/*.onnx", "*/*/*.onnx"):
+            for f in p.glob(pat):
+                if f.is_file():
+                    return True
+    except OSError:
+        pass
+    return False
+
+
 def _sd_checkpoint_path(name: str, host_path):
     """The image checkpoint an MODEL_VOLUMES_SD volume preloads through the
     sdcpp backend: the MODEL_VOLUMES-selected file when given, else
@@ -810,7 +827,7 @@ def _model_volumes() -> dict:
             top = sorted(x.name for x in p.iterdir())[:32]
         except OSError:
             top = []
-        onnx = any(x.endswith(".onnx") for x in top) or (p / "model.onnx").exists()
+        onnx = _onnx_volume(p)
         # a GGUF volume doubles as a host-preloaded wasi-nn graph (the ggml
         # backend) when one unambiguous file exists or MODEL_VOLUMES picks it;
         # MODEL_VOLUMES_SD volumes preload through sdcpp instead
@@ -874,6 +891,29 @@ def _stage_nn_graph(name: str, gguf):
         return d
     except OSError as e:
         print(f"[nn-graph] staging volume '{name}' failed: {e}", flush=True)
+        return None
+
+
+def _stage_onnx_dir(name: str, host_path):
+    """Stage an ONNX volume for -S nn-graph=onnx::<dir>: unlike the gguf
+    case there is no file to pick - the toolchain walks the whole tree and
+    registers every *.onnx as "<basename>/<component>" - so the stage is ONE
+    symlink to the mount, named after the VOLUME (the mpk-<hash> mount name
+    must not leak into graph names). Atomic re-link per launch, like
+    _stage_nn_graph."""
+    d = FS_DIR / "nn-graph" / name
+    try:
+        d.parent.mkdir(parents=True, exist_ok=True)
+        if not d.is_symlink() and d.is_dir():
+            shutil.rmtree(d)  # a stale gguf-style staging dir from a re-typed volume
+        tmp = d.parent / f".{name}.{os.getpid()}"
+        if tmp.is_symlink() or tmp.exists():
+            tmp.unlink()
+        tmp.symlink_to(host_path)
+        os.replace(tmp, d)
+        return d
+    except OSError as e:
+        print(f"[nn-graph] staging onnx volume '{name}' failed: {e}", flush=True)
         return None
 
 
@@ -1795,11 +1835,20 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
                     vol_args += ["-S", f"nn-graph=sd::{stage}"]
                 continue
             gguf = _gguf_path(name, host_path)
-            if not gguf:
+            if gguf:
+                stage = _stage_nn_graph(name, gguf)
+                if stage:
+                    vol_args += ["-S", f"nn-graph=ggml::{stage}"]
                 continue
-            stage = _stage_nn_graph(name, gguf)
-            if stage:
-                vol_args += ["-S", f"nn-graph=ggml::{stage}"]
+            # ONNX volumes preload too (every *.onnx registers as
+            # "<volume>/<component>"; guests load_by_name and skip the
+            # per-request byte lift entirely). Guest load() of the same
+            # bytes converges on the same content-hash session cache, so
+            # apps built against the old contract keep working unchanged.
+            if _onnx_volume(host_path):
+                stage = _stage_onnx_dir(name, host_path)
+                if stage:
+                    vol_args += ["-S", f"nn-graph=onnx::{stage}"]
     # enclave transparent egress (phase 2): `-S egress=<host>:<port>` makes the
     # patched wasmtime funnel ALL guest outbound through the loopback SOCKS front
     # (credential in $ENCLAVE_EGRESS_CRED, set host-side by _spawn_and_wait), so an

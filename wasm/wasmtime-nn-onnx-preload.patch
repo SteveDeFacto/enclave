@@ -1,0 +1,151 @@
+diff --git a/crates/wasi-nn/src/lib.rs b/crates/wasi-nn/src/lib.rs
+index 175e2bb..ac8586f 100644
+--- a/crates/wasi-nn/src/lib.rs
++++ b/crates/wasi-nn/src/lib.rs
+@@ -46,6 +46,14 @@ pub fn preload_registry(preload_graphs: &[(String, String)]) -> wasmtime::Result
+                     .ok_or(format_err!("unsupported backend: {kind}"))?
+             }
+         };
++        // Enclave: onnx preloads register EVERY *.onnx in the volume as a
++        // named graph (diffusers layouts carry several models per volume) -
++        // see InMemoryRegistry::load_onnx_tree. Other kinds keep the
++        // one-dir-one-graph convention.
++        if kind.eq_ignore_ascii_case("onnx") {
++            registry.load_onnx_tree(&mut *backends[idx], Path::new(path))?;
++            continue;
++        }
+         let backend = backends[idx]
+             .as_dir_loadable()
+             .ok_or(format_err!("{kind} does not support directory loading"))?;
+diff --git a/crates/wasi-nn/src/registry/in_memory.rs b/crates/wasi-nn/src/registry/in_memory.rs
+index 797ae4d..5cd6658 100644
+--- a/crates/wasi-nn/src/registry/in_memory.rs
++++ b/crates/wasi-nn/src/registry/in_memory.rs
+@@ -1,9 +1,9 @@
+ //! Implement a [`GraphRegistry`] with a hash map.
+ 
+ use super::{Graph, GraphRegistry};
+-use crate::backend::BackendFromDir;
++use crate::backend::{BackendFromDir, BackendInner};
+ use crate::wit::ExecutionTarget;
+-use std::{collections::HashMap, path::Path};
++use std::{collections::HashMap, path::Path, path::PathBuf};
+ use wasmtime::{bail, format_err};
+ 
+ /// Enclave: `Clone` is load-bearing - graphs are `Arc`-shared, so a process
+@@ -38,6 +38,115 @@ impl InMemoryRegistry {
+         self.0.insert(name.into_owned(), graph);
+         Ok(())
+     }
++
++    /// Enclave: register a graph under an explicit name (multi-graph
++    /// preloads need names the dir-basename convention can't express).
++    pub fn register(&mut self, name: String, graph: Graph) {
++        self.0.insert(name, graph);
++    }
++
++    /// Enclave: preload EVERY `*.onnx` under `path` (an attached model
++    /// volume) as a named graph - `-S nn-graph=onnx::<dir>`. Diffusers-style
++    /// volumes carry several models (text_encoder/unet/vae_decoder), so one
++    /// dir = one graph doesn't fit; instead each file registers as
++    ///   "<base>"                    when it is the volume's ONLY .onnx
++    ///   "<base>/<parent dir>"       for the model.onnx convention
++    ///   "<base>/<path minus .onnx>" otherwise
++    /// (base = the dir's basename, i.e. the volume name; the only-file case
++    /// ALSO registers its specific name, so both spellings work). Guests
++    /// load_by_name() these and the weights never transit guest memory or
++    /// hostcall fuel - the same big-model contract as the ggml/sd preloads,
++    /// with the engine (ORT) already host-side.
++    ///
++    /// Sessions build through the backend's content-hash cache, so a guest
++    /// that still load()s the same bytes converges on the same session.
++    /// Target comes from ENCLAVE_ONNX_PRELOAD_TARGET ("gpu" default - the
++    /// strict-GPU discipline applies, a missing CUDA EP fails the preload
++    /// loudly; set "cpu" on dev boxes).
++    ///
++    /// Models with EXTERNAL DATA (a sibling *.onnx_data / *.data file) are
++    /// skipped with a note: sessions built from bytes cannot resolve the
++    /// data path (the guest-load path has the identical limitation).
++    pub fn load_onnx_tree(
++        &mut self,
++        backend: &mut dyn BackendInner,
++        path: &Path,
++    ) -> wasmtime::Result<()> {
++        if !path.is_dir() {
++            bail!("preload directory is not a valid directory: {}", path.display());
++        }
++        let base = path
++            .file_name()
++            .map(|s| s.to_string_lossy().into_owned())
++            .ok_or(format_err!("no file name in path"))?;
++        let target = match std::env::var("ENCLAVE_ONNX_PRELOAD_TARGET").as_deref() {
++            Ok("cpu") => ExecutionTarget::Cpu,
++            _ => ExecutionTarget::Gpu,
++        };
++
++        let mut files: Vec<PathBuf> = Vec::new();
++        collect_onnx(path, 0, &mut files)?;
++        files.sort();
++        if files.is_empty() {
++            bail!("no *.onnx under {} (is this an ONNX volume?)", path.display());
++        }
++        let single = files.len() == 1;
++        for file in files {
++            let rel = file.strip_prefix(path).unwrap().to_string_lossy().replace('\\', "/");
++            if has_external_data(&file) {
++                eprintln!(
++                    "wasi-nn: skipping preload of {base}/{rel}: external-data onnx \
++                     (sessions built from bytes cannot resolve the data file)"
++                );
++                continue;
++            }
++            let name = if rel == "model.onnx" {
++                base.clone()
++            } else if let Some(dir) = rel.strip_suffix("/model.onnx") {
++                format!("{base}/{dir}")
++            } else {
++                format!("{base}/{}", rel.trim_end_matches(".onnx"))
++            };
++            let bytes = std::fs::read(&file)
++                .map_err(|e| format_err!("reading {}: {e}", file.display()))?;
++            let graph = backend
++                .load(&[&bytes], target)
++                .map_err(|e| format_err!("preloading {name}: {e}"))?;
++            drop(bytes);
++            if single && name != base {
++                self.0.insert(base.clone(), graph.clone());
++            }
++            self.0.insert(name, graph);
++        }
++        Ok(())
++    }
++}
++
++/// `*.onnx` files under `dir`, at most 3 levels deep (model.onnx,
++/// sub/model.onnx, sub/dir/file.onnx - the layouts real volumes use).
++fn collect_onnx(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) -> wasmtime::Result<()> {
++    if depth > 2 {
++        return Ok(());
++    }
++    let entries =
++        std::fs::read_dir(dir).map_err(|e| format_err!("reading {}: {e}", dir.display()))?;
++    for entry in entries {
++        let p = entry.map_err(|e| format_err!("{e}"))?.path();
++        if p.is_dir() {
++            collect_onnx(&p, depth + 1, out)?;
++        } else if p.extension().map(|x| x == "onnx").unwrap_or(false) {
++            out.push(p);
++        }
++    }
++    Ok(())
++}
++
++fn has_external_data(model: &Path) -> bool {
++    let Some(name) = model.file_name().and_then(|n| n.to_str()) else { return false };
++    let dir = model.parent().unwrap_or(Path::new("."));
++    dir.join(format!("{name}.data")).exists()
++        || dir.join(format!("{name}_data")).exists()
++        || model.with_extension("onnx_data").exists()
+ }
+ 
+ impl GraphRegistry for InMemoryRegistry {

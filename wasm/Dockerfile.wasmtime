@@ -114,6 +114,29 @@ COPY wasmtime-nn-ggml.patch /tmp/
 RUN git apply --check /tmp/wasmtime-nn-ggml.patch \
  && git apply /tmp/wasmtime-nn-ggml.patch
 
+# enclave sdcpp wasi-nn backend: image checkpoints (stable-diffusion.cpp)
+# behind wasi:nn - `-S nn-graph=sd::<dir>` preloads, guests load_by_name()
+# and one compute() runs the whole txt2img pipeline. Applied ALWAYS (the
+# next patch layers on it); the FEATURE stays off in the cargo build below
+# until the enclave-sdcpp lib tarball (libenclave_sd + libstable-diffusion,
+# see wasm/sd-shim/README.md) ships - then add
+# `wasmtime-wasi-nn/sdcpp` to --features and ESD_LIB_LOCATION here.
+COPY wasmtime-nn-sdcpp.patch /tmp/
+RUN git apply --check /tmp/wasmtime-nn-sdcpp.patch \
+ && git apply /tmp/wasmtime-nn-sdcpp.patch
+
+# enclave onnx named-graph preload: `-S nn-graph=onnx::<volume dir>`
+# registers EVERY *.onnx in the volume as "<volume>/<component>" at server
+# startup (diffusers layouts carry several models per volume); guests
+# load_by_name() them and model bytes stop transiting guest memory and
+# hostcall fuel entirely - the structural big-model path for ONNX, engine
+# (ORT) already host-side. Rides the existing onnx feature; sessions build
+# through the same content-hash cache the guest load() path uses, so old
+# apps converge on the same sessions unchanged.
+COPY wasmtime-nn-onnx-preload.patch /tmp/
+RUN git apply --check /tmp/wasmtime-nn-onnx-preload.patch \
+ && git apply /tmp/wasmtime-nn-onnx-preload.patch
+
 # System-linked ORT: the binary NEEDS libonnxruntime.so.1 at runtime; ship it
 # plus the two provider dylibs the CUDA EP dlopens (providers_shared is the
 # dispatcher). providers_tensorrt is deliberately not shipped (never
