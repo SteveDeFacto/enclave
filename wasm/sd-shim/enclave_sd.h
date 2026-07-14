@@ -31,25 +31,32 @@ int32_t esd_gpu_devices(void);
 /* Load a model. Either model_path names a single-file checkpoint
  * (.safetensors/.gguf/.ckpt - text encoders + diffusion + VAE in one file),
  * or it is NULL and the component paths name the pieces (FLUX-style:
- * diffusion_path required, others as the architecture demands). Unused
- * paths are NULL.
+ * diffusion_path required, others as the architecture demands). llm_path is
+ * the LLM text encoder used by the 2025+ DiT families (Qwen-Image: Qwen2.5-VL;
+ * Z-Image: Qwen3-4B; sd.cpp's --llm). Unused paths are NULL.
  *
  * n_threads <= 0 = all physical cores. wtype is a str_to_sd_type() string
  * ("" = keep source precision; "f16" halves an f32 checkpoint on load).
  * use_gpu 0 = pure CPU, nonzero = default device placement (GPU when one
  * exists - callers enforce strictness BEFORE calling, via esd_gpu_devices).
- * flash_attn nonzero enables FA on the diffusion model.
+ * flash_attn nonzero enables FA on the diffusion model. vae_tiling nonzero
+ * decodes the VAE in tiles (sd.cpp auto tile size, 0.5 overlap): caps the
+ * decode buffer at ~O(tile) instead of O(image) - the difference between a
+ * ~6 GB and a <1 GB spike at 1024px - at the cost of blend seam risk, so it
+ * is a deployment knob, not a default.
  * Returns an opaque handle, or NULL (see esd_last_error). */
 void *esd_load_model(const char *model_path,
                      const char *diffusion_path,
                      const char *clip_l_path,
                      const char *clip_g_path,
                      const char *t5xxl_path,
+                     const char *llm_path,
                      const char *vae_path,
                      int32_t n_threads,
                      const char *wtype,
                      int32_t use_gpu,
-                     int32_t flash_attn);
+                     int32_t flash_attn,
+                     int32_t vae_tiling);
 void esd_free_model(void *handle);
 
 /* txt2img: one image, blocking. rgb_out must hold width*height*3 bytes

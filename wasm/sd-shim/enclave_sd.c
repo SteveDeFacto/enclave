@@ -80,16 +80,25 @@ int32_t esd_gpu_devices(void) {
     return n;
 }
 
+/* The opaque handle: sd.cpp's context plus the per-model knobs that apply
+ * at GENERATION time (sd_img_gen_params_t fields, fixed per deployment). */
+typedef struct {
+    sd_ctx_t *ctx;
+    int32_t   vae_tiling;
+} esd_model_t;
+
 void *esd_load_model(const char *model_path,
                      const char *diffusion_path,
                      const char *clip_l_path,
                      const char *clip_g_path,
                      const char *t5xxl_path,
+                     const char *llm_path,
                      const char *vae_path,
                      int32_t n_threads,
                      const char *wtype,
                      int32_t use_gpu,
-                     int32_t flash_attn) {
+                     int32_t flash_attn,
+                     int32_t vae_tiling) {
     sd_ctx_params_t p;
     sd_ctx_params_init(&p);
     p.model_path           = model_path;
@@ -97,6 +106,7 @@ void *esd_load_model(const char *model_path,
     p.clip_l_path          = clip_l_path;
     p.clip_g_path          = clip_g_path;
     p.t5xxl_path           = t5xxl_path;
+    p.llm_path             = llm_path;
     p.vae_path             = vae_path;
     p.n_threads            = n_threads > 0 ? n_threads : sd_get_num_physical_cores();
     if (wtype && wtype[0]) {
@@ -111,10 +121,29 @@ void *esd_load_model(const char *model_path,
     }
     p.flash_attn           = flash_attn != 0;
     p.diffusion_flash_attn = flash_attn != 0;
-    return new_sd_ctx(&p);
+    sd_ctx_t *ctx = new_sd_ctx(&p);
+    if (!ctx) {
+        return NULL;
+    }
+    esd_model_t *m = malloc(sizeof(*m));
+    if (!m) {
+        free_sd_ctx(ctx);
+        snprintf(g_last_error, sizeof(g_last_error), "out of memory");
+        return NULL;
+    }
+    m->ctx        = ctx;
+    m->vae_tiling = vae_tiling;
+    return m;
 }
 
-void esd_free_model(void *handle) { free_sd_ctx((sd_ctx_t *)handle); }
+void esd_free_model(void *handle) {
+    if (!handle) {
+        return;
+    }
+    esd_model_t *m = (esd_model_t *)handle;
+    free_sd_ctx(m->ctx);
+    free(m);
+}
 
 int32_t esd_txt2img(void *handle,
                     const char *prompt,
@@ -127,9 +156,16 @@ int32_t esd_txt2img(void *handle,
                     const char *sample_method,
                     const char *scheduler,
                     uint8_t *rgb_out) {
-    sd_ctx_t *ctx = (sd_ctx_t *)handle;
+    esd_model_t *m = (esd_model_t *)handle;
+    sd_ctx_t *ctx = m->ctx;
     sd_img_gen_params_t p;
     sd_img_gen_params_init(&p);
+    if (m->vae_tiling) {
+        /* auto tile size (0 = sd.cpp picks), 0.5 overlap - mirrors the
+         * engine's own defaults for --vae-tiling */
+        p.vae_tiling_params.enabled        = true;
+        p.vae_tiling_params.target_overlap = 0.5f;
+    }
     p.prompt          = prompt;
     p.negative_prompt = negative_prompt ? negative_prompt : "";
     p.width           = width;

@@ -85,10 +85,10 @@ index b8d8710..05697c5 100644
  }
 diff --git a/crates/wasi-nn/src/backend/sdcpp.rs b/crates/wasi-nn/src/backend/sdcpp.rs
 new file mode 100644
-index 0000000..b16f5f8
+index 0000000..d4db59b
 --- /dev/null
 +++ b/crates/wasi-nn/src/backend/sdcpp.rs
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,453 @@
 +//! A stable-diffusion.cpp backend for wasi-nn — image generation models
 +//! (safetensors/GGUF checkpoints) behind the standard `wasi:nn` interface.
 +//!
@@ -133,11 +133,19 @@ index 0000000..b16f5f8
 +//!                          "f16" halves an f32 checkpoint; quant names work)
 +//!   ENCLAVE_SD_N_THREADS   CPU threads (default: all physical cores)
 +//!   ENCLAVE_SD_FLASH_ATTN  1 = enable flash attention on the diffusion model
++//!   ENCLAVE_SD_VAE_TILING  1 = decode the VAE in tiles: caps the decode
++//!                          buffer at ~O(tile) instead of O(image) - a ~6 GB
++//!                          spike at 1024px becomes <1 GB - at the cost of
++//!                          tile-blend seam risk. Deployment knob, default 0.
 +//!   ENCLAVE_SD_MODEL_FILE  checkpoint inside the volume dir, for dirs where
 +//!                          the single-file convention below is ambiguous
 +//!   ENCLAVE_SD_DIFFUSION_FILE / _CLIP_L_FILE / _CLIP_G_FILE / _T5XXL_FILE /
 +//!   _VAE_FILE              component-file mode (FLUX-style split models),
 +//!                          all relative to the volume dir
++//!   ENCLAVE_SD_LLM_FILE    the LLM text encoder for 2025+ DiT families
++//!                          (Qwen-Image: Qwen2.5-VL; Z-Image: Qwen3-4B;
++//!                          sd.cpp's --llm), relative to the volume dir;
++//!                          combines with either mode above
 +//!
 +//! Single-file convention (no env): model.gguf, else model.safetensors, else
 +//! exactly one top-level *.safetensors or *.gguf in the dir.
@@ -161,11 +169,13 @@ index 0000000..b16f5f8
 +        clip_l_path: *const c_char,
 +        clip_g_path: *const c_char,
 +        t5xxl_path: *const c_char,
++        llm_path: *const c_char,
 +        vae_path: *const c_char,
 +        n_threads: i32,
 +        wtype: *const c_char,
 +        use_gpu: i32,
 +        flash_attn: i32,
++        vae_tiling: i32,
 +    ) -> *mut c_void;
 +    fn esd_free_model(handle: *mut c_void);
 +    fn esd_txt2img(
@@ -325,12 +335,17 @@ index 0000000..b16f5f8
 +            (Some(model), (None, None, None, None, None))
 +        };
 +        let (diffusion, clip_l, clip_g, t5xxl, vae) = components;
++        // the LLM text encoder rides alongside EITHER mode: split-component
++        // layouts (Qwen-Image, Z-Image) and single-checkpoint volumes that
++        // ship the encoder as a separate gguf both occur in the wild
++        let llm = env_file(dir, "ENCLAVE_SD_LLM_FILE")?;
 +
 +        let model_c = model.as_deref().map(cstring).transpose()?;
 +        let diffusion_c = diffusion.as_deref().map(cstring).transpose()?;
 +        let clip_l_c = clip_l.as_deref().map(cstring).transpose()?;
 +        let clip_g_c = clip_g.as_deref().map(cstring).transpose()?;
 +        let t5xxl_c = t5xxl.as_deref().map(cstring).transpose()?;
++        let llm_c = llm.as_deref().map(cstring).transpose()?;
 +        let vae_c = vae.as_deref().map(cstring).transpose()?;
 +        let wtype = CString::new(std::env::var("ENCLAVE_SD_WTYPE").unwrap_or_default())
 +            .map_err(|_| err("ENCLAVE_SD_WTYPE contains NUL"))?;
@@ -346,11 +361,13 @@ index 0000000..b16f5f8
 +                opt_ptr(&clip_l_c),
 +                opt_ptr(&clip_g_c),
 +                opt_ptr(&t5xxl_c),
++                opt_ptr(&llm_c),
 +                opt_ptr(&vae_c),
 +                n_threads,
 +                wtype.as_ptr(),
 +                use_gpu as i32,
 +                env_flag("ENCLAVE_SD_FLASH_ATTN", false) as i32,
++                env_flag("ENCLAVE_SD_VAE_TILING", false) as i32,
 +            )
 +        };
 +        if handle.is_null() {

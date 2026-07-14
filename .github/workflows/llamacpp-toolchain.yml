@@ -39,7 +39,7 @@ on:
       release_tag:
         description: "Release tag for the lib tarball (created if missing)"
         required: true
-        default: "enclave-llamacpp-bec4772f-sd1"
+        default: "enclave-llamacpp-bec4772f-sd2"
 
 env:
   # pinned llama.cpp revision - the one the shim + backend were validated

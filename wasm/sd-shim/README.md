@@ -58,9 +58,12 @@ ESD_LIB_LOCATION=<dir with both .so> cargo build --release -p wasmtime-cli \
 - Tuning env (per node / per tenant): `ENCLAVE_SD_USE_GPU` (default 1,
   strict — no silent CPU fallback), `ENCLAVE_SD_WTYPE` (e.g. `f16` to halve
   an f32 checkpoint on load), `ENCLAVE_SD_N_THREADS`, `ENCLAVE_SD_FLASH_ATTN`,
-  and `ENCLAVE_SD_{MODEL,DIFFUSION,CLIP_L,CLIP_G,T5XXL,VAE}_FILE` for
+  `ENCLAVE_SD_VAE_TILING` (1 = tiled VAE decode: the ~6 GB decode spike at
+  1024px becomes <1 GB, at tile-seam risk — the big-resolution knob), and
+  `ENCLAVE_SD_{MODEL,DIFFUSION,CLIP_L,CLIP_G,T5XXL,LLM,VAE}_FILE` for
   volumes where the single-checkpoint convention is ambiguous (FLUX-style
-  split components).
+  split components; `LLM` is the Qwen-class text encoder the 2025+ DiT
+  families use — Qwen-Image, Z-Image — validated with Z-Image-Turbo).
 
 ## Guest contract (wasi-nn, WIT named tensors)
 
