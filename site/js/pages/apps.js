@@ -40,11 +40,12 @@ function renderApps(){
     // moderation view: the catalog owner sees EVERY delisted app; a publisher
     // sees only their own - their one path back (relist, or republish the slug).
     apps = STORE.apps.filter(a => a.versions.length && !a.active && (isOwner || myApp(a)));
-  } else if (STORE.filter === "unverified"){
-    // owner-only queue: active apps not yet endorsed, waiting to be verified.
-    // An app whose latest release was rejected already has its verdict - it
-    // lives in the Rejected tab, not the to-review queue.
-    apps = STORE.apps.filter(a => a.versions.length && a.active && !appVerified(a) && !appRejected(a));
+  } else if (STORE.filter === "pending"){
+    // the to-review queue: active apps not yet endorsed, with no verdict on
+    // their latest release. The owner sees every one; a publisher sees only
+    // their own - where their app waits while the owner reviews it.
+    apps = STORE.apps.filter(a => a.versions.length && a.active && !appVerified(a) && !appRejected(a)
+                               && (isOwner || myApp(a)));
   } else if (STORE.filter === "rejected"){
     // moderation view: apps whose latest release was rejected (appRejected).
     // The owner sees every one (their rejection record); a publisher sees only
@@ -52,14 +53,12 @@ function renderApps(){
     // Listing state doesn't matter here: a delisted app still shows.
     apps = STORE.apps.filter(a => appRejected(a) && (isOwner || myApp(a)));
   } else {
-    // public tabs (All / Verified): delisted apps are hidden from everyone here,
-    // and an app whose every version is yanked/rejected has nothing to show a
-    // normal browser (its publisher and the owner still see it - all versions
-    // are visible to them, so the length check passes). Unverified apps are
-    // visible only to their publisher and the catalog owner.
-    apps = STORE.apps.filter(a => a.versions.length && a.active && visibleVerIdxs(a).length
-                               && (appVerified(a) || isOwner || myApp(a)));
-    if (STORE.filter === "verified") apps = apps.filter(appVerified);
+    // Approved - the public store and the default tab: active, owner-endorsed
+    // apps with something visible (an app whose every version is yanked/
+    // rejected has nothing to show a normal browser). Everything else lives in
+    // the moderation tabs above, each scoped to the owner + the affected
+    // publisher.
+    apps = STORE.apps.filter(a => a.versions.length && a.active && visibleVerIdxs(a).length && appVerified(a));
   }
   // search matches only what the viewer can see - a yanked version's CID must
   // not surface an app to someone who'd then find no trace of that version
@@ -87,25 +86,27 @@ const appRejected = (a) => {
   return false;
 };
 
-/* The Unverified, Rejected and Delisted tabs are the catalog owner's moderation
-   surface. Unverified (the queue of active-but-unendorsed apps) is owner-only.
-   Rejected and Delisted are owner-visible always, and ALSO shown to a publisher
-   with an app in that state - only their own appear there (rejected = fix or
-   yank the release; delisted = their path back to relist). Everyone else never
-   sees any of them; a tab that just became hidden falls back to All. */
+/* The Pending, Rejected and Delisted tabs are the catalog owner's moderation
+   surface - always visible to them - and each is ALSO shown to a publisher
+   with an app in that state; only their own appear there (pending = where
+   their app waits for the owner's verdict; rejected = fix or yank the release;
+   delisted = their path back to relist). Everyone else never sees any of them;
+   a tab that just became hidden falls back to Approved. */
 function syncModTabs(me, isOwner){
   const delisted = document.querySelector('#storeFilter button[data-filter="delisted"]');
-  const unverified = document.querySelector('#storeFilter button[data-filter="unverified"]');
+  const pending = document.querySelector('#storeFilter button[data-filter="pending"]');
   const rejected = document.querySelector('#storeFilter button[data-filter="rejected"]');
-  const hasOwnDelisted = !!me && STORE.apps.some(a => a.versions.length && !a.active && a.publisher.toLowerCase() === me);
-  const hasOwnRejected = !!me && STORE.apps.some(a => appRejected(a) && a.publisher.toLowerCase() === me);
+  const mine = (a) => !!me && a.publisher.toLowerCase() === me;
+  const hasOwnDelisted = STORE.apps.some(a => a.versions.length && !a.active && mine(a));
+  const hasOwnPending = STORE.apps.some(a => a.versions.length && a.active && !appVerified(a) && !appRejected(a) && mine(a));
+  const hasOwnRejected = STORE.apps.some(a => appRejected(a) && mine(a));
   if (delisted) delisted.hidden = !(isOwner || hasOwnDelisted);
-  if (unverified) unverified.hidden = !isOwner;
+  if (pending) pending.hidden = !(isOwner || hasOwnPending);
   if (rejected) rejected.hidden = !(isOwner || hasOwnRejected);
   const cur = document.querySelector('#storeFilter button[data-filter="' + STORE.filter + '"]');
   if (cur && cur.hidden){
-    STORE.filter = "all";
-    $$("#storeFilter button").forEach(x => x.classList.toggle("on", x.dataset.filter === "all"));
+    STORE.filter = "approved";
+    $$("#storeFilter button").forEach(x => x.classList.toggle("on", x.dataset.filter === "approved"));
   }
 }
 
