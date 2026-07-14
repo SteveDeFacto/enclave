@@ -296,7 +296,7 @@ containers:
       # (name:path:file.gguf) picks WHICH gguf preloads as the wasi-nn graph
       # when the repo ships several quantizations - the manager stages the
       # pick as a symlink dir, so the mpk-<hash> mount name never matters.
-      - MODEL_VOLUMES: "qwen2.5-0.5b:/tinfoil/mpk/mpk-e8e9414bf9f999b44ecd86524627b4a912f17a79d7f191280092af3513688da4,qwen2.5-0.5b-gguf:/tinfoil/mpk/mpk-d02f1afc0eee60adc4da2a541c8e095c9cff347b4f3996c2950ff84c676c1c70:qwen2.5-0.5b-instruct-q4_k_m.gguf,qwen3.5-122b-gguf:/tinfoil/mpk/mpk-1cbf0645575029ca49ebd10daaee21fccd6eb66f1d1563b147c647d78e08387c,sd-turbo:/tinfoil/mpk/mpk-df0919ea85c829fb62c61029ac130f7e4a98bc6a57fe52dfb777a7426d5b36fc,sd-turbo-full:/tinfoil/mpk/mpk-e787b81d664922c08ac69bb0952b436404bbb150f6f7b71971431d0c3ff4ef60"
+      - MODEL_VOLUMES: "qwen2.5-0.5b:/tinfoil/mpk/mpk-e8e9414bf9f999b44ecd86524627b4a912f17a79d7f191280092af3513688da4,qwen2.5-0.5b-gguf:/tinfoil/mpk/mpk-d02f1afc0eee60adc4da2a541c8e095c9cff347b4f3996c2950ff84c676c1c70:qwen2.5-0.5b-instruct-q4_k_m.gguf,qwen3.5-122b-gguf:/tinfoil/mpk/mpk-1cbf0645575029ca49ebd10daaee21fccd6eb66f1d1563b147c647d78e08387c,sd-turbo:/tinfoil/mpk/mpk-df0919ea85c829fb62c61029ac130f7e4a98bc6a57fe52dfb777a7426d5b36fc,sd-turbo-full:/tinfoil/mpk/mpk-e787b81d664922c08ac69bb0952b436404bbb150f6f7b71971431d0c3ff4ef60,z-image-turbo:/tinfoil/mpk/mpk-9282c2c36539935081b45ca64a8c33765b5b3215318e73f702524a11007ad4f5"
       # Volumes preloaded through the stable-diffusion.cpp wasi-nn backend
       # (image txt2img: the guest load_by_name()s the volume and one
       # compute() runs the whole pipeline host-side; weights never enter
@@ -305,10 +305,21 @@ containers:
       # (wasmtime-nn-sdcpp.patch on top of nn-ggml + libenclave_sd/
       # libstable-diffusion from wasm/sd-shim) - rebuild the "Wasmtime
       # Toolchain" and repin WASMTIME_IMAGE before deployments can serve it.
-      - MODEL_VOLUMES_SD: "sd-turbo-full"
-      # sd_turbo.safetensors is fp32 (5.2 GB of the volume's 13 GB): convert
-      # weights to f16 on load - halves VRAM, matches GPU compute precision.
-      - ENCLAVE_SD_WTYPE: "f16"
+      # z-image-turbo REPLACES sd-turbo-full here (not alongside): the
+      # ENCLAVE_SD_*_FILE envs below are node-global and the preload
+      # validates them against EVERY listed SD volume - a single-checkpoint
+      # volume like sd-turbo-full would fail validation against them. (Its
+      # volume stays mounted for guests; only the sd preload moves on.)
+      - MODEL_VOLUMES_SD: "z-image-turbo"
+      # Component layout of the z-image-turbo volume (EnclaveHost/
+      # z-image-turbo-sd): Z-Image needs sd.cpp's --llm text-encoder slot.
+      # NO ENCLAVE_SD_WTYPE: the volume ships Q8_0 ggufs - forcing f16 would
+      # UP-convert quantized weights and double VRAM.
+      - ENCLAVE_SD_DIFFUSION_FILE: "z_image_turbo-Q8_0.gguf"
+      - ENCLAVE_SD_LLM_FILE: "Qwen3-4B-Instruct-2507-Q8_0.gguf"
+      - ENCLAVE_SD_VAE_FILE: "ae.safetensors"
+      # tiled VAE decode: the 1024px decode spike drops ~6 GB -> <1 GB
+      - ENCLAVE_SD_VAE_TILING: "1"
     # SECRET doubles as the manager's control-plane token (VMMGR_TOKEN): tenants
     # hold outbound HTTP to loopback, so the control API on :8091 must reject
     # calls that don't carry it (the supervisor sends X-Vmmgr-Token). The tenant
@@ -379,6 +390,14 @@ models:
   - name: "sd-turbo-full"
     repo: "stabilityai/sd-turbo@b261bac6fd2cf515557d5d0707481eafa0485ec2"
     mpk: "e787b81d664922c08ac69bb0952b436404bbb150f6f7b71971431d0c3ff4ef60_12957339648_7214a717-20cd-5a86-9bc3-dd3eac7676c0"
+  # Z-Image-Turbo (Tongyi-MAI, Apache-2.0) as a curated sd.cpp bundle:
+  # Q8_0 transformer + Qwen3-4B Q8_0 text encoder + FLUX AE, single-file
+  # components (see the repo's README for upstream sha256 provenance).
+  # Serving: sdcpp backend, cfg 1.0, 4-8 steps, ~13 GB peak VRAM at 1024px
+  # with ENCLAVE_SD_VAE_TILING - gpu >= 0.10.
+  - name: "z-image-turbo"
+    repo: "EnclaveHost/z-image-turbo-sd@07cb261e0093aedc442472faeab729508a2384f5"
+    mpk: "9282c2c36539935081b45ca64a8c33765b5b3215318e73f702524a11007ad4f5_11193159680_31dc54ae-4be7-5dd7-83a4-c9220cb45974"
 
 # Single ingress → supervisor. Only these paths are reachable from outside.
 # PROBE-PATH NOTE: this shim exposes "/health", but the supervisor serves its
