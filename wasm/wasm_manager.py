@@ -758,6 +758,42 @@ def _onnx_volume(host_path) -> bool:
     return False
 
 
+# sdcpp component-file mode (sd2 toolchain, 2025+ DiT families): Z-Image/
+# Qwen-Image volumes ship split components the backend resolves through
+# these node-global envs (paths relative to the volume dir). The manager
+# mirrors the backend's validation so launch args stay honest.
+_SD_COMPONENT_ENV_VARS = (
+    "ENCLAVE_SD_DIFFUSION_FILE", "ENCLAVE_SD_CLIP_L_FILE",
+    "ENCLAVE_SD_CLIP_G_FILE", "ENCLAVE_SD_T5XXL_FILE",
+    "ENCLAVE_SD_LLM_FILE", "ENCLAVE_SD_VAE_FILE",
+)
+
+
+def _sd_component_files() -> dict:
+    return {var: v for var in _SD_COMPONENT_ENV_VARS
+            if (v := os.environ.get(var, "").strip())}
+
+
+def _sd_layout(name: str, host_path):
+    """How an MODEL_VOLUMES_SD volume preloads on this node, mirroring the
+    sdcpp backend exactly: ("components", None) when
+    ENCLAVE_SD_DIFFUSION_FILE selects component mode, ("checkpoint", path)
+    for the single-file convention, (None, None) when the backend would
+    refuse - the manager then mounts WITHOUT preloading instead of aborting
+    the tenant launch. Every SET ENCLAVE_SD_*_FILE env must resolve inside
+    the volume in EITHER mode (the backend validates all of them, and they
+    are node-global - which is why a component-layout volume and a
+    single-checkpoint volume cannot both preload on one node yet)."""
+    p = pathlib.Path(host_path)
+    comps = _sd_component_files()
+    if not all((p / rel).is_file() for rel in comps.values()):
+        return (None, None)
+    if "ENCLAVE_SD_DIFFUSION_FILE" in comps:
+        return ("components", None)
+    ckpt = _sd_checkpoint_path(name, p)
+    return ("checkpoint", ckpt) if ckpt else (None, None)
+
+
 def _sd_checkpoint_path(name: str, host_path):
     """The image checkpoint an MODEL_VOLUMES_SD volume preloads through the
     sdcpp backend: the MODEL_VOLUMES-selected file when given, else
@@ -831,7 +867,7 @@ def _model_volumes() -> dict:
         # a GGUF volume doubles as a host-preloaded wasi-nn graph (the ggml
         # backend) when one unambiguous file exists or MODEL_VOLUMES picks it;
         # MODEL_VOLUMES_SD volumes preload through sdcpp instead
-        sd = name in _SD_VOLUMES and _sd_checkpoint_path(name, p) is not None
+        sd = name in _SD_VOLUMES and _sd_layout(name, p)[0] is not None
         gguf = not sd and _gguf_path(name, p) is not None
         out[name] = {"name": name, "path": str(p), "bytes": _dir_bytes(p),
                      "onnx": onnx, "gguf": gguf, "sd": sd, "files": top}
@@ -929,7 +965,14 @@ def _probe_serve_output(extra_args, env_extra, timeout=45.0):
     port = _free_port()
     cmd = [WASMTIME, "serve", "-Scli", "-Shttp", "-Snn", *extra_args,
            "--addr", f"{HOST_IP}:{port}", str(wasm)]
-    env = dict(os.environ)
+    # scrub the node-global sdcpp component-file envs: the sd leg probes an
+    # EMPTY dir to reach the backend's checkpoint-picker error ("expected
+    # model..."), and a leaked ENCLAVE_SD_*_FILE diverts it into env-file
+    # validation with error text the classifier doesn't know - misreading a
+    # capable toolchain as unsupported (happened live on v0.5.133, the first
+    # release with these envs set fleet-wide).
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith("ENCLAVE_SD_") and k.endswith("_FILE"))}
     env.update(env_extra)
     try:
         proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL,
@@ -992,9 +1035,10 @@ def _preload_support() -> dict:
 
 
 def _stage_onnx_dir(name: str, host_path):
-    """Stage an ONNX volume for -S nn-graph=onnx::<dir>: unlike the gguf
-    case there is no file to pick - the toolchain walks the whole tree and
-    registers every *.onnx as "<basename>/<component>" - so the stage is ONE
+    """Stage a WHOLE volume dir for -S nn-graph=onnx::<dir> (and sd::<dir>
+    component-layout volumes): unlike the gguf case there is no file to
+    pick - the onnx toolchain walks the whole tree, and the sdcpp backend
+    resolves the ENCLAVE_SD_*_FILE names inside it - so the stage is ONE
     symlink to the mount, named after the VOLUME (the mpk-<hash> mount name
     must not leak into graph names). Atomic re-link per launch, like
     _stage_nn_graph."""
@@ -1931,9 +1975,18 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
                 if not support["sd"]:
                     print(f"[nn-graph] sd volume '{name}': toolchain lacks sd preload - mounting only", flush=True)
                     continue
-                ckpt = _sd_checkpoint_path(name, host_path)
+                mode, ckpt = _sd_layout(name, host_path)
+                if mode == "components":
+                    # split-component volumes (Z-Image/Qwen-Image-class)
+                    # stage WHOLE-DIR: the backend resolves the env-named
+                    # files inside it - same one-symlink shape as onnx
+                    stage = _stage_onnx_dir(name, host_path)
+                    if stage:
+                        vol_args += ["-S", f"nn-graph=sd::{stage}"]
+                    continue
                 if not ckpt:
-                    print(f"[nn-graph] sd volume '{name}': no unambiguous checkpoint", flush=True)
+                    print(f"[nn-graph] sd volume '{name}': no unambiguous checkpoint "
+                          f"and the ENCLAVE_SD_*_FILE envs don't resolve here - mounting only", flush=True)
                     continue
                 stage = _stage_nn_graph(name, ckpt)
                 if stage:
