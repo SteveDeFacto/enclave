@@ -44,11 +44,10 @@ function renderApps(){
     // owner-only queue: active apps not yet endorsed, waiting to be verified.
     apps = STORE.apps.filter(a => a.versions.length && a.active && !appVerified(a));
   } else if (STORE.filter === "rejected"){
-    // moderation view: apps carrying a rejected release (rejection is
-    // per-version). The owner sees every one (their rejection record); a
-    // publisher sees only their own - the cue to yank the release or publish
-    // a fixed version. Listing state doesn't matter here: a delisted app's
-    // rejected version still shows.
+    // moderation view: apps whose latest release was rejected (appRejected).
+    // The owner sees every one (their rejection record); a publisher sees only
+    // their own - the cue to yank the release or publish a fixed version.
+    // Listing state doesn't matter here: a delisted app still shows.
     apps = STORE.apps.filter(a => appRejected(a) && (isOwner || myApp(a)));
   } else {
     // public tabs (All / Verified): delisted apps are hidden from everyone here,
@@ -75,8 +74,16 @@ function renderApps(){
   }));
 }
 
-// an app with at least one rejected release - the Rejected tab's membership
-const appRejected = (a) => (a.versions || []).some(v => v.approval === APPROVAL.rejected);
+// the Rejected tab's membership: the app's LATEST release was rejected.
+// Latest = newest non-yanked entry, so both cleanup paths clear the app from
+// the tab: publish a fixed version (a newer latest, pending) or yank the
+// rejected one. Older rejected versions under a newer release are history,
+// not the app's current state.
+const appRejected = (a) => {
+  const vs = a.versions || [];
+  for (let i = vs.length - 1; i >= 0; i--) if (!vs[i].yanked) return vs[i].approval === APPROVAL.rejected;
+  return false;
+};
 
 /* The Unverified, Rejected and Delisted tabs are the catalog owner's moderation
    surface. Unverified (the queue of active-but-unendorsed apps) is owner-only.
