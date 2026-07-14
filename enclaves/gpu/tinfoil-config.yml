@@ -296,7 +296,7 @@ containers:
       # (name:path:file.gguf) picks WHICH gguf preloads as the wasi-nn graph
       # when the repo ships several quantizations - the manager stages the
       # pick as a symlink dir, so the mpk-<hash> mount name never matters.
-      - MODEL_VOLUMES: "qwen2.5-0.5b:/tinfoil/mpk/mpk-e8e9414bf9f999b44ecd86524627b4a912f17a79d7f191280092af3513688da4,qwen2.5-0.5b-gguf:/tinfoil/mpk/mpk-d02f1afc0eee60adc4da2a541c8e095c9cff347b4f3996c2950ff84c676c1c70:qwen2.5-0.5b-instruct-q4_k_m.gguf,qwen3.5-122b-gguf:/tinfoil/mpk/mpk-1cbf0645575029ca49ebd10daaee21fccd6eb66f1d1563b147c647d78e08387c,sd-turbo:/tinfoil/mpk/mpk-df0919ea85c829fb62c61029ac130f7e4a98bc6a57fe52dfb777a7426d5b36fc,sd-turbo-full:/tinfoil/mpk/mpk-e787b81d664922c08ac69bb0952b436404bbb150f6f7b71971431d0c3ff4ef60,z-image-turbo:/tinfoil/mpk/mpk-9282c2c36539935081b45ca64a8c33765b5b3215318e73f702524a11007ad4f5"
+      - MODEL_VOLUMES: "qwen2.5-0.5b:/tinfoil/mpk/mpk-e8e9414bf9f999b44ecd86524627b4a912f17a79d7f191280092af3513688da4,qwen2.5-0.5b-gguf:/tinfoil/mpk/mpk-d02f1afc0eee60adc4da2a541c8e095c9cff347b4f3996c2950ff84c676c1c70:qwen2.5-0.5b-instruct-q4_k_m.gguf,qwen2-5-0-5b-gguf:/tinfoil/mpk/mpk-bb5cace1df1795f9dde1b6da38b2b9edfaaa56f4574a5d6270c1295b192c81c1,qwen3.5-122b-gguf:/tinfoil/mpk/mpk-1cbf0645575029ca49ebd10daaee21fccd6eb66f1d1563b147c647d78e08387c,sd-turbo:/tinfoil/mpk/mpk-df0919ea85c829fb62c61029ac130f7e4a98bc6a57fe52dfb777a7426d5b36fc,sd-turbo-full:/tinfoil/mpk/mpk-e787b81d664922c08ac69bb0952b436404bbb150f6f7b71971431d0c3ff4ef60,z-image-turbo:/tinfoil/mpk/mpk-9282c2c36539935081b45ca64a8c33765b5b3215318e73f702524a11007ad4f5"
       # Volumes preloaded through the stable-diffusion.cpp wasi-nn backend
       # (image txt2img: the guest load_by_name()s the volume and one
       # compute() runs the whole pipeline host-side; weights never enter
@@ -374,6 +374,13 @@ models:
   - name: "qwen2.5-0.5b-gguf"
     repo: "Qwen/Qwen2.5-0.5B-Instruct-GGUF@9217f5db79a29953eb74d5343926648285ec7e67"
     mpk: "d02f1afc0eee60adc4da2a541c8e095c9cff347b4f3996c2950ff84c676c1c70_5372555264_5600f8a0-1cd0-5dc9-a32c-7a110e14da28"
+  # Slim curated re-wrap of the volume above: ONLY the q4_k_m gguf (the same
+  # bytes MODEL_VOLUMES picks there - sha256 74a4da8c...) PLUS tokenizer.json,
+  # so it's self-contained (~490 MB vs the official repo's 5.4 GB, no
+  # cross-volume tokenizer attach). Single gguf = no MODEL_VOLUMES third field.
+  - name: "qwen2-5-0-5b-gguf"
+    repo: "EnclaveHost/qwen2.5-0.5b-gguf@28ee3c6a09ba2c4b7447c53d3cddad0bdefcf186"
+    mpk: "bb5cace1df1795f9dde1b6da38b2b9edfaaa56f4574a5d6270c1295b192c81c1_498454528_3b7bbfae-47ec-55ce-8c30-951d1874a293"
   # Qwen3.5-122B-A10B at 4-bit (unsloth UD-IQ4_XS, ~60 GB) for the ggml/llama.cpp
   # wasi-nn path - the big-model tenant option (~45% of an H200's VRAM). The repo
   # ships THREE split GGUF parts (Qwen3.5-122B-A10B-UD-IQ4_XS-0000N-of-00003.gguf)
