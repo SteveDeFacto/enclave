@@ -56,6 +56,9 @@ function shortImg(s){ if (!s) return ""; return s.length > 44 ? s.slice(0, 42) +
 // Unknown/new statuses land in "ended" rather than vanishing.
 const FILTER_KEY = "enclave_dash_filters";
 const BUCKETS = ["running", "queued", "ended", "failed"];
+// Decline reasons that no amount of waiting resolves (mirrors the enclave's
+// claim-gauntlet wording; deploy.js's watchClaimAndRun keys on the same set)
+const WHY_TERMINAL = /below the app|minimum shares|yanked|not .{0,12}approved|rejected|delisted|unlisted|configcid|retired|deactivated/i;
 function bucketOf(st){
   st = String(st || "").toLowerCase();
   if (st === "running") return "running";
@@ -297,6 +300,7 @@ class Deployments extends EnclaveElement {
           '</span>' +
         '</div>' +
         ((st === "failed" || st === "expired") && d.error ? '<div class="enc-err" title="why this deployment ' + esc(st) + '">⚠ ' + esc(d.error) + '</div>' : '') +
+        (st === "queued" ? '<div class="enc-why" data-why="' + esc(d.id) + '" hidden></div>' : '') +
         (ep ? '<button class="enc-ep" data-ep="' + esc(ep) + '">' + esc(ep) + ' ⧉</button>'
               + (d.public && st === "running" && safeHref(ep) ? '<a class="enc-open" href="' + esc(safeHref(ep)) + '/" target="_blank" rel="noopener">open ↗</a>' : '') : '') +
         depIp6Row(d) +
@@ -311,6 +315,8 @@ class Deployments extends EnclaveElement {
     $$(".enc-fundbtn", body).forEach(b => b.addEventListener("click", () => this._fund(b.dataset.id, b)));
     $$(".enc-verify", body).forEach(b => b.addEventListener("click", () => this._verify(b.dataset.id, b)));
     $$(".enc-kill", body).forEach(b => b.addEventListener("click", () => this._kill(b.dataset.id, b)));
+    this._fillWhy();               // cached decline reasons repaint instantly with the rows
+    this._probeWhy(pageRows);      // then refresh them (throttled per row)
     this._renderPager(pages, shown.length, PER_PAGE);
     // finished runs' strips yield to their rows the moment those render
     [...this._strips.keys()].forEach(r => this._retireStrip(r));
@@ -319,6 +325,51 @@ class Deployments extends EnclaveElement {
       const b = body.querySelector('.enc-outbtn[data-id="' + highlight + '"]');
       if (b && runlog.runFor(highlight)) this._output(highlight, b);
     }
+  }
+
+  /* ---- queued rows: WHY is the fleet not taking this? ----
+     "queued" only says no runner holds a lease - the ledger can't say why.
+     /v1/claim-hint runs the enclaves' exact claim gauntlet and returns the
+     decline reason, so the row can distinguish "waiting on capacity" from
+     TERMINAL states (below the app's minimum shares, unapproved version,
+     retired configCid) where no amount of waiting ever starts the app and
+     the only exit is terminate + redeploy (created shares are immutable).
+     Without this, a permanently unclaimable deployment is indistinguishable
+     from a patient one - it took chain forensics to tell them apart once
+     (2026-07-14, 0xf3d976a0…). Probes are throttled hard: current page only,
+     30s per row - the enclave's hint bucket is per-source-IP and the relay
+     pools every browser behind its one IP. ---- */
+  async _probeWhy(rows) {
+    this._why = this._why || new Map();
+    for (const d of rows) {
+      if ((d.status || "") !== "queued" || !/^0x[0-9a-f]{64}$/i.test(d.id || "")) continue;
+      const c = this._why.get(d.id);
+      if (c && Date.now() - c.at < 30_000) continue;
+      this._why.set(d.id, { ...(c || {}), at: Date.now() });   // stamp before the await: overlapping polls must not double-probe
+      try {
+        const r = await fetch(Enclave.base + "/claim-hint", { method: "POST",
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ id: d.id }) });
+        const h = await r.json();
+        if (h && h.accepted === false && h.reason)
+          this._why.set(d.id, { at: Date.now(), reason: h.reason, terminal: WHY_TERMINAL.test(h.reason) });
+        else if (h && h.accepted === true)
+          this._why.set(d.id, { at: Date.now(), reason: "", terminal: false });   // being claimed - clear the line
+      } catch(e){}   // 429 / network: keep what we knew, retry next cycle
+    }
+    this._fillWhy();
+  }
+  _fillWhy() {
+    if (!this._why) return;
+    $$(".enc-why", this).forEach(el => {
+      const c = this._why.get(el.dataset.why);
+      if (!c || !c.reason){ el.hidden = true; el.innerHTML = ""; el.classList.remove("enc-err"); return; }
+      el.classList.toggle("enc-err", !!c.terminal);
+      el.innerHTML = c.terminal
+        ? "⚠ won’t start by waiting - the fleet refuses this work: " + esc(c.reason)
+          + " (a deployment’s shares are immutable: terminate it and redeploy at the app’s current minimums)"
+        : '<span class="dim">fleet: ' + esc(c.reason) + " - retrying automatically</span>";
+      el.hidden = false;
+    });
   }
 
   /* ---- pager: prev · "x–y of N" · next. Hidden for a single page. ---- */

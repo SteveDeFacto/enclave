@@ -155,7 +155,13 @@ export const parseCatalogRef = (ref) => {
 };
 export const REF_CACHE = {};    // friendly "slug:version" -> "catalog://<appId>/<idx>" (filled by Use-in-Deploy + lookups)
 export const PORTS_CACHE = {};  // friendly "slug:version" -> that version's firewall CSV (defaults the deploy)
-export const MINS_CACHE = {};   // friendly "slug:version" -> minimum dial positions { gpuPct, cpuPct } from its specs
+export const SPECS_CACHE = {};  // friendly "slug:version" -> the version's RAW specs {vramMb,gpuGflops,memMb,cpuGflops}.
+                                // Raw on purpose: dial floors are minPctsOf(spec) AT READ TIME, so they always
+                                // divide by the currently adopted fleet hardware - caching computed percents
+                                // froze them against whatever spec was live at first resolve (the 91%-vs-92%
+                                // unclaimable-deployment bug of 2026-07-14)
+export const specOf = (v) => ({ vramMb: Number(v && v.vramMb) || 0, gpuGflops: Number(v && v.gpuGflops) || 0,
+                                memMb: Number(v && v.memMb) || 0, cpuGflops: Number(v && v.cpuGflops) || 0 });
 export const CONFIG_CACHE = {}; // friendly "slug:version" -> that VERSION's default/template config JSON (pre-fills the deploy form)
 export function looksFriendly(s){ return s.includes(":") && !s.startsWith("ipfs://"); }
 export function resolveAppRef(input){
@@ -182,9 +188,9 @@ export function resolveAppRef(input){
     return { reference: input, label: input, error: "'" + slug + ":" + version + "' " + (v.approval === APPROVAL.rejected ? "was rejected" : "isn’t approved yet") + " by the catalog owner; the enclave refuses to deploy it." };
   REF_CACHE[input] = catalogRef(apps[0].appId, vi);
   PORTS_CACHE[input] = v.ports || "";
-  MINS_CACHE[input] = minPctsOf(v);   // the version's specs -> the dials' floors
+  SPECS_CACHE[input] = specOf(v);         // raw specs; floors are computed at read time
   CONFIG_CACHE[input] = v.config || "";   // the version's default config template
-  return { reference: REF_CACHE[input], label: input, mins: MINS_CACHE[input] };
+  return { reference: REF_CACHE[input], label: input, mins: minPctsOf(SPECS_CACHE[input]) };
 }
 
 // A mid-session address-book change (js/core/addressbook.js emits

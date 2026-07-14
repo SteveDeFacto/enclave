@@ -5,6 +5,7 @@
    ============================================================ */
 import { DEFAULT_API_BASE } from "./config.js";
 import { lsGet, lsSet } from "./util.js";
+import { adoptServerSpec } from "./pricing.js";
 
 /* ---- typed error carrying HTTP status ---- */
 export class EnclaveError extends Error {
@@ -64,6 +65,12 @@ export const Enclave = {
     return fetch(url, { headers: { "Accept": "application/json" } }).then(r => {
       if (!r.ok) throw new EnclaveError("availability: HTTP " + r.status, r.status);
       return r.json();
+    }).then(a => {
+      // every availability read feeds the share math the REAL fleet hardware -
+      // the minimum-dial floors must divide by what the runners divide by
+      // (pricing.js explains why the fallback constants can't be trusted)
+      adoptServerSpec(a);
+      return a;
     });
   },
   /* Deployments. List/get are PUBLIC ledger reads: a session token gives the

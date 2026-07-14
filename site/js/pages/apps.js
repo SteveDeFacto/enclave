@@ -15,7 +15,7 @@ import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, IPFS_UPLOAD_URL, IPFS_IMAGE_UPL
 import { Enclave, EnclaveError } from "../core/api.js";
 import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, rate6Of, waitReceipt, catSchemaRev } from "../core/chain.js";
 import { connectWallet, authenticate, ensureBaseChain, sendTx, usdcBalanceOf, openBuyModal } from "../core/wallet.js";
-import { STORE, loadCatalog, selIdx, defaultIdx, appVerified, appPrivileged, visibleVerIdxs, validPortsCsv, REF_CACHE, PORTS_CACHE, MINS_CACHE, CONFIG_CACHE, catalogRef, mediaOf, appMedia, stripMedia, withMedia } from "../core/catalog.js";
+import { STORE, loadCatalog, selIdx, defaultIdx, appVerified, appPrivileged, visibleVerIdxs, validPortsCsv, REF_CACHE, PORTS_CACHE, SPECS_CACHE, specOf, CONFIG_CACHE, catalogRef, mediaOf, appMedia, stripMedia, withMedia } from "../core/catalog.js";
 import { minPctsOf, shareRates } from "../core/pricing.js";
 import { navigate } from "../boot.js";
 
@@ -93,12 +93,15 @@ function useInDeploy(app, v, idx){
   const friendly = app.slug + ":" + v.version;      // human-friendly; resolves to the version RECORD at deploy
   REF_CACHE[friendly] = catalogRef(app.appId, idx);
   PORTS_CACHE[friendly] = v.ports || "";
-  MINS_CACHE[friendly] = minPctsOf(v);
+  SPECS_CACHE[friendly] = specOf(v);
   const cfgPreview = stripMedia(v.config || "");    // hide the _media block from the deploy config preview
   CONFIG_CACHE[friendly] = cfgPreview;               // the VERSION's config -> shown read-only on the deploy form
   try {
+    // the RAW specs ride along - the deploy page derives the dial floors from
+    // them against the fleet hardware IT has adopted (percents minted here
+    // could divide by a different, staler server spec)
     sessionStorage.setItem("enclave_use_in_deploy", JSON.stringify({
-      friendly, appId: app.appId, index: idx, ports: v.ports || "", mins: MINS_CACHE[friendly], config: cfgPreview }));
+      friendly, appId: app.appId, index: idx, ports: v.ports || "", spec: SPECS_CACHE[friendly], config: cfgPreview }));
   } catch(e){}
   // the console's own URL, share-friendly: /deploy?app=hello-world_1.0.0
   // (the "_" form keeps the query un-percent-encoded; deploy.js normalizes it
@@ -194,9 +197,14 @@ function quickDeploy(app, v, idx){
     // the flow lives in the deploy chunk; it navigates to the dashboard and
     // narrates into the run log (deployOnChain never throws)
     const m = await import("./deploy.js");
+    // shares are re-derived NOW: the availability fetch may have adopted the
+    // fleet's real hardware after this modal opened, and a share below the
+    // runners' floor mints an unclaimable deployment (created shares are
+    // immutable, funding unrecoverable)
+    const m2 = minPctsOf(specOf(v));
     // the appRef IS the version record: the enclave applies its config,
     // volumes and ports from the chain - nothing rides the deployment
-    m.deployOnChain({ reference: catalogRef(app.appId, idx), gpuMilli: mins.gpuPct * 10, cpuMilli: mins.cpuPct * 10,
+    m.deployOnChain({ reference: catalogRef(app.appId, idx), gpuMilli: m2.gpuPct * 10, cpuMilli: m2.cpuPct * 10,
       ports: v.ports || "", isPublic: true, fundUsd: usd, asset: "USDC" });
   });
   est(); loadBal();
@@ -735,4 +743,7 @@ export function boot() {
   applyView();          // direct entries and soft-navs to apps.html#publish land on the publish view
   renderActiveView();   // grid, or a single app's page when apps?app=<appId>
   loadCatalog();
+  // adopt the fleet's real hardware into the share math before anyone opens
+  // quick-deploy - minimum dials divide by these numbers (see core/pricing.js)
+  Enclave.getAvailability().catch(() => {});
 }

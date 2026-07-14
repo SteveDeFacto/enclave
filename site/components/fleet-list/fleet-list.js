@@ -5,7 +5,7 @@
    ============================================================ */
 import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc, fmtNum } from "../../js/core/util.js";
-import { CARD_GB, CARD_TFLOPS, NODE_RAM_GB, NODE_VCPUS } from "../../js/core/pricing.js";
+import { serverSpec } from "../../js/core/pricing.js";
 import { REGISTRY_ADDRESS } from "../../js/core/config.js";
 import { catExplorer } from "../../js/core/chain.js";
 
@@ -39,8 +39,9 @@ class FleetList extends EnclaveElement {
           const cFree = a.cpuShareFree != null ? a.cpuShareFree : (gpu ? 0 : a.maxShare || 0);
           const gPct = Math.floor(gFree * 100), cPct = Math.floor(cFree * 100);
           const name = String(e.endpoint || "").replace(/^https?:\/\//, "").split(".")[0] || "enclave";
-          const vramGb = a.cardVramGb || CARD_GB, tflops = a.cardTflops || CARD_TFLOPS;
-          const ramGb = a.nodeRamGb || NODE_RAM_GB, vcpus = a.nodeVcpus || NODE_VCPUS;
+          const s = serverSpec();   // adopted fleet hardware; display fallback for rows that omit their own
+          const vramGb = a.cardVramGb || s.cardVramGb, tflops = a.cardTflops || s.cardTflops;
+          const ramGb = a.nodeRamGb || s.nodeRamGb, vcpus = a.nodeVcpus || s.nodeVcpus;
           return '<div class="fleet-row" title="' + esc(e.endpoint || "") + '">'
             + '<span class="fleet-head">'
             + '<span class="ap-badge ' + (gpu ? "info" : "") + '">' + (gpu ? "gpu" : "cpu") + '</span>'

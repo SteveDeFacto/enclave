@@ -650,11 +650,24 @@ function sendForwarded(res, r, req) {
 // enclaves + best node pool across ALL enclaves (they can be different boxes —
 // that is the point of the two-pool model). gpuEnclaveCpuShareFree is the cpu
 // pool on the best GPU enclave: a GPU deployment's cpuShare must fit THERE.
+//
+// spec* fields are for SIZING app specs into minimum shares, and they are the
+// fleet-wide MINIMA of the hardware numbers the runners themselves divide by
+// in their claim gate. The plain cardVramGb/nodeRamGb describe the BEST box
+// (capacity view) — a dial floor computed on the biggest card under-sells on
+// every smaller one, and a deployment below a runner's minimum is unclaimable
+// there forever (created shares are immutable). Sizing against the minima
+// keeps a bought share valid on EVERY live enclave.
 function aggregateAvailability() {
-  const g = live.filter((e) => e.availability.gpu)
+  const gpus = live.filter((e) => e.availability.gpu);
+  const g = gpus.slice()
     .sort((a, b) => gpuFreeOf(b.availability) - gpuFreeOf(a.availability))[0]?.availability || null;
   const c = live.slice()
     .sort((a, b) => cpuFreeOf(b.availability) - cpuFreeOf(a.availability))[0]?.availability || null;
+  const minOf = (rows, field) => rows.reduce((m, e) => {
+    const v = Number(e.availability?.[field]);
+    return Number.isFinite(v) && v > 0 ? (m > 0 ? Math.min(m, v) : v) : m;
+  }, 0);
   return {
     aggregate: true, enclaves: live.length, gpu: !!g, type: g ? "gpu" : "cpu",
     gpuShareFree: g ? gpuFreeOf(g) : 0, cpuShareFree: c ? cpuFreeOf(c) : 0,
@@ -665,6 +678,8 @@ function aggregateAvailability() {
     cardVramGb: g ? g.cardVramGb ?? 0 : 0, cardTflops: g ? g.cardTflops ?? 0 : 0, cards: g ? g.cards ?? 0 : 0,
     vcpusFree: c ? c.vcpusFree ?? 0 : 0, ramGbFree: c ? c.ramGbFree ?? 0 : 0, cpuGflopsFree: c ? c.cpuGflopsFree ?? 0 : 0,
     nodeVcpus: c ? c.nodeVcpus ?? 0 : 0, nodeRamGb: c ? c.nodeRamGb ?? 0 : 0, nodeGflops: c ? c.nodeGflops ?? 0 : 0,
+    specCardVramGb: minOf(gpus, "cardVramGb"), specCardTflops: minOf(gpus, "cardTflops"),
+    specNodeVcpus: minOf(live, "nodeVcpus"), specNodeRamGb: minOf(live, "nodeRamGb"), specNodeGflops: minOf(live, "nodeGflops"),
     // attached model volumes across the fleet (Modelwrap), deduped by name -
     // each carries `enclaves`: which endpoints can mount it (placement matters,
     // a volume only lives where its enclave declares it)

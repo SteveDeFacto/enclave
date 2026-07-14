@@ -25,6 +25,10 @@ c-deployments{display:contents;}
    the track at ~650px and scroll the whole page sideways on phones */
 .enc-body{display:grid;gap:14px;grid-template-columns:minmax(0,1fr);}
 .enc-err{margin-top:8px;padding:.5em .7em;border:1px solid var(--amber-dim);border-radius:8px;background:rgba(255,145,77,.06);color:var(--amber);font-family:var(--font-mono);font-size:.72rem;line-height:1.5;word-break:break-word;}
+/* queued rows' "why isn't the fleet taking this" line (claim-hint decline
+   reason). Layout only: transient reasons dim via an inner .dim span,
+   terminal ones get .enc-err stacked on (declared FIRST so its colors win) */
+.enc-why{margin-top:8px;font-family:var(--font-mono);font-size:.72rem;line-height:1.5;word-break:break-word;}
 /* each deployment is a CARD in the app-card material (surface, radius,
    border, hover accent) - panels expand inside their card */
 .enc-row{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;transition:border-color .2s var(--ease);}

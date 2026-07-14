@@ -20,14 +20,14 @@ import { navigate } from "../boot.js";
 import { $, $$, esc, short, wait, fmtNum, fmtDur, hlJson, hlCode, copyText, showToast, statusCls, on, tosAccepted, setTosAccepted } from "../core/util.js";
 import { APP_DOMAIN, DEPLOYMENTS_ADDRESS, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
-import { CARD_GB, NODE_VCPUS, NODE_RAM_GB, CARD_TFLOPS, NODE_GFLOPS, shareRates } from "../core/pricing.js";
+import { minPctsOf, serverSpec, shareRates } from "../core/pricing.js";
 import { encCall, DEP_SEL, DEP_CREATED_TOPIC, APPROVAL, depGet, depRate6, depPrices6, depSchemaRev, rate6Of, waitReceipt } from "../core/chain.js";
 
 // create()'s shape on the live contract (rev 1 carried a removed sshPubKey
 // string): sniffed once at init; the samples and the real encode both use it.
 let depRev = 2;
 import { connectWallet, refreshWallet, ensureBaseChain, sendTx, usdcBalanceOf, ethBalanceOf, openBuyModal } from "../core/wallet.js";
-import { STORE, loadCatalog, REF_CACHE, PORTS_CACHE, MINS_CACHE, CONFIG_CACHE, looksFriendly, resolveAppRef, catalogRef } from "../core/catalog.js";
+import { STORE, loadCatalog, REF_CACHE, PORTS_CACHE, SPECS_CACHE, CONFIG_CACHE, looksFriendly, resolveAppRef, catalogRef } from "../core/catalog.js";
 
 /* component handles (assigned in initDeploy) */
 let fleetList = null, volPicker = null;
@@ -53,7 +53,8 @@ function renderAccessNote(){
 // minimums server-side.
 function currentMins(){
   const input = ($("#cfgImage") ? $("#cfgImage").value : "").trim();
-  return MINS_CACHE[input] || { gpuPct: 0, cpuPct: 1 };
+  const spec = SPECS_CACHE[input];
+  return spec ? minPctsOf(spec) : { gpuPct: 0, cpuPct: 1 };   // computed NOW, against the adopted fleet hardware
 }
 /* The "App config" box shows the picked VERSION's config - the JSON the app
    receives as ENCLAVE_CONFIG, straight from the on-chain record the owner
@@ -144,10 +145,12 @@ function renderDeploy(){
     rate = 0; readout = "✕ a share exceeds 100% of the " + (gpuPct > 100 ? "card" : "node");
   }
   else if (dep.gpuEnclave && gpuPct < mins.gpuPct) {
-    rate = 0; readout = "✕ this app needs at least a " + mins.gpuPct + "% GPU share (its specs: that much VRAM/compute on a " + CARD_GB + " GB / " + CARD_TFLOPS + " TFLOPS card)";
+    const s = serverSpec();
+    rate = 0; readout = "✕ this app needs at least a " + mins.gpuPct + "% GPU share (its specs: that much VRAM/compute on the fleet's " + s.cardVramGb + " GB / " + s.cardTflops + " TFLOPS card)";
   }
   else if (cpuPct < mins.cpuPct) {
-    rate = 0; readout = "✕ this app needs at least a " + mins.cpuPct + "% CPU share (its specs: that much RAM/compute on a " + NODE_RAM_GB + " GB / " + NODE_GFLOPS + " GFLOPS node)";
+    const s = serverSpec();
+    rate = 0; readout = "✕ this app needs at least a " + mins.cpuPct + "% CPU share (its specs: that much RAM/compute on the fleet's " + s.nodeRamGb + " GB / " + s.nodeGflops + " GFLOPS node)";
   }
   else if (gpuPct > 0 && Math.round(cpuPct) > Math.round(gpuPct)) {
     rate = 0; readout = "✕ CPU share (" + Math.round(cpuPct) + "%) can't exceed GPU share (" + Math.round(gpuPct) + "%) - a GPU app's CPU slice rides on its card's node";
@@ -205,6 +208,20 @@ async function runDeploy(){
   const cpuMilli = Math.round(Math.max(1, Math.min(100, dep.cpuPct))) * 10;
   const ports = ($("#cfgPorts") && $("#cfgPorts").value || "");
   const { portsCsv, appPort } = portsSpec(ports);
+
+  // HARD floor, the last line before a wallet signature: runners divide the
+  // app's specs by their probed hardware and refuse anything below the result,
+  // and a created record's shares are IMMUTABLE - an under-provisioned
+  // deployment sits "Queued" forever, claimable by nobody, its funding
+  // unrecoverable. The dial UI enforces the same floor; this catches every
+  // other path here (stale prefill, races, hand-edited fields).
+  const fmins = SPECS_CACHE[raw] ? minPctsOf(SPECS_CACHE[raw]) : null;
+  if (fmins && fmins.gpuPct > 0 && gpuMilli < fmins.gpuPct * 10)
+    return note([["warn", !dep.gpuEnclave
+      ? "[!] " + raw + " needs a GPU (min " + fmins.gpuPct + "% of a card) and the fleet has no GPU enclave live - this deployment would never be claimed."
+      : "[!] " + raw + " needs at least a " + fmins.gpuPct + "% GPU share on this fleet's hardware - " + (gpuMilli / 10) + "% would never be claimed. Raise the GPU dial."]]);
+  if (fmins && cpuMilli < fmins.cpuPct * 10)
+    return note([["warn", "[!] " + raw + " needs at least a " + fmins.cpuPct + "% CPU share on this fleet's hardware - " + (cpuMilli / 10) + "% would never be claimed. Raise the CPU dial."]]);
 
   if (dry){
     const plan = [["warn", "// dry run: nothing is sent"]];
@@ -503,9 +520,10 @@ async function refreshAvailability(){
     dep.gpuEnclave = a.gpu !== false;               // gpu:false = CPU-only enclave (older enclaves omit the field)
     const unitG = $("#gpuShareUnit");
     if (unitG) unitG.textContent = dep.gpuEnclave ? "(% of one card · 0 = CPU-only app)" : "(CPU-only enclave · no GPU here)";
-    const cardGb = (a.cardVramGb != null) ? a.cardVramGb : CARD_GB;
-    const cardTf = (a.cardTflops != null) ? a.cardTflops : CARD_TFLOPS;
-    const nodeRamGb = (a.nodeRamGb != null) ? a.nodeRamGb : NODE_RAM_GB;
+    // getAvailability() adopted this payload into the share math already;
+    // read the capacity captions off the same adopted numbers
+    const spec = serverSpec();
+    const cardGb = spec.cardVramGb, cardTf = spec.cardTflops, nodeRamGb = spec.nodeRamGb;
     // both pools, live: the largest free slice of one card and the node's
     // leftover vCPU+RAM pool; maxShare = older enclaves
     const gpuFree = (a.gpuShareFree != null ? a.gpuShareFree : (a.gpu !== false ? (a.maxShare || 0) : 0));
@@ -521,7 +539,7 @@ async function refreshAvailability(){
     }
     if (cIn) cIn.max = String(Math.max(1, cpuFreePct));
     if (capC) capC.textContent = "· " + cpuFreePct + "% of the node free now (≈"
-      + fmtNum(cpuFree * nodeRamGb) + " GB RAM / ≈" + fmtNum(cpuFree * ((a.nodeVcpus != null) ? a.nodeVcpus : NODE_VCPUS)) + " vCPU)";
+      + fmtNum(cpuFree * nodeRamGb) + " GB RAM / ≈" + fmtNum(cpuFree * spec.nodeVcpus) + " vCPU)";
     // clamp if the current pick now exceeds capacity, but don't yank the field the user is editing
     if (dep.gpuPct > gpuFreePct && dep.gpuEnclave && document.activeElement !== gIn){ dep.gpuPct = gpuFreePct; gIn.value = String(gpuFreePct); }
     if (cIn && dep.cpuPct > cpuFreePct && document.activeElement !== cIn){ dep.cpuPct = Math.max(1, cpuFreePct); cIn.value = String(dep.cpuPct); }
@@ -660,12 +678,16 @@ function applyUseInDeploy(){
     showToast("Deploy set to " + friendly + " (min " + mins.gpuPct + "% GPU / " + mins.cpuPct + "% CPU)"
             + (ports ? " · open ports " + ports : "") + (config ? " · config template applied" : ""));
   };
-  if (stash && stash.friendly === friendly && stash.appId != null && stash.index != null){
+  // the stash must carry the version's RAW specs (not computed percents): the
+  // floors are recomputed HERE against the currently adopted fleet hardware -
+  // percents minted on the Apps page could predate the availability fetch.
+  // A stash without specs (older tab) falls through to the catalog re-resolve.
+  if (stash && stash.friendly === friendly && stash.appId != null && stash.index != null && stash.spec){
     REF_CACHE[friendly] = catalogRef(stash.appId, stash.index);
     PORTS_CACHE[friendly] = stash.ports || "";
-    MINS_CACHE[friendly] = stash.mins;
+    SPECS_CACHE[friendly] = stash.spec;
     CONFIG_CACHE[friendly] = stash.config || "";
-    applyMins(stash.mins, stash.ports, stash.config);
+    applyMins(minPctsOf(stash.spec), stash.ports, stash.config);
   } else {
     // shared / bookmarked link: resolve the ref from the catalog
     loadCatalog().then(() => {
