@@ -133,10 +133,16 @@ jobs:
       - name: Clone stable-diffusion.cpp (pinned)
         run: |
           # NOT --recursive: the ggml submodule is replaced by the system
-          # ggml above, examples/webp/webm submodules are built OFF.
+          # ggml above, examples/webp/webm submodules are built OFF. But
+          # sd.cpp's graph-cut code includes ggml INTERNAL headers by
+          # vendored path ("ggml/src/ggml-impl.h") even in system-ggml
+          # builds - point that path at the LLAMA tree's ggml so internal
+          # headers come from the exact source of the lib we link (better
+          # than the leejet fork's copy: no internal-struct skew).
           git clone https://github.com/leejet/stable-diffusion.cpp /tmp/sd.cpp
           cd /tmp/sd.cpp
           git checkout "$SD_COMMIT"
+          ln -s /tmp/llama.cpp/ggml ggml
 
       - name: Build sd.cpp against the llama tree's ggml (shared, no CUDA compile)
         run: |
