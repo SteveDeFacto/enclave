@@ -894,6 +894,103 @@ def _stage_nn_graph(name: str, gguf):
         return None
 
 
+# --- preload capability probe ---------------------------------------------- #
+# Which `-S nn-graph=<kind>::` preload kinds THIS wasmtime toolchain
+# implements, probed ONCE (lazily, before the first launch that wants them)
+# with throwaway serve processes. Gating launches on this makes manager and
+# toolchain rollouts order-independent: emitting onnx:: to a pre-preload
+# wasmtime ABORTS the tenant at startup (upstream semantics look for
+# <dir>/model.onnx - "No such file or directory"), and sd:: to a build
+# without the sdcpp feature dies with "unknown graph encoding: sd".
+#
+# onnx is a POSITIVE-signal probe: an 84-byte Identity model staged at
+# graph/sub/model.onnx preloads ("wasi-nn graph preload done") only with the
+# multi-graph tree walk. sd discriminates ERROR text on an empty dir: the
+# sdcpp backend complains it wants a checkpoint ("expected model.gguf..."),
+# an unsupported build says "unknown graph encoding". Unknown output = not
+# supported (fail safe: tenants just keep the guest-load contract).
+_ONNX_PROBE_MODEL = bytes.fromhex(
+    "0808120d656e636c6176652d70726f62653a3b0a100a017812017922084964656e74697479"
+    "120570726f62655a0f0a0178120a0a08080112040a020801620f0a0179120a0a0808011204"
+    "0a02080142040a00100d"
+)
+_PRELOAD_SUPPORT = {"state": "unprobed", "onnx": False, "sd": False, "detail": ""}
+_PRELOAD_PROBE_LOCK = threading.Lock()
+
+
+def _probe_serve_output(extra_args, env_extra, timeout=45.0):
+    """Launch a throwaway `wasmtime serve` with `extra_args` on the boot
+    fixture and return its combined stdout+stderr until exit, preload-done,
+    or timeout. Only used by _preload_support."""
+    import select
+    wasm = APPS_DIR / "nn-demo.wasm"
+    if MOCK or not wasm.is_file():
+        return None
+    port = _free_port()
+    cmd = [WASMTIME, "serve", "-Scli", "-Shttp", "-Snn", *extra_args,
+           "--addr", f"{HOST_IP}:{port}", str(wasm)]
+    env = dict(os.environ)
+    env.update(env_extra)
+    try:
+        proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, preexec_fn=_preexec)
+    except Exception as e:                                       # noqa: BLE001
+        return f"spawn failed: {e}"
+    out = []
+    deadline = time.time() + timeout
+    try:
+        while time.time() < deadline:
+            r, _, _ = select.select([proc.stdout], [], [], 0.25)
+            if r:
+                line = proc.stdout.readline()
+                if line:
+                    out.append(line.strip())
+            if proc.poll() is not None:
+                out.extend(x.strip() for x in (proc.stdout.read() or "").splitlines())
+                break
+            # the preload-done line means serve came up and stayed up
+            if any("preload done" in x for x in out):
+                break
+        return "\n".join(out)
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:                                        # noqa: BLE001
+            pass
+
+
+def _preload_support() -> dict:
+    with _PRELOAD_PROBE_LOCK:
+        if _PRELOAD_SUPPORT["state"] != "unprobed":
+            return _PRELOAD_SUPPORT
+        detail = []
+        try:
+            graph = FS_DIR / "preload-probe" / "graph"
+            (graph / "sub").mkdir(parents=True, exist_ok=True)
+            (graph / "sub" / "model.onnx").write_bytes(_ONNX_PROBE_MODEL)
+            empty = FS_DIR / "preload-probe" / "empty"
+            empty.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            _PRELOAD_SUPPORT.update(state="failed", detail=f"fixture: {e}")
+            print(f"[preload-probe] fixture staging failed: {e}", flush=True)
+            return _PRELOAD_SUPPORT
+        o = _probe_serve_output(["-S", f"nn-graph=onnx::{graph}"],
+                                {"ENCLAVE_ONNX_PRELOAD_TARGET": "cpu"})
+        onnx_ok = bool(o) and "preload done" in o
+        detail.append(f"onnx: {'ok' if onnx_ok else (o or 'no fixture/mock').splitlines()[-1][:120]}")
+        # ENCLAVE_SD_USE_GPU=0 skips the strict-GPU check so the probe reaches
+        # the checkpoint picker deterministically on CPU and GPU nodes alike
+        s = _probe_serve_output(["-S", f"nn-graph=sd::{empty}"],
+                                {"ENCLAVE_SD_USE_GPU": "0"})
+        sd_ok = bool(s) and "unknown graph encoding" not in s and "expected model" in s
+        detail.append(f"sd: {'ok' if sd_ok else (s or 'no fixture/mock').splitlines()[-1][:120]}")
+        _PRELOAD_SUPPORT.update(state="probed", onnx=onnx_ok, sd=sd_ok,
+                                detail="; ".join(detail))
+        print(f"[preload-probe] onnx={onnx_ok} sd={sd_ok} ({_PRELOAD_SUPPORT['detail']})", flush=True)
+        return _PRELOAD_SUPPORT
+
+
 def _stage_onnx_dir(name: str, host_path):
     """Stage an ONNX volume for -S nn-graph=onnx::<dir>: unlike the gguf
     case there is no file to pick - the toolchain walks the whole tree and
@@ -1821,11 +1918,19 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
     # (_stage_nn_graph); MODEL_VOLUMES' third field picks the file (any part
     # of a split family selects the whole family).
     if nn:
+        # gate the NEWER preload kinds on what this toolchain implements
+        # (_preload_support) - emitting a kind the wasmtime can't parse or
+        # walk aborts the tenant at startup, and manager/toolchain images
+        # roll independently. ggml predates the probe and stays ungated.
+        support = _preload_support()
         for name, host_path in vol_mounts.items():
             # MODEL_VOLUMES_SD volumes preload through the sdcpp backend
             # (image txt2img pipelines: safetensors/ckpt checkpoints, FLUX
             # gguf quants); everything else with a GGUF is an LLM for ggml.
             if name in _SD_VOLUMES:
+                if not support["sd"]:
+                    print(f"[nn-graph] sd volume '{name}': toolchain lacks sd preload - mounting only", flush=True)
+                    continue
                 ckpt = _sd_checkpoint_path(name, host_path)
                 if not ckpt:
                     print(f"[nn-graph] sd volume '{name}': no unambiguous checkpoint", flush=True)
@@ -1846,6 +1951,9 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
             # bytes converges on the same content-hash session cache, so
             # apps built against the old contract keep working unchanged.
             if _onnx_volume(host_path):
+                if not support["onnx"]:
+                    print(f"[nn-graph] onnx volume '{name}': toolchain lacks onnx preload - mounting only", flush=True)
+                    continue
                 stage = _stage_onnx_dir(name, host_path)
                 if stage:
                     vol_args += ["-S", f"nn-graph=onnx::{stage}"]
@@ -2747,7 +2855,8 @@ def _debug_env() -> dict:
            "fs": FS_ENABLED, "fs_guest": FS_GUEST_PATH if FS_ENABLED else None,
            "default_storage_mb": DEF_STORAGE_MB if FS_ENABLED else 0,
            "enc": ENC_ENABLED and shutil.which(RCLONE_BIN) is not None,
-           "enc_guest": ENC_GUEST_ROOT if ENC_ENABLED else None}
+           "enc_guest": ENC_GUEST_ROOT if ENC_ENABLED else None,
+           "nn_preload": dict(_PRELOAD_SUPPORT)}
     try:
         out["uname"] = " ".join(os.uname())
     except Exception as e:
