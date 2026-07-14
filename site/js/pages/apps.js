@@ -168,7 +168,7 @@ function quickDeploy(app, v, idx){
       '<label class="qd-tos"><input type="checkbox" class="qd-tosck"' + (tosAccepted() ? " checked" : "") + ' /> <span>I have read and agree to the <a href="terms" target="_blank" rel="noopener">Terms of Service</a> - payments are crypto-only, non-custodial and final, and uptime isn’t guaranteed.</span></label>' +
       '<div class="qd-actions">' +
         '<button class="btn btn-primary qd-go" type="button">▸ Deploy</button>' +
-        '<button class="btn qd-adv" type="button" title="Pick shares, open ports, app config, and payment options on the full console">Advanced settings →</button>' +
+        '<button class="btn qd-adv" type="button" title="Pick shares, open ports, app config, and payment options on the full console">Advanced →</button>' +
         '<button class="btn qd-cancel" type="button">Cancel</button>' +
       '</div>' +
     '</div>';
