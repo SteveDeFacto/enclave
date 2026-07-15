@@ -49,8 +49,8 @@ const DEFAULTS = {
   chainId: 8453,
   rpcs: ["https://base-rpc.publicnode.com", "https://base.drpc.org",
          "https://1rpc.io/base", "https://mainnet.base.org"],
-  DEPLOYMENTS_ADDRESS: "0xd52214CeB7103175497419F5147EAE6f6B683044",
-  APP_CATALOG_ADDRESS: "0x11e91fae8864a690A7636C9095d9C3CfcC672F2b",
+  DEPLOYMENTS_ADDRESS: "0x0A7dE5D205c10B812AbaF0b89f3A243466bCEe01",
+  APP_CATALOG_ADDRESS: "0xaB0462E55c18E295A221e4Eaa8738F25eB0696D7",
   REGISTRY_ADDRESS: "0xCB65f487eba6564D57FfB860cF9aE701584cB4a2",
   ADDRESS_BOOK_ADDRESS: "0xab214342d5A490150A4A977063A2f88E21F80907",     // EnclaveAddressBook; written by scripts/deploy-address-book.mjs — when set, the CLI resolves the addresses above from it at start ("" = baked only)
   USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",

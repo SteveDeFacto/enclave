@@ -96,14 +96,14 @@ containers:
       # FORWARDER_ADDRESS = deployed EnclavePay contract. USDC funds go straight to the
       # payout wallet set INSIDE that contract (the operator's cold wallet) - never here.
       # NOTE: requires outbound egress from the enclave to BASE_RPC. Confirm with Tinfoil.
-      - FORWARDER_ADDRESS: "0x9487322262F4ED763C1a0880ECD5E996094fb81C"                            # set after deploying EnclavePay.sol
+      - FORWARDER_ADDRESS: "0x580270e88E5DF35DaD59E7FE3d907ebeA96673a6"                            # set after deploying EnclavePay.sol
       - USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"   # USDC on Base
       # app approval gate: EnclaveAppCatalog (read-only, written by scripts/deploy-app-catalog.mjs).
       # ipfs:// app deploys are REFUSED unless the catalog owner has Approved that
       # version (setApproval tx signed by the catalog's deployer key). Empty =
       # nothing can deploy (the image ships no deployable apps; the one baked
       # .wasm is the boot probe's fixture, not reachable through the API).
-      - APP_CATALOG_ADDRESS: "0x11e91fae8864a690A7636C9095d9C3CfcC672F2b"                          # set after deploying EnclaveAppCatalog.sol (must be on CHAIN_ID's chain, read via BASE_RPC)
+      - APP_CATALOG_ADDRESS: "0xaB0462E55c18E295A221e4Eaa8738F25eB0696D7"                          # set after deploying EnclaveAppCatalog.sol (must be on CHAIN_ID's chain, read via BASE_RPC)
       - PAYMENT_WINDOW_SEC: "600"                        # unpaid deployments release the reservation
       - GRACE_SEC: "90"                                  # grace after expiry before teardown (top-up window)
       - PAY_POLL_SEC: "12"
@@ -142,7 +142,7 @@ containers:
       # registry entry's operator), so registry advertising above is a hard
       # prerequisite, as is PROVISION_BACKEND=vm (claims run catalog wasm apps).
       - CLAIM_ENABLED: "1"
-      - DEPLOYMENTS_ADDRESS: "0xd52214CeB7103175497419F5147EAE6f6B683044"                          # set by scripts/deploy-deployments.mjs
+      - DEPLOYMENTS_ADDRESS: "0x0A7dE5D205c10B812AbaF0b89f3A243466bCEe01"                          # set by scripts/deploy-deployments.mjs
       # - CLAIM_POLL_SEC: "60"                           # optional: queue sweep / lease audit cadence
       # - RENEW_MARGIN_SEC: "300"                        # optional: renew when less lease than this remains
       # CPU-only work waits this long for a CPU enclave before a GPU enclave bids on

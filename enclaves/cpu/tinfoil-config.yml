@@ -47,10 +47,10 @@ containers:
       - CORS_ORIGINS: "https://enclave.host"
       - BASE_RPC: "https://mainnet.base.org"
       # pay-per-deploy (no custody): same EnclavePay forwarder as the GPU flavor.
-      - FORWARDER_ADDRESS: "0x9487322262F4ED763C1a0880ECD5E996094fb81C"
+      - FORWARDER_ADDRESS: "0x580270e88E5DF35DaD59E7FE3d907ebeA96673a6"
       - USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"   # USDC on Base
       # app approval gate: same EnclaveAppCatalog as the GPU flavor.
-      - APP_CATALOG_ADDRESS: "0x11e91fae8864a690A7636C9095d9C3CfcC672F2b"
+      - APP_CATALOG_ADDRESS: "0xaB0462E55c18E295A221e4Eaa8738F25eB0696D7"
       - PAYMENT_WINDOW_SEC: "600"
       - GRACE_SEC: "90"
       - PAY_POLL_SEC: "12"
@@ -74,7 +74,7 @@ containers:
       # Portable deployments: the claim loop adopts ONLY CPU deployments
       # (EnclaveDeployments records created with gpu=false).
       - CLAIM_ENABLED: "1"
-      - DEPLOYMENTS_ADDRESS: "0xd52214CeB7103175497419F5147EAE6f6B683044"
+      - DEPLOYMENTS_ADDRESS: "0x0A7dE5D205c10B812AbaF0b89f3A243466bCEe01"
       # dedicated per-deployment IPv6 (tcp + udp): the relay box's routed /64
       # (shared with the GPU flavor — one relay box, one /64; deployment ids are
       # unique fleet-wide so derived addresses never collide). Empty keeps ports
