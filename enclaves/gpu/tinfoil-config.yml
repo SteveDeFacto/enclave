@@ -353,7 +353,13 @@ containers:
       # 16384^2 per head, tens of GB of compute buffer, and sampling dies
       # at graph allocation ("sampling for image 1/1 failed" in <1s, seen
       # live). With FA the 2048px diffusion buffer is a few GB.
-      - ENCLAVE_SD_FLASH_ATTN: "1"
+      # DIAGNOSTIC (2026-07-15): flipped to 0 to isolate the qwen-image-2512
+      # crystalline speckle. v0.5.151 (VAE pinned f32 + VAE FA off) did NOT
+      # fix it, which exonerates the VAE and points at the diffusion model's
+      # fp16 flash-attention path. If qwen@512 renders clean with FA off, the
+      # diffusion FA overflow is confirmed. Revert (or cap qwen resolution)
+      # once diagnosed - FA is still required for 2048px.
+      - ENCLAVE_SD_FLASH_ATTN: "0"
       # Fused-attention quarantine (ORT/onnx volumes only - sdcpp/ggml
       # tenants are untouched): deployments attaching a listed volume get
       # the ORT_DISABLE_* attention envs in THEIR wasmtime process (unfused
