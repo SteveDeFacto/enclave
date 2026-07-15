@@ -1711,13 +1711,18 @@ def _capacity() -> dict:
 #   WASM_CPU_MAX_PCT=<1..100>   HARD ceiling: at most this % of the whole node's
 #                               vCPUs (cgroup cpu.max). Can throttle bursty apps
 #                               — use deliberately.
-# Both need a cpu-enabled, delegated cgroup-v2 subtree. Point WASM_CGROUP_PARENT
-# at one the CVM's init delegated to the manager (its cgroup.subtree_control
-# must already list `cpu`); without it we best-effort create a child of the
-# manager's own cgroup, which only works if the manager isn't a leaf holding
-# processes (the cgroup-v2 "no internal processes" rule — usually it IS, so
-# real deployments should set WASM_CGROUP_PARENT). If placement fails for ANY
-# reason we WARN and leave the tenant uncapped — never fail a launch over it.
+# Both need the cpu controller available in a cgroup-v2 subtree the manager can
+# write. We SELF-CONFIGURE, so this is NOT per-enclave or per-boot work: on the
+# first launch we move the manager's own processes into a leaf child (so the
+# manager's cgroup becomes an inner node, satisfying the cgroup-v2 "no internal
+# processes" rule), enable `+cpu` on its subtree_control, and nest per-tenant
+# cgroups under enclave-tenants/. The ONLY external requirement is that the CVM
+# launched the manager with the cpu controller DELEGATED to its cgroup (systemd
+# `Delegate=cpu`, or the container runtime's cgroup delegation) — a one-time
+# image setting inherited by every enclave. WASM_CGROUP_PARENT is an optional
+# override: point it at a ready-made cpu-enabled subtree to skip self-config. If
+# cpu isn't delegated, or placement fails for ANY reason, we WARN and leave the
+# tenant uncapped — never fail a launch over it.
 _CPU_WEIGHT        = os.environ.get("WASM_CPU_WEIGHT", "").strip()
 _CPU_MAX_PCT       = os.environ.get("WASM_CPU_MAX_PCT", "").strip()
 _CGROUP_PARENT_ENV = os.environ.get("WASM_CGROUP_PARENT", "").strip()
@@ -1746,17 +1751,37 @@ def _cpu_cgroup_base():
                 rel = l[3:]
                 break
         mgr = pathlib.Path("/sys/fs/cgroup") / rel.lstrip("/")
-        if not (mgr / "cgroup.controllers").exists():
+        ctrl = mgr / "cgroup.controllers"
+        if not ctrl.exists():
             print("[cpu] cgroup v2 not found under the manager's cgroup — CPU limits off", flush=True)
+            return None
+        if "cpu" not in ctrl.read_text().split():
+            print("[cpu] cpu controller not delegated to the manager's cgroup — launch the manager "
+                  "with cgroup cpu delegation (systemd Delegate=cpu) or set WASM_CGROUP_PARENT; "
+                  "CPU limits off", flush=True)
             return None
         base = mgr / "enclave-tenants"
         base.mkdir(exist_ok=True)
+        sub = mgr / "cgroup.subtree_control"
         try:
-            (mgr / "cgroup.subtree_control").write_text("+cpu")   # so children get cpu.* files
-        except OSError as e:
-            print(f"[cpu] could not enable cpu controller ({e}); delegate a cpu-enabled cgroup via "
-                  f"WASM_CGROUP_PARENT — CPU limits off", flush=True)
-            return None
+            sub.write_text("+cpu")                       # so children get cpu.* files
+        except OSError:
+            # cgroup-v2 "no internal processes" rule: mgr can't hand a controller
+            # to its children while it directly holds processes. Move everything
+            # in mgr into a leaf child so mgr becomes an inner node, then retry.
+            leaf = mgr / "mgr"
+            leaf.mkdir(exist_ok=True)
+            try:
+                for pid in (mgr / "cgroup.procs").read_text().split():
+                    try:
+                        (leaf / "cgroup.procs").write_text(pid)   # one PID per write in v2
+                    except OSError:
+                        pass
+                sub.write_text("+cpu")
+            except OSError as e:
+                print(f"[cpu] could not enable cpu controller ({e}); set WASM_CGROUP_PARENT to a "
+                      f"cpu-enabled subtree — CPU limits off", flush=True)
+                return None
         _cpu_cgroup_parent = base
     except Exception as e:                                        # noqa: BLE001
         print(f"[cpu] cgroup setup failed ({e}) — CPU limits off", flush=True)
