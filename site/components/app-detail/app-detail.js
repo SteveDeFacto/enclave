@@ -71,8 +71,16 @@ class AppDetail extends EnclaveElement {
     const opts = app.versions.map((vv, idx) => !verVisible(app, vv) ? '' :
       '<option value="' + idx + '"' + (idx === i ? ' selected' : '') + '>' + esc(vv.version) + (vv.verified ? ' ✓' : '') + (vv.yanked ? ' (yanked)' : '') + apLabel(vv) + '</option>').join('');
     const m = minPctsOf(v);
+    // publish stamp: the version's on-chain createdAt (block time of its
+    // publishVersion tx). The fallback version object above has none - hide.
+    const pub = Number(v.createdAt) ? new Date(Number(v.createdAt) * 1000) : null;
+    const pubStamp = !pub ? '' :
+      '<span class="vlbl" title="published (on-chain publishVersion timestamp): ' + pub.toISOString() + '">published '
+      + pub.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })
+      + ' ' + pub.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + '</span>';
     this.querySelector(".app-verrow").innerHTML =
       '<span class="vlbl">version</span><select class="ver-select" aria-label="Version">' + opts + '</select>'
+      + pubStamp
       + '<span title="exact specs this app declares (' + ((Number(v.vramMb) > 0 || Number(v.gpuGflops) > 0)
           ? (Math.round(Number(v.vramMb) / 102.4) / 10) + ' GB VRAM' + (Number(v.gpuGflops) > 0 ? ' / ' + (Number(v.gpuGflops) / 1000) + ' TFLOPS GPU' : '') + ', '
           : 'CPU-only, ')
