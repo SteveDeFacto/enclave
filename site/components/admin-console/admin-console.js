@@ -120,21 +120,23 @@ class AdminConsole extends EnclaveElement {
       const S = this.S = { book: { addr: ADDRESS_BOOK_ADDRESS, owner: null, entries: {} } };
       if (!S.book.addr) { this._note.textContent = "no ADDRESS_BOOK_ADDRESS is configured - deploy the book first (scripts/deploy-address-book.mjs)."; return; }
       const bookSel = CONTRACTS.EnclaveAddressBook.sel;
-      const [allHex, bookOwner] = await Promise.all([call(S.book.addr, "0x" + bookSel.all), rdAddr(S.book.addr, bookSel.owner)]);
+      const [allHex, bookOwner, bookPending] = await Promise.all([call(S.book.addr, "0x" + bookSel.all), rdAddr(S.book.addr, bookSel.owner), rdAddr(S.book.addr, bookSel.pendingOwner)]);
       S.book.owner = bookOwner;
+      S.book.pending = bookPending;
       S.book.entries = decodeBook(allHex);
       const E = S.book.entries;
 
       const dep = E.deployments, cat = E.appCatalog, pay = E.enclavePay, vol = E.volumeAccess;
       const dSel = CONTRACTS.EnclaveDeployments.sel, pSel = CONTRACTS.EnclavePay.sel, vSel = CONTRACTS.EnclaveVolumeAccess.sel;
       [S.dep, S.cat, S.pay, S.vol] = await Promise.all([
-        dep ? Promise.all([rdAddr(dep, dSel.owner), rdAddr(dep, dSel.payout), rdUint(dep, dSel.pricePerSec6), rdUint(dep, dSel.cpuPricePerSec6), rdUint(dep, dSel.leaseSec), rdAddr(dep, dSel.ethUsdFeed)])
-              .then(([owner, payout, gpu, cpu, lease, feed]) => ({ addr: dep, owner, payout, gpu, cpu, lease, feed })) : null,
-        cat ? rdAddr(cat, CONTRACTS.EnclaveAppCatalog.sel.owner).then((owner) => ({ addr: cat, owner })) : null,
-        pay ? Promise.all([rdAddr(pay, pSel.owner), rdAddr(pay, pSel.payout), rdAddr(pay, pSel.usdc)])
-              .then(([owner, payout, usdc]) => ({ addr: pay, owner, payout, usdc })) : null,
-        vol ? Promise.all([rdAddr(vol, vSel.admin), rdAddr(vol, vSel.operator)])
-              .then(([admin, operator]) => ({ addr: vol, admin, operator })) : null,
+        dep ? Promise.all([rdAddr(dep, dSel.owner), rdAddr(dep, dSel.payout), rdUint(dep, dSel.pricePerSec6), rdUint(dep, dSel.cpuPricePerSec6), rdUint(dep, dSel.leaseSec), rdAddr(dep, dSel.ethUsdFeed), rdAddr(dep, dSel.pendingOwner)])
+              .then(([owner, payout, gpu, cpu, lease, feed, pending]) => ({ addr: dep, owner, payout, gpu, cpu, lease, feed, pending })) : null,
+        cat ? Promise.all([rdAddr(cat, CONTRACTS.EnclaveAppCatalog.sel.owner), rdAddr(cat, CONTRACTS.EnclaveAppCatalog.sel.pendingOwner)])
+              .then(([owner, pending]) => ({ addr: cat, owner, pending })) : null,
+        pay ? Promise.all([rdAddr(pay, pSel.owner), rdAddr(pay, pSel.payout), rdAddr(pay, pSel.usdc), rdAddr(pay, pSel.pendingOwner)])
+              .then(([owner, payout, usdc, pending]) => ({ addr: pay, owner, payout, usdc, pending })) : null,
+        vol ? Promise.all([rdAddr(vol, vSel.admin), rdAddr(vol, vSel.operator), rdAddr(vol, vSel.pendingAdmin)])
+              .then(([admin, operator, pending]) => ({ addr: vol, admin, operator, pending })) : null,
       ]);
       this._note.hidden = true;
       this._paint();
@@ -183,6 +185,7 @@ class AdminConsole extends EnclaveElement {
 
   _paint() {
     const S = this.S;
+    const me = lc(Enclave.address);   // connected wallet — used by the danger-zone Accept affordance
     const sec = (title, sub, inner) => `<section class="ac-panel">
       <h3>${title}</h3>${sub ? `<p class="ac-sub">${sub}</p>` : ""}${inner}
       <div class="ac-status" hidden></div>
@@ -295,23 +298,35 @@ class AdminConsole extends EnclaveElement {
 
     /* -- danger zone -- */
     {
+      const bSel = CONTRACTS.EnclaveAddressBook.sel, cSel = CONTRACTS.EnclaveAppCatalog.sel;
+      const dSel = CONTRACTS.EnclaveDeployments.sel, pSel = CONTRACTS.EnclavePay.sel, vSel = CONTRACTS.EnclaveVolumeAccess.sel;
       const rows = [
-        S.book && { label: "Address book", fn: "setOwner", to: S.book.addr, cur: S.book.owner, sel: CONTRACTS.EnclaveAddressBook.sel.setOwner, act: "own-book" },
-        S.dep && { label: "EnclaveDeployments", fn: "setOwner", to: S.dep.addr, cur: S.dep.owner, sel: CONTRACTS.EnclaveDeployments.sel.setOwner, act: "own-dep" },
-        S.cat && { label: "EnclaveAppCatalog", fn: "transferOwnership", to: S.cat.addr, cur: S.cat.owner, sel: CONTRACTS.EnclaveAppCatalog.sel.transferOwnership, act: "own-cat" },
-        S.pay && { label: "EnclavePay", fn: "setOwner", to: S.pay.addr, cur: S.pay.owner, sel: CONTRACTS.EnclavePay.sel.setOwner, act: "own-pay" },
-        S.vol && { label: "EnclaveVolumeAccess", fn: "transferAdmin", to: S.vol.addr, cur: S.vol.admin, sel: CONTRACTS.EnclaveVolumeAccess.sel.transferAdmin, act: "own-vol" },
+        S.book && { label: "Address book", fn: "setOwner", to: S.book.addr, cur: S.book.owner, pending: S.book.pending, sel: bSel.setOwner, accSel: bSel.acceptOwnership, act: "own-book" },
+        S.dep && { label: "EnclaveDeployments", fn: "setOwner", to: S.dep.addr, cur: S.dep.owner, pending: S.dep.pending, sel: dSel.setOwner, accSel: dSel.acceptOwnership, act: "own-dep" },
+        S.cat && { label: "EnclaveAppCatalog", fn: "transferOwnership", to: S.cat.addr, cur: S.cat.owner, pending: S.cat.pending, sel: cSel.transferOwnership, accSel: cSel.acceptOwnership, act: "own-cat" },
+        S.pay && { label: "EnclavePay", fn: "setOwner", to: S.pay.addr, cur: S.pay.owner, pending: S.pay.pending, sel: pSel.setOwner, accSel: pSel.acceptOwnership, act: "own-pay" },
+        S.vol && { label: "EnclaveVolumeAccess", fn: "transferAdmin", to: S.vol.addr, cur: S.vol.admin, pending: S.vol.pending, sel: vSel.transferAdmin, accSel: vSel.acceptAdmin, act: "own-vol" },
       ].filter(Boolean);
       this._ownRows = Object.fromEntries(rows.map((r) => [r.act, r]));
-      const inner = rows.map((r) => `<div class="ac-row">
+      const inner = rows.map((r) => {
+        const hasPending = r.pending && !isZero(r.pending);
+        const mePending = hasPending && lc(r.pending) === me;
+        const pendingHtml = hasPending
+          ? `<div class="ac-pending">pending → ${mono(r.pending)} ${mePending
+              ? `<button class="btn btn-sm ac-danger-btn" data-act="acc-${r.act}">Accept</button>`
+              : `<span class="dim">(the new key completes it by calling accept)</span>`}</div>`
+          : "";
+        return `<div class="ac-row">
         <div class="ac-lbl">${esc(r.label)} <code>${esc(r.fn)}</code></div>
         <div class="ac-cur">${mono(r.cur)}</div>
         <input class="ac-in" id="in-${r.act}" type="text" placeholder="new owner 0x…" spellcheck="false" />
         <input class="ac-in ac-in-key" id="cf-${r.act}" type="text" placeholder='type "TRANSFER"' spellcheck="false" />
-        <button class="btn btn-sm ac-danger-btn" data-act="${r.act}" data-owner="${esc(r.cur)}">Transfer</button>
-      </div>`).join("");
+        <button class="btn btn-sm ac-danger-btn" data-act="${r.act}" data-owner="${esc(r.cur)}">Nominate</button>
+        ${pendingHtml}
+      </div>`;
+      }).join("");
       parts.push(sec(`<span class="warn">Danger zone - ownership handoffs</span>`,
-        `Every one of these is SINGLE-STEP: there is no accept from the new key, so a typo hands the platform to a stranger permanently. Type the address twice as carefully as you'd sign it.`,
+        `Every one of these is now TWO-STEP: "Nominate" only sets a pending owner — the new key takes control only after IT calls accept from its own wallet, so a typo can't hand the platform to a stranger (the wrong address simply can't accept). Until it accepts, nothing changes: re-nominate to correct, or nominate the zero address to cancel.`,
         inner));
     }
 
@@ -426,13 +441,18 @@ class AdminConsole extends EnclaveElement {
         return void this._tx(to, encCall(sel, [{ t: "addr", v }]), `${fn}(${short(v)})`, panelStatus, true);
       }
 
-      /* ownership handoffs */
+      /* ownership handoffs (step 1: nominate) */
       if (act.startsWith("own-")) {
         const r = this._ownRows[act];
         const v = val("in-" + act), cf = val("cf-" + act);
         if (!need(ADDR_RE.test(v) && !isZero(v), "enter the new owner address (0x…, non-zero)")) return;
-        if (!need(cf === "TRANSFER", 'type TRANSFER (exactly) to confirm - this handoff is single-step and irreversible')) return;
-        return void this._tx(r.to, encCall(r.sel, [{ t: "addr", v }]), `${r.label} ${r.fn} → ${short(v)}`, panelStatus, true);
+        if (!need(cf === "TRANSFER", 'type TRANSFER (exactly) to confirm - this NOMINATES the new key (two-step); it takes control only after it accepts')) return;
+        return void this._tx(r.to, encCall(r.sel, [{ t: "addr", v }]), `${r.label} ${r.fn} → ${short(v)} (nominate)`, panelStatus, true);
+      }
+      /* ownership handoffs (step 2: the pending key accepts) */
+      if (act.startsWith("acc-")) {
+        const r = this._ownRows[act.slice(4)];
+        return void this._tx(r.to, encCall(r.accSel, []), `${r.label} accept ownership`, panelStatus, true);
       }
 
       /* deploys */

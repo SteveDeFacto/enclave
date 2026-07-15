@@ -57,7 +57,14 @@ contract EnclaveVolumeAccess {
     }
 
     address public admin;    // deployer of THIS contract; may rotate the operator + admin
+    address public pendingAdmin; // two-step admin handoff: must acceptAdmin()
     address public operator; // the enclave operator EOA (auto-grant writer; the existing runner key)
+
+    // Bounds the permissionless self-registration array so an attacker can't grief
+    // a volume into unbounded storage/enumeration by spamming register() from many
+    // addresses. Generous: real volumes stay far under it; the owner can still
+    // grant already-registered members even at the cap.
+    uint256 public constant MAX_MEMBERS = 1024;
 
     mapping(bytes32 => Volume) private _vol;
     bytes32[] private _volIds;   // enumeration (created + imported) — the first revision had none,
@@ -70,6 +77,7 @@ contract EnclaveVolumeAccess {
     event OwnerTransferred(bytes32 indexed volId, address indexed newOwner);
     event OperatorChanged(address indexed operator);
     event AdminChanged(address indexed admin);
+    event AdminTransferStarted(address indexed previousAdmin, address indexed newAdmin);
 
     constructor(address _operator) {
         admin = msg.sender;
@@ -112,6 +120,10 @@ contract EnclaveVolumeAccess {
         Member storage m = v.members[msg.sender];
         bool rotating = m.registered && m.pubkey != pubkey && m.sealedVEK.length != 0;
         if (!m.registered) {
+            // permissionless self-registration grows an unbounded array — cap it so
+            // one volume can't be griefed into unbounded storage. An already-
+            // registered member rotating a pubkey (below) never re-pushes.
+            require(v.memberList.length < MAX_MEMBERS, "member cap");
             v.memberList.push(msg.sender);
             m.registered = true;
         }
@@ -256,11 +268,23 @@ contract EnclaveVolumeAccess {
         emit OperatorChanged(o);
     }
 
+    /// @notice Begin a TWO-STEP admin handoff. `a` must call acceptAdmin() to take
+    ///         control; until then `admin` is unchanged. A single-step transfer to a
+    ///         mistyped address would strand operator rotation and the import window
+    ///         (both admin-gated) with no recovery.
     function transferAdmin(address a) external {
         require(msg.sender == admin, "!admin");
         require(a != address(0), "zero admin");
-        admin = a;
-        emit AdminChanged(a);
+        pendingAdmin = a;
+        emit AdminTransferStarted(admin, a);
+    }
+
+    /// @notice Complete the handoff. Only the pending admin may finalize.
+    function acceptAdmin() external {
+        require(msg.sender == pendingAdmin, "!pendingAdmin");
+        admin = pendingAdmin;
+        pendingAdmin = address(0);
+        emit AdminChanged(admin);
     }
 
     // ----- reads (enclave ACL check, app member list, auto-grant sweep) ----

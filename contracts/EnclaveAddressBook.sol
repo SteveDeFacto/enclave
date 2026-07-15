@@ -25,12 +25,14 @@ pragma solidity ^0.8.20;
 ///     baked fallback).
 contract EnclaveAddressBook {
     address public owner;
+    address public pendingOwner;              // two-step handoff: must accept()
     bytes32[] private _keys;                  // every key ever set, for all()
     mapping(bytes32 => address) public addr;  // key -> current address
     mapping(bytes32 => bool) private _seen;
 
     event AddressSet(bytes32 indexed key, address value);
     event OwnerChanged(address owner);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
 
     constructor() { owner = msg.sender; }
 
@@ -56,10 +58,23 @@ contract EnclaveAddressBook {
 
     function count() external view returns (uint256) { return _keys.length; }
 
+    /// @notice Begin a TWO-STEP ownership handoff. `newOwner` must then call
+    ///         acceptOwnership(); until it does, `owner` is unchanged. This is the
+    ///         root of the whole contract graph — a fat-fingered single-step
+    ///         transfer here would strand every consumer's resolution, so the new
+    ///         key must prove it can transact before it takes control.
     function setOwner(address newOwner) external {
         require(msg.sender == owner, "!owner");
         require(newOwner != address(0), "owner=0");
-        owner = newOwner;
-        emit OwnerChanged(newOwner);
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    /// @notice Complete the handoff. Only the pending owner may finalize.
+    function acceptOwnership() external {
+        require(msg.sender == pendingOwner, "!pendingOwner");
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        emit OwnerChanged(owner);
     }
 }

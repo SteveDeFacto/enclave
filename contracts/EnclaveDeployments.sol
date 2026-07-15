@@ -126,6 +126,7 @@ contract EnclaveDeployments {
     uint256 private constant FEED_MAX_AGE = 2 hours; // reject stale ETH/USD answers
 
     address public owner;                  // sets price/leaseSec/payout; NOT a custodian
+    address public pendingOwner;           // two-step handoff: must acceptOwnership()
     address public payout;                 // where funding lands (the Enclave cold wallet)
     IERC20Auth   public immutable usdc;
     IEnclaveRegistry public immutable registry;
@@ -161,6 +162,7 @@ contract EnclaveDeployments {
     event LeaseSecSet(uint64 leaseSec);
     event PayoutChanged(address indexed payout);
     event OwnerChanged(address indexed owner);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event FeedChanged(address indexed feed);
 
     constructor(address _usdc, address _payout, address _registry, address _ethUsdFeed) {
@@ -417,6 +419,11 @@ contract EnclaveDeployments {
             bytes32 id = items[i].id;
             require(id != bytes32(0), "id=0");
             require(!_exists[id], "exists");
+            // create() always yields rate >= 1 (cpuMilli >= 1, cpuPrice > 0), but
+            // import copies rate verbatim from the source record. A rate==0 record
+            // would divide-by-zero in _burnLease (balance6 / rate) the moment the
+            // fleet tries to claim it — permanently unclaimable. Refuse it here.
+            require(items[i].rate > 0, "rate=0");
             _exists[id] = true;
             _ids.push(id);
             _deployments[id] = items[i];
@@ -499,11 +506,22 @@ contract EnclaveDeployments {
         emit PayoutChanged(p);
     }
 
+    /// @notice Begin a TWO-STEP ownership handoff. `o` must call acceptOwnership()
+    ///         to take control; until then `owner` is unchanged, so a mistyped
+    ///         address can never strand price/lease/payout governance.
     function setOwner(address o) external {
         require(msg.sender == owner, "!owner");
         require(o != address(0), "zero addr");
-        owner = o;
-        emit OwnerChanged(o);
+        pendingOwner = o;
+        emit OwnershipTransferStarted(owner, o);
+    }
+
+    /// @notice Complete the handoff. Only the pending owner may finalize.
+    function acceptOwnership() external {
+        require(msg.sender == pendingOwner, "!pendingOwner");
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        emit OwnerChanged(owner);
     }
 
     // ========================================================================

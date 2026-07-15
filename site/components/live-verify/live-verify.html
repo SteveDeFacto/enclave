@@ -11,5 +11,5 @@
     <div class="lv-verdict"></div>
     <div class="lv-meta"></div>
   </div>
-  <p class="lv-note">The verifier module loads from esm.sh; Sigstore bundles and the silicon vendor's certificate collateral (AMD KDS) come through Tinfoil's CORS proxies. Fully independent path: <code class="lv-cli">tinfoil attestation verify -e &lt;enclave-host&gt; -r EnclaveHost/enclave</code>, via <a href="https://github.com/tinfoilsh/tinfoil-cli" target="_blank" rel="noopener">tinfoil-cli</a>.</p>
+  <p class="lv-note">The verifier module is served from this site itself (same-origin, version-pinned), not a third-party CDN; the Sigstore provenance bundles and the silicon vendor's certificate collateral (AMD KDS) it checks come through Tinfoil's CORS proxies. Fully independent path: <code class="lv-cli">tinfoil attestation verify -e &lt;enclave-host&gt; -r EnclaveHost/enclave</code>, via <a href="https://github.com/tinfoilsh/tinfoil-cli" target="_blank" rel="noopener">tinfoil-cli</a>.</p>
 </div>

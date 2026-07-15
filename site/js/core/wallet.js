@@ -12,6 +12,7 @@ import { Enclave, EnclaveError } from "./api.js";
 import { baseRpc, encCall, waitReceipt } from "./chain.js";
 import { $, $$, esc, short, lsGet, lsSet, fmtDur, copyText, showToast, emit } from "./util.js";
 import { qrSvg } from "../lib/qr.js";
+import { runlog } from "./runlog.js";
 
 /* ---- wallet discovery: EIP-6963 multi-wallet, EIP-1193 fallback ---- */
 export const Wallet = {
@@ -67,8 +68,11 @@ export const PrivyWallet = {
     if (this.privy) return this.privy;
     if (!this.enabled()) throw new EnclaveError("Privy is not configured on this deployment.", 0);
     let mod;
-    try { mod = await import("https://esm.sh/@privy-io/js-sdk-core?bundle"); }
-    catch(e){ throw new EnclaveError("Could not load the Privy SDK (network or CDN issue): " + (e.message || e), 0); }
+    // Same-origin, version-pinned bundle (scripts/build-vendor.mjs ->
+    // site/vendor/privy-core.js). Was an UNPINNED esm.sh import — a wallet-path
+    // dependency must not hot-load unversioned code from a third-party CDN.
+    try { mod = await import("/vendor/privy-core.js"); }
+    catch(e){ throw new EnclaveError("Could not load the Privy SDK: " + (e.message || e), 0); }
     const Privy = mod.default || mod.Privy;
     if (!Privy) throw new EnclaveError("Unexpected Privy SDK shape (no default export).", 0);
     // js-sdk-core requires an explicit storage adapter (the React SDK bundles one)
@@ -479,6 +483,7 @@ export function disconnectWallet(){
   if (Enclave.walletRdns === PRIVY_RDNS) PrivyWallet.logout();   // fire-and-forget; clears the Privy auth session too
   Enclave.token = null; Enclave.address = null; Enclave.provider = null; Enclave.chainId = null; Enclave.walletRdns = null; Enclave.walletEmail = null;
   clearSession();
+  runlog.clear();   // don't leave the prior user's deploy narratives in localStorage / on-screen
   const pop = $("#walletPop"); if (pop){ pop.hidden = true; pop.innerHTML = ""; }
   refreshWallet();
   emit("enclave:auth", { authed: false });

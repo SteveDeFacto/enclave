@@ -12,7 +12,13 @@
    verification.selfCheck is the enclave running the same steps
    on itself; this is the version that actually carries trust.
    ============================================================ */
-export const LV_VERIFIER_URL = "https://esm.sh/@tinfoilsh/verifier@1.1.7?bundle";
+// Same-origin, version-pinned bundle of @tinfoilsh/verifier (built by
+// scripts/build-vendor.mjs -> site/vendor/verifier.js, served from our own IPFS
+// pin behind Caddy TLS). This is deliberately NOT an esm.sh import: the whole
+// product is "✓ verify it yourself in your browser", so the verifier code MUST
+// come from the same origin as the page — a third-party CDN with no integrity
+// pin could return code that reports verified:true for anything.
+export const LV_VERIFIER_URL = "/vendor/verifier.js";
 
 // verification pointers: new shape (verification) with fallback to the
 // pre-selfCheck field name (verify) so older enclaves still work.

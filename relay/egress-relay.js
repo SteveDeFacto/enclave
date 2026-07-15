@@ -48,7 +48,8 @@ import net from "node:net";
 import dns from "node:dns/promises";
 import WebSocket, { createWebSocketStream } from "ws";
 import { isBlockedHost, parseIp } from "./net-guard.mjs";
-import { createFleet, fleetConfig } from "./fleet.mjs";
+import { createFleet, fleetConfig, installProcessGuards } from "./fleet.mjs";
+installProcessGuards("egress-relay");
 
 const need = (k) => { const v = (process.env[k] || "").trim(); if (!v) { console.error(`fatal: ${k} is required`); process.exit(1); } return v; };
 const CFG = fleetConfig();

@@ -51,7 +51,8 @@ import dgram from "node:dgram";
 import net from "node:net";
 import http from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { createFleet, fleetConfig, fetchJson } from "./fleet.mjs";
+import { createFleet, fleetConfig, fetchJson, installProcessGuards } from "./fleet.mjs";
+installProcessGuards("dns-relay");
 
 const need = (k) => { const v = (process.env[k] || "").trim(); if (!v) { console.error(`fatal: ${k} is required`); process.exit(1); } return v; };
 const fqdn = (s) => s.trim().toLowerCase().replace(/\.+$/, "");

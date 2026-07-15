@@ -16,7 +16,7 @@ export function lsDel(k){ try { localStorage.removeItem(k); } catch(e){} }
 /* ---- Terms of Service assent (gates every deploy surface) ----
    Acceptance is stored per TERMS VERSION: bumping TOS_VERSION (keep it in
    step with the "Last updated" date on terms.html) re-asks everyone. */
-export const TOS_VERSION = "2026-07-12";
+export const TOS_VERSION = "2026-07-14";
 export const tosAccepted = () => lsGet("enclave_tos_accepted") === TOS_VERSION;
 export const setTosAccepted = (on) => on ? lsSet("enclave_tos_accepted", TOS_VERSION) : lsDel("enclave_tos_accepted");
 

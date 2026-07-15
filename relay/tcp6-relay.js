@@ -43,7 +43,8 @@
 
 import net from "node:net";
 import WebSocket, { createWebSocketStream } from "ws";
-import { createFleet, fleetConfig, fetchJson } from "./fleet.mjs";
+import { createFleet, fleetConfig, fetchJson, installProcessGuards } from "./fleet.mjs";
+installProcessGuards("tcp6-relay");
 
 const CFG = fleetConfig();
 if (!CFG.registryAddress && !CFG.staticList.length) {

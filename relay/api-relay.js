@@ -62,7 +62,9 @@ import https from "node:https";
 import net from "node:net";
 import tls from "node:tls";
 import { createHash, createHmac } from "node:crypto";
-import { readCappedText } from "./fleet.mjs";
+import { readCappedText, installProcessGuards } from "./fleet.mjs";
+import { isBlockedHost } from "./net-guard.mjs";
+installProcessGuards("api-relay");
 
 let   REGISTRY_ADDRESS  = (process.env.REGISTRY_ADDRESS || "").trim();   // env fallback; the address book (below) overrides
 let   DEPLOYMENTS_ADDRESS = (process.env.DEPLOYMENTS_ADDRESS || "").trim(); // EnclaveDeployments ledger; book overrides too
@@ -87,21 +89,32 @@ if (!REGISTRY_ADDRESS && !ADDRESS_BOOK && !STATIC_ENCLAVES.length) {
   process.exit(1);
 }
 
-// --- hardening config (all OPT-IN; defaults preserve today's behavior) --------
+// --- hardening config ----------------------------------------------------------
 // SECURITY (B1/B2/B3): the on-chain registry is permissionless — anyone can
 // register an endpoint. TRUSTED_OPERATORS (comma-separated, lowercased Enclave-
 // Registry operator addresses) restricts on-chain discovery to vetted operators,
-// so session tokens and /x data-path traffic only ever reach them. Unset = keep
-// following every registered endpoint (today's behavior) + a loud one-time warn.
-const TRUSTED_OPERATORS = (process.env.TRUSTED_OPERATORS || "").toLowerCase()
-  .split(",").map((s) => s.trim()).filter(Boolean);
+// so session tokens and /x data-path traffic only ever reach them.
+//
+// FAIL CLOSED: this single control sits behind three trust boundaries (token
+// harvest, egress-token leak, subdomain hijack), so an UNSET var must never
+// silently reopen them on a rebuilt or fresh box. When TRUSTED_OPERATORS is
+// unset/empty we fall back to the BAKED canonical operator set below (not "trust
+// everyone"). Running a genuinely unrestricted relay is still possible but only
+// as an explicit, auditable opt-in: TRUSTED_OPERATORS=* (or "any"/"all").
+const DEFAULT_TRUSTED_OPERATORS = ["0x390e2e0e0bc34b7f428f1e31c9b6770d5028ecc1"]; // canonical Enclave fleet operator
+const _rawOperators = (process.env.TRUSTED_OPERATORS ?? "").trim();
+const OPERATORS_UNRESTRICTED = /^(\*|any|all)$/i.test(_rawOperators);
+const TRUSTED_OPERATORS = OPERATORS_UNRESTRICTED ? []
+  : (_rawOperators
+      ? _rawOperators.toLowerCase().split(",").map((s) => s.trim()).filter(Boolean)
+      : DEFAULT_TRUSTED_OPERATORS.slice());
 const isHttpsEndpoint = (ep) => { try { return new URL(ep).protocol === "https:"; } catch { return false; } };
 let _warnedUnauth = false;
 function warnIfUnauthenticated() {
-  if (STATIC_ENCLAVES.length || TRUSTED_OPERATORS.length || _warnedUnauth) return;
+  if (STATIC_ENCLAVES.length || !OPERATORS_UNRESTRICTED || _warnedUnauth) return;
   _warnedUnauth = true;
-  console.error("[api-relay] WARNING: TRUSTED_OPERATORS unset — routing tokens/traffic to EVERY endpoint in the " +
-    "permissionless EnclaveRegistry (no operator allowlist). Set TRUSTED_OPERATORS=<addr,addr> to restrict to vetted operators.");
+  console.error("[api-relay] WARNING: TRUSTED_OPERATORS=* — routing tokens/traffic to EVERY endpoint in the " +
+    "permissionless EnclaveRegistry (no operator allowlist), by explicit configuration. Unset it to restrict to the vetted operator set.");
 }
 // CORS (fix 5): allowlist instead of reflecting any Origin with credentials.
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || "https://enclave.host,https://www.enclave.host")
@@ -214,11 +227,17 @@ async function readRegistry() {
   warnIfUnauthenticated();
   return Promise.all(out
     .filter((e) => e.active && now - Number(e.lastSeen) <= STALE_AFTER_SEC)
-    // B2: only vetted operators when the allowlist is configured
-    .filter((e) => !TRUSTED_OPERATORS.length || TRUSTED_OPERATORS.includes(String(e.operator || "").toLowerCase()))
+    // B2: only vetted operators (baked default, or the env allowlist). Pass-all
+    // ONLY under the explicit TRUSTED_OPERATORS=* opt-in — never by omission.
+    .filter((e) => OPERATORS_UNRESTRICTED || TRUSTED_OPERATORS.includes(String(e.operator || "").toLowerCase()))
     .map((e) => ({ e, endpoint: e.endpoint.replace(/\/+$/, "") }))
     // B1/B3: never route to a non-https discovered endpoint (real enclaves are https)
     .filter(({ endpoint }) => { const ok = isHttpsEndpoint(endpoint); if (!ok) console.error(`[api-relay] skipping non-https registry endpoint: ${endpoint}`); return ok; })
+    // SSRF: the registry is permissionless — drop any endpoint whose host is a
+    // literal private/loopback/link-local IP (or localhost) so an attacker can't
+    // register https://127.0.0.1/ or https://169.254.169.254/ and make this relay
+    // dial its own localhost / cloud metadata. (Real enclaves are public domains.)
+    .filter(({ endpoint }) => { let h; try { h = new URL(endpoint).hostname; } catch { return false; } const ok = !isBlockedHost(h); if (!ok) console.error(`[api-relay] skipping non-global registry endpoint: ${endpoint}`); return ok; })
     .map(async ({ e, endpoint }) =>
       ({ endpoint, id: await endpointId(endpoint), repo: e.repo, lastSeen: Number(e.lastSeen) })));
 }
@@ -438,11 +457,24 @@ async function pollRegistry() {
   try { registry = await readRegistry(); }
   catch (e) { console.error("[api-relay] registry read failed:", e.message); }
 }
+// Bounded /availability poll. The registry is permissionless, so an attacker can
+// inflate the row count; a naive Promise.all(registry.map(...)) would open one
+// concurrent socket PER row every cycle (unbounded fan-out / self-driving SSRF).
+// A fixed worker pool caps in-flight probes regardless of registry size.
+const AVAIL_POLL_CONCURRENCY = parseInt(process.env.AVAIL_POLL_CONCURRENCY || "32", 10);
 async function pollAvailability() {
-  const rows = await Promise.all(registry.map(async (e) => {
-    const a = await fetchJson(`${e.endpoint}/availability`);
-    return a ? { ...e, availability: a, checkedAt: new Date().toISOString() } : null;
-  }));
+  const src = registry, rows = new Array(src.length);
+  let i = 0;
+  const worker = async () => {
+    for (;;) {
+      const idx = i++;
+      if (idx >= src.length) return;
+      const e = src[idx];
+      const a = await fetchJson(`${e.endpoint}/availability`);
+      rows[idx] = a ? { ...e, availability: a, checkedAt: new Date().toISOString() } : null;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(AVAIL_POLL_CONCURRENCY, src.length || 1) }, worker));
   live = rows.filter(Boolean);
   updatedAt = new Date().toISOString();
 }
@@ -1046,4 +1078,4 @@ const BIND = process.env.API_RELAY_BIND || undefined;
 if (!BIND) console.error("[api-relay] NOTE: binding ALL interfaces (no API_RELAY_BIND). If a local Caddy fronts this relay, set API_RELAY_BIND=127.0.0.1 so :" + PORT + " isn't reachable directly.");
 server.listen(PORT, BIND, () => console.log(
   `[api-relay] :${PORT}${BIND ? " (" + BIND + ")" : ""} · ${STATIC_ENCLAVES.length ? `static list (${STATIC_ENCLAVES.length})` : `EnclaveRegistry ${REGISTRY_ADDRESS}`} · ${live.length}/${registry.length} live`
-  + (STATIC_ENCLAVES.length || TRUSTED_OPERATORS.length ? "" : " · UNAUTHENTICATED fleet (no TRUSTED_OPERATORS)")));
+  + (STATIC_ENCLAVES.length || !OPERATORS_UNRESTRICTED ? "" : " · UNAUTHENTICATED fleet (TRUSTED_OPERATORS=*)")));

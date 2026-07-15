@@ -23,6 +23,8 @@ cli/dist/
 site/dist/
 # privy bundle build workspace (scripts/build-privy.mjs; its output site/privy/ IS committed)
 scripts/.privy-build/
+# same-origin vendor bundles build workspace (scripts/build-vendor.mjs; its output site/vendor/ IS committed)
+scripts/.vendor-build/
 # rolling archive of hashed site chunks (deploy.sh ships the union so cached
 # entries keep resolving their chunks across deploys)
 site/.chunk-archive/

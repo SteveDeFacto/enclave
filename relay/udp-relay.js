@@ -39,7 +39,8 @@
 
 import dgram from "node:dgram";
 import WebSocket from "ws";
-import { createFleet, fleetConfig, fetchJson } from "./fleet.mjs";
+import { createFleet, fleetConfig, fetchJson, installProcessGuards } from "./fleet.mjs";
+installProcessGuards("udp-relay");
 
 const CFG = fleetConfig();
 if (!CFG.registryAddress && !CFG.staticList.length) {

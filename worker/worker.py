@@ -64,12 +64,18 @@ REQUIRE_FENCE = os.environ.get("REQUIRE_FENCE", "1") not in ("0", "false", "off"
 # shared bearer token on EVERY endpoint. The token is a worker-specific env,
 # NOT the fleet-wide SECRET: SECRET is already set on many deployments and the
 # supervisor does not yet forward any token to the worker, so keying off SECRET
-# would instantly lock the supervisor out. Empty WORKER_TOKEN => auth DISABLED
-# (loud boot warning) so a not-yet-wired deploy keeps working; setting it (and
-# wiring the supervisor to send it) closes the control plane AND the "trusted
-# PTX" bypass in one shot.
+# would instantly lock the supervisor out.
+#
+# FAIL CLOSED: an UNSET WORKER_TOKEN no longer silently DISABLES auth — the
+# control plane sits behind a co-tenant boundary (guests hold inherit-network and
+# can reach loopback), so a rebuilt or fresh box with no token must DENY, not
+# open. Running unauthenticated is still possible for a not-yet-wired deploy, but
+# only as an explicit, auditable opt-in: WORKER_ALLOW_UNAUTHENTICATED=1. Setting
+# WORKER_TOKEN (and wiring the supervisor to send it) closes the control plane
+# AND the "trusted PTX" bypass in one shot.
 BIND  = os.environ.get("WORKER_BIND", "127.0.0.1")
 TOKEN = os.environ.get("WORKER_TOKEN", "")
+ALLOW_UNAUTH = os.environ.get("WORKER_ALLOW_UNAUTHENTICATED", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _bearer(headers) -> str:
@@ -78,9 +84,12 @@ def _bearer(headers) -> str:
 
 
 def _authorized(headers) -> bool:
-    """Gate for every endpoint. No token configured => allowed (see boot warning);
-    otherwise the request must carry the shared token (constant-time compare)."""
-    return True if not TOKEN else hmac.compare_digest(_bearer(headers), TOKEN)
+    """Gate for every endpoint. No token configured => DENY (fail closed) unless
+    WORKER_ALLOW_UNAUTHENTICATED is explicitly set; otherwise the request must
+    carry the shared token (constant-time compare)."""
+    if not TOKEN:
+        return ALLOW_UNAUTH
+    return hmac.compare_digest(_bearer(headers), TOKEN)
 
 
 def _trusted(headers) -> bool:
@@ -91,10 +100,17 @@ def _trusted(headers) -> bool:
 
 
 def _auth_warning(role: str):
-    if not TOKEN:
-        print(f"[{role}] WARNING: WORKER_TOKEN unset — control plane is UNAUTHENTICATED; "
-              f"any process that can reach this port can create/kill tenants and submit "
-              f"jobs. Set WORKER_TOKEN (and have the supervisor send it) to close this.",
+    if TOKEN:
+        return
+    if ALLOW_UNAUTH:
+        print(f"[{role}] WARNING: WORKER_TOKEN unset and WORKER_ALLOW_UNAUTHENTICATED=1 — "
+              f"control plane is UNAUTHENTICATED by explicit configuration; any process that can "
+              f"reach this port can create/kill tenants and submit jobs. Set WORKER_TOKEN to close this.",
+              flush=True)
+    else:
+        print(f"[{role}] WARNING: WORKER_TOKEN unset — control plane is FAIL-CLOSED (every request "
+              f"denied). Set WORKER_TOKEN (and have the supervisor send it) to operate, or "
+              f"WORKER_ALLOW_UNAUTHENTICATED=1 to explicitly run open (not recommended).",
               flush=True)
 
 

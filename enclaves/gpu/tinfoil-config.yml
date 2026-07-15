@@ -258,6 +258,27 @@ containers:
       - NODE_RAM_GB: "64"
       - NODE_HAS_GPU: "1"           # GPU node: catalog apps with vram_mb > 0 may launch here (CPU flavor sets "0")
       - GPU_VRAM_GB: "141"          # FALLBACK only: the manager probes the card at boot; a tenant's MPS mem limit = gpuShare × the probed total
+      # --- tenant resource caps (pre-launch hardening) ---
+      # CPU fair-share: without this every tenant runs UNCAPPED and one can pin all
+      # vCPUs (single-tenant DoS). PREREQ: cpu.weight/cpu.max only take effect if a
+      # cpu-enabled cgroup-v2 subtree is DELEGATED to the manager — wire that in the
+      # CVM runtime and point WASM_CGROUP_PARENT at it, else these SILENTLY no-op
+      # (verify the [cpu] boot logs after rollout; the env var alone isn't proof).
+      # - WASM_CGROUP_PARENT: "/sys/fs/cgroup/<delegated-cpu-subtree>"
+      - WASM_CPU_WEIGHT: "100"      # equal fair-share weight per tenant — stops starvation under contention without throttling a tenant below the share it paid for
+      # Optional HARD ceiling (each tenant capped at N% of the node's vCPUs). Left
+      # off by default: it's a FLAT cap, so it would throttle a deployment that
+      # legitimately bought a large CPU share. Enable + tune to the max share sold.
+      # - WASM_CPU_MAX_PCT: "50"
+      # RAM admission gate: refuse deployments whose linear-mem + /data + enc-vol
+      # caps oversubscribe NODE_RAM_GB × WASM_RAM_HEADROOM (default 0.9), instead of
+      # relying only on the measure-and-kill storage audit (closes the tmpfs-OOM window).
+      - WASM_ACCOUNT_STORAGE_RAM: "1"
+      # Trim the UNAUTHENTICATED /health to bare liveness — capacity/model-volume
+      # names/GPU specs/probe internals are withheld from loopback-reaching tenants.
+      # The supervisor presents VMMGR_TOKEN (=SECRET, bound below) so it still gets
+      # the full body it needs for capacity/pricing.
+      - WASM_HEALTH_MINIMAL: "1"
       - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
       # ggml (GGUF) context window for EVERY GPU tenant on this node (the manager
       # inherits this into each -S nn-graph wasmtime process; there is no

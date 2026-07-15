@@ -212,6 +212,10 @@ class Deployments extends EnclaveElement {
       if (d.run.id) { const nar = this._openNar(d.run.id); if (nar) paintLine(nar.box, d.cls, d.txt, nar.scroller); }
     }
     else if (d.type === "end") this._retireStrip(d.run);
+    else if (d.type === "clear") {                        // sign-out purged the run log
+      this._strips.forEach((s) => s.remove());
+      this._strips.clear();
+    }
   }
   _openNar(id) {
     const row = this.querySelector('.enc-out[data-id="' + id + '"]:not([hidden])');

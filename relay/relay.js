@@ -68,7 +68,8 @@
 
 import net from "node:net";
 import WebSocket, { createWebSocketStream } from "ws";
-import { createFleet, fleetConfig, fetchJson } from "./fleet.mjs";
+import { createFleet, fleetConfig, fetchJson, installProcessGuards } from "./fleet.mjs";
+installProcessGuards("tcp-relay");
 
 const need = (k) => {
   const v = (process.env[k] || "").trim();

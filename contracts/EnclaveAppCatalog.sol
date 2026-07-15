@@ -121,6 +121,7 @@ contract EnclaveAppCatalog {
                                                // (runners restrict the range; 8080/8091 are infra-reserved)
 
     address public owner;                             // sets `verified` + `approval`; can hand off
+    address public pendingOwner;                      // two-step handoff: must acceptOwnership()
     bytes32[] private _appIds;                        // every app ever created
     mapping(bytes32 => App) private _apps;
     mapping(bytes32 => bool) private _exists;
@@ -138,6 +139,7 @@ contract EnclaveAppCatalog {
     event AppActiveSet(bytes32 indexed appId, bool active);
     event CidGranted(bytes32 indexed cidKey, bytes32 indexed appId);
     event OwnerChanged(address indexed owner);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
 
     constructor() { owner = msg.sender; emit OwnerChanged(msg.sender); }
 
@@ -324,11 +326,25 @@ contract EnclaveAppCatalog {
         emit CidGranted(cidKey, appId);
     }
 
+    /// @notice Begin a TWO-STEP ownership handoff. `o` must call acceptOwnership()
+    ///         to take control; until then `owner` is unchanged. Critical here:
+    ///         the owner is the SOLE caller of setApproval(Approved), so a mistyped
+    ///         single-step transfer would mean no app could ever be approved
+    ///         again — a business-liveness cliff. The new key must prove it can
+    ///         transact before it inherits that power.
     function transferOwnership(address o) external {
         require(msg.sender == owner, "!owner");
         require(o != address(0), "zero addr");
-        owner = o;
-        emit OwnerChanged(o);
+        pendingOwner = o;
+        emit OwnershipTransferStarted(owner, o);
+    }
+
+    /// @notice Complete the handoff. Only the pending owner may finalize.
+    function acceptOwnership() external {
+        require(msg.sender == pendingOwner, "!pendingOwner");
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        emit OwnerChanged(owner);
     }
 
     // ----- one-time migration (owner-gated, permanently sealable) -----------

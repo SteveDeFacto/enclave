@@ -45,6 +45,7 @@ interface IERC20Auth {
 
 contract EnclavePay {
     address public owner;             // can update payout / hand off ownership
+    address public pendingOwner;      // two-step handoff: must acceptOwnership()
     address public payout;            // where USDC lands (the Enclave cold wallet)
     IERC20Auth public immutable usdc; // USDC token (Base: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913)
     uint256 private _entered = 1;      // reentrancy guard (1 = free, 2 = inside a value-moving call)
@@ -64,6 +65,7 @@ contract EnclavePay {
     event PaidEth(bytes32 indexed deploymentId, address indexed payer, uint256 amountWei);
     event PayoutChanged(address indexed payout);
     event OwnerChanged(address indexed owner);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
 
     constructor(address _usdc, address _payout) {
         require(_usdc != address(0) && _payout != address(0), "zero addr");
@@ -125,10 +127,21 @@ contract EnclavePay {
         emit PayoutChanged(p);
     }
 
+    /// @notice Begin a TWO-STEP ownership handoff. `o` must call acceptOwnership()
+    ///         to take control; until then `owner` is unchanged, so a mistyped
+    ///         address can never strand governance of the payout key.
     function setOwner(address o) external {
         require(msg.sender == owner, "!owner");
         require(o != address(0), "zero addr");
-        owner = o;
-        emit OwnerChanged(o);
+        pendingOwner = o;
+        emit OwnershipTransferStarted(owner, o);
+    }
+
+    /// @notice Complete the handoff. Only the pending owner may finalize.
+    function acceptOwnership() external {
+        require(msg.sender == pendingOwner, "!pendingOwner");
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        emit OwnerChanged(owner);
     }
 }

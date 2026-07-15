@@ -129,6 +129,14 @@ containers:
       - NODE_VCPUS: "16"
       - NODE_RAM_GB: "64"
       - NODE_HAS_GPU: "0"           # refuse catalog apps that declare vram_mb > 0
+      # --- tenant resource caps (pre-launch hardening; see the GPU flavor for the
+      # full rationale). CPU caps only take effect once a cpu-enabled cgroup-v2
+      # subtree is delegated to the manager (WASM_CGROUP_PARENT) — else they no-op.
+      # - WASM_CGROUP_PARENT: "/sys/fs/cgroup/<delegated-cpu-subtree>"
+      - WASM_CPU_WEIGHT: "100"      # equal fair-share weight per tenant — stops single-tenant CPU starvation
+      # - WASM_CPU_MAX_PCT: "50"    # optional FLAT hard ceiling; enable + tune to the max CPU share sold
+      - WASM_ACCOUNT_STORAGE_RAM: "1"   # refuse deployments that oversubscribe NODE_RAM_GB
+      - WASM_HEALTH_MINIMAL: "1"        # bare-liveness /health for unauthenticated (tenant) callers; supervisor authenticates with SECRET
       # each app's memory cap is its deployment's cpuShare × NODE_RAM_GB
       # (>= the mem_mb its specs declare); WASM_APP_MIN_MEM_MB (64) is the floor
     # SECRET doubles as the manager's control-plane token (VMMGR_TOKEN): tenants

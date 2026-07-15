@@ -265,6 +265,14 @@ containers:
       - NODE_RAM_GB: "512"
       - NODE_HAS_GPU: "1"           # GPU node: catalog apps with vram_mb > 0 may launch here (CPU flavor sets "0")
       - GPU_VRAM_GB: "141"          # FALLBACK only: the manager probes the card at boot; a tenant's MPS mem limit = gpuShare × the probed total
+      # --- tenant resource caps (pre-launch hardening; see the GPU flavor for the
+      # full rationale). CPU caps only take effect once a cpu-enabled cgroup-v2
+      # subtree is delegated to the manager (WASM_CGROUP_PARENT) — else they no-op.
+      # - WASM_CGROUP_PARENT: "/sys/fs/cgroup/<delegated-cpu-subtree>"
+      - WASM_CPU_WEIGHT: "100"      # equal fair-share weight per tenant — stops single-tenant CPU starvation
+      # - WASM_CPU_MAX_PCT: "50"    # optional FLAT hard ceiling; enable + tune to the max CPU share sold
+      - WASM_ACCOUNT_STORAGE_RAM: "1"   # refuse deployments that oversubscribe NODE_RAM_GB
+      - WASM_HEALTH_MINIMAL: "1"        # bare-liveness /health for unauthenticated (tenant) callers; supervisor authenticates with SECRET
       - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
       # ggml (GGUF) context window for EVERY GPU tenant on this node (the manager
       # inherits this into each -S nn-graph wasmtime process; there is no

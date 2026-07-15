@@ -19,6 +19,21 @@
 // origins to serve; every origin still authenticates the relay (egress) or
 // scopes it to public deployments (tcp6/udp) exactly as before.
 
+import { isBlockedHost } from "./net-guard.mjs";
+
+// Process-level safety net for the long-lived relay daemons. Node's default is
+// --unhandled-rejections=throw, so a single stray rejection from any poller or a
+// detached async in a request handler would otherwise crash the daemon and dark
+// the relay. Log-and-continue on rejections (every request/poll is already
+// independently try/caught); log-and-exit(1) on a genuine uncaughtException so
+// systemd (Restart=always on the relay units) restarts from a clean state.
+export function installProcessGuards(name, log = console.error) {
+  if (installProcessGuards._done) return;   // idempotent per process
+  installProcessGuards._done = true;
+  process.on("unhandledRejection", (r) => log(`[${name}] unhandledRejection:`, r instanceof Error ? (r.stack || r.message) : r));
+  process.on("uncaughtException", (e) => { log(`[${name}] uncaughtException:`, (e && e.stack) || e); process.exit(1); });
+}
+
 const DEFAULTS = {
   baseRpc: "https://mainnet.base.org",
   registryPollSec: 300,
@@ -43,15 +58,24 @@ export function fleetConfig(env = process.env) {
     baseRpc: env.BASE_RPC || DEFAULTS.baseRpc,
     registryPollSec: parseInt(env.REGISTRY_POLL_SEC || "", 10) || DEFAULTS.registryPollSec,
     staleAfterSec: parseInt(env.STALE_AFTER_SEC || "", 10) || DEFAULTS.staleAfterSec,
-    // Operator allowlist (OPT-IN hardening). Comma-separated, lowercased Enclave-
-    // Registry operator addresses. When set, on-chain discovery is filtered to
-    // endpoints whose registry `operator` is in the list, so tokens / the egress
-    // token / data-path traffic only ever reach vetted operators (closes the
-    // permissionless-registry trust gap). Unset = today's behavior (any
-    // registered endpoint is followed) plus a loud one-time warning.
-    trustedOperators: (env.TRUSTED_OPERATORS || "").toLowerCase()
-      .split(",").map((s) => s.trim()).filter(Boolean),
+    // Operator allowlist. Comma-separated, lowercased EnclaveRegistry operator
+    // addresses. On-chain discovery is filtered to endpoints whose registry
+    // `operator` is in the list, so tokens / the egress token / data-path traffic
+    // only ever reach vetted operators (closes the permissionless-registry trust
+    // gap). FAIL CLOSED: unset/empty falls back to the BAKED canonical operator
+    // set (never "follow everyone"), so a rebuilt egress/dns relay can't silently
+    // reopen the boundary. Explicit unrestricted mode is opt-in: set it to *.
+    trustedOperators: parseTrustedOperators(env.TRUSTED_OPERATORS),
+    operatorsUnrestricted: /^(\*|any|all)$/i.test((env.TRUSTED_OPERATORS ?? "").trim()),
   };
+}
+
+const DEFAULT_TRUSTED_OPERATORS = ["0x390e2e0e0bc34b7f428f1e31c9b6770d5028ecc1"]; // canonical Enclave fleet operator
+function parseTrustedOperators(raw) {
+  const s = (raw ?? "").trim();
+  if (/^(\*|any|all)$/i.test(s)) return [];              // explicit unrestricted opt-in
+  const list = s.toLowerCase().split(",").map((x) => x.trim()).filter(Boolean);
+  return list.length ? list : DEFAULT_TRUSTED_OPERATORS.slice();
 }
 
 const BOOK_ABI = [
@@ -105,12 +129,12 @@ const ZERO32 = /^0x0+$/;
 const isHttpsEndpoint = (ep) => { try { return new URL(ep).protocol === "https:"; } catch { return false; } };
 let _warnedUnauth = false;
 function warnIfUnauthenticated(cfg, log) {
-  if (cfg.trustedOperators.length || _warnedUnauth) return;
+  if (!cfg.operatorsUnrestricted || _warnedUnauth) return;
   _warnedUnauth = true;
-  log("WARNING: TRUSTED_OPERATORS is unset — this relay follows EVERY endpoint in the permissionless " +
-      "EnclaveRegistry with no operator allowlist. Session tokens / the egress token / data-path traffic " +
-      "may be routed to attacker-registered endpoints. Set TRUSTED_OPERATORS=<comma-separated operator " +
-      "addresses> to restrict the fleet to vetted operators.");
+  log("WARNING: TRUSTED_OPERATORS=* — this relay follows EVERY endpoint in the permissionless " +
+      "EnclaveRegistry with no operator allowlist, by explicit configuration. Session tokens / the egress " +
+      "token / data-path traffic may be routed to attacker-registered endpoints. Unset TRUSTED_OPERATORS " +
+      "to restrict the fleet to the vetted operator set.");
 }
 
 // createFleet(cfg, log) -> { origins(), start() }
@@ -244,11 +268,16 @@ export function createFleet(cfg, log = () => {}) {
     const ops = cfg.trustedOperators;
     return rows
       .filter((e) => e.active && now - Number(e.lastSeen) <= cfg.staleAfterSec)
-      // B2: only vetted operators when the allowlist is configured
-      .filter((e) => !ops.length || ops.includes(String(e.operator || "").toLowerCase()))
+      // B2: only vetted operators (baked default, or the env allowlist). Pass-all
+      // ONLY under the explicit TRUSTED_OPERATORS=* opt-in — never by omission.
+      .filter((e) => cfg.operatorsUnrestricted || ops.includes(String(e.operator || "").toLowerCase()))
       .map((e) => e.endpoint.replace(/\/+$/, ""))
       // B1/B3: never dial a non-https discovered endpoint (enclaves are https)
-      .filter((ep) => { const ok = isHttpsEndpoint(ep); if (!ok) log(`skipping non-https registry endpoint: ${ep}`); return ok; });
+      .filter((ep) => { const ok = isHttpsEndpoint(ep); if (!ok) log(`skipping non-https registry endpoint: ${ep}`); return ok; })
+      // SSRF: drop endpoints whose host is a literal private/loopback/link-local
+      // IP (or localhost) so a permissionless-registry row can't make the data-
+      // plane relays dial the relay box's own localhost / cloud metadata.
+      .filter((ep) => { let h; try { h = new URL(ep).hostname; } catch { return false; } const ok = !isBlockedHost(h); if (!ok) log(`skipping non-global registry endpoint: ${ep}`); return ok; });
   }
 
   async function refresh() {
@@ -268,7 +297,7 @@ export function createFleet(cfg, log = () => {}) {
     runnerEndpointFor,
     async start() {
       log(`on-chain fleet: ${cfg.addressBook ? "EnclaveAddressBook " + cfg.addressBook + " -> registry" : "EnclaveRegistry " + cfg.registryAddress}`
-          + (cfg.trustedOperators.length ? ` · trusted operators: ${cfg.trustedOperators.length}` : " · UNAUTHENTICATED (no TRUSTED_OPERATORS)"));
+          + (cfg.operatorsUnrestricted ? " · UNAUTHENTICATED (TRUSTED_OPERATORS=*)" : ` · trusted operators: ${cfg.trustedOperators.length}`));
       await refresh();
       setInterval(refresh, cfg.registryPollSec * 1000);
     },

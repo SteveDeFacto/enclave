@@ -76,8 +76,14 @@ PORT         = int(os.environ.get("WASM_MANAGER_PORT", "8091"))   # same port th
 # control API must not stay open - one tenant could DELETE another's vm. When
 # set (the enclave config passes the shared SECRET), every control route
 # demands it; /health and the tenant data plane (/enc/*, its own per-deployment
-# tokens) stay open. Unset = legacy-open (local dev).
+# tokens) stay open.
+#
+# FAIL CLOSED: with neither VMMGR_TOKEN nor SECRET set, the control plane no
+# longer stays legacy-open — a tenant holds outbound HTTP to loopback and could
+# DELETE another tenant's vm, so a box with no token must DENY. Explicitly running
+# open (local dev) is opt-in: VMMGR_ALLOW_UNAUTHENTICATED=1.
 VMMGR_TOKEN  = os.environ.get("VMMGR_TOKEN") or os.environ.get("SECRET") or ""
+VMMGR_ALLOW_UNAUTH = os.environ.get("VMMGR_ALLOW_UNAUTHENTICATED", "").strip().lower() in ("1", "true", "yes", "on")
 # /health is intentionally OPEN (no control token) for the supervisor's liveness
 # probe, but its FULL body leaks capacity, model-volume names/listings, GPU
 # specs and the verbose GPU-probe diagnostics to any loopback-reaching caller
@@ -2637,9 +2643,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _ctrl_authed(self) -> bool:
         """Control-plane gate (see VMMGR_TOKEN). Timing-safe; header X-Vmmgr-Token
-        or Authorization: Bearer."""
+        or Authorization: Bearer. Fail closed when no token is configured unless
+        VMMGR_ALLOW_UNAUTHENTICATED is explicitly set."""
         if not VMMGR_TOKEN:
-            return True
+            return VMMGR_ALLOW_UNAUTH
         tok = self.headers.get("X-Vmmgr-Token") or ""
         if not tok:
             m = re.match(r"^Bearer\s+(\S+)$", self.headers.get("Authorization") or "")
@@ -2966,6 +2973,15 @@ def main():
         threading.Thread(target=_nn_probe_loop, daemon=True).start()   # gates GPU launches
     print(f"wasm-manager on :{PORT} runtime=wasmtime mock={MOCK} apps_dir={APPS_DIR} "
           f"p3={bool(P3_FLAGS)} fs={FS_ENABLED} nn={_NN_PROBE['state']}", flush=True)
+    if not VMMGR_TOKEN:
+        if VMMGR_ALLOW_UNAUTH:
+            print("wasm-manager WARNING: no VMMGR_TOKEN/SECRET and VMMGR_ALLOW_UNAUTHENTICATED=1 — "
+                  "control plane is UNAUTHENTICATED by explicit configuration (a loopback-reaching "
+                  "tenant can create/delete any vm).", flush=True)
+        else:
+            print("wasm-manager WARNING: no VMMGR_TOKEN/SECRET — control plane is FAIL-CLOSED "
+                  "(control routes deny every request). Set SECRET/VMMGR_TOKEN to operate, or "
+                  "VMMGR_ALLOW_UNAUTHENTICATED=1 to explicitly run open (local dev only).", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

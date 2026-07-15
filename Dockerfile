@@ -1,14 +1,18 @@
 # Builds the enclave image. Pin the resulting digest in tinfoil-config.yml.
 # Keep deps minimal — this image is measured and published; smaller TCB = easier audit.
-FROM node:20-slim
-# openssh-server provides sshd (the supervisor hosts SSH; sandbox images need none);
-# openssh-client provides ssh-keygen for the boot host key + in-enclave keypair minting;
+# Base pinned by DIGEST (not just the mutable 20-slim tag) so the measured TCB is
+# reproducible build-to-build. Re-pin deliberately on a base bump:
+#   curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull" ... (Docker-Content-Digest of node:20-slim)
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
 # openssl mints the in-enclave TLS-bridge key + self-signed cert at boot (initTlsBridge).
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-server openssh-client openssl \
+# (The SSH owner-access channel was removed in ad2f4f0e — openssh-server/-client are gone.)
+RUN apt-get update && apt-get install -y --no-install-recommends openssl \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+# npm ci (not install): installs the EXACT locked tree; requires an in-sync
+# package-lock.json (no `*` glob — a missing lockfile must FAIL, not silently float).
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 COPY supervisor.js ./
 # dedicated-IP egress: the enclave-side SOCKS front + its SSRF classifier
 # (net-guard.mjs is also symlinked into relay/ and shipped to the relay box).

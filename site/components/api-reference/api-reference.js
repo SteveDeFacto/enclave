@@ -2,7 +2,7 @@
    <c-api-reference> - the Swagger-style API reference,
    rendered live from openapi.json: grouped operations, schema
    trees, request/response examples, runnable fetch()/cURL
-   samples (the ▶ run button evaluates the displayed snippet
+   samples (the ▶ run button replays the displayed request
    against the live API with the session's address + token).
    Dispatches a document-level `enclave:api-rendered` event once the
    operations exist, so deep links (#op-…) can resolve.
@@ -170,7 +170,11 @@ class ApiReference extends EnclaveElement {
 
         // code samples (fetch | cURL) - fetch is the default; ▶ run evals it live
         const curl = this.buildCurl(method, path, op), fetchS = this.buildFetch(method, path, op);
-        this.SAMP[oi] = { curl, fetch: fetchS, auth: !opPublic(op) };
+        // req = the structured request the ▶ run button replays natively (no eval,
+        // so it works under a CSP without 'unsafe-eval'). url/body carry the sample
+        // address placeholder; sampFill() swaps in the connected wallet at run time.
+        this.SAMP[oi] = { curl, fetch: fetchS, auth: !opPublic(op),
+          req: { method, url: this.buildUrl(path, op), body: bodyExample(op) } };
         body += '<div class="block-lbl">Code</div>'
           + '<div class="samples sampletoggle" data-sid="' + oi + '">'
           + '<button class="on" data-mode="fetch">fetch()</button>'
@@ -200,24 +204,30 @@ class ApiReference extends EnclaveElement {
     this.wireApi();
   }
 
-  // ▶ run: evaluate the operation's fetch() sample as real JavaScript against the
-  // live API (address + bearer token substituted from the session) and render the
-  // response inline. It's literally the displayed snippet - what you see is what runs.
+  // ▶ run: replay the operation against the live API and render the response
+  // inline. Reconstructs the SAME request the displayed fetch() sample shows -
+  // method, url, auth header, JSON body - from structured data (SAMP[oi].req),
+  // NOT by eval'ing the snippet string. This keeps the feature alive under a CSP
+  // with no 'unsafe-eval' (new Function was silently dead on the live site).
   async runSample(oi, btn) {
-    const s = this.SAMP[oi]; if (!s) return;
+    const s = this.SAMP[oi]; if (!s || !s.req) return;
     const out = this.querySelector('[data-srun="' + oi + '"]'); if (!out) return;
     if (s.auth && !Enclave.token){
       out.innerHTML = '<div class="wp-err" style="margin-top:8px">This endpoint needs auth - hit Sign in first, then run again.</div>';
       return;
     }
-    const code = sampFill(s.fetch);
+    const { method, url, body } = s.req;
+    const headers = {};
+    if (s.auth) headers["Authorization"] = "Bearer " + (Enclave.token || "");
+    const init = { method, headers };
+    if (body){ headers["Content-Type"] = "application/json"; init.body = sampFill(JSON.stringify(body)); }
     const t0 = btn.textContent; btn.disabled = true; btn.textContent = "running…";
     try {
-      const fn = new Function("LOGIN_TOKEN", '"use strict"; return (async () => {\n' + code + '\nreturn { status: res.status, ok: res.ok, data };\n})();');
-      const r = await fn(Enclave.token || "");
+      const res = await fetch(sampFill(url), init);
+      let data; try { data = await res.json(); } catch(_){ data = await res.text().catch(() => null); }
       out.innerHTML = '<div class="code" style="margin-top:8px"><div class="codebar"><span class="fn">' +
-        (r.ok ? "" : "⚠ ") + esc(String(r.status)) + ' response</span></div>' +
-        '<pre style="margin:0;padding:13px 16px;max-height:280px;overflow:auto"><code>' + hlJson(r.data) + "</code></pre></div>";
+        (res.ok ? "" : "⚠ ") + esc(String(res.status)) + ' response</span></div>' +
+        '<pre style="margin:0;padding:13px 16px;max-height:280px;overflow:auto"><code>' + hlJson(data) + "</code></pre></div>";
     } catch(err){
       out.innerHTML = '<div class="wp-err" style="margin-top:8px">run failed: ' + esc(String(err && (err.message || err))) + "</div>";
     }

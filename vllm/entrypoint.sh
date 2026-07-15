@@ -20,6 +20,12 @@
 #                    per-tenant GPU stack on the same card (enclaves/gpu) so
 #                    tenant MPS shares keep their VRAM budget.
 #   VLLM_PORT        loopback port for the OpenAI server (default 8000)
+#   PLATFORM_MODEL_KEY  require this Bearer key on the OpenAI API (must equal the
+#                    supervisor's PLATFORM_MODEL_KEY, which it re-asserts upstream).
+#                    Unset = open on loopback. SET IT before enabling a co-hosted
+#                    platform-model tier: all containers share one net namespace,
+#                    so a run-mode tenant with -Sinherit-network can reach
+#                    127.0.0.1:8000 and bill-bypass the supervisor gate otherwise.
 #   VLLM_EXTRA_ARGS  appended verbatim (parsers, quant flags, etc.)
 set -euo pipefail
 
@@ -62,7 +68,17 @@ fi
 echo "enclave-vllm: serving $MODEL_DIR as '$SERVED_MODEL_NAME' | TP=$TENSOR_PARALLEL kv=$KV_CACHE_DTYPE ctx=$MAX_MODEL_LEN gpu-util=$GPU_MEMORY_UTILIZATION port=$VLLM_PORT" >&2
 
 # Loopback bind: the enclave shim only exposes the supervisor; nothing reaches
-# vLLM except the supervisor's in-CVM proxy.
+# vLLM except the supervisor's in-CVM proxy. Loopback is NOT a trust boundary
+# here (all CVM containers share one net namespace, and run-mode tenants get
+# -Sinherit-network), so gate the API behind the shared PLATFORM_MODEL_KEY when
+# set — defense in depth against a tenant bypassing the supervisor's billing gate.
+API_KEY_ARGS=()
+if [ -n "${PLATFORM_MODEL_KEY:-}" ]; then
+  API_KEY_ARGS=(--api-key "$PLATFORM_MODEL_KEY")
+else
+  echo "enclave-vllm: WARNING: PLATFORM_MODEL_KEY unset — the OpenAI API on 127.0.0.1:$VLLM_PORT is UNAUTHENTICATED; a shared-namespace tenant could reach it directly and bypass supervisor billing. Set PLATFORM_MODEL_KEY before serving a platform-model tier." >&2
+fi
+
 exec vllm serve "$MODEL_DIR" \
   --served-model-name "$SERVED_MODEL_NAME" \
   --tensor-parallel-size "$TENSOR_PARALLEL" \
@@ -71,4 +87,5 @@ exec vllm serve "$MODEL_DIR" \
   --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
   --host 127.0.0.1 \
   --port "$VLLM_PORT" \
+  "${API_KEY_ARGS[@]}" \
   ${VLLM_EXTRA_ARGS:-}

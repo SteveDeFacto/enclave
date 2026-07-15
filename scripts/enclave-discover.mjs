@@ -34,6 +34,21 @@ const ABI = [
 
 const client = createPublicClient({ chain: base, transport: http(RPC_URL) });
 
+// The registry is permissionless — anyone can register any endpoint. Real
+// enclaves are public https hosts, so drop non-https rows and rows whose host is
+// a literal loopback/private/link-local IP (or localhost). Placement is untrusted
+// (attestation still gates trust at connect), but this stops the helper from ever
+// dialing the caller's own localhost / cloud metadata for a hostile row.
+function isPublicHttpsEndpoint(ep) {
+  let u; try { u = new URL(ep); } catch { return false; }
+  if (u.protocol !== "https:") return false;
+  const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (h === "localhost" || h.endsWith(".localhost")) return false;
+  if (/^(127\.|10\.|192\.168\.|169\.254\.|::1$|fe80:|f[cd][0-9a-f]{2}:)/.test(h)) return false;
+  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(h)) return false;
+  return true;
+}
+
 // 1) read the registry (slow-moving truth: who exists, where, what code)
 export async function readRegistry(address = REGISTRY_ADDRESS) {
   const total = Number(await client.readContract({ address, abi: ABI, functionName: "count" }));
@@ -44,7 +59,8 @@ export async function readRegistry(address = REGISTRY_ADDRESS) {
     out.push(...page);
   }
   const now = Math.floor(Date.now() / 1000);
-  return out.filter(e => e.active && now - Number(e.lastSeen) <= STALE_AFTER_SEC);
+  return out.filter(e => e.active && now - Number(e.lastSeen) <= STALE_AFTER_SEC
+    && isPublicHttpsEndpoint(e.endpoint));
 }
 
 // 2) fan out to each enclave's /availability (fast-moving truth: free capacity)

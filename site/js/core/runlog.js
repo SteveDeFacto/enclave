@@ -80,6 +80,17 @@ export const runlog = {
   /* every run a page unload cut off mid-deploy (this browser only) */
   interrupted() { return runs.filter(r => r.interrupted); },
 
+  /* purge every run + persisted history. Called on sign-out so a prior user's
+     deploy narratives (deployment ids, labels, timestamps) don't linger in
+     localStorage or re-render for the next person on a shared browser. */
+  clear() {
+    runs.length = 0;              // truncate in place so runs() keeps the same ref
+    live.clear();                 // any in-flight writer's dead() now flips true -> it goes silent
+    clearTimeout(saveT);          // cancel a pending debounced save that would re-persist old runs
+    try { lsSet(KEY, "[]"); } catch (e) {}
+    emit("enclave:runlog", { type: "clear" });
+  },
+
   /* open a new run and hand back its writer; concurrent with any others */
   startRun() {
     const d = new Date();

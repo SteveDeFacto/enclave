@@ -1542,7 +1542,13 @@ if (PLATFORM_MODEL_URL) {
     // the remainder (usually "/"). Reconstruct the OpenAI path for vLLM.
     const path = (req.baseUrl + (req.url === "/" ? "" : req.url)) || req.originalUrl;
     const headers = { ...req.headers, host: upstream.host };
-    delete headers.authorization;   // the platform key stays here; vLLM runs open on loopback
+    // vLLM now enforces --api-key (defense in depth: shared-namespace neighbors,
+    // incl. tenant processes with -Sinherit-network, can't reach the model on
+    // loopback without it). Re-assert the SAME shared key upstream — the client
+    // already presented exactly Bearer PLATFORM_MODEL_KEY above. Unset = vLLM open
+    // on loopback, strip the header (unchanged legacy behavior).
+    if (PLATFORM_MODEL_KEY) headers.authorization = `Bearer ${PLATFORM_MODEL_KEY}`;
+    else delete headers.authorization;
     const up = http.request(
       { host: upstream.hostname, port: upstream.port || 80, method: req.method, path, headers },
       (r) => { res.writeHead(r.statusCode || 502, r.headers); r.pipe(res); });
