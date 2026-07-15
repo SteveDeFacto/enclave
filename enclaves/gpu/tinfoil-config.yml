@@ -44,7 +44,7 @@ containers:
 
   # --- GPU worker: forks MPS-capped CUDA processes per tenant, runs submitted jobs
   - name: "worker"
-    image: "ghcr.io/enclavehost/enclave-worker@sha256:223e857616a49884202d0651a95fc385f686a76c49f2dc420b89ea6067eb724f"
+    image: "ghcr.io/enclavehost/enclave-worker@sha256:442b38b86cace20aa69d6e76d9f8c1b3379d1547af5436c4c174ac46c696ada1"
     runtime: nvidia
     gpus: all
     ipc: host
@@ -247,7 +247,7 @@ containers:
   # are hardware-enforced per process. Tenants without a GPU share never get
   # the wasi-nn import at all.
   - name: "wasm-manager"
-    image: "ghcr.io/enclavehost/enclave-wasm-manager@sha256:5be4407d0408e4375d7c06b99684f1296c2f7d8cd3dbc4d3a3e54a080e724590"
+    image: "ghcr.io/enclavehost/enclave-wasm-manager@sha256:9fe20e0dcb8c2d749ad4d1ee8642eb64cf2e74ecff7cff56988ed84278ea086e"
     runtime: nvidia
     gpus: all
     ipc: host
