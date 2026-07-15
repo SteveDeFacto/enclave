@@ -326,19 +326,21 @@ containers:
       # (wasmtime-nn-sdcpp.patch on top of nn-ggml + libenclave_sd/
       # libstable-diffusion from wasm/sd-shim) - rebuild the "Wasmtime
       # Toolchain" and repin WASMTIME_IMAGE before deployments can serve it.
-      # z-image-turbo-sd REPLACES sd-turbo-full here (not alongside): the
+      # Both SD volumes preload (image models only - sd-turbo/sd-turbo-full
+      # stay mounted for guests but out of the SD preload). The
       # ENCLAVE_SD_*_FILE envs below are node-global and the preload
-      # validates them against EVERY listed SD volume - a single-checkpoint
-      # volume like sd-turbo-full would fail validation against them. (Its
-      # volume stays mounted for guests; only the sd preload moves on.)
-      - MODEL_VOLUMES_SD: "z-image-turbo-sd"
-      # Component layout of the z-image-turbo-sd volume (repo of the same
-      # name): Z-Image needs sd.cpp's --llm text-encoder slot.
-      # NO ENCLAVE_SD_WTYPE: the volume ships Q8_0 ggufs - forcing f16 would
+      # validates them against EVERY listed SD volume, so both volumes carry
+      # GENERIC component filenames (diffusion.gguf/llm.gguf/vae.safetensors):
+      # z-image-turbo-sd@d7aeefc3 (rename of 07cb261e) and qwen-image-2512-sd.
+      - MODEL_VOLUMES_SD: "z-image-turbo-sd,qwen-image-2512-sd"
+      # Generic component layout, shared by every SD volume above. Each
+      # volume brings its OWN diffusion/llm/vae under these names (z-image:
+      # Z-Image 6B + Qwen3-4B; qwen: Qwen-Image-2512 20B + Qwen2.5-VL-7B).
+      # NO ENCLAVE_SD_WTYPE: the volumes ship Q8_0 ggufs - forcing f16 would
       # UP-convert quantized weights and double VRAM.
-      - ENCLAVE_SD_DIFFUSION_FILE: "z_image_turbo-Q8_0.gguf"
-      - ENCLAVE_SD_LLM_FILE: "Qwen3-4B-Instruct-2507-Q8_0.gguf"
-      - ENCLAVE_SD_VAE_FILE: "ae.safetensors"
+      - ENCLAVE_SD_DIFFUSION_FILE: "diffusion.gguf"
+      - ENCLAVE_SD_LLM_FILE: "llm.gguf"
+      - ENCLAVE_SD_VAE_FILE: "vae.safetensors"
       # tiled VAE decode: caps the 1024px decode spike (~6 GB -> ~1.5 GB).
       # 64:0.25 = 64-latent (512px) tiles, 0.25 overlap: <=512px decodes
       # SINGLE-TILE (byte-identical to untiled - verified), 1024px is a 3x3
@@ -445,13 +447,10 @@ models:
   # MERGED into the Q8_0 transformer, curated for the sdcpp backend
   # (provenance + per-file sha256 in the repo README). Components carry the
   # GENERIC names diffusion.gguf / llm.gguf (Qwen2.5-VL-7B text encoder) /
-  # vae.safetensors, built so the node-global ENCLAVE_SD_*_FILE envs can one
-  # day name every SD volume at once. NOT in MODEL_VOLUMES_SD yet: those envs
-  # still pin z-image-turbo-sd's filenames and the preload validates them
-  # against EVERY listed SD volume, so flipping the preload is a separate cutover
-  # (mount-only until then - two ggufs and no selection means no accidental
-  # LLM preload either). Serving: 8 steps, cfg 1.0, ~34 GB peak VRAM at
-  # 1024px with VAE tiling.
+  # vae.safetensors - the same names z-image-turbo-sd now uses, so the one
+  # node-global ENCLAVE_SD_*_FILE env set resolves in both. In MODEL_VOLUMES_SD
+  # above; preloads alongside z-image. Serving: 8 steps, cfg 1.0, ~34 GB peak
+  # VRAM at 1024px with VAE tiling.
   - name: "qwen-image-2512-sd"
     repo: "EnclaveHost/qwen-image-2512-sd@a82dcb53ef8ff3c675dd0b636788ebb332fa973f"
     mpk: "f056a6215bdcb103a4e6b6c73bcfea205523593c6de78c53de4782d3c81e39f2_30075547648_8c18a205-f8c1-5a49-82d7-f0c367f603a1"
