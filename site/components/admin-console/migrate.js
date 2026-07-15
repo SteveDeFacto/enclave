@@ -95,7 +95,13 @@ export async function importState(target, contractName) {
                 verify(data, target) -> {total, ok, bad: [labels]} } */
 
 const PAGE = 50;
-const CHUNK = { deployments: 12, apps: 20, versions: 25 };
+// Keep each migration tx SMALL. A large multicall (tens of KB calldata / >10M
+// gas) gets SIGNED and handed back a tx hash, but wallets/RPCs silently DROP it
+// at broadcast - it never lands, so the console sits on "sent … waiting" while
+// the receipt never appears. Bound every packed tx on BOTH axes (see packPlan),
+// and size-chunk versions since their `config` blob can be up to 4 KB each.
+const CHUNK = { deployments: 6, apps: 10 };
+const VER_TX_BYTES = 6 * 1024;   // max calldata for a single importVersions call
 
 /* -- deployments -- */
 // Struct-schema revision sniff (same idea as the catalog's): rev-1 sources
@@ -161,22 +167,38 @@ const appCmp = (a, b) => APP_SCHEMA.every((f) => String(a[f.k]).toLowerCase() ==
 const verCmp = (a, b) => VER_SCHEMA.every((f) => String(a[f.k]).toLowerCase() === String(b[f.k]).toLowerCase());
 
 const chunked = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+// rough encoded size (bytes) of one Version tuple: fixed head + each dynamic
+// string padded up to a 32-byte word (slight over-estimate, which is safe).
+const verSize = (v) => 384 + ["cid", "version", "ports", "config"]
+  .reduce((s, k) => s + 32 + Math.ceil(String(v[k] || "").length / 32) * 32, 0);
+// split `arr` so each chunk's summed sizeOf stays under maxBytes; a single item
+// over the cap still gets its own chunk (callers keep items well under it).
+const chunkBySize = (arr, maxBytes, sizeOf) => {
+  const out = []; let cur = [], b = 0;
+  for (const it of arr) { const s = sizeOf(it);
+    if (cur.length && b + s > maxBytes) { out.push(cur); cur = []; b = 0; }
+    cur.push(it); b += s; }
+  if (cur.length) out.push(cur);
+  return out;
+};
 
 /* Fold the planned import calls into multicall(bytes[]) transactions so a
    whole migration usually rides ONE wallet confirmation. Greedy packing by
    rough per-call gas estimates against a per-tx budget (well under Base's
    block limit; the wallet still estimates the real number before signing).
    Inner auth is untouched - multicall delegatecalls self, msg.sender holds. */
-const GAS_BUDGET = 15_000_000;
+const GAS_BUDGET  = 5_000_000;    // per packed tx - stays under RPC estimateGas caps
+const DATA_BUDGET = 12 * 1024;    // per packed tx (sum of inner calls) - multicall wrapper adds a little on top; bigger txs get dropped at broadcast
 function packPlan(contractName, txs) {
   if (txs.length <= 1) return txs;
   const sel = CONTRACTS[contractName].sel;
+  const bytesOf = (t) => (t.dataHex.length - 2) / 2;
   const groups = [[]];
-  let used = 0;
+  let usedGas = 0, usedBytes = 0;
   for (const t of txs) {
-    const g = t.gas || 1_000_000;
-    if (groups[groups.length - 1].length && used + g > GAS_BUDGET) { groups.push([]); used = 0; }
-    groups[groups.length - 1].push(t); used += g;
+    const g = t.gas || 1_000_000, b = bytesOf(t);
+    if (groups[groups.length - 1].length && (usedGas + g > GAS_BUDGET || usedBytes + b > DATA_BUDGET)) { groups.push([]); usedGas = 0; usedBytes = 0; }
+    groups[groups.length - 1].push(t); usedGas += g; usedBytes += b;
   }
   return groups.map((g) => g.length === 1 ? g[0] : {
     label: `multicall · ${g.length} calls (${g.map((t) => t.label.split(" ·")[0]).filter((v, i, a) => a.indexOf(v) === i).join(", ")})`,
@@ -226,7 +248,7 @@ export const MIG_KINDS = {
       for (const a of data) {
         // versions are append-only in publish order: the target holds a prefix
         const done = have[a.appId.toLowerCase()] ? have[a.appId.toLowerCase()].versions.length : 0;
-        for (const [i, c] of chunked(a.versions.slice(done), CHUNK.versions).entries())
+        for (const [i, c] of chunkBySize(a.versions.slice(done), VER_TX_BYTES, verSize).entries())
           txs.push({ label: `importVersions · ${a.slug} (${c.length}${done || i ? ", cont." : ""})`,
             gas: 100_000 + 300_000 * c.length,
             dataHex: encCallX(sel.importVersions, [{ t: "bytes32", v: a.appId }, { t: "tuple[]", schema: VER_SCHEMA, v: c }]) });
