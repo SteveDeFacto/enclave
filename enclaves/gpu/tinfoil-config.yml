@@ -354,20 +354,29 @@ containers:
       # at graph allocation ("sampling for image 1/1 failed" in <1s, seen
       # live). With FA the 2048px diffusion buffer is a few GB.
       - ENCLAVE_SD_FLASH_ATTN: "1"
-      # THE qwen-image-2512 crystalline-speckle FIX (2026-07-15). Root cause:
-      # ggml-cuda's fp16 cublas matmul path on Hopper (H200) uses
-      # CUBLAS_COMPUTE_16F - fp16 ACCUMULATION. The 20B Qwen-Image MMDiT's
-      # matmul dot products (hidden dim 4096+, large activations) sum past
-      # fp16's max (65504) and saturate to inf -> sparse latent spikes the VAE
-      # faithfully decodes as crystalline speckle. (CPU is f32-accumulate =
-      # clean; smaller z-image doesn't overflow; NOT flash attention - v0.5.152
-      # ran FA off and it persisted; NOT the VAE - decode is clean in fp16 up
-      # to |latent|~272, verified on a 3070.) This env forces every ggml-cuda
-      # cublas GEMM to CUBLAS_COMPUTE_32F (f32 accumulation) - fixes the
-      # overflow, keeps Q8_0 weights (no VRAM change), negligible cost on
-      # Hopper tensor cores. Node-wide: also makes z-image / llm GGUF matmuls
-      # f32-accumulate (strictly more correct). Read once per wasmtime process
-      # via getenv in ggml-cuda.cu; inherited from this container's env.
+      # THE qwen-image-2512 crystalline-speckle FIX (2026-07-15). Root cause,
+      # confirmed live + against ggml-cuda.cu: the 20B Qwen-Image MMDiT's Q8_0
+      # weight matmuls take ggml-cuda's fp16 cublas path (use_fp16 is true for
+      # quantized src0, ggml-cuda.cu:1658). That path converts the ACTIVATION
+      # to fp16 INPUT before the GEMM (:1691) - and this model's activations
+      # exceed fp16's max (65504), so they saturate to inf. The inf shows up as
+      # sparse bright green/magenta latent spikes the (innocent) VAE decodes as
+      # crystalline glitter. CPU is f32 = clean; smaller z-image stays under
+      # 65504; NOT flash attention (v0.5.152 ran FA off, persisted); NOT the
+      # VAE (decode clean in fp16 to |latent|~272, verified on a 3070); NOT
+      # mere accumulation - v0.5.153's GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F made
+      # accumulation f32 and it PERSISTED, which proves the overflow is at the
+      # fp16 INPUT conversion, not the sum.
+      #
+      # Fix: pin the diffusion weights to bf16. bf16 src0 takes a DIFFERENT
+      # cublas branch (:1663) that converts the activation to bf16 (full f32
+      # exponent range - no inf) and accumulates in f32. Config-only, no
+      # rebuild. Cost: diffusion grows Q8_0 ~21GB -> bf16 ~40GB VRAM (fits the
+      # 140GB H200; watch the app's MPS cap). VAE stays f32 (its default rule);
+      # the whole rule REPLACES the shim default so both are listed here.
+      - ENCLAVE_SD_TENSOR_TYPE_RULES: '^model\.diffusion_model\.=bf16,^vae\.=f32,^first_stage_model\.=f32'
+      # Kept from v0.5.153: forces f32 accumulation on any remaining fp16 cublas
+      # GEMM (e.g. the Q8_0 text encoder) - strictly more correct, ~free on Hopper.
       - GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F: "1"
       # Fused-attention quarantine (ORT/onnx volumes only - sdcpp/ggml
       # tenants are untouched): deployments attaching a listed volume get
