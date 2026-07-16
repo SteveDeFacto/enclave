@@ -74,6 +74,33 @@ jobs:
           cd /tmp/llama.cpp
           git checkout "$LLAMA_COMMIT"
 
+      - name: Patch ggml - disable MMQ stream-k (Hopper cross-block fixup race)
+        run: |
+          cd /tmp/llama.cpp
+          # THE qwen-image-2512 crystalline-speckle FIX (2026-07-16). Isolated on
+          # hardware: the fleet's own lib renders pixel-clean when its sm_86 SASS
+          # runs on a 46-SM RTX 3070 (even under MPS SM caps down to ~2 SMs) and
+          # speckles ONLY when its sm_90 SASS runs on the 132-SM H200 - identical
+          # binary, weights, seed. Ruled out: VAE (vae-on-cpu still speckled),
+          # flash-attn, fp16/bf16 (Q8_0 uses integer MMQ on both archs), the
+          # compiler (nvcc+clang both clean on sm_86), PDL (GGML_CUDA_PDL=0 in
+          # v0.5.160 didn't clear it), and MPS SM-capping (clean on sm_86 at every
+          # cap). What remains is MMQ's stream-k decomposition: it splits each
+          # matmul's K dim across `nsm` blocks (mmq.cuh, nsm = device SM count)
+          # and recombines them in a fixup kernel whose memory-pool temp buffer
+          # the code ITSELF flags race-prone (mmq.cu ~L250). The H200's high nsm
+          # drives far more fixup blocks than any Ampere card, producing sparse
+          # wrong matmul outputs = the saturated green/magenta speckle. qwen's
+          # 1085 Q8_0 matmuls hit it hard; z-image's 202 (F32-heavy) stay clean.
+          # Fix: force conventional tiling (use_stream_k=false) on NVIDIA - the
+          # standard AMD/old-CUDA MMQ path, no cross-block fixup, no race. Keeps
+          # Q8_0/MMQ (memory-neutral); costs some H200 matmul throughput.
+          f=ggml/src/ggml-cuda/mmq.cu
+          sed -i 's/const bool use_stream_k = /const bool use_stream_k = false \&\& /g' "$f"
+          n=$(grep -c 'use_stream_k = false &&' "$f")
+          echo "patched use_stream_k sites: $n (expect 2)"
+          test "$n" -eq 2
+
       - name: Build (Release, CUDA, shared libs, sm_86+sm_90, portable CPU)
         run: |
           cd /tmp/llama.cpp
