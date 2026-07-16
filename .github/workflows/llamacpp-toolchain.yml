@@ -31,6 +31,15 @@
 # + sm_90 (fleet H200), NO PTX - an unknown future arch must fail loudly, not
 # PTX-JIT for minutes inside TDX (learned live). GGML_NATIVE=OFF: the runner's
 # AVX flags must not leak into kernels that run on different fleet CPUs.
+#
+# sm_90 SASS is compiled from the compute_86 (AMPERE) virtual arch
+# (-gencode arch=compute_86,code=sm_90), NOT compute_90. ggml-cuda's Hopper
+# (__CUDA_ARCH__>=900) code path miscomputes Qwen-Image's attention float
+# matmuls -> the crystalline-speckle artifact (verified 2026-07-16: sm_86
+# renders qwen pixel-clean, native sm_90 speckles, IDENTICAL ggml source).
+# Compiling the Ampere source branch to native sm_90 SASS keeps the H200 on
+# the clean code path (__CUDA_ARCH_LIST__={860} -> highest_compiled_arch(900)
+# =860) at full native speed - no Hopper branch, no PTX-JIT.
 name: llama.cpp Toolchain
 
 on:
@@ -93,11 +102,11 @@ jobs:
             -DGGML_BACKEND_DL=ON \
             -DGGML_CUDA=ON \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.6/bin/nvcc \
-            -DCMAKE_CUDA_ARCHITECTURES="86-real;90-real" \
+            -DCMAKE_CUDA_ARCHITECTURES="86-real" \
             -DGGML_NATIVE=OFF \
             -DCMAKE_C_FLAGS="-DGGML_MAX_NAME=128" \
             -DCMAKE_CXX_FLAGS="-DGGML_MAX_NAME=128" \
-            -DCMAKE_CUDA_FLAGS="-DGGML_MAX_NAME=128" \
+            -DCMAKE_CUDA_FLAGS="-DGGML_MAX_NAME=128 -gencode arch=compute_86,code=sm_90" \
             -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF \
             -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_COMMON=OFF \
             -DCMAKE_INSTALL_PREFIX=/tmp/ggml-prefix
