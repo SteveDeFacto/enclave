@@ -353,7 +353,16 @@ containers:
       # 16384^2 per head, tens of GB of compute buffer, and sampling dies
       # at graph allocation ("sampling for image 1/1 failed" in <1s, seen
       # live). With FA the 2048px diffusion buffer is a few GB.
-      - ENCLAVE_SD_FLASH_ATTN: "1"
+      # DIAGNOSTIC (v0.5.158, 2026-07-16): VAE-on-CPU (v0.5.157) proved the
+      # speckle is the DIFFUSION model, not the VAE (22s CPU decode, still
+      # speckled). Biases load F32 (Linear init_params), so there is NO bf16 in
+      # the diffusion compute - the ONLY fp16 left is the flash-attention K/V
+      # cast (qwen passes kv_scale=1/128 to survive it; clean z-image uses 1.0).
+      # FA off -> manual attention, no fp16 K/V cast, F32 scores. If this clears
+      # the speckle it's the flash path; if not, fp16 is exonerated entirely.
+      # (FA off materializes seq^2 scores - fine <=1024px, OOMs at 2048px; test
+      # at 512px.)
+      - ENCLAVE_SD_FLASH_ATTN: "0"
       # THE qwen-image-2512 crystalline-speckle FIX (2026-07-15). Root cause,
       # confirmed live + against ggml-cuda.cu: the 20B Qwen-Image MMDiT's Q8_0
       # weight matmuls take ggml-cuda's fp16 cublas path (use_fp16 is true for
