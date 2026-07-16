@@ -22,7 +22,7 @@
    (costs the user pennies), never under-sell.
    ============================================================ */
 export const FULL_RATE = 0.0016667;        // whole-H200 USDC/sec ($6.00/hr)
-export const CPU_NODE_RATE = 0.0002778;    // whole CPU node USDC/sec ($1.00/hr)
+export const CPU_NODE_RATE = 0.000834;     // whole CPU node USDC/sec ($3.00/hr)
 export const MIN_COMPUTE_PCT = 1;    // shares are dialed in whole percent (CUDA MPS grain); 1% floor, no fixed 1/7
 
 const FALLBACK = {

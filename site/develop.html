@@ -279,7 +279,7 @@ create("catalog://0x06a4…c13/5", 250, 50, 8080, "", true, "")
 // GET /availability lists the volumes the fleet carries (name, bytes, which enclaves).</code></pre></c-code>
 
           <h4>Fund it: pay-per-second, credited on-chain, no custody</h4>
-          <p>Funding lands in the deployment's on-chain <code>balance6</code> (the USDC itself forwards to Enclave in the same transaction - the contract holds nothing, and payments are final). Your rate is snapshotted at create: <code>gpuShare × $6/hr + cpuShare × $1/hr</code>. Pay either way:</p>
+          <p>Funding lands in the deployment's on-chain <code>balance6</code> (the USDC itself forwards to Enclave in the same transaction - the contract holds nothing, and payments are final). Your rate is snapshotted at create: <code>gpuShare × $<span data-live-price="unit-hr" data-gpu="100">6</span>/hr + cpuShare × $<span data-live-price="unit-hr" data-cpu="100">3</span>/hr</code>. Pay either way:</p>
           <c-code fn="EnclaveDeployments · two ways to fund"><pre><code>// USDC: sign an EIP-3009 ReceiveWithAuthorization (gas-free wallet signature,
 // to = the EnclaveDeployments contract, nonce prefixed with the id's first 16 bytes), then ONE tx:
 fundWithAuthorization(bytes32 id, address from, uint256 value,
@@ -640,8 +640,8 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
               <tr><td class="pname">memory cap</td><td>= memMb</td><td>exactly what you ask for, runtime-enforced; the CPU share is derived from it</td></tr>
               <tr><td class="pname">/data cap (storage_mb)</td><td>256 MB default · 0 = no /data</td><td>audit sweep kills on breach</td></tr>
               <tr><td class="pname">open ports</td><td>≤ 8 entries · labels 1–19999</td><td>8080/8091 reserved · labels &lt; 1024 always remapped</td></tr>
-              <tr><td class="pname">GPU/VRAM share</td><td>0–100% of one card</td><td>0 = CPU-only · VRAM+compute in proportion · floored at the app's minimum · × $6/hr</td></tr>
-              <tr><td class="pname">CPU/RAM share</td><td>1–100% of the node</td><td>RAM+vCPU in proportion (sets the memory cap) · floored at the app's minimum · ≤ GPU share for GPU apps · × $1/hr</td></tr>
+              <tr><td class="pname">GPU/VRAM share</td><td>0–100% of one card</td><td>0 = CPU-only · VRAM+compute in proportion · floored at the app's minimum · × $<span data-live-price="unit-hr" data-gpu="100">6</span>/hr</td></tr>
+              <tr><td class="pname">CPU/RAM share</td><td>1–100% of the node</td><td>RAM+vCPU in proportion (sets the memory cap) · floored at the app's minimum · ≤ GPU share for GPU apps · × $<span data-live-price="unit-hr" data-cpu="100">3</span>/hr</td></tr>
               <tr><td class="pname">readiness window</td><td>~20 s</td><td>first <code>http:</code>/<code>tcp:</code> port must accept, or the deploy fails</td></tr>
               <tr><td class="pname">body writes</td><td>≤ 4096 bytes per call</td><td>chunk larger payloads (<a href="#docs-http">ch. 07</a>)</td></tr>
               <tr><td class="pname">UDP bridge idle</td><td>120 s</td><td>per WebSocket flow</td></tr>

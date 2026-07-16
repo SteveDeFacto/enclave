@@ -101,7 +101,7 @@
         {
           "@type": "Offer",
           "name": "CPU / RAM share",
-          "priceSpecification": { "@type": "UnitPriceSpecification", "price": 1, "priceCurrency": "USD", "unitText": "hour, per whole CPU node" }
+          "priceSpecification": { "@type": "UnitPriceSpecification", "price": 3, "priceCurrency": "USD", "unitText": "hour, per whole CPU node" }
         }
       ]
     }
@@ -240,12 +240,12 @@
     <div class="price-grid">
       <div class="price-card">
         <span class="pc-t">GPU / VRAM dial</span>
-        <span class="pc-rate">× $6/hr per full card</span>
+        <span class="pc-rate">× $<span data-live-price="unit-hr" data-gpu="100">6</span>/hr per full card</span>
         <p>0-100% of one H200. VRAM and compute move together: each percent buys ≈1.4&nbsp;GB VRAM and ≈9.9 TFLOPS (≈1.3 SMs). <b>0% = a CPU-only app.</b></p>
       </div>
       <div class="price-card">
         <span class="pc-t">CPU / RAM dial</span>
-        <span class="pc-rate">× $1/hr per whole node</span>
+        <span class="pc-rate">× $<span data-live-price="unit-hr" data-cpu="100">3</span>/hr per whole node</span>
         <p>0-100% of the node's vCPU+RAM: each percent buys ≈0.16 vCPU, ≈0.64&nbsp;GB RAM, ≈10 GFLOPS (a whole node is roughly a thousandth of a card's FLOPS). <b>Your app's memory cap is exactly this slice of the node's 64&nbsp;GB.</b></p>
       </div>
       <div class="price-card">
@@ -261,8 +261,8 @@
     </div>
     <div class="contract-foot"><a class="contract-link" id="priceAddrLink" target="_blank" rel="noopener" aria-label="View the EnclaveDeployments contract on Basescan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg> contract</a></div>
 
-    <div class="price-formula"><code>price = GPU% × $6/hr &nbsp;+&nbsp; CPU% × $1/hr &nbsp;·&nbsp; metered per second</code></div>
-    <p class="mig-note" style="margin-top:10px;">One honest rounding note: the per-second rate is settled in whole millionths of a USDC, rounded up - so the very smallest slices meter a hair above the formula (a 1%-CPU app runs at $0.0108/hr rather than $0.0100). Every estimate shown on the deploy pages already includes this.</p>
+    <div class="price-formula"><code>price = GPU% × $<span data-live-price="unit-hr" data-gpu="100">6</span>/hr &nbsp;+&nbsp; CPU% × $<span data-live-price="unit-hr" data-cpu="100">3</span>/hr &nbsp;·&nbsp; metered per second</code></div>
+    <p class="mig-note" style="margin-top:10px;">One honest rounding note: the per-second rate is settled in whole millionths of a USDC, rounded up - so the very smallest slices meter a hair above the formula (a 1%-CPU app runs at $<span data-live-price="hr4" data-cpu="1">0.0324</span>/hr rather than $<span data-live-price="lin-hr4" data-cpu="1">0.0300</span>). Every estimate shown on the deploy pages already includes this.</p>
 
     <div class="mig-table-wrap">
       <div class="mig-scroll">
@@ -271,11 +271,11 @@
           <tr><th>Example</th><th>GPU share</th><th>CPU share</th><th>What the shares grant</th><th>Per hour</th><th>Per second</th></tr>
         </thead>
         <tbody>
-          <tr class="full"><td>CPU-only</td><td>0%</td><td>10%</td><td>no GPU · 6.4 GB RAM / 1.6 vCPU</td><td>$0.10</td><td>$0.0000278</td></tr>
-          <tr class="full"><td>Slice</td><td>10%</td><td>5%</td><td>~14 GB VRAM / ~99 TFLOPS · 3.2 GB RAM</td><td>$0.65</td><td>$0.0001806</td></tr>
-          <tr class="full"><td>Quarter</td><td>25%</td><td>5%</td><td>~35 GB VRAM / ~247 TFLOPS · 3.2 GB RAM</td><td>$1.55</td><td>$0.0004306</td></tr>
-          <tr class="full"><td>Half</td><td>50%</td><td>10%</td><td>~70 GB VRAM / ~495 TFLOPS · 6.4 GB RAM</td><td>$3.10</td><td>$0.0008611</td></tr>
-          <tr class="full"><td>Full GPU</td><td>100%</td><td>10%</td><td>141 GB VRAM / 989 TFLOPS · 6.4 GB RAM</td><td>$6.10</td><td>$0.0016945</td></tr>
+          <tr class="full"><td>CPU-only</td><td>0%</td><td>10%</td><td>no GPU · 6.4 GB RAM / 1.6 vCPU</td><td>$<span data-live-price="hr" data-cpu="10">0.30</span></td><td>$<span data-live-price="sec" data-cpu="10">0.000084</span></td></tr>
+          <tr class="full"><td>Slice</td><td>10%</td><td>5%</td><td>~14 GB VRAM / ~99 TFLOPS · 3.2 GB RAM</td><td>$<span data-live-price="hr" data-gpu="10" data-cpu="5">0.75</span></td><td>$<span data-live-price="sec" data-gpu="10" data-cpu="5">0.000209</span></td></tr>
+          <tr class="full"><td>Quarter</td><td>25%</td><td>5%</td><td>~35 GB VRAM / ~247 TFLOPS · 3.2 GB RAM</td><td>$<span data-live-price="hr" data-gpu="25" data-cpu="5">1.65</span></td><td>$<span data-live-price="sec" data-gpu="25" data-cpu="5">0.000459</span></td></tr>
+          <tr class="full"><td>Half</td><td>50%</td><td>10%</td><td>~70 GB VRAM / ~495 TFLOPS · 6.4 GB RAM</td><td>$<span data-live-price="hr" data-gpu="50" data-cpu="10">3.30</span></td><td>$<span data-live-price="sec" data-gpu="50" data-cpu="10">0.000917</span></td></tr>
+          <tr class="full"><td>Full GPU</td><td>100%</td><td>10%</td><td>141 GB VRAM / 989 TFLOPS · 6.4 GB RAM</td><td>$<span data-live-price="hr" data-gpu="100" data-cpu="10">6.30</span></td><td>$<span data-live-price="sec" data-gpu="100" data-cpu="10">0.001751</span></td></tr>
         </tbody>
       </table>
       </div>

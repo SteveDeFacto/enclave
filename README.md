@@ -46,7 +46,7 @@ Beyond plain web apps: GPU inference via `wasi-nn` (ONNX, plus GGUF through a bu
 
 The app's specs set the **minimum shares**: each pool's floor is the spec divided by the server's spec, taking the **larger** of the memory and compute axes, rounded up to the whole percent. Server specs: H200 = 141 GB / 989 TFLOPS (VRAM is probed from the card at boot via `nvidia-smi memory.total`, `GPU_VRAM_GB` is only the fallback; compute via `GPU_TFLOPS`); node = 64 GB / ~1000 GFLOPS (`NODE_RAM_GB`/`NODE_GFLOPS`; CPU compute is denominated in GFLOPS because a whole node is only ~1/1000 of a card). A GPU app's CPU minimum also lifts its GPU minimum, because of the invariant: **`gpuShare >= cpuShare` whenever `gpuShare > 0`** (a GPU app's CPU slice rides on the same node as its card). Runners enforce the minimums at deploy and claim time; the site's deploy page floors its two dials at them.
 
-The leftovers are the point: a tenant buying 100% GPU + 10% CPU leaves 90% of that node's CPU/RAM rentable by CPU-only apps. Pricing is additive: `rate = gpuShare × cardRate ($6/hr) + cpuShare × nodeRate ($1/hr)`, per second.
+The leftovers are the point: a tenant buying 100% GPU + 10% CPU leaves 90% of that node's CPU/RAM rentable by CPU-only apps. Pricing is additive: `rate = gpuShare × cardRate ($6/hr) + cpuShare × nodeRate ($3/hr)`, per second.
 
 Routing: GPU work (`gpuShare > 0`) runs **only** on GPU-enabled enclaves. CPU-only work is served by CPU-only enclaves first; GPU enclaves bid on it only after a grace window (`CPU_CLAIM_GRACE_SEC`, default 120s) and only out of leftover CPU pool.
 

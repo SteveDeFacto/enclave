@@ -16,6 +16,7 @@ import "../../components/live-verify/live-verify.js";
 import { $ } from "../core/util.js";
 import { DEPLOYMENTS_ADDRESS } from "../core/config.js";
 import { catExplorer } from "../core/chain.js";
+import { hydrateLivePrices } from "../core/live-prices.js";
 
 /* Scroll reveal: sections below the fold get .rv (hidden, see base.css)
    and settle in on first intersection; cards inside stagger via --rv-i.
@@ -63,6 +64,9 @@ export function boot() {
       link.title = "EnclaveDeployments · " + DEPLOYMENTS_ADDRESS;
     } else link.hidden = true;
   }
+  // every quoted dollar rate on this page re-reads from the contract - the
+  // baked numbers are only the first paint (see core/live-prices.js)
+  hydrateLivePrices();
   // reveal init waits one frame: the router scrolls right after boot()
   // returns (and a hard entry may still be applying its anchor scroll), so
   // the fold check must run against the settled viewport, not a stale one

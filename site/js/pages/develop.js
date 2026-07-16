@@ -13,6 +13,7 @@ import "../../components/code-tabs/code-tabs.js";
 import "../../components/api-reference/api-reference.js";
 import { $, $$ } from "../core/util.js";
 import { downloadSpec } from "../../components/footer/footer.js";
+import { hydrateLivePrices } from "../core/live-prices.js";
 
 /* ============================================================
    Guide chapter scroll-spy
@@ -104,5 +105,6 @@ document.addEventListener("enclave:api-rendered", () => {
 export function boot() {
   run(initDocs);
   run(() => gotoAnchor((location.hash || "").slice(1) || "docs"));   // pane visibility before the spec arrives
+  run(hydrateLivePrices);   // the docs quote real $/hr rates - refresh them from the contract
   const dl = $("#dlSpec"); if (dl) dl.addEventListener("click", downloadSpec);
 }
