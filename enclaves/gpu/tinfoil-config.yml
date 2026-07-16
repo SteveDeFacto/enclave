@@ -354,45 +354,29 @@ containers:
       # at graph allocation ("sampling for image 1/1 failed" in <1s, seen
       # live). With FA the 2048px diffusion buffer is a few GB.
       - ENCLAVE_SD_FLASH_ATTN: "1"
-      # qwen-image-2512 crystalline-speckle: the REAL fix ships in the ggml
-      # toolchain (ELL sd7, MMQ stream-k disabled - see wasm/Dockerfile.wasmtime
-      # and .github/workflows/llamacpp-toolchain.yml), NOT here. Isolated on
-      # hardware: the fleet's own lib renders pixel-clean when its sm_86 SASS runs
-      # on a 46-SM RTX 3070 (even under MPS SM caps down to ~2 SMs) and speckles
-      # only when its sm_90 SASS runs on the 132-SM H200 - identical binary,
-      # weights, seed. Cause: MMQ stream-k splits each Q8_0 matmul's K dim across
-      # `nsm` blocks (nsm = device SM count) and recombines them in a fixup kernel
-      # whose pool temp buffer the code itself flags race-prone (mmq.cu ~L250);
-      # the H200's high nsm yields sparse wrong outputs = the speckle. sd7 forces
-      # conventional tiling (use_stream_k=false).
+      # qwen-image-2512 crystalline-speckle - CURRENT fix attempt: bypass ggml's
+      # MMQ int8 kernels entirely via NVIDIA cuBLAS (ELL sd8, built with
+      # -DGGML_CUDA_FORCE_CUBLAS=ON; see llamacpp-toolchain.yml). The env below
+      # forces full-precision F32 accumulation in that cuBLAS path.
       #
-      # Ruled out by experiment (do not revisit): VAE (vae-on-cpu still speckled),
-      # flash-attn, fp16/bf16 (Q8_0 uses integer MMQ on both archs, mmq.cu:307),
-      # compiler (nvcc+clang both clean on sm_86), MPS SM-capping (clean on sm_86
-      # at every cap), and PDL - GGML_CUDA_PDL=0 shipped in v0.5.160 and did NOT
-      # clear the speckle. FA restored to 1 (the v0.5.158 FA=0 was a diagnostic);
-      # GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F dropped (never a real ggml env; the
-      # actual knob is GGML_CUDA_CUBLAS_COMPUTE_TYPE). GGML_CUDA_PDL=0 KEPT as
-      # cheap conservative Hopper hardening (PDL is a documented race-prone launch
-      # path); it is not the speckle fix.
+      # The speckle survives EVERY ggml execution-path change tried on the fleet:
+      # VAE-on-cpu (v0.5.157), flash-attn off (v0.5.158), PDL off (v0.5.160),
+      # MMQ stream-k off (v0.5.161), CUDA graphs+fusion off (v0.5.162). It appears
+      # ONLY on the H200's sm_90 path - the fleet's own lib renders pixel-clean on
+      # a 46-SM RTX 3070's sm_86 (even under MPS SM caps to ~2 SMs), same binary/
+      # weights/seed. Surviving all kernel-SELECTION changes points either at the
+      # matmul kernels themselves on sm_90 or BELOW ggml (H200 confidential-
+      # computing memory path / driver). FORCE_CUBLAS is the discriminator: routes
+      # all matmuls through NVIDIA's tested GEMM. If the speckle clears -> it was
+      # ggml's MMQ kernels; if it persists -> it is below ggml (platform-level).
+      # Verified locally: FORCE_CUBLAS+f32 builds and renders pixel-identical on
+      # sm_86 (no regression, no OOM). Costs H200 matmul throughput.
+      #
+      # GGML_CUDA_PDL=0 kept as cheap conservative Hopper hardening (documented
+      # race-prone launch path; not the speckle fix). DISABLE_GRAPHS/DISABLE_FUSION
+      # from v0.5.162 REMOVED - they didn't clear the speckle and cost throughput.
       - GGML_CUDA_PDL: "0"
-      # qwen-image-2512 speckle - NEXT TEST (2026-07-16, after sd7/stream-k
-      # disable STILL speckled in v0.5.161). Newly-isolated confound: every clean
-      # local run offloads (params_backend=*=cpu + max_vram, forced by the 3070's
-      # 8 GB) so the diffusion graph is CUT into 4 small CUDA graphs; the fleet
-      # H200 (141 GB) runs FULLY RESIDENT -> ONE big CUDA graph. My local uses
-      # CUDA graphs on sm_86 and is clean ("CUDA graph warmup complete" in the
-      # logs), so this is not graphs-per-se - it is the sm_90 replay SCHEDULING
-      # of one large captured graph, which can parallelize captured nodes across
-      # a missing dependency (a race the eager/sm_86 path serializes away) =
-      # sparse saturated spikes. GGML_CUDA_DISABLE_GRAPHS forces eager launch
-      # (common.cuh:1234, presence-gated); GGML_CUDA_DISABLE_FUSION drops fused
-      # kernels (ggml-cuda.cu:3041, truthy-gated) - both safe (slower, always
-      # correct). If this clears the speckle, graphs is the prime suspect and
-      # these can be bisected/perf-tuned later; if not, the next step is bypassing
-      # ggml's MMQ int8 kernels via cuBLAS (toolchain rebuild).
-      - GGML_CUDA_DISABLE_GRAPHS: "1"
-      - GGML_CUDA_DISABLE_FUSION: "1"
+      - GGML_CUDA_CUBLAS_COMPUTE_TYPE: "f32"
       # Fused-attention quarantine (ORT/onnx volumes only - sdcpp/ggml
       # tenants are untouched): deployments attaching a listed volume get
       # the ORT_DISABLE_* attention envs in THEIR wasmtime process (unfused
