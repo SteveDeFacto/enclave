@@ -354,34 +354,27 @@ containers:
       # at graph allocation ("sampling for image 1/1 failed" in <1s, seen
       # live). With FA the 2048px diffusion buffer is a few GB.
       - ENCLAVE_SD_FLASH_ATTN: "1"
-      # qwen-image-2512 crystalline-speckle ROOT CAUSE + FIX (2026-07-16),
-      # isolated decisively on hardware: the fleet's OWN nvcc lib renders
-      # pixel-clean when its sm_86 SASS executes on an Ampere card (RTX 3070) and
-      # speckles ONLY when its sm_90 SASS executes on the H200 - identical binary,
-      # identical weights, identical seed. The split is therefore NOT numeric
-      # (VAE-on-CPU, FA off, fp16, bf16, and nvcc-vs-clang were each ruled out by
-      # experiment); it is ggml-cuda's Programmatic Dependent Launch (PDL). PDL
-      # overlaps consecutive kernels on Hopper, resynchronizing via
-      # cudaGridDependencySynchronize / cudaTriggerProgrammaticLaunchCompletion,
-      # and is emitted ONLY for __CUDA_ARCH__>=900 / ptxVersion>=90
-      # (common.cuh:124,130,1611) - so it is LIVE on the H200 and DEAD on every
-      # pre-Hopper card. That is exactly the observed sm_86-clean/sm_90-speckle
-      # boundary. The PDL launcher (ggml_cuda_kernel_launch) wraps the diffusion
-      # glue kernels - norm, rope, cpy, binbcast (bias adds), quantize
-      # (activation->Q8_0 before each MMQ), unary, scale - and a read-before-write
-      # across a PDL boundary corrupts intermediate activations into the
-      # green/magenta crystalline glitter.
+      # qwen-image-2512 crystalline-speckle: the REAL fix ships in the ggml
+      # toolchain (ELL sd7, MMQ stream-k disabled - see wasm/Dockerfile.wasmtime
+      # and .github/workflows/llamacpp-toolchain.yml), NOT here. Isolated on
+      # hardware: the fleet's own lib renders pixel-clean when its sm_86 SASS runs
+      # on a 46-SM RTX 3070 (even under MPS SM caps down to ~2 SMs) and speckles
+      # only when its sm_90 SASS runs on the 132-SM H200 - identical binary,
+      # weights, seed. Cause: MMQ stream-k splits each Q8_0 matmul's K dim across
+      # `nsm` blocks (nsm = device SM count) and recombines them in a fixup kernel
+      # whose pool temp buffer the code itself flags race-prone (mmq.cu ~L250);
+      # the H200's high nsm yields sparse wrong outputs = the speckle. sd7 forces
+      # conventional tiling (use_stream_k=false).
       #
-      # FIX: PDL is default-ON with a runtime kill switch (getenv in
-      # common.cuh:1630). Setting it to 0 falls back to standard sequential
-      # kernel launches (common.cuh:1642). Config-only, no toolchain/image
-      # rebuild, zero numeric risk. FA restored to 1 (the v0.5.158 FA=0 was a
-      # diagnostic, now unnecessary). The prior fp16-cublas-overflow theory was
-      # WRONG: Q8_0 matmuls already take the integer MMQ path on BOTH archs
-      # (turing_mma_available true for sm_86 AND sm_90, mmq.cu:307), and
-      # GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F was never a real ggml env var (the
-      # actual knob is GGML_CUDA_CUBLAS_COMPUTE_TYPE) - dropped as a confirmed
-      # no-op.
+      # Ruled out by experiment (do not revisit): VAE (vae-on-cpu still speckled),
+      # flash-attn, fp16/bf16 (Q8_0 uses integer MMQ on both archs, mmq.cu:307),
+      # compiler (nvcc+clang both clean on sm_86), MPS SM-capping (clean on sm_86
+      # at every cap), and PDL - GGML_CUDA_PDL=0 shipped in v0.5.160 and did NOT
+      # clear the speckle. FA restored to 1 (the v0.5.158 FA=0 was a diagnostic);
+      # GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F dropped (never a real ggml env; the
+      # actual knob is GGML_CUDA_CUBLAS_COMPUTE_TYPE). GGML_CUDA_PDL=0 KEPT as
+      # cheap conservative Hopper hardening (PDL is a documented race-prone launch
+      # path); it is not the speckle fix.
       - GGML_CUDA_PDL: "0"
       # Fused-attention quarantine (ORT/onnx volumes only - sdcpp/ggml
       # tenants are untouched): deployments attaching a listed volume get
