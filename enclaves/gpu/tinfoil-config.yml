@@ -353,13 +353,22 @@ containers:
       # 16384^2 per head, tens of GB of compute buffer, and sampling dies
       # at graph allocation ("sampling for image 1/1 failed" in <1s, seen
       # live). With FA the 2048px diffusion buffer is a few GB.
-      # DIAGNOSTIC (2026-07-15): flipped to 0 to isolate the qwen-image-2512
-      # crystalline speckle. v0.5.151 (VAE pinned f32 + VAE FA off) did NOT
-      # fix it, which exonerates the VAE and points at the diffusion model's
-      # fp16 flash-attention path. If qwen@512 renders clean with FA off, the
-      # diffusion FA overflow is confirmed. Revert (or cap qwen resolution)
-      # once diagnosed - FA is still required for 2048px.
-      - ENCLAVE_SD_FLASH_ATTN: "0"
+      - ENCLAVE_SD_FLASH_ATTN: "1"
+      # THE qwen-image-2512 crystalline-speckle FIX (2026-07-15). Root cause:
+      # ggml-cuda's fp16 cublas matmul path on Hopper (H200) uses
+      # CUBLAS_COMPUTE_16F - fp16 ACCUMULATION. The 20B Qwen-Image MMDiT's
+      # matmul dot products (hidden dim 4096+, large activations) sum past
+      # fp16's max (65504) and saturate to inf -> sparse latent spikes the VAE
+      # faithfully decodes as crystalline speckle. (CPU is f32-accumulate =
+      # clean; smaller z-image doesn't overflow; NOT flash attention - v0.5.152
+      # ran FA off and it persisted; NOT the VAE - decode is clean in fp16 up
+      # to |latent|~272, verified on a 3070.) This env forces every ggml-cuda
+      # cublas GEMM to CUBLAS_COMPUTE_32F (f32 accumulation) - fixes the
+      # overflow, keeps Q8_0 weights (no VRAM change), negligible cost on
+      # Hopper tensor cores. Node-wide: also makes z-image / llm GGUF matmuls
+      # f32-accumulate (strictly more correct). Read once per wasmtime process
+      # via getenv in ggml-cuda.cu; inherited from this container's env.
+      - GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F: "1"
       # Fused-attention quarantine (ORT/onnx volumes only - sdcpp/ggml
       # tenants are untouched): deployments attaching a listed volume get
       # the ORT_DISABLE_* attention envs in THEIR wasmtime process (unfused
