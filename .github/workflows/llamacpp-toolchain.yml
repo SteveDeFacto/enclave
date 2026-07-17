@@ -94,17 +94,17 @@ jobs:
             -DGGML_CUDA=ON \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.6/bin/nvcc \
             -DCMAKE_CUDA_ARCHITECTURES="86-real;90-real" \
-            `# NATIVE int8 MMQ (no FORCE_CUBLAS) + ptxas -O2. The sm_90 speckle is a` \
+            `# NATIVE int8 MMQ (no FORCE_CUBLAS) + ptxas -O0. The sm_90 speckle is a` \
             `# ptxas SCHEDULING/register miscompile of the int8 MMQ path (#24399:` \
             `# stale address register on a shared STORE) - present at the default` \
-            `# ptxas -O3 on CUDA 12.6 AND 13.3. Throttling ptxas to -O2 changes its` \
+            `# ptxas -O3 on CUDA 12.6 AND 13.3. Throttling ptxas to -O0 changes its` \
             `# instruction scheduling + register allocation, aiming to dodge the` \
             `# miscompile while KEEPING the fast native m16n8k32 tensor-core path at` \
             `# Q8_0 (the ~6.5s target, vs cuBLAS ~28s). No source patch.` \
             -DGGML_NATIVE=OFF \
             -DCMAKE_C_FLAGS="-DGGML_MAX_NAME=128" \
             -DCMAKE_CXX_FLAGS="-DGGML_MAX_NAME=128" \
-            -DCMAKE_CUDA_FLAGS="-DGGML_MAX_NAME=128 -Xptxas -O2" \
+            -DCMAKE_CUDA_FLAGS="-DGGML_MAX_NAME=128 -Xptxas -O0" \
             -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF \
             -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_COMMON=OFF \
             -DCMAKE_INSTALL_PREFIX=/tmp/ggml-prefix
