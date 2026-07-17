@@ -358,21 +358,16 @@ containers:
       # at graph allocation ("sampling for image 1/1 failed" in <1s, seen
       # live). With FA the 2048px diffusion buffer is a few GB.
       - ENCLAVE_SD_FLASH_ATTN: "1"
-      # qwen-image-2512 crystalline-speckle: fixed by FORCE_CUBLAS (ELL sd12,
-      # -DGGML_CUDA_FORCE_CUBLAS=ON). Root cause = sm_90 (Hopper H200) ptxas/
-      # scheduler MISCOMPILE of ggml's int8 MMQ path (same locus as llama.cpp
-      # #24399, coredumps on sm_120; silent chromatic speckle on sm_90). NOT a
-      # source bug (identical PTX is pixel-clean on sm_86) and NO upstream fix
-      # exists (#24399 open+stale). It is NOT reachable by MMQ config: EVERY MMQ
-      # variant stayed speckled on the live H200 - native m16n8k32, the 4x
-      # m8n8k16 decomposition (sd10), mmq_x=64 (sd11), Q6_K (sd9), stream-k-off
-      # (v0.5.161); also ruled out VAE (v0.5.157), flash (v0.5.158), PDL
-      # (v0.5.160), graphs+fusion (v0.5.162). ONLY bypassing MMQ via cuBLAS is
-      # clean (proven v0.5.163). Cost: cuBLAS dequantizes every pass -> slower
-      # (~30s/gen); the fast native int8 path needs a real upstream ggml/ptxas
-      # fix. COMPUTE_TYPE=f32 forces full-precision cuBLAS accumulation: f16
-      # overflows qwen's activations (>65504 -> NaN white), f32 has the range.
-      - GGML_CUDA_CUBLAS_COMPUTE_TYPE: "f32"
+      # qwen-image-2512 crystalline-speckle: NATIVE int8 MMQ at Q8_0, chasing the
+      # fast tensor-core path CLEAN (the ~6.5s target; cuBLAS bypass is clean but
+      # ~28s). Root cause = sm_90 (Hopper H200) ptxas SCHEDULING miscompile of the
+      # int8 MMQ path (#24399: stale address register on a shared STORE), present
+      # at ptxas -O3 on CUDA 12.6 AND 13.3. This ELL throttles ptxas (see
+      # llamacpp-toolchain.yml -Xptxas). NOT a source bug (clean on sm_86), NO
+      # upstream fix. Ruled out (do not revisit): FORCE_CUBLAS is the clean-but-
+      # slow bypass (v0.5.163/169); Q6_K (sd9), 4x m8n8k16 decomp (sd10), mmq_x=64
+      # (sd11), stream-k-off (v0.5.161), VAE (v0.5.157), flash (v0.5.158), PDL
+      # (v0.5.160), graphs+fusion (v0.5.162) all stayed speckled.
       # GGML_CUDA_PDL=0 kept as cheap Hopper hardening (not the fix).
       - GGML_CUDA_PDL: "0"
       # Fused-attention quarantine (ORT/onnx volumes only - sdcpp/ggml
