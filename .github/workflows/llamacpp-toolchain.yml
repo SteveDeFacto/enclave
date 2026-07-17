@@ -90,6 +90,21 @@ jobs:
           cd /tmp/llama.cpp
           git checkout "$LLAMA_COMMIT"
 
+      - name: Patch ggml CMake for clang-as-CUDA compiler
+        run: |
+          cd /tmp/llama.cpp
+          # Pristine ggml sets CUDA_FLAGS = -use_fast_math -extended-lambda
+          # UNCONDITIONALLY; both are nvcc-only spellings that clang rejects
+          # ("unknown argument: -extended-lambda"). Gate them on the NVIDIA
+          # compiler id and give clang the equivalents (-ffast-math; host flags
+          # passed directly, not via -Xcompiler). Same patch the local clang
+          # build carries. No-op / not applied for nvcc builds don't need it -
+          # this branch always builds with clang.
+          git apply "$GITHUB_WORKSPACE/wasm/patches/ggml-clang-cmake.patch"
+          grep -q 'CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA"' ggml/src/ggml-cuda/CMakeLists.txt \
+            || { echo "ERROR: ggml clang CMake patch did not apply"; exit 1; }
+          echo "ggml CMake patched for clang"
+
       - name: Build (Release, CUDA, shared libs, sm_86+sm_90, portable CPU)
         run: |
           cd /tmp/llama.cpp
