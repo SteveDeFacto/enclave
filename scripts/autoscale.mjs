@@ -64,6 +64,8 @@ export const CFG = {
   cooldownSec: num("AUTOSCALE_COOLDOWN_SEC", 1800),
   idleStopSec: num("AUTOSCALE_IDLE_STOP_SEC", 2700),
   hintMax: num("AUTOSCALE_HINT_MAX", 10),
+  consolidate: (env.AUTOSCALE_CONSOLIDATE ?? "") !== "0" && (env.AUTOSCALE_CONSOLIDATE ?? "") !== "off",
+  evacMinRemainingSec: num("AUTOSCALE_EVAC_MIN_REMAINING_SEC", 1800),
   bootTimeoutSec: num("AUTOSCALE_BOOT_TIMEOUT_SEC", 1500),
   trustTimeoutSec: num("AUTOSCALE_TRUST_TIMEOUT_SEC", 420), // relay REGISTRY_POLL_SEC is 300
 };
@@ -103,7 +105,7 @@ const STRUCTURAL_RE = /below the app's minimum|deactivated|configCid is retired|
 // pure planner — all scaling policy lives here (unit-tested in test/)
 // ---------------------------------------------------------------------------
 export function decide(snap, cfg = CFG) {
-  const { candidates, enclaves, containers, health, relayDomains, relayOk = true, leases = [], lastActionAgo = {}, now = 0 } = snap;
+  const { candidates, enclaves, containers, health, relayDomains, relayOk = true, leases = [], lastActionAgo = {}, now = 0, hosted = [] } = snap;
   const warnings = [];
   const actions = [];
   // a relay outage looks identical to "no capacity anywhere" — refuse to act on it.
@@ -183,6 +185,30 @@ export function decide(snap, cfg = CFG) {
           actions.push({ type: "stop", name: c.name, flavor: f,
             reason: `idle (0 deployments, last on-chain lease ended ${Math.round(idleAge / 60)}m ago), no queued ${f} demand` });
         }
+      }
+    }
+
+    // consolidation: when everything is quiet, evacuate ONE auto box whose
+    // live tenants ALL fit on a single other box — a graceful on-chain
+    // release refunds each tenant's unused tail and the target's sweep
+    // re-claims them (a restart, same as any lease migration). The emptied
+    // box then idle-stops on a later tick (hysteresis by construction).
+    if (cfg.consolidate && relayOk && !wantUp && d.count === 0 && !cooling &&
+        !actions.some((a) => a.flavor === f)) {
+      for (const src of running) {
+        const tenants = hosted.filter((h) => h.runner === src.runnerId && h.flavor !== "gpu8");
+        if (tenants.length === 0) continue;                                   // idle-stop path owns this
+        if (tenants.some((t) => t.remainingSec < cfg.evacMinRemainingSec)) continue; // draining soon: just wait
+        const needGpu = tenants.reduce((s2, t) => s2 + t.gpuShare, 0);
+        const needCpu = tenants.reduce((s2, t) => s2 + t.cpuShare, 0);
+        const target = enclaves.find((e2) => e2.runnerId && e2.runnerId !== src.runnerId &&
+          (f !== "gpu" || (e2.gpu && e2.gpuShareFree >= needGpu + 0.01)) &&
+          e2.cpuShareFree >= needCpu + 0.01);
+        if (!target) continue;
+        actions.push({ type: "evacuate", name: src.name, flavor: f, moves: tenants.map((t) => t.id),
+          target: target.endpoint,
+          reason: `consolidation: ${tenants.length} tenant(s) (gpu ${needGpu.toFixed(2)} / cpu ${needCpu.toFixed(2)}) fit on ${target.endpoint}; box empties then idle-stops` });
+        break;                                                                // one evacuation per run
       }
     }
 
@@ -344,12 +370,16 @@ async function buildSnapshot(log) {
   let enclaves = [], relayDomains = [], relayOk = false;
   try {
     const r = await fetchJson(`${CFG.apiBase}/enclaves`);
-    enclaves = (r.enclaves || []).map((e) => ({
-      gpu: !!e.availability?.gpu,
-      gpuShareFree: Number(e.availability?.gpuShareFree || 0),
-      cpuShareFree: Number(e.availability?.cpuShareFree || 0),
-      endpoint: String(e.endpoint || e.url || ""),
-    }));
+    enclaves = (r.enclaves || []).map((e) => {
+      const endpoint = String(e.endpoint || e.url || "");
+      return {
+        gpu: !!e.availability?.gpu,
+        gpuShareFree: Number(e.availability?.gpuShareFree || 0),
+        cpuShareFree: Number(e.availability?.cpuShareFree || 0),
+        endpoint,
+        runnerId: endpoint ? keccak256(stringToBytes(endpoint)).toLowerCase() : null,
+      };
+    });
     relayDomains = enclaves.map((e) => e.endpoint.toLowerCase()).filter(Boolean);
     relayOk = true;
     log(`relay: ${enclaves.length} live enclave(s)`);
@@ -379,13 +409,19 @@ async function buildSnapshot(log) {
   }
 
   const leases = rows.map((d) => ({ runner: String(d.runner).toLowerCase(), leaseUntil: Number(d.leaseUntil) }));
+  const hosted = rows.filter((d) => d.active && Number(d.leaseUntil) > now).map((d) => ({
+    id: d.id, runner: String(d.runner).toLowerCase(),
+    flavor: d.gpuMilli > 0 ? "gpu" : "cpu",
+    gpuShare: d.gpuMilli / 1000, cpuShare: d.cpuMilli / 1000,
+    remainingSec: (Number(d.leaseUntil) - now) + (Number(d.rate) > 0 ? Math.floor(Number(d.balance6) / Number(d.rate)) : 0),
+  }));
   const lastActionAgo = {};
   for (const f of ["gpu", "cpu"]) {
     const at = Number(env[`AUTOSCALE_LAST_ACTION_${f.toUpperCase()}`] || 0);
     lastActionAgo[f] = at > 0 ? Math.max(0, now - at) : Infinity;
   }
 
-  return { now, candidates, enclaves, containers, health, relayDomains, relayOk, leases, lastActionAgo };
+  return { now, candidates, enclaves, containers, health, relayDomains, relayOk, leases, lastActionAgo, hosted };
 }
 
 async function verifyTagExists(tag) {
@@ -532,6 +568,21 @@ async function apply(planPath) {
         await tinfoil(["container", cur.status === "failed" ? "relaunch" : "start", a.name, "--tag", a.tag]);
         const domain = await waitServing(a.name, log);
         await waitRelayTrust(a.name, domain, log);
+      } else if (a.type === "evacuate") {
+        if (!cur || /^(stopped|stopping|failed)$/.test(cur.status)) { log("  source no longer running — skip"); continue; }
+        if (!env.ADMIN_TOKEN) { log("  ADMIN_TOKEN not set — cannot release tenants; skip (set the repo secret to enable consolidation)"); continue; }
+        for (const id of a.moves) {
+          try {
+            const r = await fetch(`https://${cur.domain}/v1/admin/deployments/${id}/release`, {
+              method: "POST", headers: { "x-admin-token": env.ADMIN_TOKEN }, signal: AbortSignal.timeout(30000) });
+            if (r.status === 404) { log(`  ${id.slice(0, 10)}…: endpoint missing — supervisor predates the release lever (ships with the next fleet update); skip rest`); break; }
+            if (!r.ok) { const b = await r.text(); throw new Error(`${r.status}: ${b.slice(0, 120)}`); }
+            log(`  ${id.slice(0, 10)}…: released (tail refunded on-chain; re-queues for ${a.target})`);
+          } catch (e) {
+            log(`  ${id.slice(0, 10)}…: release failed — ${e.message}`);
+            failures.push(`evacuate ${a.name} ${id.slice(0, 10)}: ${e.message}`);
+          }
+        }
       } else if (a.type === "create") {
         if (cur) { log(`  already exists (status ${cur.status}) — skip`); continue; }
         const args = ["container", "create", a.name, "--repo", CFG.repo, "--tag", a.tag];

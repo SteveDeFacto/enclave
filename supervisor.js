@@ -2513,6 +2513,32 @@ app.post("/v1/admin/deployments/:id/provision", async (req, res) => {
   res.json(view(rec));
 });
 
+// Operator-initiated graceful release — the consolidation lever: stop the app
+// here, refund the unused lease tail on-chain (releaseLease), and let another
+// enclave's sweep re-claim the deployment. The tenant experiences a restart
+// (same as any lease migration); nothing is charged for the moved tail. The
+// evacuation set stops THIS enclave from re-claiming what it just dropped —
+// without it the source's own sweep wins the race and the move never happens.
+const _evacuated = new Map();                 // id -> until (ms)
+const EVAC_HOLDOFF_MS = 15 * 60_000;
+app.post("/v1/admin/deployments/:id/release", async (req, res) => {
+  if (!ADMIN_TOKEN || !safeEqStr(req.headers["x-admin-token"], ADMIN_TOKEN))
+    return fail(res, 404, "not_found", "Not found.");
+  const rec = deployments.get(req.params.id);
+  if (!rec) return fail(res, 404, "not_found", "No such deployment.");
+  if (!rec._onchain || !["running", "claimed"].includes(rec.status))
+    return fail(res, 409, "not_releasable", `Deployment is ${rec.status}.`);
+  try { await stopContainer(rec); } catch {}
+  if (rec._gpu) { releaseGpu(rec._gpu); rec._gpu = null; }
+  rec.status = "expired";
+  rec.error = "released by the operator (fleet consolidation); it re-queues and another enclave picks it up";
+  _evacuated.set(rec.id, Date.now() + EVAC_HOLDOFF_MS);
+  releaseLease(rec.id, "operator release (consolidation)").catch(() => {});
+  saveStateSoon();
+  console.log(`[admin] ${rec.id} released by operator (consolidation)`);
+  res.json(view(rec));
+});
+
 app.delete("/v1/deployments/:id", authed, async (req, res) => {
   const rec = deployments.get(req.params.id);
   if (!rec || rec.owner !== req.address) return fail(res, 404, "not_found", "No such deployment.");
@@ -3671,6 +3697,8 @@ async function considerClaim(d, { hinted = false, background = false } = {}) {
   // app (or a transient local fault) claims / fails / releases in a loop.
   const pf = _provisionBackoff.get(d.id);
   if (pf && Date.now() < pf.until) return "provisioning failed here recently; backing off";
+  const ev = _evacuated.get(d.id);
+  if (ev && Date.now() < ev) return "evacuated from here for consolidation; leaving it for another enclave";
   const gpuShare = Number(d.gpuMilli) / 1000, cpuShare = Number(d.cpuMilli) / 1000;
   let slice;
   if (gpuShare > 0) {

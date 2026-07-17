@@ -191,3 +191,68 @@ test("gpu8 containers are never counted or touched", () => {
   assert.ok(r.actions.every((a) => a.flavor !== "gpu8"));
   assert.ok(!r.actions.some((a) => a.name.includes("gpu8")));
 });
+
+// ---------- consolidation: evacuate an auto box whose tenants fit elsewhere --
+const hostedRow = (over = {}) => ({
+  id: "0x" + "e1".repeat(32), runner: RUNNER, flavor: "gpu",
+  gpuShare: 0.35, cpuShare: 0.02, remainingSec: 7200, ...over,
+});
+const KRYPTOS_ID = "0x" + "cd".repeat(32);
+const consolidatableSnap = (over = {}) => snap({
+  containers: [baseline(), autoBox({ status: "running" })],
+  enclaves: [
+    gpuBox({ gpuShareFree: 0.6, cpuShareFree: 0.9, runnerId: KRYPTOS_ID, endpoint: "https://enclave1.nan.containers.tinfoil.dev" }),
+    gpuBox({ gpuShareFree: 0.65, cpuShareFree: 0.9, runnerId: RUNNER, endpoint: "https://auto-gpu-1.nan.containers.tinfoil.dev" }),
+  ],
+  hosted: [hostedRow()],
+  ...over,
+});
+const consolidateCfg = { ...cfg, consolidate: true, evacMinRemainingSec: 1800 };
+
+test("quiet fleet: an auto box's tenants that fit elsewhere get evacuated", () => {
+  const r = decide(consolidatableSnap(), consolidateCfg);
+  assert.equal(r.actions.length, 1);
+  assert.equal(r.actions[0].type, "evacuate");
+  assert.equal(r.actions[0].name, "auto-gpu-1");
+  assert.deepEqual(r.actions[0].moves, [hostedRow().id]);
+  assert.ok(r.actions[0].target.includes("enclave1"));
+});
+
+test("evacuation never fires with demand, cooldown, near-drain tenants, or a too-full target", () => {
+  // queued demand for the flavor
+  assert.equal(decide(consolidatableSnap({ candidates: [gpuAsk()] }), consolidateCfg)
+    .actions.filter((a) => a.type === "evacuate").length, 0);
+  // cooldown
+  assert.equal(decide(consolidatableSnap({ lastActionAgo: { gpu: 60 } }), consolidateCfg)
+    .actions.filter((a) => a.type === "evacuate").length, 0);
+  // tenant about to drain: cheaper to wait
+  assert.equal(decide(consolidatableSnap({ hosted: [hostedRow({ remainingSec: 600 })] }), consolidateCfg)
+    .actions.length, 0);
+  // target lacks room
+  const full = consolidatableSnap();
+  full.enclaves[0].gpuShareFree = 0.2;
+  assert.equal(decide(full, consolidateCfg).actions.length, 0);
+  // kill switch
+  assert.equal(decide(consolidatableSnap(), { ...consolidateCfg, consolidate: false }).actions.length, 0);
+});
+
+test("baseline boxes are never evacuation sources", () => {
+  // tenants live on the BASELINE box; the auto box is empty -> the only
+  // action allowed is idle-stopping the auto box, never evacuating enclave1
+  const s2 = consolidatableSnap({ hosted: [hostedRow({ runner: KRYPTOS_ID })] });
+  const r = decide(s2, consolidateCfg);
+  assert.ok(!r.actions.some((a) => a.type === "evacuate"));
+});
+
+test("a gpu box's riding cpu tenants count toward the target's cpu pool", () => {
+  const s2 = consolidatableSnap({ hosted: [
+    hostedRow(),
+    hostedRow({ id: "0x" + "e2".repeat(32), flavor: "cpu", gpuShare: 0, cpuShare: 0.5 }),
+  ]});
+  s2.enclaves[0].cpuShareFree = 0.3;    // can't take the cpu rider
+  assert.equal(decide(s2, consolidateCfg).actions.length, 0);
+  s2.enclaves[0].cpuShareFree = 0.9;    // now both fit
+  const r = decide(s2, consolidateCfg);
+  assert.equal(r.actions[0]?.type, "evacuate");
+  assert.equal(r.actions[0].moves.length, 2);
+});

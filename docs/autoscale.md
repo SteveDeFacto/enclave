@@ -71,6 +71,26 @@ of: zero unmet demand for the flavor, the box's own `/v1/health` reporting
 cooldown, and `AUTOSCALE_IDLE_STOP_SEC` (45 min) since the last one. gpu8
 flavors are out of scope entirely.
 
+## Consolidation (scale-down by moving tenants)
+
+When a flavor is fully quiet — zero unmet demand, no cooldown, no other
+action — and a running `auto-*` box's live tenants would ALL fit on one other
+box (with margin), the planner proposes **evacuate**: each tenant is released
+through the source enclave's `POST /v1/admin/deployments/:id/release`
+(ADMIN_TOKEN-gated; ships in supervisors ≥ the release carrying it). A
+release stops the app, refunds the unused lease tail on-chain, and holds the
+id off the source for 15 min so the target's sweep re-claims it. The emptied
+box then idle-stops on a later tick — hysteresis by construction. Tenants
+experience one restart (identical to any lease migration): RAM-backed `/data`
+resets, encrypted volumes persist, no funded time is lost.
+
+Guards: only `auto-*` sources (stopping a baseline box saves nothing), one
+evacuation per run, every tenant must have ≥ `AUTOSCALE_EVAC_MIN_REMAINING_SEC`
+(30 min) of runtime left (a draining box is cheaper to just wait out), and the
+whole feature is disabled with `AUTOSCALE_CONSOLIDATE=0`. Requires the
+`ADMIN_TOKEN` repo secret (same value as the fleet's Tinfoil vault secret);
+without it apply skips evacuations with a notice.
+
 ## Approval gating
 
 By default every apply waits on the **`fleet-scale` environment** (required
