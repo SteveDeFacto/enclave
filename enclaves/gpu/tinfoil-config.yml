@@ -366,10 +366,19 @@ containers:
       # even render BYTE-IDENTICAL speckle. It is an sm_90 hardware/architectural
       # issue with ggml's MMQ int8 kernel (open, unfixed llama.cpp #24399); clean
       # on sm_86 with the same binary. ONLY bypassing MMQ via cuBLAS is clean
-      # (proven v0.5.163/169). No speed cost: native MMQ ran ~28-32s = same as
-      # cuBLAS ~28s (the fast native path needs an upstream ggml/NVIDIA fix).
-      # COMPUTE_TYPE=f32: f16 overflows qwen activations (>65504 -> NaN white).
-      - GGML_CUDA_CUBLAS_COMPUTE_TYPE: "f32"
+      # (proven v0.5.163/169).
+      # COMPUTE_TYPE: cuBLAS is clean but its SPEED depends heavily on this.
+      # f32 = true FP32 GEMM on Hopper FP32 CUDA cores (~67 TFLOPS, NO tensor
+      # cores). That is fine at 512 (~34s) but explodes with resolution: 768
+      # ~102s, 1024 >180s -> past the gateway idle-timeout -> "network error"
+      # at the DEFAULT 1024 size (the earlier "no speed cost" note was a
+      # 512-only measurement and was WRONG for 1024). bf16 = bf16 tensor cores
+      # (~989 TFLOPS on H200) with f32 accumulate (ggml traits: data CUDA_R_16BF,
+      # compute CUBLAS_COMPUTE_32F, GEMM_DEFAULT_TENSOR_OP) - much faster AND
+      # still clean: bf16 keeps f32's 8-bit exponent range so it does NOT
+      # overflow qwen activations the way f16 did (>65504 -> NaN white), and it
+      # is still the cuBLAS path so NO int8-MMQ speckle. This is the speed fix.
+      - GGML_CUDA_CUBLAS_COMPUTE_TYPE: "bf16"
       # GGML_CUDA_PDL=0 kept as cheap Hopper hardening (not the fix).
       - GGML_CUDA_PDL: "0"
       # Fused-attention quarantine (ORT/onnx volumes only - sdcpp/ggml
