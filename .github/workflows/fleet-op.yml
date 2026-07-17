@@ -1,0 +1,69 @@
+# fleet-op.yml — manual fleet operations via the Tinfoil CLI, for incident
+# response when the automated paths can't sequence themselves (first need:
+# 2026-07-17, the account's 1-GPU quota blocks blue-green updates while an
+# auto-* box occupies the spare slot — updates then need stop -> update ->
+# start, three ops no other workflow can perform ad hoc).
+#
+# Deliberately small: stop / start / relaunch / get on ONE named container, or
+# update-fleet <tag> (the same script the publish flow runs). No delete — that
+# stays a dashboard-only action. Runs on repo-write trust like deploy.yml.
+name: Fleet Op
+
+run-name: "fleet-op: ${{ inputs.op }} ${{ inputs.target }}${{ inputs.tag != '' && format(' @ {0}', inputs.tag) || '' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      op:
+        description: "Operation"
+        required: true
+        type: choice
+        options: [get, stop, start, relaunch, update-fleet]
+      target:
+        description: "Container name (get/stop/start/relaunch)"
+        required: false
+        default: ""
+        type: string
+      tag:
+        description: "Release tag (start/relaunch optional; update-fleet required)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: autoscale        # serialize with autoscale applies — same fleet, same levers
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  op:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Run operation
+        env:
+          TINFOIL_API_KEY: ${{ secrets.TINFOIL_API_KEY }}
+          OP: ${{ inputs.op }}
+          TARGET: ${{ inputs.target }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          : "${TINFOIL_API_KEY:?TINFOIL_API_KEY secret is required}"
+          ./scripts/ensure-tinfoil-cli.sh
+          export PATH="$HOME/.local/bin:$PATH"
+          case "$OP" in
+            update-fleet)
+              [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-cpu|-gpu8)?$ ]] || { echo "::error::update-fleet needs a valid tag"; exit 2; }
+              ./scripts/tinfoil-update-fleet.sh "$TAG" ;;
+            get|stop|start|relaunch)
+              [[ "$TARGET" =~ ^[a-z0-9][a-z0-9-]{1,40}$ ]] || { echo "::error::target must be a container name"; exit 2; }
+              ARGS=()
+              [ "$OP" = "start" ] || [ "$OP" = "relaunch" ] && [ -n "$TAG" ] && ARGS=(--tag "$TAG")
+              tinfoil container "$OP" "$TARGET" "${ARGS[@]:-}" ;;
+            *) echo "::error::unknown op $OP"; exit 2 ;;
+          esac
