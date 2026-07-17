@@ -1,0 +1,488 @@
+# Enclave enclave - SUBMISSION MODEL (multi-container, all measured & attested).
+#
+# Four containers share one confidential VM (shared localhost network, shared
+# /mnt/ramdisk volume, ipc:host so MPS shared-memory works):
+#
+#   supervisor   - control plane (auth, billing, quota, routing). No GPU. Public via shim.
+#   mps-control  - runs the MPS daemon so per-tenant worker processes get HARDWARE-
+#                  enforced SM% + VRAM caps (validated under CC). Owns /tmp/nvidia-mps.
+#   worker       - GPU container. Holds the card, forks one MPS-capped CUDA process
+#                  per tenant, runs submitted compute. Reached by the supervisor on localhost.
+#   wasm-manager - tenant apps as `wasmtime serve` processes (wasi-nn GPU via MPS).
+#
+# The WHOLE card belongs to tenants: gpuShare is a 1-100% dial and 100% = all
+# 141 GB + all SMs (no platform-model sidecar holds a slice on this flavor -
+# big models ride the same tenant path as attested GGUF volumes via wasi-nn).
+#
+# Tenants do NOT bring containers (Tinfoil forbids runtime container creation) - they
+# SUBMIT work to the worker. That is the only model the platform allows.
+#
+# Images are built+pinned by CI; leave the :placeholder tags, the Release workflow
+# rewrites the @sha256 digests. Tinfoil REQUIRES a digest on every image to attest it.
+cvm-version: 0.7.5
+cpus: 16
+memory: 65536      # 64 GiB
+gpus: 1            # whole H200 attached to the enclave (CC allows 1 or 8)
+
+containers:
+  # --- MPS daemon: makes per-tenant SM%/VRAM caps enforceable in prod -----------
+  - name: "mps-control"
+    image: "ghcr.io/enclavehost/enclave-mps@sha256:e7c28466c299913e4319bb913cd15223fa96b74454de0b7f938283906d648049"
+    runtime: nvidia
+    gpus: all
+    ipc: host
+    restart: always
+    volumes:
+      - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # shared MPS pipe dir
+      - /mnt/ramdisk/nvidia-mps-log:/tmp/nvidia-mps-log
+    healthcheck:
+      test: ["CMD-SHELL", "echo get_server_list | nvidia-cuda-mps-control >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # --- GPU worker: forks MPS-capped CUDA processes per tenant, runs submitted jobs
+  - name: "worker"
+    image: "ghcr.io/enclavehost/enclave-worker@sha256:442b38b86cace20aa69d6e76d9f8c1b3379d1547af5436c4c174ac46c696ada1"
+    runtime: nvidia
+    gpus: all
+    ipc: host
+    restart: always
+    env:
+      - WORKER_PORT: "8090"
+      - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
+      - GPU_VRAM_GB: "141"          # FALLBACK only: the worker probes the card (nvidia-smi memory.total) at boot
+    volumes:
+      - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # join the MPS daemon
+    healthcheck:
+      # /health is token-gated like every worker endpoint, so the probe must
+      # present the bearer ($WORKER_TOKEN is injected into the container env;
+      # unset expands empty and the worker's auth-off fallback still answers).
+      test: ["CMD-SHELL", 'curl -sf -H "Authorization: Bearer $WORKER_TOKEN" http://localhost:8090/health || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    secrets:
+      - WORKER_TOKEN             # shared bearer with the supervisor (SAME Tinfoil secret); gates the worker control plane (/tenants, /run, ...). Unset = loopback-only + auth OFF.
+
+  # --- supervisor: control plane (no GPU), public ingress -----------------------
+  - name: "supervisor"
+    image: "ghcr.io/enclavehost/enclave-supervisor@sha256:ea1ecb1d6d4d019ddd093a878594545f66daa236a5c0879be0ca32a2fa461018"
+    restart: always
+    env:
+      - PORT: "8080"
+      # WORKER_MGR_URL (NOT "WORKER_URL" — the code reads WORKER_MGR_URL; the old
+      # name was a silent no-op that left the default 127.0.0.1:8090 in place).
+      - WORKER_MGR_URL: "http://localhost:8090"          # GPU worker (PTX submission backend)
+      # tenant-app hosting: the wasm-manager runs each app as a `wasmtime serve` process.
+      - PROVISION_BACKEND: "vm"                          # "vm" = wasm app hosting (wasm-manager); "worker" = GPU PTX
+      - VMMGR_URL: "http://localhost:8091"               # the wasm-manager (container below); "vm"/VMMGR names are legacy
+      - PUBLIC_URL: ""                                  # empty: supervisor advertises its own attested shim-cert SAN (handles enclave1..N with one config; Host header is not trusted for identity). Verify the returned network.endpoint on first deploy.
+      - SIWE_DOMAIN: "enclave.host"
+      - SIWE_URI: "https://enclave.host"
+      - CHAIN_ID: "8453"
+      - CORS_ORIGINS: "https://enclave.host"
+      - BASE_RPC: "https://mainnet.base.org"
+      # pay-per-deploy (no custody): supervisor WATCHES this forwarder for payments.
+      # FORWARDER_ADDRESS = deployed EnclavePay contract. USDC funds go straight to the
+      # payout wallet set INSIDE that contract (the operator's cold wallet) - never here.
+      # NOTE: requires outbound egress from the enclave to BASE_RPC. Confirm with Tinfoil.
+      - FORWARDER_ADDRESS: "0x580270e88E5DF35DaD59E7FE3d907ebeA96673a6"                            # set after deploying EnclavePay.sol
+      - USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"   # USDC on Base
+      # app approval gate: EnclaveAppCatalog (read-only, written by scripts/deploy-app-catalog.mjs).
+      # ipfs:// app deploys are REFUSED unless the catalog owner has Approved that
+      # version (setApproval tx signed by the catalog's deployer key). Empty =
+      # nothing can deploy (the image ships no deployable apps; the one baked
+      # .wasm is the boot probe's fixture, not reachable through the API).
+      - APP_CATALOG_ADDRESS: "0xaB0462E55c18E295A221e4Eaa8738F25eB0696D7"                          # set after deploying EnclaveAppCatalog.sol (must be on CHAIN_ID's chain, read via BASE_RPC)
+      - PAYMENT_WINDOW_SEC: "600"                        # unpaid deployments release the reservation
+      - GRACE_SEC: "90"                                  # grace after expiry before teardown (top-up window)
+      - PAY_POLL_SEC: "12"
+      - SESSION_TTL: "43200"
+      # Session JWTs are ES256-signed by a key MINTED IN-ENCLAVE at boot (persisted
+      # to /mnt/ramdisk/enclave-session tmpfs, never host disk), so the operator —
+      # who provisions the fleet SECRET below — CANNOT forge a session token. The
+      # public half is published at /v1/session-jwks and inside /v1/attestation.
+      # There is NO HS256/SECRET fallback: a token that isn't ES256 over this key
+      # is rejected, so nothing the operator holds can mint or verify a session.
+      # attestation: /v1/attestation relays the shim's Remote Attestation Document
+      # (fetched from /.well-known/tinfoil-attestation on loopback; ATTESTATION_URL
+      # overrides discovery if the shim binds elsewhere). ENCLAVE_REPO is the repo
+      # whose Sigstore-signed release measurements verifiers compare the quote to.
+      # MUST match the canonical GitHub casing exactly: Sigstore's policy check
+      # compares it verbatim to the cert's GitHubWorkflowRepository claim, and
+      # "EnclaveHost/Enclave" vs "EnclaveHost/enclave" fails verification.
+      - ENCLAVE_REPO: "EnclaveHost/enclave"
+      # on-chain discovery: with these set, the supervisor self-registers this
+      # enclave in EnclaveRegistry and heartbeats every 15 min (registerOnChain in
+      # supervisor.js), so callers discover enclaves from the chain with no
+      # trusted gateway. Non-fatal: if anything here is missing the enclave still
+      # serves, it just doesn't advertise. Registration signs on Base mainnet over
+      # BASE_RPC and needs the REGISTRY_PRIVATE_KEY secret funded with a little ETH
+      # for gas. The advertised URL is NOT configured — the enclave registers the
+      # hostname in its OWN attested shim-cert SAN (read over loopback at boot),
+      # never a request Host header. (Pin it with PUBLIC_URL only if you must.)
+      - REGISTRY_ENABLED: "1"
+      - ADDRESS_BOOK_ADDRESS: "0xab214342d5A490150A4A977063A2f88E21F80907"                                                            # set by scripts/deploy-address-book.mjs; "" = baked addresses only; when set the supervisor resolves + polls the contract addresses below from the on-chain EnclaveAddressBook
+      - REGISTRY_ADDRESS: "0xCB65f487eba6564D57FfB860cF9aE701584cB4a2"                             # set by scripts/deploy-registry.mjs
+      # - REGISTRY_HEARTBEAT_SEC: "900"                  # optional, default 15 min
+      # Portable deployments (contracts/DEPLOYMENTS.md): with CLAIM_ENABLED the
+      # enclave polls the EnclaveDeployments ledger and claims funded, unleased
+      # deployments it can serve — including ones whose previous runner died.
+      # Claims sign with REGISTRY_PRIVATE_KEY (the contract gates claims to this
+      # registry entry's operator), so registry advertising above is a hard
+      # prerequisite, as is PROVISION_BACKEND=vm (claims run catalog wasm apps).
+      - CLAIM_ENABLED: "1"
+      - DEPLOYMENTS_ADDRESS: "0x0A7dE5D205c10B812AbaF0b89f3A243466bCEe01"                          # set by scripts/deploy-deployments.mjs
+      # - CLAIM_POLL_SEC: "60"                           # optional: queue sweep / lease audit cadence
+      # - RENEW_MARGIN_SEC: "300"                        # optional: renew when less lease than this remains
+      # CPU-only work waits this long for a CPU enclave before a GPU enclave bids on
+      # it (from its leftover CPU pool) via the SWEEP path. Lowered from the 120s
+      # default: while the fleet is GPU-only there is no CPU enclave to defer to, so
+      # 120s was pure Queued time on every CPU deploy. The /v1/claim-hint fast path
+      # (console deploys) skips this grace entirely — this only bounds the slower
+      # sweep backstop. Raise it back toward 120 once a CPU enclave rejoins the fleet.
+      - CPU_CLAIM_GRACE_SEC: "60"
+      - GPU_COUNT: "1"
+      - GPU_VRAM_GB: "141"                               # FALLBACK until probed: the supervisor adopts the wasm-manager's nvidia-smi total via /health (this container has no GPU), so a share's VRAM cap tracks the real card
+      - GPU_TFLOPS: "989"                                # GPU compute per card (H200 FP16 dense); exact gpuTflops asks divide by this
+      - NODE_GFLOPS: "1000"                              # CPU compute per node in GFLOPS (16 vCPU ≈ 1 TFLOPS); exact cpuGflops asks divide by this
+      - SM_TOTAL: "132"
+      - MIN_COMPUTE_PCT: "1"
+      - VRAM_GRANULARITY_GB: "1"
+      - CTX_OVERHEAD_GB: "0.5"
+      # dedicated per-deployment IPv6: the relay box's routed /64. Each public
+      # deployment gets its own IPv6 from this prefix (deterministic from the id);
+      # its tcp:N ports are served there by the tcp6-relay and its udp:N ports by
+      # the udp-relay - at the real port, no SNI, no remapping. Advertised in the
+      # deploy response (network.address/tcp/udp) and /v1/net-map + /v1/udp-map.
+      # Empty = dedicated addressing off (ports stay in-enclave-only via /x).
+      # DEP_ADDR_PREFIX is the current name; UDP_ADDR_PREFIX is the accepted
+      # legacy alias. See relay/README.md.
+      - DEP_ADDR_PREFIX: "2a01:4f9:c013:9b52::/64"       # nan-relay's routed /64 (46.62.128.36); MUST match the relay boxes
+      # dedicated-IP EGRESS (outbound half): app outbound leaves FROM its own
+      # IPv6 via ENCLAVE_EGRESS. EGRESS_RELAY_TOKEN is a shared secret matching the
+      # egress-relay box's env — delivered via `secrets:` below (NOT a plaintext
+      # env, which would pin it empty and shadow the injected secret). Unset =
+      # egress off. See relay/README.md.
+      - EGRESS_SOCKS_PORT: "1080"
+      # manual-billing / pilot: boot deployments without an on-chain payment.
+      # AUTO_PROVISION="1" provisions EVERY deploy for free (use only for a closed
+      # pilot). Leave "" and use the ADMIN_TOKEN-gated provision endpoint instead to
+      # provision one deployment at a time. AUTO_PROVISION_HOURS=0 means no auto-expiry.
+      - AUTO_PROVISION: ""
+      - AUTO_PROVISION_HOURS: "0"
+      # public-TCP relay support (relay/README.md): the SNI suffix the relay
+      # serves (deployments are reached at <dep-id>.tcp.<domain>). Setting it
+      # enables /x/:id/tls/:port — at boot the supervisor MINTS the TLS key +
+      # self-signed cert for *.<domain> IN-ENCLAVE (initTlsBridge), so the key
+      # never exists outside the CVM (no ACME account, no secret store, no
+      # operator copy) and the untrusted relay only ever forwards ciphertext.
+      # /v1/tls-bridge publishes the cert's fingerprints over the attested
+      # origin so clients can pin the relay-path session to the enclave; being
+      # plain (measured) config, the domain itself is attested too. Empty =
+      # the /tls/ bridge is disabled.
+      - TLS_BRIDGE_DOMAIN: "app.enclave.host"   # tcp.* SUNSET: the fallback pair + /tls/ gate live on the unified app zone now
+      # in-enclave browser TLS for public HTTP apps: ACME (ZeroSSL) certs for
+      # <label>.APP_CERT_DOMAIN minted INSIDE the CVM, served through the SNI
+      # relay's /x/:id/https passthrough. DNS-01 TXT records publish to the
+      # platform DNS daemon (nan-relay box), HMAC'd with SECRET. The feature
+      # activates only when the ACME_EAB_* secrets below are ALSO set.
+      - APP_CERT_DOMAIN: "app.enclave.host"
+      - DNS_API: "http://46.62.128.36:8153"              # dns-relay TXT push API (nan-relay box)
+    # fair-billing state (deployments, funded-time balances, payment-scan cursor).
+    # Persisting it means a supervisor restart FREEZES every deployment's clock and
+    # payment watching resumes where it stopped, instead of forfeiting paid time.
+    # NOTE: the ramdisk survives container restarts within one CVM boot, NOT a full
+    # CVM relaunch - a relaunch still starts fresh (payments made while fully down
+    # are re-scanned only within the persisted cursor's window).
+    #
+    # STATE_FILE (/var/lib/enclave/state.json) MAY be pointed at host-backed storage
+    # for billing persistence across a full relaunch. The in-enclave TLS-bridge
+    # PRIVATE KEY must NEVER touch host-backed disk, so it is minted on its OWN
+    # tmpfs path (TLS_BRIDGE_DIR, default /mnt/ramdisk/enclave-tls) that is
+    # independent of STATE_FILE. Keep the TLS key dir memory-backed even if you move
+    # STATE_FILE to a host volume. The session-signing key (SESSION_KEY_DIR, default
+    # /mnt/ramdisk/enclave-session) has the SAME rule — keep it memory-backed.
+    volumes:
+      - /mnt/ramdisk/enclave-state:/var/lib/enclave
+    secrets:
+      - SECRET                   # manager control-token (VMMGR_TOKEN) + DNS-push HMAC seed; NO LONGER signs session JWTs (those use the in-enclave ES256 key). Fleet-wide.
+      - ADMIN_TOKEN              # operator token for POST /v1/admin/deployments/:id/provision
+      - WORKER_TOKEN             # shared bearer with the worker container (SAME Tinfoil secret); the supervisor sends it on worker-manager calls. Unset = not sent.
+      - REGISTRY_PRIVATE_KEY     # EnclaveRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
+      - EGRESS_RELAY_TOKEN       # shared secret with the egress-relay box; same value fleet-wide (like SECRET). Unset = egress off.
+      - ACME_EAB_KID             # ZeroSSL External Account Binding pair (ZeroSSL Developer page).
+      - ACME_EAB_HMAC            # Fleet-wide like SECRET; unset = in-enclave app TLS stays off.
+      # NOTE: the TLS-bridge key/cert are NOT secrets — they are minted
+      # in-enclave at boot (see TLS_BRIDGE_DOMAIN above), so nothing outside
+      # the CVM ever holds the private key. The ACME certs work the same way -
+      # only the EAB account credentials above come from outside.
+    command: ["node", "supervisor.js"]
+
+  # --- wasm manager: tenant apps via `wasmtime serve` --------------------------
+  # Nested container runtimes (qemu microVM, then gVisor) are both blocked: the
+  # enclave confines this container so it can't create namespaces/mounts or let a
+  # runtime fork/exec its helpers, and privileged: true isn't honored (Tinfoil's
+  # config has no such field). A Wasm runtime needs NONE of those ops, so it runs
+  # inside the confinement as-is. Each tenant app is a `wasmtime serve` subprocess
+  # on a private loopback port; isolation = Wasm sandbox + OS process + curated
+  # WASI (no fs, no host env, no net beyond the served socket). The supervisor
+  # (PROVISION_BACKEND="vm") speaks the SAME /vms contract and proxies /x/:id to
+  # the app's loopback port. No privileged, no netns, no cgroups.
+  #
+  # NO deployable apps ship in the image (the one baked .wasm is the boot
+  # probe's fixture): tenant apps arrive as ipfs://<cid>, fetched and
+  # hash-verified against the CID in-enclave by this manager, gated by the
+  # on-chain catalog approval. Apps are wasi:http components.
+  # wasi-nn GPU interface: this container holds the card because tenant
+  # wasmtime processes ARE the CUDA processes — a deployment that buys a GPU
+  # share is launched with `-S nn` and runs ONNX inference through the host's
+  # ONNX Runtime CUDA provider. Isolation is the SAME scheme as the worker
+  # backend's PTX children: each tenant process joins the mps-control daemon
+  # (shared pipe dir + ipc:host) with CUDA_MPS_ACTIVE_THREAD_PERCENTAGE and
+  # CUDA_MPS_PINNED_DEVICE_MEM_LIMIT set from its bought share, so SM% and VRAM
+  # are hardware-enforced per process. Tenants without a GPU share never get
+  # the wasi-nn import at all.
+  - name: "wasm-manager"
+    image: "ghcr.io/enclavehost/enclave-wasm-manager@sha256:8ee26713e598e056794fa49c71a81622cce19e72511bbbb74431c4d7e043c6ea"
+    runtime: nvidia
+    gpus: all
+    ipc: host
+    restart: always
+    env:
+      - WASM_MANAGER_PORT: "8091"   # same port the supervisor's VMMGR_URL already targets
+      - NODE_VCPUS: "16"
+      - NODE_RAM_GB: "64"
+      - NODE_HAS_GPU: "1"           # GPU node: catalog apps with vram_mb > 0 may launch here (CPU flavor sets "0")
+      - GPU_VRAM_GB: "141"          # FALLBACK only: the manager probes the card at boot; a tenant's MPS mem limit = gpuShare × the probed total
+      # --- tenant resource caps (pre-launch hardening) ---
+      # CPU fair-share: without this every tenant runs UNCAPPED and one can pin all
+      # vCPUs (single-tenant DoS). PREREQ: cpu.weight/cpu.max only take effect if a
+      # cpu-enabled cgroup-v2 subtree is DELEGATED to the manager — wire that in the
+      # CVM runtime and point WASM_CGROUP_PARENT at it, else these SILENTLY no-op
+      # (verify the [cpu] boot logs after rollout; the env var alone isn't proof).
+      # - WASM_CGROUP_PARENT: "/sys/fs/cgroup/<delegated-cpu-subtree>"
+      - WASM_CPU_WEIGHT: "100"      # equal fair-share weight per tenant — stops starvation under contention without throttling a tenant below the share it paid for
+      # Optional HARD ceiling (each tenant capped at N% of the node's vCPUs). Left
+      # off by default: it's a FLAT cap, so it would throttle a deployment that
+      # legitimately bought a large CPU share. Enable + tune to the max share sold.
+      # - WASM_CPU_MAX_PCT: "50"
+      # RAM admission gate: refuse deployments whose linear-mem + /data + enc-vol
+      # caps oversubscribe NODE_RAM_GB × WASM_RAM_HEADROOM (default 0.9), instead of
+      # relying only on the measure-and-kill storage audit (closes the tmpfs-OOM window).
+      - WASM_ACCOUNT_STORAGE_RAM: "1"
+      # Trim the UNAUTHENTICATED /health to bare liveness — capacity/model-volume
+      # names/GPU specs/probe internals are withheld from loopback-reaching tenants.
+      # The supervisor presents VMMGR_TOKEN (=SECRET, bound below) so it still gets
+      # the full body it needs for capacity/pricing.
+      - WASM_HEALTH_MINIMAL: "1"
+      - CUDA_MPS_PIPE_DIRECTORY: "/tmp/nvidia-mps"
+      # ggml (GGUF) context window for EVERY GPU tenant on this node (the manager
+      # inherits this into each -S nn-graph wasmtime process; there is no
+      # per-deployment override). 262144 = 256K tokens = Qwen3.5-122B's NATIVE
+      # context (max_position_embeddings); going past it needs static YaRN, which
+      # Qwen warns degrades shorter requests, so we hold at native. The KV cache
+      # is allocated up front for the full window, so it scales with the model -
+      # but Qwen3.5 is a HYBRID linear-attention MoE: only 12 of its 48 layers are
+      # full-attention (the other 36 carry a constant-size linear/recurrent state
+      # that does NOT grow with context). So KV = 12 layers x 2 KV heads x 256
+      # head-dim x (K+V) x 2 bytes = 24 KB/token: 256K f16 = ~6.4 GB on top of the
+      # ~60 GB weights (~67 GB total), so a 122B deployment MUST buy a >=~50% GPU
+      # share or context allocation fails loudly ("n_ctx too large for the share").
+      # (The q8_0 KV cache set below halves it to ~3.2 GB, easing the floor to
+      # ~48%.) Small models (qwen2.5-0.5b-gguf) pay only a few hundred MB. Lower
+      # this if the node should not carry the big-context cost by default.
+      - ENCLAVE_GGML_N_CTX: "262144"
+      # KV-cache quantization (needs the KV-quant wasmtime toolchain - the
+      # WASMTIME_IMAGE repinned alongside this commit). q8_0 on BOTH K and V
+      # halves the up-front KV the window costs (256K: ~6.4 GB f16 -> ~3.2 GB) at
+      # negligible quality cost. A quantized V cache REQUIRES Flash Attention (the
+      # backend auto-enables it for a q8 V, but we set it explicitly). FA on this
+      # H200 UNDER MPS is the one unvalidated piece: if a 122B ever fails context
+      # allocation after this release, fall back to a q8 K-only cache with
+      #   ENCLAVE_GGML_KV_CACHE_TYPE_V: "f16"  +  ENCLAVE_GGML_FLASH_ATTN: "auto"
+      # (K-quant needs no FA) - a config-only re-measure, no toolchain rebuild.
+      - ENCLAVE_GGML_KV_CACHE_TYPE: "q8_0"
+      - ENCLAVE_GGML_FLASH_ATTN: "on"
+      # each app's memory cap is its deployment's cpuShare × NODE_RAM_GB
+      # (>= the mem_mb its specs declare); WASM_APP_MIN_MEM_MB (64) is the floor
+      # friendly name -> the model's auto-mount path. Tinfoil mounts each
+      # `models:` entry into every container at /tinfoil/mpk/mpk-<root_hash>
+      # (NO volumes: bind - the source path doesn't exist on the CVM host).
+      # The manager advertises these in /availability; llm-chat loads from
+      # /models/<name> inside the guest. An optional third field
+      # (name:path:file.gguf) picks WHICH gguf preloads as the wasi-nn graph
+      # when the repo ships several quantizations - the manager stages the
+      # pick as a symlink dir, so the mpk-<hash> mount name never matters.
+      - MODEL_VOLUMES: "qwen2.5-0.5b-gguf:/tinfoil/mpk/mpk-bb5cace1df1795f9dde1b6da38b2b9edfaaa56f4574a5d6270c1295b192c81c1,qwen3.5-122b-gguf:/tinfoil/mpk/mpk-1cbf0645575029ca49ebd10daaee21fccd6eb66f1d1563b147c647d78e08387c,sd-turbo:/tinfoil/mpk/mpk-df0919ea85c829fb62c61029ac130f7e4a98bc6a57fe52dfb777a7426d5b36fc,sd-turbo-full:/tinfoil/mpk/mpk-e787b81d664922c08ac69bb0952b436404bbb150f6f7b71971431d0c3ff4ef60,z-image-turbo-sd:/tinfoil/mpk/mpk-2b646ec9773d4dba7227656826627de606a86d98790b0e806a62e548b6c581f5,qwen-image-2512-sd:/tinfoil/mpk/mpk-f056a6215bdcb103a4e6b6c73bcfea205523593c6de78c53de4782d3c81e39f2"
+      # Volumes preloaded through the stable-diffusion.cpp wasi-nn backend
+      # (image txt2img: the guest load_by_name()s the volume and one
+      # compute() runs the whole pipeline host-side; weights never enter
+      # guest memory). EXPLICIT list - a diffusion GGUF is indistinguishable
+      # from an LLM GGUF by extension. Needs the sdcpp wasmtime toolchain
+      # (wasmtime-nn-sdcpp.patch on top of nn-ggml + libenclave_sd/
+      # libstable-diffusion from wasm/sd-shim) - rebuild the "Wasmtime
+      # Toolchain" and repin WASMTIME_IMAGE before deployments can serve it.
+      # Both SD volumes preload (image models only - sd-turbo/sd-turbo-full
+      # stay mounted for guests but out of the SD preload). The
+      # ENCLAVE_SD_*_FILE envs below are node-global and the preload
+      # validates them against EVERY listed SD volume, so both volumes carry
+      # GENERIC component filenames (diffusion.gguf/llm.gguf/vae.safetensors):
+      # z-image-turbo-sd@d7aeefc3 (rename of 07cb261e) and qwen-image-2512-sd.
+      - MODEL_VOLUMES_SD: "z-image-turbo-sd,qwen-image-2512-sd"
+      # Generic component layout, shared by every SD volume above. Each
+      # volume brings its OWN diffusion/llm/vae under these names (z-image:
+      # Z-Image 6B + Qwen3-4B; qwen: Qwen-Image-2512 20B + Qwen2.5-VL-7B).
+      # No ENCLAVE_SD_WTYPE: weights run NATIVE Q8_0 (as shipped in the ggufs).
+      # The sm_90 speckle is fixed in the ggml build itself (ELL sd10 forces the
+      # decomposed 4x m8n8k16 int8 MMA on Hopper - see llamacpp-toolchain.yml),
+      # so we keep the fast tensor-core path at full Q8_0. Q6_K (sd9) was dropped:
+      # it shares the SAME buggy int8 mma+epilogue and was still speckled AND
+      # slower (~30s) on the live H200.
+      - ENCLAVE_SD_DIFFUSION_FILE: "diffusion.gguf"
+      - ENCLAVE_SD_LLM_FILE: "llm.gguf"
+      - ENCLAVE_SD_VAE_FILE: "vae.safetensors"
+      # tiled VAE decode: caps the 1024px decode spike (~6 GB -> ~1.5 GB).
+      # 64:0.25 = 64-latent (512px) tiles, 0.25 overlap: <=512px decodes
+      # SINGLE-TILE (byte-identical to untiled - verified), 1024px is a 3x3
+      # mosaic instead of the engine default's 7x7 (32-latent tiles put a
+      # visible seam grid in FLUX-AE outputs - seen live on z-image).
+      - ENCLAVE_SD_VAE_TILING: "64:0.25"
+      # flash attention on the diffusion model (the Z-Image reference
+      # invocation's --diffusion-fa). REQUIRED for big resolutions: without
+      # it attention materializes seq x seq matrices - at 2048px that is
+      # 16384^2 per head, tens of GB of compute buffer, and sampling dies
+      # at graph allocation ("sampling for image 1/1 failed" in <1s, seen
+      # live). With FA the 2048px diffusion buffer is a few GB.
+      - ENCLAVE_SD_FLASH_ATTN: "1"
+      # qwen-image-2512 crystalline-speckle: NATIVE int8 MMQ at Q8_0, chasing the
+      # fast tensor-core path CLEAN (the ~6.5s target; cuBLAS bypass is clean but
+      # ~28s). Root cause = sm_90 (Hopper H200) ptxas SCHEDULING miscompile of the
+      # int8 MMQ path (#24399: stale address register on a shared STORE), present
+      # at ptxas -O3 on CUDA 12.6 AND 13.3. This ELL throttles ptxas (see
+      # llamacpp-toolchain.yml -Xptxas). NOT a source bug (clean on sm_86), NO
+      # upstream fix. Ruled out (do not revisit): FORCE_CUBLAS is the clean-but-
+      # slow bypass (v0.5.163/169); Q6_K (sd9), 4x m8n8k16 decomp (sd10), mmq_x=64
+      # (sd11), stream-k-off (v0.5.161), VAE (v0.5.157), flash (v0.5.158), PDL
+      # (v0.5.160), graphs+fusion (v0.5.162) all stayed speckled.
+      # GGML_CUDA_PDL=0 kept as cheap Hopper hardening (not the fix).
+      - GGML_CUDA_PDL: "0"
+      # Fused-attention quarantine (ORT/onnx volumes only - sdcpp/ggml
+      # tenants are untouched): deployments attaching a listed volume get
+      # the ORT_DISABLE_* attention envs in THEIR wasmtime process (unfused
+      # MATH path); everything else keeps the fast fused kernels. sd-turbo:
+      # the Olive fp16 UNet returns 100% NaN epsilon (black images) under
+      # MPS on sm_90 with the fused defaults - seen live 2026-07-14.
+      - ENCLAVE_ONNX_UNFUSED_VOLUMES: "sd-turbo"
+    # SECRET doubles as the manager's control-plane token (VMMGR_TOKEN): tenants
+    # hold outbound HTTP to loopback, so the control API on :8091 must reject
+    # calls that don't carry it (the supervisor sends X-Vmmgr-Token). The tenant
+    # data plane (/enc/*) and /health use their own auth / stay open.
+    secrets:
+      - SECRET
+    volumes:
+      - /mnt/ramdisk/nvidia-mps:/tmp/nvidia-mps          # join the MPS daemon (SM%/VRAM caps)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+# --- attested model weights (Tinfoil Modelwrap) -----------------------------
+# Read-only model volumes; each becomes a dm-verity image whose root hash is
+# part of the enclave measurement (the attestation commits to the exact bytes).
+# Generate the `mpk` value in the Tinfoil Models tab from the pinned repo, then
+# paste the full value here and the mpk-<root_hash> path into MODEL_VOLUMES
+# above (Tinfoil auto-mounts each model into every container at
+# /tinfoil/mpk/mpk-<root_hash>; do NOT add a volumes: bind for it). Deployments
+# attach these by name (via the console volume picker or their configCid JSON
+# `volumes` field); the wasm-manager mounts each into the guest at /models/<name>.
+models:
+  # Slim curated re-wrap of Qwen/Qwen2.5-0.5B-Instruct-GGUF (which ships NINE
+  # quantizations and no tokenizer): ONLY the q4_k_m gguf (sha256 74a4da8c...,
+  # verified 2026-07-08) PLUS tokenizer.json, so it's self-contained (~490 MB
+  # vs the official repo's 5.4 GB, no cross-volume tokenizer attach). It
+  # KEEPS the retired official-repo volume's name, so existing catalog
+  # configs attaching qwen2.5-0.5b-gguf keep working; only the (also
+  # retired) onnx volume qwen2.5-0.5b has no successor name.
+  # Single gguf = no MODEL_VOLUMES third field.
+  - name: "qwen2.5-0.5b-gguf"
+    repo: "EnclaveHost/qwen2.5-0.5b-gguf@28ee3c6a09ba2c4b7447c53d3cddad0bdefcf186"
+    mpk: "bb5cace1df1795f9dde1b6da38b2b9edfaaa56f4574a5d6270c1295b192c81c1_498454528_3b7bbfae-47ec-55ce-8c30-951d1874a293"
+  # Qwen3.5-122B-A10B at 4-bit (unsloth UD-IQ4_XS, ~60 GB) for the ggml/llama.cpp
+  # wasi-nn path - the big-model tenant option (~45% of an H200's VRAM). The repo
+  # ships THREE split GGUF parts (Qwen3.5-122B-A10B-UD-IQ4_XS-0000N-of-00003.gguf)
+  # + its own tokenizer.json, flat at the root; the wasm-manager auto-detects the
+  # complete split family and stages all parts as ONE nn-graph, so no MODEL_VOLUMES
+  # third field is needed. NOTE: loading a split family needs the split-family
+  # ggml backend from wasmtime-nn-ggml.patch - rebuild the "Wasmtime Toolchain"
+  # and repin WASMTIME_IMAGE in wasm/Dockerfile.wasm (the current 80148c92 pin
+  # predates that patch) before a deployment can actually serve this volume.
+  - name: "qwen3.5-122b-gguf"
+    repo: "EnclaveHost/qwen3.5-122b-gguf@8beb6427d807c9d2cf185ea22c149f8c63668815"
+    mpk: "1cbf0645575029ca49ebd10daaee21fccd6eb66f1d1563b147c647d78e08387c_60242325504_b8673ecf-afc3-5051-8093-f2bf785fe93a"
+  # SD-Turbo (distilled Stable Diffusion 2.1, 512x512 txt2img in 1-4 steps),
+  # the Olive fp16 ONNX export by the onnxruntime team, fused for the CUDA EP
+  # (com.microsoft ops - GPU-only, the CPU EP has no kernels for it). Serves
+  # the image-generator app's default config: the guest reads the three
+  # graphs (text_encoder 0.68 GB / unet 1.73 GB / vae_decoder 0.1 GB) and
+  # load()s them per request - ~2.5 GB of lifts, inside the 4 GiB
+  # hostcall-fuel budget; the host's ORT session cache makes reloads cheap.
+  # File pins (sha256 per file) live in the app repo's fetch-model.sh.
+  - name: "sd-turbo"
+    repo: "onnxruntime/sd-turbo@80d4d2e238a7c61a83053b931f2354ab43dd3688"
+    mpk: "df0919ea85c829fb62c61029ac130f7e4a98bc6a57fe52dfb777a7426d5b36fc_2582355968_83bded1a-e8eb-56cb-b8e2-3905863340bf"
+  # The ORIGINAL stabilityai SD-Turbo release: full repo (13 GB - fp32 +
+  # fp16 diffusers subfolders) whose top-level sd_turbo.safetensors (5.2 GB
+  # fp32 single-file checkpoint) is what actually serves, through the
+  # stable-diffusion.cpp preload path (MODEL_VOLUMES_SD above; the
+  # image-generator app's {"backend":"sdcpp"} config). The sdcpp checkpoint
+  # picker takes the single top-level *.safetensors, so the diffusers
+  # subfolders ride along as dead weight - a future re-wrap of just the
+  # checkpoint file would shed ~8 GB.
+  - name: "sd-turbo-full"
+    repo: "stabilityai/sd-turbo@b261bac6fd2cf515557d5d0707481eafa0485ec2"
+    mpk: "e787b81d664922c08ac69bb0952b436404bbb150f6f7b71971431d0c3ff4ef60_12957339648_7214a717-20cd-5a86-9bc3-dd3eac7676c0"
+  # Z-Image-Turbo (Tongyi-MAI, Apache-2.0) as a curated sd.cpp bundle:
+  # Q8_0 transformer + Qwen3-4B Q8_0 text encoder + FLUX AE, single-file
+  # components (per-file sha256 provenance now in the volume's own README).
+  # Same component filenames as before - the ENCLAVE_SD_*_FILE envs above
+  # are unchanged. RENAMED from "z-image-turbo" to match the repo: volumes
+  # attach BY NAME, so catalog configs / deployments still naming
+  # z-image-turbo must move to z-image-turbo-sd once this wrap is live.
+  # Serving: sdcpp backend, cfg 1.0, 4-8 steps, ~13 GB peak VRAM at 1024px
+  # with ENCLAVE_SD_VAE_TILING - gpu >= 0.10.
+  - name: "z-image-turbo-sd"
+    repo: "EnclaveHost/z-image-turbo-sd@d7aeefc33a479d183cedf4dce3c294ea71db29ab"
+    mpk: "2b646ec9773d4dba7227656826627de606a86d98790b0e806a62e548b6c581f5_11193159680_474e22f4-e109-5cd2-81c5-3e98c40643f4"
+  # Qwen-Image-2512 (Apache-2.0) with the lightx2v Lightning 8-step LoRA
+  # MERGED into the Q8_0 transformer, curated for the sdcpp backend
+  # (provenance + per-file sha256 in the repo README). Components carry the
+  # GENERIC names diffusion.gguf / llm.gguf (Qwen2.5-VL-7B text encoder) /
+  # vae.safetensors - the same names z-image-turbo-sd now uses, so the one
+  # node-global ENCLAVE_SD_*_FILE env set resolves in both. In MODEL_VOLUMES_SD
+  # above; preloads alongside z-image. Serving: 8 steps, cfg 1.0, ~34 GB peak
+  # VRAM at 1024px with VAE tiling.
+  - name: "qwen-image-2512-sd"
+    repo: "EnclaveHost/qwen-image-2512-sd@a82dcb53ef8ff3c675dd0b636788ebb332fa973f"
+    mpk: "f056a6215bdcb103a4e6b6c73bcfea205523593c6de78c53de4782d3c81e39f2_30075547648_8c18a205-f8c1-5a49-82d7-f0c367f603a1"
+
+# Single ingress → supervisor. Only these paths are reachable from outside.
+# PROBE-PATH NOTE: this shim exposes "/health", but the supervisor serves its
+# health JSON at /v1/health (it registers no bare /health route), so an external
+# GET /health 404s. Point external/uptime health probes at /v1/health; the
+# per-container Docker healthchecks (worker/manager :8090,:8091 /health) are a
+# DIFFERENT, internal endpoint and are unaffected.
+shim:
+  upstream-port: 8080
+  paths:
+    - /health
+    - /v1/*
+    - /availability
+    - /x/*
+    # app deploys need NO new shim path: /v1/vms/* falls under /v1/* (the
+    # supervisor proxies it to the wasm-manager on :8091), and the app's server is reached via /x/*.
