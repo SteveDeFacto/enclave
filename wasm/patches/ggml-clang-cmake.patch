@@ -1,0 +1,32 @@
+diff --git a/ggml/src/ggml-cuda/CMakeLists.txt b/ggml/src/ggml-cuda/CMakeLists.txt
+index d3953eee9..ae5473368 100644
+--- a/ggml/src/ggml-cuda/CMakeLists.txt
++++ b/ggml/src/ggml-cuda/CMakeLists.txt
+@@ -194,7 +194,12 @@ if (CUDAToolkit_FOUND)
+ 
+     set(CUDA_CXX_FLAGS "")
+ 
+-    set(CUDA_FLAGS -use_fast_math -extended-lambda)
++    if (CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
++        set(CUDA_FLAGS -use_fast_math -extended-lambda)
++    else()
++        # clang-as-CUDA: extended lambdas are default; -ffast-math matches -use_fast_math
++        set(CUDA_FLAGS -ffast-math)
++    endif()
+ 
+     if (GGML_CUDA_DEBUG)
+         list(APPEND CUDA_FLAGS -lineinfo)
+@@ -260,7 +265,12 @@ if (CUDAToolkit_FOUND)
+     list(JOIN   CUDA_CXX_FLAGS " " CUDA_CXX_FLAGS_JOINED)  # pass host compiler flags as a single argument
+ 
+     if (NOT CUDA_CXX_FLAGS_JOINED STREQUAL "")
+-        list(APPEND CUDA_FLAGS -Xcompiler ${CUDA_CXX_FLAGS_JOINED})
++        if (CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
++            list(APPEND CUDA_FLAGS -Xcompiler ${CUDA_CXX_FLAGS_JOINED})
++        else()
++            # clang compiles device+host itself; host flags go directly
++            list(APPEND CUDA_FLAGS ${CUDA_CXX_FLAGS})
++        endif()
+     endif()
+ 
+     target_compile_options(ggml-cuda PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:${CUDA_FLAGS}>")
