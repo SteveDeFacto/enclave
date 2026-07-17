@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-cuda/CMakeLists.txt b/ggml/src/ggml-cuda/CMakeLists.txt
-index d3953eee9..ae5473368 100644
+index d3953eee9..78755ef8f 100644
 --- a/ggml/src/ggml-cuda/CMakeLists.txt
 +++ b/ggml/src/ggml-cuda/CMakeLists.txt
-@@ -194,7 +194,12 @@ if (CUDAToolkit_FOUND)
+@@ -194,7 +194,13 @@ if (CUDAToolkit_FOUND)
  
      set(CUDA_CXX_FLAGS "")
  
@@ -10,13 +10,14 @@ index d3953eee9..ae5473368 100644
 +    if (CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
 +        set(CUDA_FLAGS -use_fast_math -extended-lambda)
 +    else()
-+        # clang-as-CUDA: extended lambdas are default; -ffast-math matches -use_fast_math
-+        set(CUDA_FLAGS -ffast-math)
++        # clang-as-CUDA: extended lambdas are default; -ffp-contract=fast gives FMA
++        # like nvcc fmad WITHOUT -ffinite-math-only (which NaNs qwen -> white on sm_90)
++        set(CUDA_FLAGS -ffp-contract=fast)
 +    endif()
  
      if (GGML_CUDA_DEBUG)
          list(APPEND CUDA_FLAGS -lineinfo)
-@@ -260,7 +265,12 @@ if (CUDAToolkit_FOUND)
+@@ -260,7 +266,12 @@ if (CUDAToolkit_FOUND)
      list(JOIN   CUDA_CXX_FLAGS " " CUDA_CXX_FLAGS_JOINED)  # pass host compiler flags as a single argument
  
      if (NOT CUDA_CXX_FLAGS_JOINED STREQUAL "")
