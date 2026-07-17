@@ -74,6 +74,30 @@ jobs:
           cd /tmp/llama.cpp
           git checkout "$LLAMA_COMMIT"
 
+      - name: Patch ggml - force decomposed int8 MMA on sm_90 (Hopper speckle fix)
+        run: |
+          cd /tmp/llama.cpp
+          # sm_90 (Hopper H200) miscompiles the single mma.sync.m16n8k32.s8.s8
+          # int8 tensor-core op: ptxas->SASS lowering + Hopper scheduler timing
+          # of the MMA write-back yields an intermittent bad-address shared store
+          # (llama.cpp #24399, coredumped on sm_120; SILENT chromatic speckle on
+          # sm_90). Same PTX/tile-config/epilogue is pixel-clean on sm_86 - it is
+          # a codegen/scheduling hazard, not a source bug, so there is no upstream
+          # fix to pin (issue open+stale, mma.cuh untouched). Q6_K did NOT help:
+          # it funnels through the SAME int8 mma + SAME epilogue.
+          # Fix: on sm_90 ONLY, emit the Turing 4x m8n8k16 (and 2x for k16)
+          # decomposition instead of the single m16n8k32. Identical int8 tensor-
+          # core math (verified BYTE-IDENTICAL + clean on sm_86), but a wholly
+          # different instruction sequence/register-alloc/epilogue schedule in the
+          # miscompiled region -> dodges the hazard while STAYING on tensor cores
+          # (far faster than the FORCE_CUBLAS/Q6_K dequant fallbacks). No-op on
+          # sm_86 (860 < HOPPER 900), so it cannot regress the Ampere path.
+          f=ggml/src/ggml-cuda/mma.cuh
+          perl -0777 -i -pe 's/#if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE\n(\s*asm\("mma\.sync\.aligned\.m16n8k(?:16|32)\.row\.col\.s32\.s8\.s8\.s32)/#if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE && __CUDA_ARCH__ < GGML_CUDA_CC_HOPPER \/* sm_90 int8 IMMA miscompiles -> 4x m8n8k16 *\/\n$1/g' "$f"
+          n=$(grep -c "__CUDA_ARCH__ < GGML_CUDA_CC_HOPPER /\* sm_90 int8 IMMA" "$f")
+          echo "patched int8 MMA guards: $n (expect 2)"
+          test "$n" -eq 2 || { echo "ERROR: expected 2 patched guards, got $n - upstream mma.cuh drifted, refusing to build"; exit 1; }
+
       - name: Build (Release, CUDA, shared libs, sm_86+sm_90, portable CPU)
         run: |
           cd /tmp/llama.cpp
@@ -94,9 +118,10 @@ jobs:
             -DGGML_CUDA=ON \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.6/bin/nvcc \
             -DCMAKE_CUDA_ARCHITECTURES="86-real;90-real" \
-            `# Native MMQ (no FORCE_CUBLAS): qwen runs Q6_K weights (config` \
-            `# ENCLAVE_SD_WTYPE=q6_K) whose MMA kernel dodges the Q8_0 sm_90` \
-            `# write-back-epilogue bug that FORCE_CUBLAS (sd8) had to bypass.` \
+            `# Native int8 MMQ, native Q8_0 weights (no FORCE_CUBLAS, no Q6_K):` \
+            `# the sm_90 speckle is fixed at the source by the "Patch ggml" step` \
+            `# above (Hopper emits 4x m8n8k16 instead of the miscompiled` \
+            `# m16n8k32), so we keep the fast tensor-core path AND full Q8_0.` \
             -DGGML_NATIVE=OFF \
             -DCMAKE_C_FLAGS="-DGGML_MAX_NAME=128" \
             -DCMAKE_CXX_FLAGS="-DGGML_MAX_NAME=128" \

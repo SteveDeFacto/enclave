@@ -336,15 +336,12 @@ containers:
       # Generic component layout, shared by every SD volume above. Each
       # volume brings its OWN diffusion/llm/vae under these names (z-image:
       # Z-Image 6B + Qwen3-4B; qwen: Qwen-Image-2512 20B + Qwen2.5-VL-7B).
-      # ENCLAVE_SD_WTYPE=q6_K: down-convert the Q8_0 gguf weights to Q6_K on load.
-      # This is the qwen-image speckle SPEED fix: Q6_K's MMA kernel dodges the
-      # sm_90 Q8_0 write-back-epilogue bug (llama.cpp #24399) that forced the slow
-      # FORCE_CUBLAS bypass, so we run NATIVE int8 MMQ again (ELL sd9, FORCE_CUBLAS
-      # removed). Q6_K is SMALLER than Q8_0 (6.5 vs 8.5 bpw -> less VRAM/bandwidth)
-      # and visually indistinguishable for BOTH qwen and z-image (verified locally
-      # on sm_86; z-image's F32 norm/bias tensors stay F32). Node-global: applies
-      # to every SD volume; both models confirmed clean + full-quality under Q6_K.
-      - ENCLAVE_SD_WTYPE: "q6_K"
+      # No ENCLAVE_SD_WTYPE: weights run NATIVE Q8_0 (as shipped in the ggufs).
+      # The sm_90 speckle is fixed in the ggml build itself (ELL sd10 forces the
+      # decomposed 4x m8n8k16 int8 MMA on Hopper - see llamacpp-toolchain.yml),
+      # so we keep the fast tensor-core path at full Q8_0. Q6_K (sd9) was dropped:
+      # it shares the SAME buggy int8 mma+epilogue and was still speckled AND
+      # slower (~30s) on the live H200.
       - ENCLAVE_SD_DIFFUSION_FILE: "diffusion.gguf"
       - ENCLAVE_SD_LLM_FILE: "llm.gguf"
       - ENCLAVE_SD_VAE_FILE: "vae.safetensors"
@@ -361,17 +358,19 @@ containers:
       # at graph allocation ("sampling for image 1/1 failed" in <1s, seen
       # live). With FA the 2048px diffusion buffer is a few GB.
       - ENCLAVE_SD_FLASH_ATTN: "1"
-      # qwen-image-2512 crystalline-speckle: SOLVED. Root cause = a bug in
-      # ggml-cuda's Q8_0 MMQ int8 write-back epilogue on the H200 sm_90 path (same
-      # locus as llama.cpp #24399, reported on Blackwell). First fixed by
-      # FORCE_CUBLAS (v0.5.163, bypass MMQ -> cuBLAS) but that dequantizes every
-      # pass and is slow; the SPEED fix is Q6_K weights (ENCLAVE_SD_WTYPE above)
-      # whose MMA kernel isn't affected, running NATIVE int8 MMQ (ELL sd9).
-      # Ruled out (all still speckled on Q8_0/sm_90, do not revisit): VAE
-      # (v0.5.157), flash (v0.5.158), PDL (v0.5.160), stream-k (v0.5.161),
-      # graphs+fusion (v0.5.162). sm_90-only: the same lib is pixel-clean on a
-      # 3070's sm_86 (even under MPS SM caps). GGML_CUDA_PDL=0 kept as cheap
-      # Hopper hardening (not the fix).
+      # qwen-image-2512 crystalline-speckle: fixed in the ggml build (ELL sd10).
+      # Root cause = sm_90 (Hopper) ptxas/scheduler MISCOMPILE of the single
+      # mma.sync.m16n8k32.s8 int8 tensor-core op + its write-back epilogue (same
+      # locus as llama.cpp #24399, which coredumps on sm_120; silent speckle on
+      # sm_90). NOT a source bug - identical PTX is pixel-clean on sm_86 - and
+      # NO upstream fix exists (#24399 open+stale). Fix = force the Turing 4x
+      # m8n8k16 decomposition on sm_90 only (llamacpp-toolchain.yml "Patch ggml"),
+      # keeping the fast tensor-core path at native Q8_0. Prior attempts, all
+      # still speckled on Q8_0/sm_90 (do not revisit): FORCE_CUBLAS (v0.5.163,
+      # clean but slow dequant), Q6_K (sd9, same buggy mma, still speckled+slow),
+      # VAE (v0.5.157), flash (v0.5.158), PDL (v0.5.160), stream-k (v0.5.161),
+      # graphs+fusion (v0.5.162). GGML_CUDA_PDL=0 kept as cheap Hopper hardening
+      # (not the fix).
       - GGML_CUDA_PDL: "0"
       # Fused-attention quarantine (ORT/onnx volumes only - sdcpp/ggml
       # tenants are untouched): deployments attaching a listed volume get
