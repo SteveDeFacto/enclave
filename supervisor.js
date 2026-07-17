@@ -34,7 +34,7 @@ import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, renameSync
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { WebSocketServer, createWebSocketStream } from "ws";
-import { verifyMessage, createPublicClient, createWalletClient, http as viemHttp, getAddress, keccak256, toHex, stringToBytes, parseEventLogs, encodeAbiParameters } from "viem";
+import { verifyMessage, createPublicClient, createWalletClient, http as viemHttp, fallback as viemFallback, getAddress, keccak256, toHex, stringToBytes, parseEventLogs, encodeAbiParameters } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { SignJWT, jwtVerify } from "jose";
@@ -176,6 +176,17 @@ const AUTO_PROVISION       = /^(1|true|on)$/i.test(process.env.AUTO_PROVISION ||
 const AUTO_PROVISION_HOURS = parseFloat(process.env.AUTO_PROVISION_HOURS || "0");
 const ADMIN_TOKEN          = process.env.ADMIN_TOKEN || "";
 const BASE_RPC       = process.env.BASE_RPC || "https://mainnet.base.org";
+// Multi-provider RPC pool: one throttled provider must never fail-close the
+// claim path — the catalog-approval gate and hint evaluation read the chain,
+// and when the single RPC rate-limits, every claim declines "Could not verify
+// this app's approval" while capacity sits free (observed fleet-wide
+// 2026-07-17 on mainnet.base.org). BASE_RPC stays FIRST so an explicit
+// override is authoritative; the rest are fallbacks (mirrors cli/enclave.mjs
+// and the relay's publicnode lesson).
+const RPC_POOL = [...new Set([BASE_RPC,
+  "https://base-rpc.publicnode.com", "https://base.drpc.org",
+  "https://1rpc.io/base", "https://mainnet.base.org"])];
+const rpcTransport = () => viemFallback(RPC_POOL.map((u) => viemHttp(u, { retryCount: 2, retryDelay: 500 })));
 const SESSION_TTL    = parseInt(process.env.SESSION_TTL || "604800", 10); // 7d: SIWE is lazy now (only logs/attestation/private data need it) - make the one signature rare
 const DEFAULT_IMAGE  = process.env.DEFAULT_IMAGE || "debian:bookworm-slim"; // any stock image
 // --- worker launch: tenants run as the manager's wasmtime/CUDA processes ------
@@ -820,7 +831,7 @@ async function initMps() {
 // (observed live 2026-07-05: "over rate limit" from mainnet.base.org killed
 // whole claim passes). Longer exponential retry absorbs a burst cap; the
 // per-tick call budget is kept low by deriving post-tx state from receipts.
-const chainClient = createPublicClient({ chain: base, transport: viemHttp(BASE_RPC, { retryCount: 5, retryDelay: 500 }) });
+const chainClient = createPublicClient({ chain: base, transport: rpcTransport() });
 
 // ----------------------------------------------------------------------------
 // state (in-process; this service is the single enclave instance)
@@ -3362,7 +3373,7 @@ let _claimAccount = null, _claimWallet = null, _txChain = Promise.resolve();
 function claimSigner() {
   if (!_claimWallet) {
     _claimAccount = privateKeyToAccount(REGISTRY_PK.startsWith("0x") ? REGISTRY_PK : `0x${REGISTRY_PK}`);
-    _claimWallet  = createWalletClient({ account: _claimAccount, chain: base, transport: viemHttp(BASE_RPC, { retryCount: 5, retryDelay: 500 }) });
+    _claimWallet  = createWalletClient({ account: _claimAccount, chain: base, transport: rpcTransport() });
   }
   return { account: _claimAccount, wallet: _claimWallet };
 }

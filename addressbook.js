@@ -14,7 +14,7 @@
 // in place when the book changes (ES live bindings); process.env.* is kept in
 // step for any child/tooling that reads env.
 
-import { createPublicClient, http, getAddress } from "viem";
+import { createPublicClient, http, fallback, getAddress } from "viem";
 import { base } from "viem/chains";
 
 export let REGISTRY_ADDRESS      = process.env.REGISTRY_ADDRESS || "";
@@ -39,8 +39,13 @@ const current = () => ({ registry: REGISTRY_ADDRESS, deployments: DEPLOYMENTS_AD
 
 let client = null;
 async function readBook() {
+  // same multi-provider pool as supervisor.js RPC_POOL: the address book is
+  // the root of contract resolution — a throttled single RPC must not pin the
+  // fleet to stale addresses or block boot
   if (!client) client = createPublicClient({ chain: base,
-    transport: http(process.env.BASE_RPC || "https://mainnet.base.org", { retryCount: 3, retryDelay: 500 }) });
+    transport: fallback([...new Set([process.env.BASE_RPC || "https://mainnet.base.org",
+      "https://base-rpc.publicnode.com", "https://base.drpc.org",
+      "https://1rpc.io/base", "https://mainnet.base.org"])].map((u) => http(u, { retryCount: 2, retryDelay: 500 }))) });
   const [keysHex, values] = await client.readContract({ address: getAddress(BOOK), abi: ABI, functionName: "all" });
   const changed = [];
   keysHex.forEach((kh, i) => {
