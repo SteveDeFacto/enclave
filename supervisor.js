@@ -569,6 +569,37 @@ if (process.env.REACH_SELFTEST) {
   process.exit(0);
 }
 
+// ---- claim-sweep ordering: own leases outrank new work ----------------------
+// Split a ledger pass into leases THIS enclave already holds but is not
+// locally serving (a previous life: an update reboot wipes local state while
+// leases live on) vs everything else. Resumes must run FIRST, and while any
+// own lease is still unresumed the sweep takes NO new work: the lease holder
+// already paid for the slice, and a new claim admitted first can consume the
+// very capacity the resume needs ("no free capacity") — observed live
+// 2026-07-17: a fresh 49% GPU claim displaced an orphaned 49% tenant, which
+// then sat dark on a live, still-billing lease. The hold is bounded by the
+// lease itself (<= leaseSec): an unresumable lease lapses and re-queues.
+function sweepPartition(ledger, enclaveId, nowMs, isLocallyServing) {
+  const own = [], rest = [];
+  for (const d of ledger) {
+    const ours = Number(d.leaseUntil) * 1000 > nowMs && d.runner === enclaveId
+      && !isLocallyServing(d.id);
+    (ours ? own : rest).push(d);
+  }
+  return { own, rest };
+}
+
+// SWEEP_SELFTEST='{"enclaveId":"0x…","nowMs":…,"ledger":[…],"serving":["id",…]}'
+// prints the partition's id lists as one JSON line and exits — same contract
+// as the seams above (test/claim-sweep.test.mjs drives it).
+if (process.env.SWEEP_SELFTEST) {
+  const c = JSON.parse(process.env.SWEEP_SELFTEST);
+  const serving = new Set(c.serving || []);
+  const { own, rest } = sweepPartition(c.ledger || [], c.enclaveId, c.nowMs, (id) => serving.has(id));
+  console.log(JSON.stringify({ own: own.map((d) => d.id), rest: rest.map((d) => d.id) }));
+  process.exit(0);
+}
+
 // ---- resource model: EXACT RESOURCES -> TWO CALCULATED SHARES ---------------
 // Apps specify EXACT resources on four axes: vramGb + gpuTflops of one GPU card
 // (both 0 = CPU-only app) and memMb + cpuGflops of the node. CPU compute is
@@ -3557,18 +3588,37 @@ async function fetchLedger() {
 // change: a silent decline loop is indistinguishable from a dead sweep from
 // outside the enclave, and it took chain forensics to tell them apart once.
 const _sweepDeclines = new Map();             // id -> last logged reason
+let _resumeHoldLogged = "";                   // last logged hold reason (log on change)
 async function claimSweep(ledger) {
   if (!(await backendHealthy())) return;      // don't take work we'd immediately fail
-  for (const d of ledger) {
+  const sweepOne = async (d) => {
     let reason;
     try { reason = await considerClaim(d); }
     catch (e) { reason = "error: " + (e.shortMessage || e.message); }   // one bad item must not end the pass
-    if (!reason) { _sweepDeclines.delete(d.id); continue; }             // a claim was attempted
+    if (!reason) { _sweepDeclines.delete(d.id); return null; }          // a claim was attempted
     if (reason !== _sweepDeclines.get(d.id) && !reason.startsWith("already serving")) {
       console.log(`[claim] sweep skips ${d.id}: ${reason}`);
       _sweepDeclines.set(d.id, reason);
     }
+    return reason;
+  };
+  // Own live leases resume FIRST, and an unresumed one holds all new claims
+  // this pass — its owner already paid for the slice (see sweepPartition).
+  const { own, rest } = sweepPartition(ledger, _enclaveId, Date.now(), (id) => {
+    const ex = deployments.get(id);
+    return !!ex && !CLAIM_TERMINAL.has(ex.status);
+  });
+  let hold = null;
+  for (const d of own) { const r = await sweepOne(d); if (r) hold ??= `${d.id}: ${r}`; }
+  if (hold) {
+    if (hold !== _resumeHoldLogged) {
+      console.log(`[claim] holding new claims: own lease not yet resumed (${hold})`);
+      _resumeHoldLogged = hold;
+    }
+    return;
   }
+  _resumeHoldLogged = "";
+  for (const d of rest) await sweepOne(d);
 }
 
 // One deployment through the full claim gauntlet. Returns a reason string

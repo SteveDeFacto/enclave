@@ -879,14 +879,33 @@ async function listDeployments(u, req, res) {
   if (!addr && !oks.length)
     return json(res, 401, { error: "unauthorized", message: "Pass ?owner=0x… (or a session token) to say whose deployments to list." }, req);
   const data = [], seen = new Set();
+  // registry-id -> the ids that enclave's 200 list carried. The same token
+  // scoped both the fan-out and the ledger loop below, so for THIS owner an
+  // answering runner whose list LACKS a leased id is definitive: the lease
+  // outlived the local record (enclave restart/update wiped state, or the
+  // resume found no capacity) and nothing actually serves the app.
+  const hostedByRunner = new Map();
   for (const { e, r } of oks) {
-    try { for (const it of JSON.parse(r.text).data || []) { data.push(it); seen.add(String(it.id).toLowerCase()); ownerLearn(it.id, e.endpoint); } } catch {}
+    const ids = new Set();
+    try { for (const it of JSON.parse(r.text).data || []) { data.push(it); seen.add(String(it.id).toLowerCase()); ids.add(String(it.id).toLowerCase()); ownerLearn(it.id, e.endpoint); } } catch {}
+    if (e.id) hostedByRunner.set(String(e.id).toLowerCase(), ids);
   }
+  const tokenOwner = tokenAddress(auth);
   if (addr) {
     try {
       for (const d of await ledgerRows()) {
         if (d.owner.toLowerCase() !== addr || seen.has(d.id.toLowerCase())) continue;
-        data.push(ledgerView(d));
+        const view = ledgerView(d);
+        // ledgerStatus says "running" for lease-live + runner-alive — but a
+        // runner that answered this owner's list WITHOUT the id is not serving
+        // it. Show "claimed" (+ stranded) instead of a lie the owner pays for
+        // (observed live 2026-07-17: a displaced tenant read RUNNING for 30
+        // minutes while its app was dark).
+        if (view.status === "running" && tokenOwner && addr === tokenOwner) {
+          const hosted = hostedByRunner.get(String(d.runner).toLowerCase());
+          if (hosted && !hosted.has(d.id.toLowerCase())) { view.status = "claimed"; view.stranded = true; }
+        }
+        data.push(view);
       }
     } catch (e) { console.error("[api-relay] ledger read failed:", e.message); }
   }

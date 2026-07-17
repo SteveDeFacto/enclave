@@ -254,3 +254,52 @@ test("api-relay: a fleet-wide 401 propagates instead of falling back to ledger r
   const r = await getJson(origin, "/v1/deployments", jwt(OWNER));
   assert.equal(r.status, 401, "the enclaves' refusal is the answer; public ledger rows must not mask a dead session");
 });
+
+// ---------- stranded lease: runner answers but doesn't host the record -------
+// ledgerStatus can only see lease + runner-liveness, so a lease that outlived
+// its enclave-local record (restart/update wiped state, or the resume found no
+// capacity) reads "running" while the app is dark and the owner pays. When the
+// signed-in fan-out has the runner's OWN 200 list and the id is absent, the
+// merged row must say "claimed" (+ stranded) — observed live 2026-07-17: a
+// displaced tenant read RUNNING for a full lease while serving nothing.
+test("api-relay: a leased id missing from its live runner's own list downgrades to claimed+stranded", async (t) => {
+  const hosted = { id: ID("33"), status: "running", owner: OWNER, image: { reference: "ipfs://served" },
+                   resources: { gpuShare: 0.35, cpuShare: 0.01 } };
+  const enclave = http.createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    if (req.url === "/availability") return res.end(JSON.stringify({ gpu: true, gpuShareFree: 0.14, cpuShareFree: 0.9 }));
+    if (req.url === "/v1/deployments" && req.method === "GET") return res.end(JSON.stringify({ data: [hosted], cursor: null }));
+    res.statusCode = 404; res.end("{}");
+  });
+  enclave.listen(0, "127.0.0.1"); await once(enclave, "listening");
+  t.after(() => enclave.close());
+  const endpoint = `http://127.0.0.1:${enclave.address().port}`;
+  const { keccak256, stringToBytes } = await import("viem");
+  const us = keccak256(stringToBytes(endpoint));
+  const ledger = [
+    { id: ID("33"), owner: OWNER, appRef: "ipfs://served", active: true, balance6: 2_000_000, spent6: 100_000,
+      runner: us, leaseUntil: FUTURE },          // genuinely hosted: enclave row wins by id
+    { id: ID("99"), owner: OWNER, appRef: "ipfs://zombie", active: true, balance6: 2_000_000, spent6: 500_000,
+      runner: us, leaseUntil: FUTURE },          // OUR live runner, but its list lacks it -> stranded
+    { id: ID("77"), owner: OWNER, appRef: "ipfs://orphan", active: true, balance6: 2_000_000, spent6: 100_000,
+      runner: RUNNER, leaseUntil: FUTURE },      // runner not live at all: plain "claimed", not stranded
+  ];
+
+  const origin = await startRelay(t, { enclaves: endpoint, ledger });
+  const signed = await getJson(origin, "/v1/deployments", jwt(OWNER));
+  assert.equal(signed.status, 200);
+  const by = Object.fromEntries(signed.body.data.map((r) => [r.id, r]));
+  assert.equal(by[ID("33")].status, "running", "the enclave's own row still wins for what it truly hosts");
+  assert.equal(by[ID("99")].status, "claimed", "leased-but-unhosted must not read running");
+  assert.equal(by[ID("99")].stranded, true, "the downgrade is flagged for UIs");
+  assert.ok(by[ID("99")].ledger);
+  assert.equal(by[ID("77")].status, "claimed", "dead-runner lease stays claimed");
+  assert.equal(by[ID("77")].stranded, undefined, "no stranded flag without an answering runner");
+
+  // tokenless: no fan-out, no runner list to consult -> the pure ledger view
+  // keeps "running" (documented best-effort; the signed-in view carries truth)
+  const anon = await getJson(origin, "/v1/deployments?owner=" + OWNER);
+  const anonBy = Object.fromEntries(anon.body.data.map((r) => [r.id, r]));
+  assert.equal(anonBy[ID("99")].status, "running");
+  assert.equal(anonBy[ID("99")].stranded, undefined);
+});
