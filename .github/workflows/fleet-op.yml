@@ -30,8 +30,11 @@ on:
         default: ""
         type: string
 
+# own group: incident tooling must NEVER queue behind an autoscale run that
+# is waiting for approval (a queued group member also gets CANCELLED when a
+# newer one arrives — this workflow's ops must not be silently dropped)
 concurrency:
-  group: autoscale        # serialize with autoscale applies — same fleet, same levers
+  group: fleet-op
   cancel-in-progress: false
 
 permissions:

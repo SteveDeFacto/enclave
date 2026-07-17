@@ -11,10 +11,13 @@
 #     default: a scale action happens only after a human approves that run.
 #     Setting the repo variable AUTOSCALE_MODE=auto switches to unattended
 #     apply — the script's own caps/cooldowns/thresholds still bound it.
-#   - workflow-level concurrency: while one run waits for approval, newer cron
-#     runs queue behind it and only the freshest pending run survives. apply
-#     re-verifies container state before each action, so approving an older
-#     plan is safe (stale actions self-skip).
+#   - concurrency is JOB-level on the apply jobs only (group autoscale-apply):
+#     plans always run on schedule, and a run waiting for approval can never
+#     lock out newer plans or fleet-op incident tooling (learned live
+#     2026-07-17: a workflow-level group let one stale waiting apply freeze
+#     every subsequent cron tick AND the fleet-op start that would have fixed
+#     it). apply re-verifies container state before each action, so approving
+#     an older plan is safe (stale actions self-skip).
 #   - no TINFOIL_API_KEY secret -> plan no-ops with a notice.
 name: Autoscale
 
@@ -24,10 +27,6 @@ on:
   schedule:
     - cron: "17,47 * * * *"
   workflow_dispatch: {}
-
-concurrency:
-  group: autoscale
-  cancel-in-progress: false
 
 # Threshold tuning without commits: any of these repo VARIABLES override the
 # script defaults (empty/unset falls through). See CFG in scripts/autoscale.mjs.
@@ -91,6 +90,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: fleet-scale
+    concurrency:
+      group: autoscale-apply
+      cancel-in-progress: false
     permissions:
       contents: read
       actions: write   # stamp AUTOSCALE_LAST_ACTION_* cooldown variables
@@ -116,6 +118,9 @@ jobs:
     if: needs.plan.outputs.has_actions == 'true' && vars.AUTOSCALE_MODE == 'auto'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    concurrency:
+      group: autoscale-apply
+      cancel-in-progress: false
     permissions:
       contents: read
       actions: write   # stamp AUTOSCALE_LAST_ACTION_* cooldown variables
