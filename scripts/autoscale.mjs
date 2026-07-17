@@ -53,11 +53,11 @@ export const CFG = {
   apiBase: (env.ENCLAVE_API_BASE || "https://api.enclave.host").replace(/\/+$/, ""),
   // a deployment only counts as demand once it has waited out the normal claim
   // path (dwell) and carries a meaningful prepaid runtime (non-refundable)
-  dwellSec: num("AUTOSCALE_DWELL_SEC", 900),
-  minFundedSec: num("AUTOSCALE_MIN_FUNDED_SEC", 7200),
+  dwellSec: num("AUTOSCALE_DWELL_SEC", 600),
+  minFundedSec: num("AUTOSCALE_MIN_FUNDED_SEC", 3600),
   // per-flavor: minimum aggregate prepaid USD and unmet share to justify a box
-  minCommittedUsd: { gpu: num("AUTOSCALE_MIN_COMMITTED_USD_GPU", 12), cpu: num("AUTOSCALE_MIN_COMMITTED_USD_CPU", 3) },
-  minUnmetShare: { gpu: num("AUTOSCALE_MIN_UNMET_GPU_SHARE", 0.15), cpu: num("AUTOSCALE_MIN_UNMET_CPU_SHARE", 0.25) },
+  minCommittedUsd: { gpu: num("AUTOSCALE_MIN_COMMITTED_USD_GPU", 4), cpu: num("AUTOSCALE_MIN_COMMITTED_USD_CPU", 1.5) },
+  minUnmetShare: { gpu: num("AUTOSCALE_MIN_UNMET_GPU_SHARE", 0.10), cpu: num("AUTOSCALE_MIN_UNMET_CPU_SHARE", 0.25) },
   horizonSec: num("AUTOSCALE_HORIZON_SEC", 86400), // cap per-deployment committed-USD credit at 24h
   maxAuto: { gpu: num("AUTOSCALE_MAX_GPU", 1), cpu: num("AUTOSCALE_MAX_CPU", 1) },
   orgContainerQuota: 10, // Tinfoil's documented per-org instance limit
@@ -345,7 +345,14 @@ async function buildSnapshot(log) {
   }
 
   // only hint-check candidates past the cheap gates and unservable right now
-  const gated = candidates.filter((c) => c.ageSec >= CFG.dwellSec && c.fundedSec >= CFG.minFundedSec);
+  const gated = [];
+  for (const c of candidates) {
+    const gates = [];
+    if (c.ageSec < CFG.dwellSec) gates.push(`dwell ${c.ageSec}s<${CFG.dwellSec}s`);
+    if (c.fundedSec < CFG.minFundedSec) gates.push(`funded ${c.fundedSec}s<${CFG.minFundedSec}s`);
+    if (gates.length) log(`  gate  ${c.id.slice(0, 10)}… ${c.flavor} share=${c.flavor === "gpu" ? c.gpuShare : c.cpuShare}: dropped (${gates.join(", ")})`);
+    else gated.push(c);
+  }
   if (enclaves.length > 0 && gated.length > 0) await classifyByHint(gated, log);
 
   const list = await tinfoilJson(["container", "list"]);

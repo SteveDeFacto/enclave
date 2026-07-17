@@ -29,6 +29,20 @@ concurrency:
   group: autoscale
   cancel-in-progress: false
 
+# Threshold tuning without commits: any of these repo VARIABLES override the
+# script defaults (empty/unset falls through). See CFG in scripts/autoscale.mjs.
+env:
+  AUTOSCALE_DWELL_SEC: ${{ vars.AUTOSCALE_DWELL_SEC }}
+  AUTOSCALE_MIN_FUNDED_SEC: ${{ vars.AUTOSCALE_MIN_FUNDED_SEC }}
+  AUTOSCALE_MIN_COMMITTED_USD_GPU: ${{ vars.AUTOSCALE_MIN_COMMITTED_USD_GPU }}
+  AUTOSCALE_MIN_COMMITTED_USD_CPU: ${{ vars.AUTOSCALE_MIN_COMMITTED_USD_CPU }}
+  AUTOSCALE_MIN_UNMET_GPU_SHARE: ${{ vars.AUTOSCALE_MIN_UNMET_GPU_SHARE }}
+  AUTOSCALE_MIN_UNMET_CPU_SHARE: ${{ vars.AUTOSCALE_MIN_UNMET_CPU_SHARE }}
+  AUTOSCALE_MAX_GPU: ${{ vars.AUTOSCALE_MAX_GPU }}
+  AUTOSCALE_MAX_CPU: ${{ vars.AUTOSCALE_MAX_CPU }}
+  AUTOSCALE_COOLDOWN_SEC: ${{ vars.AUTOSCALE_COOLDOWN_SEC }}
+  AUTOSCALE_IDLE_STOP_SEC: ${{ vars.AUTOSCALE_IDLE_STOP_SEC }}
+
 permissions:
   contents: read
 

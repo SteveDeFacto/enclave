@@ -15,10 +15,13 @@ auto-managed enclaves that sit idle. Built so that triggering it is always
    over every record; a candidate is `active`, funded past the contract's
    `claimable()` boundary (`balance6 >= rate`), and not under a live lease.
    On top of that it must have:
-   - **dwell**: `createdAt` at least `AUTOSCALE_DWELL_SEC` (15 min) ago — the
+   - **dwell**: `createdAt` at least `AUTOSCALE_DWELL_SEC` (10 min) ago — the
      normal claim path gets first shot;
-   - **real money**: at least `AUTOSCALE_MIN_FUNDED_SEC` (2 h) of prepaid
-     runtime at its snapshotted rate.
+   - **real money**: at least `AUTOSCALE_MIN_FUNDED_SEC` (1 h) of prepaid
+     runtime at its snapshotted rate. The defaults are sized to the console's
+     typical top-up (a $5 funding of a ~49% share ≈ 1.6 h) so REAL customers
+     trigger scaling; every threshold can be overridden per-run via repo
+     VARIABLES of the same names (see autoscale.yml `env`).
 2. **Structural filter.** Each candidate is checked against the fleet's own
    claim logic (`POST /v1/claim-hint`): reasons like *below the app's minimum
    shares*, *deactivated*, *configCid retired*, *app not deployable* mark the
@@ -35,9 +38,9 @@ auto-managed enclaves that sit idle. Built so that triggering it is always
 Scale-up for a flavor happens only when the unmet demand clears **both**
 economic gates:
 
-- aggregate unmet share ≥ `AUTOSCALE_MIN_UNMET_{GPU,CPU}_SHARE` (0.15 / 0.25)
+- aggregate unmet share ≥ `AUTOSCALE_MIN_UNMET_{GPU,CPU}_SHARE` (0.10 / 0.25)
 - aggregate prepaid, non-refundable runtime ≥ `AUTOSCALE_MIN_COMMITTED_USD_{GPU,CPU}`
-  ($12 / $3), counting at most 24 h per deployment
+  ($4 / $1.50), counting at most 24 h per deployment
 
 and the structural caps allow it:
 
@@ -83,12 +86,15 @@ planner even consider scaling, an attacker must permanently part with
 `MIN_COMMITTED_USD` of funding — paid to us.
 
 **Worst-case forced spend is capped and small.** Suppose an attacker funds
-$12+ of GPU demand, waits for the box, then deactivates everything. Our cost
+$4+ of GPU demand, waits for the box, then deactivates everything. Our cost
 is one H200 container for roughly boot + idle-window + cooldown (≈ 1.5–2 h)
-before the box stops again; their cost is ≥ $12, non-refundable. Repeating
-the cycle is bounded by the cooldown + cron cadence to well under one
-box-day per day per flavor, each cycle requiring fresh funding. At sane
-Tinfoil pricing this "attack" is a paying customer with poor value for money.
+before the box stops again; their cost is ≥ $4, non-refundable and paid to
+us. Repeating the cycle is bounded by the cooldown + cron cadence to well
+under one box-day per day per flavor, each cycle requiring fresh funding —
+a hard ceiling of a few tens of dollars per day, partially offset by the
+attacker's own donations. The $4 default trades a thinner griefing margin
+for real-customer responsiveness; raise `AUTOSCALE_MIN_COMMITTED_USD_GPU`
+(repo variable) if abuse ever materializes.
 
 **Capacity can't be faked downward cheaply either.** Supply comes from the
 relay we operate; demand comes from the chain via a public-RPC fallback pool.
