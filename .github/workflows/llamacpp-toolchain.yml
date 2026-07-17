@@ -65,13 +65,20 @@ jobs:
           wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update -q
-          sudo apt-get install -y -q cuda-toolkit-12-6 cmake
+          sudo apt-get install -y -q cuda-toolkit-12-6
           /usr/local/cuda-12.6/bin/nvcc --version | tail -1
+          # Ubuntu 22.04's cmake 3.22 MIS-DETECTS clang-as-CUDA-compiler as NVIDIA
+          # and injects nvcc-only -extended-lambda -> clang errors. A modern cmake
+          # (matches the local clang-clean build's cmake 4.x) detects clang and
+          # uses -ffast-math instead. Install via pip so `cmake` (/usr/local/bin)
+          # shadows the apt one.
+          sudo python3 -m pip install --upgrade "cmake<5"
+          cmake --version | head -1
           # clang as an ALTERNATE CUDA frontend: nvcc miscompiles the sm_90 MMQ
-          # int8 shared-tile STORE -> speckle (#24399). clang's NVPTX backend
-          # emits different PTX for that store, aiming to dodge the codegen bug
-          # while keeping the fast tensor-core mma path. Uses CUDA 12.6's ptxas +
-          # runtime libs (same fleet ABI); only the compile frontend changes.
+          # int8 shared-tile STORE -> speckle (#24399), and it survives ptxas -O0,
+          # so the bad codegen is in the FRONTEND PTX. clang's NVPTX backend emits
+          # different PTX; still CUDA 12.6 ptxas + runtime libs (same fleet ABI).
+          # This mirrors the LOCAL sm_86-clean builds, which all use clang.
           wget -q https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 19
