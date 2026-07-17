@@ -358,16 +358,18 @@ containers:
       # at graph allocation ("sampling for image 1/1 failed" in <1s, seen
       # live). With FA the 2048px diffusion buffer is a few GB.
       - ENCLAVE_SD_FLASH_ATTN: "1"
-      # qwen-image-2512 crystalline-speckle: NATIVE int8 MMQ at Q8_0, chasing the
-      # fast tensor-core path CLEAN (the ~6.5s target; cuBLAS bypass is clean but
-      # ~28s). Root cause = sm_90 (Hopper H200) ptxas SCHEDULING miscompile of the
-      # int8 MMQ path (#24399: stale address register on a shared STORE), present
-      # at ptxas -O3 on CUDA 12.6 AND 13.3. This ELL throttles ptxas (see
-      # llamacpp-toolchain.yml -Xptxas). NOT a source bug (clean on sm_86), NO
-      # upstream fix. Ruled out (do not revisit): FORCE_CUBLAS is the clean-but-
-      # slow bypass (v0.5.163/169); Q6_K (sd9), 4x m8n8k16 decomp (sd10), mmq_x=64
-      # (sd11), stream-k-off (v0.5.161), VAE (v0.5.157), flash (v0.5.158), PDL
-      # (v0.5.160), graphs+fusion (v0.5.162) all stayed speckled.
+      # qwen-image-2512 crystalline-speckle: FORCE_CUBLAS is the fix (ELL sd12).
+      # The native int8 MMQ path on sm_90 (Hopper H200) is fundamentally broken:
+      # the speckle survived EVERY software lever - nvcc AND clang frontends, CUDA
+      # 12.4 AND 12.6 ptxas, ptxas -O3 down to -O0, the 4x m8n8k16 mma decomposition
+      # (sd10), mmq_x=64 (sd11), Q6_K (sd9), stream-k-off (v0.5.161); nvcc 12.4/12.6
+      # even render BYTE-IDENTICAL speckle. It is an sm_90 hardware/architectural
+      # issue with ggml's MMQ int8 kernel (open, unfixed llama.cpp #24399); clean
+      # on sm_86 with the same binary. ONLY bypassing MMQ via cuBLAS is clean
+      # (proven v0.5.163/169). No speed cost: native MMQ ran ~28-32s = same as
+      # cuBLAS ~28s (the fast native path needs an upstream ggml/NVIDIA fix).
+      # COMPUTE_TYPE=f32: f16 overflows qwen activations (>65504 -> NaN white).
+      - GGML_CUDA_CUBLAS_COMPUTE_TYPE: "f32"
       # GGML_CUDA_PDL=0 kept as cheap Hopper hardening (not the fix).
       - GGML_CUDA_PDL: "0"
       # Fused-attention quarantine (ORT/onnx volumes only - sdcpp/ggml
