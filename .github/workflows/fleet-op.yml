@@ -64,6 +64,6 @@ jobs:
               [[ "$TARGET" =~ ^[a-z0-9][a-z0-9-]{1,40}$ ]] || { echo "::error::target must be a container name"; exit 2; }
               ARGS=()
               [ "$OP" = "start" ] || [ "$OP" = "relaunch" ] && [ -n "$TAG" ] && ARGS=(--tag "$TAG")
-              tinfoil container "$OP" "$TARGET" "${ARGS[@]:-}" ;;
+              tinfoil container "$OP" "$TARGET" "${ARGS[@]}" ;;
             *) echo "::error::unknown op $OP"; exit 2 ;;
           esac
