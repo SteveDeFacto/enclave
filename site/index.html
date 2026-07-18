@@ -204,7 +204,7 @@
       <div class="card jade">
         <span class="tag">hardware · attested</span>
         <h3>You vs. the operator</h3>
-        <p>Your enclave runs in a CPU TEE (AMD SEV-SNP on today's fleet) with the H200 in NVIDIA confidential-computing mode. The CPU↔GPU link is encrypted and the GPU is walled off from the host. Enclave, the operator, cannot read your VRAM, RAM, keys, or traffic. This is enforced by hardware and proven by an attestation you verify in your browser <b>before</b> sending data. This is the strong guarantee, and it's the one you can check cryptographically.</p>
+        <p>Your enclave runs in a CPU TEE (AMD SEV-SNP on today's fleet) with the GPU in NVIDIA confidential-computing mode. The CPU↔GPU link is encrypted and the GPU is walled off from the host. Enclave, the operator, cannot read your VRAM, RAM, keys, or traffic. This is enforced by hardware and proven by an attestation you verify in your browser <b>before</b> sending data. This is the strong guarantee, and it's the one you can check cryptographically.</p>
       </div>
       <div class="card iris">
         <span class="tag">software · Wasm sandbox + process</span>
@@ -241,17 +241,17 @@
       <div class="price-card">
         <span class="pc-t">GPU / VRAM dial</span>
         <span class="pc-rate">× $<span data-live-price="unit-hr" data-gpu="100">6</span>/hr per full card</span>
-        <p>0-100% of one GPU card. VRAM and compute move together: each percent buys ≈1.4&nbsp;GB VRAM and ≈9.9 TFLOPS (≈1.3 SMs). <b>0% = a CPU-only app.</b></p>
+        <p>0-100% of one GPU card. VRAM and compute move together: each percent buys ≈<span data-live-spec="vram" data-gpu="1">1.4</span>&nbsp;GB VRAM and ≈<span data-live-spec="tflops" data-gpu="1">9.9</span> TFLOPS. <b>0% = a CPU-only app.</b></p>
       </div>
       <div class="price-card">
         <span class="pc-t">CPU / RAM dial</span>
         <span class="pc-rate">× $<span data-live-price="unit-hr" data-cpu="100">3</span>/hr per whole node</span>
-        <p>0-100% of the node's vCPU+RAM: each percent buys ≈0.16 vCPU, ≈0.64&nbsp;GB RAM, ≈10 GFLOPS (a whole node is roughly a thousandth of a card's FLOPS). <b>Your app's memory cap is exactly this slice of the node's 64&nbsp;GB.</b></p>
+        <p>0-100% of the node's vCPU+RAM: each percent buys ≈<span data-live-spec="vcpu" data-cpu="1">0.16</span> vCPU, ≈<span data-live-spec="ram" data-cpu="1">0.64</span>&nbsp;GB RAM, ≈<span data-live-spec="gflops" data-cpu="1">10</span> GFLOPS (a whole node is roughly a thousandth of a card's FLOPS). <b>Your app's memory cap is exactly this slice of the node's <span data-live-spec="node-ram">64</span>&nbsp;GB.</b></p>
       </div>
       <div class="price-card">
         <span class="pc-t">Floors come from app specs</span>
         <span class="pc-rate">minimums, not suggestions</span>
-        <p>The VRAM, compute, and RAM an app declares in the catalog set each dial's minimum: spec ÷ server spec (141&nbsp;GB / 989 TFLOPS per card; 64&nbsp;GB / ~1000 GFLOPS per node), larger axis wins, rounded up to a whole percent. An app declaring 494 TFLOPS can't deploy below a 50% GPU share even if it needs 2&nbsp;GB of VRAM - <b>you can't occupy an axis without paying for it.</b></p>
+        <p>The VRAM, compute, and RAM an app declares in the catalog set each dial's minimum: spec ÷ server spec (<span data-live-spec="card-vram">140.4</span>&nbsp;GB / <span data-live-spec="card-tflops">989</span> TFLOPS per card; <span data-live-spec="node-ram">64</span>&nbsp;GB / ~<span data-live-spec="node-gflops">1000</span> GFLOPS per node), larger axis wins, rounded up to a whole percent. An app declaring <span data-live-spec="tflops-floor" data-gpu="50">494</span> TFLOPS can't deploy below a 50% GPU share even if it needs 2&nbsp;GB of VRAM - <b>you can't occupy an axis without paying for it.</b></p>
       </div>
       <div class="price-card">
         <span class="pc-t">Rules of the road</span>
@@ -271,11 +271,11 @@
           <tr><th>Example</th><th>GPU share</th><th>CPU share</th><th>What the shares grant</th><th>Per hour</th><th>Per second</th></tr>
         </thead>
         <tbody>
-          <tr class="full"><td>CPU-only</td><td>0%</td><td>10%</td><td>no GPU · 6.4 GB RAM / 1.6 vCPU</td><td>$<span data-live-price="hr" data-cpu="10">0.30</span></td><td>$<span data-live-price="sec" data-cpu="10">0.000084</span></td></tr>
-          <tr class="full"><td>Slice</td><td>10%</td><td>5%</td><td>~14 GB VRAM / ~99 TFLOPS · 3.2 GB RAM</td><td>$<span data-live-price="hr" data-gpu="10" data-cpu="5">0.75</span></td><td>$<span data-live-price="sec" data-gpu="10" data-cpu="5">0.000209</span></td></tr>
-          <tr class="full"><td>Quarter</td><td>25%</td><td>5%</td><td>~35 GB VRAM / ~247 TFLOPS · 3.2 GB RAM</td><td>$<span data-live-price="hr" data-gpu="25" data-cpu="5">1.65</span></td><td>$<span data-live-price="sec" data-gpu="25" data-cpu="5">0.000459</span></td></tr>
-          <tr class="full"><td>Half</td><td>50%</td><td>10%</td><td>~70 GB VRAM / ~495 TFLOPS · 6.4 GB RAM</td><td>$<span data-live-price="hr" data-gpu="50" data-cpu="10">3.30</span></td><td>$<span data-live-price="sec" data-gpu="50" data-cpu="10">0.000917</span></td></tr>
-          <tr class="full"><td>Full GPU</td><td>100%</td><td>10%</td><td>141 GB VRAM / 989 TFLOPS · 6.4 GB RAM</td><td>$<span data-live-price="hr" data-gpu="100" data-cpu="10">6.30</span></td><td>$<span data-live-price="sec" data-gpu="100" data-cpu="10">0.001751</span></td></tr>
+          <tr class="full"><td>CPU-only</td><td>0%</td><td>10%</td><td>no GPU · <span data-live-spec="ram" data-cpu="10">6.4</span> GB RAM / <span data-live-spec="vcpu" data-cpu="10">1.6</span> vCPU</td><td>$<span data-live-price="hr" data-cpu="10">0.30</span></td><td>$<span data-live-price="sec" data-cpu="10">0.000084</span></td></tr>
+          <tr class="full"><td>Slice</td><td>10%</td><td>5%</td><td>~<span data-live-spec="vram" data-gpu="10">14</span> GB VRAM / ~<span data-live-spec="tflops" data-gpu="10">99</span> TFLOPS · <span data-live-spec="ram" data-cpu="5">3.2</span> GB RAM</td><td>$<span data-live-price="hr" data-gpu="10" data-cpu="5">0.75</span></td><td>$<span data-live-price="sec" data-gpu="10" data-cpu="5">0.000209</span></td></tr>
+          <tr class="full"><td>Quarter</td><td>25%</td><td>5%</td><td>~<span data-live-spec="vram" data-gpu="25">35</span> GB VRAM / ~<span data-live-spec="tflops" data-gpu="25">247</span> TFLOPS · <span data-live-spec="ram" data-cpu="5">3.2</span> GB RAM</td><td>$<span data-live-price="hr" data-gpu="25" data-cpu="5">1.65</span></td><td>$<span data-live-price="sec" data-gpu="25" data-cpu="5">0.000459</span></td></tr>
+          <tr class="full"><td>Half</td><td>50%</td><td>10%</td><td>~<span data-live-spec="vram" data-gpu="50">70</span> GB VRAM / ~<span data-live-spec="tflops" data-gpu="50">495</span> TFLOPS · <span data-live-spec="ram" data-cpu="10">6.4</span> GB RAM</td><td>$<span data-live-price="hr" data-gpu="50" data-cpu="10">3.30</span></td><td>$<span data-live-price="sec" data-gpu="50" data-cpu="10">0.000917</span></td></tr>
+          <tr class="full"><td>Full GPU</td><td>100%</td><td>10%</td><td><span data-live-spec="card-vram">140.4</span> GB VRAM / <span data-live-spec="card-tflops">989</span> TFLOPS · <span data-live-spec="ram" data-cpu="10">6.4</span> GB RAM</td><td>$<span data-live-price="hr" data-gpu="100" data-cpu="10">6.30</span></td><td>$<span data-live-price="sec" data-gpu="100" data-cpu="10">0.001751</span></td></tr>
         </tbody>
       </table>
       </div>
