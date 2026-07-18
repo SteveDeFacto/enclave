@@ -1030,6 +1030,13 @@ function initStatePersistence() {
     releaseClaimsOnShutdown().finally(() => process.exit(0));
   });
 }
+// Statuses that hold NO resources: every flip into one of these releases the
+// record's slice in the same synchronous block (all sites verified 2026-07-18),
+// which is what makes them safe markers for the restore guard and the pool
+// reconciler below. Also exactly the set a claim may re-adopt over -
+// CLAIM_TERMINAL (defined near the claim path) aliases this.
+const TERMINAL_STATUSES = new Set(["expired", "failed", "terminated", "stopping"]);
+
 function loadState() {
   if (!_statePersistable || !existsSync(STATE_FILE)) return;
   let s; try { s = JSON.parse(readFileSync(STATE_FILE, "utf8")); }
@@ -1043,8 +1050,20 @@ function loadState() {
     // legacy terminal status: "stopping" was set AFTER teardown completed and
     // nothing ever finalized it, so restored records sat "stopping" forever
     if (r.status === "stopping") r.status = "terminated";
+    // a record persisted MID-PROVISION (claimed/provisioning/…) has no
+    // instance to resume and nothing downstream ever finalizes it - restored
+    // as-is it would hold its slice forever AND block its own id's re-claim
+    // ("already serving it here"). Expire it: expired holds nothing, and the
+    // sweep legitimately re-adopts an expired id while its lease is still ours.
+    if (!TERMINAL_STATUSES.has(r.status) && r.status !== "running" && r.status !== "awaiting_payment") {
+      r.status = "expired"; r.error = r.error || "interrupted mid-provision by a restart";
+    }
     deployments.set(r.id, r);
     if (r.payRef) payRefIndex.set(r.payRef.toLowerCase(), r.id);
+    // terminal records never hold resources (see TERMINAL_STATUSES) - a
+    // persisted handle on one is crash drift; drop it instead of re-reserving
+    // a slice nothing would ever release (the 2026-07-18 kryptos leak)
+    if (r._gpu && TERMINAL_STATUSES.has(r.status)) r._gpu = null;
     if (r._gpu) {                       // re-reserve the slices this deployment still holds
       if (r._gpu.cpu) cpuPool.shareFree = Math.max(0, cpuPool.shareFree - r._gpu.share);
       else {
@@ -1069,6 +1088,70 @@ function loadState() {
   }
   if (deployments.size) console.log(`[state] restored ${deployments.size} deployment(s) `
     + `(${running} running, ${waiting} awaiting payment) after ${Math.round(gapMs / 1000)}s down; clocks were frozen`);
+}
+
+// ---- pool reconciliation: the RECORDS are the truth, the pools are a cache --
+// Every alloc/release pair should keep gpuCards/cpuPool exactly in step with
+// the deployments map, but one missed release - a crash between paths, a bug
+// like the 2026-07-18 kryptos leak (~27 GB of the card held by dead work) -
+// shrinks sellable capacity FOREVER: the claim gauntlet, /availability and the
+// deploy page all read these pools, and nothing ever put the slice back. So
+// rebuild free from first principles on a cadence: total minus what
+// non-terminal records actually hold. Safe because every allocGpu/allocCpu ->
+// deployments.set attach is synchronous (no await between), so a pass can
+// never see a half-attached slice; a terminal record still holding a handle is
+// itself drift (terminal flips release synchronously) and is dropped here.
+// Corrects BOTH directions: leaked holds (under-free) and double releases
+// (over-free, which would oversell the card).
+function reconcilePools() {
+  const held = { cpu: 0, cards: gpuCards.map(() => ({ vram: 0, compute: 0 })) };
+  for (const r of deployments.values()) {
+    const h = r._gpu;
+    if (!h) continue;
+    if (TERMINAL_STATUSES.has(r.status)) { r._gpu = null; saveStateSoon(); continue; }
+    if (h.cpu) { held.cpu += h.share; continue; }
+    held.cpu += h.cpuShare || 0;
+    const c = held.cards[h.cardId];
+    if (c) { c.vram += (h._needV != null ? h._needV : h.vramGb + CTX_OVERHEAD_GB); c.compute += h.computeShare; }
+  }
+  const fixed = [];
+  const apply = (obj, key, want, label, fmt) => {
+    if (Math.abs(obj[key] - want) <= 1e-6) return;
+    fixed.push(`${label} ${fmt(obj[key])}->${fmt(want)}`);
+    obj[key] = want;
+  };
+  apply(cpuPool, "shareFree", Math.max(0, Math.min(1, 1 - held.cpu)), "cpu share", round3);
+  gpuCards.forEach((card, i) => {
+    apply(card, "vramFree", Math.max(0, Math.min(CARD_VRAM_GB, CARD_VRAM_GB - held.cards[i].vram)), `card${i} vramGb`, round1);
+    apply(card, "computeFree", Math.max(0, Math.min(1, 1 - held.cards[i].compute)), `card${i} compute`, round3);
+  });
+  if (fixed.length) console.warn(`[pool] reconciled drift - dead reservations reclaimed (${fixed.join(", ")})`);
+  return fixed;
+}
+function startPoolReconciler() {
+  reconcilePools();          // boot pass: restored drift dies before the first claim/availability answer
+  const t = setInterval(reconcilePools, 60_000);
+  if (t.unref) t.unref();
+}
+
+// POOL_SELFTEST='{"cardVramGb":140.4,"cards":[{"vramFree":86.4,"computeFree":0.64}],
+//   "cpuShareFree":0.8,"records":[{"id":"a","status":"running","_gpu":{…}}]}'
+// applies the scenario, runs reconcilePools TWICE (the second must be a
+// no-op), prints one JSON line and exits - same contract as the seams above
+// (test/pool-reconcile.test.mjs drives it).
+if (process.env.POOL_SELFTEST) {
+  const c = JSON.parse(process.env.POOL_SELFTEST);
+  if (c.cardVramGb > 0) CARD_VRAM_GB = c.cardVramGb;
+  gpuCards.length = 0;
+  (c.cards || []).forEach((k, i) => gpuCards.push({ id: i, uuid: null, vramFree: k.vramFree, computeFree: k.computeFree }));
+  if (c.cpuShareFree != null) cpuPool.shareFree = c.cpuShareFree;
+  for (const r of c.records || []) deployments.set(r.id, r);
+  const fixed = reconcilePools(), fixedAgain = reconcilePools();
+  console.log(JSON.stringify({ fixed, fixedAgain,
+    cpuShareFree: round3(cpuPool.shareFree),
+    cards: gpuCards.map((k) => ({ vramFree: round1(k.vramFree), computeFree: round3(k.computeFree) })),
+    dropped: [...deployments.values()].filter((r) => !r._gpu).map((r) => r.id) }));
+  process.exit(0);
 }
 
 // ============================================================================
@@ -3676,7 +3759,7 @@ const readOnchainDeployment = (id) => readLedgerContract("get", [id]);
 // local rec states that no longer hold the lease — safe to re-adopt over
 // "stopping" is the pre-terminated legacy name, kept so records persisted by an
 // older supervisor still count as terminal after an upgrade.
-const CLAIM_TERMINAL = new Set(["expired", "failed", "terminated", "stopping"]);
+const CLAIM_TERMINAL = TERMINAL_STATUSES;   // claim/resume may re-adopt exactly the statuses that hold no resources
 
 // ids that failed provisioning here — exponential claim cooldown (see
 // considerClaim). In-memory on purpose: a reboot is a fresh chance.
@@ -4061,7 +4144,14 @@ async function tryClaim(d, g, firewall, slice, { hinted = false, resume = false 
 // mapping. rec.owner is the on-chain owner address — SIWE tokens already carry
 // an address, so owner-only routes (status, delete) work unchanged.
 async function adopt(d, g, firewall, slice) {
-  if (deployments.has(d.id)) deployments.delete(d.id);      // terminal leftover from an earlier lease
+  const left = deployments.get(d.id);
+  if (left) {                                               // terminal leftover from an earlier lease/life
+    if (left._gpu) {                                        // a leftover still holding its slice is restore/crash
+      releaseGpu(left._gpu); left._gpu = null;              // drift (terminal flips release synchronously) - reclaim
+      console.warn(`[claim] ${d.id}: leftover record still held its slice - released before re-adopt`);
+    }
+    deployments.delete(d.id);
+  }
   const gpu = slice.cpu ? allocCpu(slice.cpuShare) : allocGpu(slice.vramGb, slice.computeShare, slice.cpuShare);
   if (!gpu) {                                                // capacity vanished since the sweep checked
     releaseLease(d.id, "capacity vanished").catch(() => {}); // hand it back with the lease refunded
@@ -4213,6 +4303,7 @@ else if (REGISTRY_READY) advertiseFromShimCert();
 // funded time only while healthy; freezes through outages; reaps at -grace)
 startPaymentWatcher();
 startBillingTicker();
+startPoolReconciler();
 
 // portable deployments: claim/renew/release on-chain leases (opt-in; see
 // contracts/DEPLOYMENTS.md). Requires registry advertising + DEPLOYMENTS_ADDRESS.
