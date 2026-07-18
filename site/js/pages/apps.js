@@ -13,7 +13,7 @@ import "../../components/app-detail/app-detail.js";
 import { $, $$, esc, short, blen, fmtDur, showToast, on, tosAccepted, setTosAccepted } from "../core/util.js";
 import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, IPFS_UPLOAD_URL, IPFS_IMAGE_UPLOAD_URL, IPFS_IMG_GATEWAY, MAX_WASM_MB, MAX_WASM_BYTES, MAX_IMAGE_MB, MAX_IMAGE_BYTES, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
-import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, rate6Of, waitReceipt, catSchemaRev } from "../core/chain.js";
+import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, depMaxGpuMilli, rate6Of, waitReceipt, catSchemaRev } from "../core/chain.js";
 import { connectWallet, authenticate, ensureBaseChain, sendTx, usdcBalanceOf, openBuyModal } from "../core/wallet.js";
 import { STORE, loadCatalog, selIdx, defaultIdx, appVerified, appPrivileged, visibleVerIdxs, validPortsCsv, REF_CACHE, PORTS_CACHE, SPECS_CACHE, specOf, CONFIG_CACHE, catalogRef, mediaOf, appMedia, stripMedia, withMedia } from "../core/catalog.js";
 import { minPctsOf, shareRates } from "../core/pricing.js";
@@ -182,16 +182,29 @@ function quickDeploy(app, v, idx){
   const go = host.querySelector(".qd-go"), balv = host.querySelector(".qd-balv");
   const buy = host.querySelector(".qd-buy"), conn = host.querySelector(".qd-connect");
   const tos = host.querySelector(".qd-tosck");
-  let bal = null;
+  let bal = null, capMsg = null;
   const est = () => {
     const usd = parseFloat(amt.value) || 0;
     estv.textContent = (usd > 0 && rate > 0) ? fmtDur(usd / rate) : "–";
     const shortOnFunds = bal != null && usd > bal;
-    note.hidden = !shortOnFunds;
-    if (shortOnFunds) note.textContent = "That’s more than your wallet holds ($" + bal.toFixed(2) + " USDC).";
-    go.disabled = !(usd >= 0.01) || shortOnFunds || !tos.checked;
-    go.title = tos.checked ? "" : "Agree to the Terms of Service above to deploy";
+    // capMsg is fatal (the contract refuses the create); it outranks the
+    // adjustable short-on-funds note and pins the Deploy button off
+    note.hidden = !shortOnFunds && !capMsg;
+    if (capMsg) note.textContent = capMsg;
+    else if (shortOnFunds) note.textContent = "That’s more than your wallet holds ($" + bal.toFixed(2) + " USDC).";
+    go.disabled = !(usd >= 0.01) || shortOnFunds || !tos.checked || !!capMsg;
+    go.title = capMsg ? "" : tos.checked ? "" : "Agree to the Terms of Service above to deploy";
   };
+  // quick-deploy buys the app's MINIMUM shares, so the on-chain per-deployment
+  // GPU cap decides right at open whether this app is deployable at all -
+  // say so here, in the modal, not after a redirect to the dashboard
+  depMaxGpuMilli().then(cap => {
+    if (mins.gpuPct * 10 > cap){
+      capMsg = "This app needs at least a " + mins.gpuPct + "% GPU share, but the platform caps deployments at "
+        + (cap / 10) + "% of a card - it can stay published, it just can’t be deployed until the cap is raised.";
+      est();
+    }
+  }).catch(() => {});
   amt.addEventListener("input", est);
   tos.addEventListener("change", () => { setTosAccepted(tos.checked); est(); });
   depPrices6().then(pr => {

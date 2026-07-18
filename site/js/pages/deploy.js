@@ -270,11 +270,8 @@ async function runDeploy(){
   // operator-set on-chain cap (pre-cap contracts read as 1000 = uncapped).
   // Publishing an app whose specs exceed the cap stays legal - only DEPLOYS
   // are gated - so say which of the two the user actually hit.
-  const capMilli = await depMaxGpuMilli();
-  if (gpuMilli > capMilli)
-    return note([["warn", fmins && fmins.gpuPct * 10 > capMilli
-      ? "[!] " + raw + " needs at least a " + fmins.gpuPct + "% GPU share, but the platform caps deployments at " + (capMilli / 10) + "% of a card - this app can be published, it just can't be deployed until the cap is raised."
-      : "[!] the platform caps GPU deployments at " + (capMilli / 10) + "% of a card - lower the GPU dial (asked: " + (gpuMilli / 10) + "%)."]]);
+  const capMsg = await gpuCapRefusal(gpuMilli, fmins ? fmins.gpuPct : null);
+  if (capMsg) return note([["warn", "[!] " + capMsg]]);
 
   if (dry){
     const wafDry = wafSpec();
@@ -334,6 +331,13 @@ function portsSpec(raw){
    request filter) rides create()'s last string as {"waf":{…}}, interpreted by
    the enclave's proxy and never shown to the app. */
 export async function deployOnChain(spec){
+  // the on-chain share-cap gate runs BEFORE the dashboard redirect: a deploy
+  // create() would refuse must be refused where the user is standing (the
+  // console form, the store's quick-deploy) - not narrated into a run log
+  // they were just navigated to. Both callers re-check earlier for richer
+  // UI; this is the shared backstop for the races they can't see.
+  const capMsg = await gpuCapRefusal(spec.gpuMilli);
+  if (capMsg) return showToast("Deploy refused: " + capMsg);
   const fund = spec.fundUsd;
   const { portsCsv, appPort } = portsSpec(spec.ports);
   const asset = spec.asset || "USDC";
@@ -353,15 +357,6 @@ export async function deployOnChain(spec){
     }
     w.line("dimln", "    if nothing happens, check your wallet - a popup may be waiting (or queued behind an old one; open the wallet and clear pending requests)");
     await ensureBaseChain();
-
-    // on-chain share-cap gate BEFORE the first signature (create() would
-    // revert anyway - refuse with words instead of a wallet error). This is
-    // the one choke point both entries share: the console form re-checks at
-    // its dials, but the store's quick-deploy modal reaches here directly.
-    const capMilli = await depMaxGpuMilli();
-    if (spec.gpuMilli > capMilli)
-      throw new EnclaveError("the platform caps GPU deployments at " + (capMilli / 10) + "% of a card and this deploy asks for "
-        + (spec.gpuMilli / 10) + "%. Apps needing more stay publishable - deploying them waits until the cap is raised.", 400);
 
     // capacity heads-up BEFORE the first signature (fresh read: the store's
     // quick-deploy modal reaches here without the console's 20s poll). Not a
@@ -627,6 +622,21 @@ function queuedVerdict(gpuPct, cpuPct){
    Fresh /availability read at click time (the 20s poll may be stale, and
    quick-deploy may never have polled). Resolves true to proceed -
    immediately when the size fits or capacity is unknown - false on cancel. */
+/* The on-chain per-deployment GPU-share cap as a refusal message (null =
+   fits; pre-cap contracts read as uncapped). Shared like confirmQueuedDeploy
+   so every entry point shows it WHERE THE USER IS - the console form's note,
+   the quick-deploy modal, deployOnChain's pre-navigation toast - instead of
+   first redirecting to the dashboard for a create() that would only revert.
+   `minGpuPct` (when known) picks the honest message: an app whose MINIMUM
+   exceeds the cap is publishable but undeployable, not a dial problem. */
+export async function gpuCapRefusal(gpuMilli, minGpuPct){
+  const cap = await depMaxGpuMilli();
+  if (!(gpuMilli > cap)) return null;
+  return minGpuPct != null && minGpuPct * 10 > cap
+    ? "this app needs at least a " + minGpuPct + "% GPU share, but the platform caps deployments at " + (cap / 10) + "% of a card - it can be published, it just can't be deployed until the cap is raised."
+    : "the platform caps GPU deployments at " + (cap / 10) + "% of a card - lower the GPU share (asked: " + (gpuMilli / 10) + "%).";
+}
+
 export async function confirmQueuedDeploy(gpuPct, cpuPct){
   try { adoptFreePct(await Enclave.getAvailability()); } catch(e){}
   const q = queuedVerdict(gpuPct, cpuPct);
