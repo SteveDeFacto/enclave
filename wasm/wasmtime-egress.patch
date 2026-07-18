@@ -79,11 +79,22 @@ new file mode 100644
 index 0000000..3137a39
 --- /dev/null
 +++ b/crates/wasi/src/egress.rs
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,279 @@
 +//! enclave transparent egress: route ALL guest outbound through the enclave's
 +//! loopback SOCKS5 front so an UNMODIFIED app leaves from the deployment's own
 +//! IPv6 — the same dedicated-source identity `ENCLAVE_EGRESS` gives an app that
 +//! opts in explicitly, but automatic and un-bypassable.
++//!
++//! One carve-out: destinations whose LITERAL IP is loopback (127.0.0.0/8, ::1)
++//! dial DIRECT, never through the front. In-CVM loopback traffic is not egress:
++//! it never leaves the enclave, has no source identity to tag, and the relay
++//! could never serve it (127.0.0.1 dialed AT the relay is the relay's own
++//! loopback — the guest just gets ConnectionRefused). The platform's own
++//! loopback planes (the wasm-manager /encvol API behind ENCLAVE_ENC_API) depend
++//! on this reach, and every non-egress tenant has always had it — the in-CVM
++//! services are token-gated fail-closed on exactly that assumption. Domain
++//! names (even "localhost") still go through the front: only literal IPs are
++//! carved out, so nothing here re-opens name-resolution tricks.
 +//!
 +//! Enabled by `-S egress=<socks-host>:<socks-port>` on the wasmtime CLI (see
 +//! `RunCommon::configure_wasip2`). The per-deployment SOCKS CREDENTIAL is read
@@ -224,6 +235,10 @@ index 0000000..3137a39
 +    if addr == cfg.front {
 +        return TcpStream::connect(cfg.front).await;
 +    }
++    // In-CVM loopback dials DIRECT — not egress (see the module doc's carve-out).
++    if addr.ip().is_loopback() {
++        return TcpStream::connect(addr).await;
++    }
 +    socks_connect(cfg, Dest::Ip(addr.ip()), addr.port()).await
 +}
 +
@@ -237,6 +252,10 @@ index 0000000..3137a39
 +            // Same front pass-through as connect_addr (see there).
 +            if SocketAddr::new(ip, port) == cfg.front {
 +                return TcpStream::connect(cfg.front).await;
++            }
++            // In-CVM loopback dials DIRECT — not egress (module-doc carve-out).
++            if ip.is_loopback() {
++                return TcpStream::connect(SocketAddr::new(ip, port)).await;
 +            }
 +            Dest::Ip(ip)
 +        }
