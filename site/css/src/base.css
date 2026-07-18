@@ -63,14 +63,30 @@ body{
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   overflow-x:hidden;
 }
-/* faint silicon substrate */
+/* faint silicon substrate: the static glows… */
 body::before{
   content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
   background:
     radial-gradient(1100px 600px at 78% -8%, rgba(47,230,168,.07), transparent 60%),
-    radial-gradient(900px 500px at 8% 8%, rgba(143,162,255,.05), transparent 55%),
+    radial-gradient(900px 500px at 8% 8%, rgba(143,162,255,.05), transparent 55%);
+}
+/* …and its grid on a composited layer of its own: the drift animates
+   transform only (no repaint), oversized by one 26px tile on every edge so
+   a loop of exactly one tile wraps seamlessly */
+body::after{
+  content:"";position:fixed;inset:-26px;z-index:0;pointer-events:none;
+  background:
     linear-gradient(transparent 0 95%, rgba(255,255,255,.018) 95%) 0 0/100% 26px,
     linear-gradient(90deg, transparent 0 95%, rgba(255,255,255,.018) 95%) 0 0/26px 100%;
+  will-change:transform;
+  animation:grid-drift 8s linear infinite;
+}
+@keyframes grid-drift{
+  from{transform:translate3d(0,0,0);}
+  to{transform:translate3d(26px,-26px,0);}
+}
+@media (prefers-reduced-motion:reduce){
+  body::after{animation:none;}
 }
 a{color:inherit;text-decoration:none;}
 img{max-width:100%;display:block;}
