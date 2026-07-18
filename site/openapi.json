@@ -1183,6 +1183,8 @@
                 "name": { "type": "string", "example": "qwen2.5-0.5b" },
                 "bytes": { "type": "integer", "description": "total size on disk", "example": 483003582 },
                 "onnx": { "type": "boolean", "description": "the dir contains an ONNX model (model.onnx or *.onnx)" },
+                "gguf": { "type": "boolean", "description": "the dir carries an unambiguous GGUF (or split-GGUF family) the runtime preloads as a named wasi-nn graph on the llama.cpp backend" },
+                "sd": { "type": "boolean", "description": "the volume is an image checkpoint preloaded through the stable-diffusion.cpp wasi-nn backend (image generation)" },
                 "endpoints": { "type": "array", "items": { "type": "string" }, "description": "fleet /availability only: enclaves carrying this volume" }
               }
             }
@@ -1321,7 +1323,7 @@
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Share of one GPU card (VRAM + compute), 0 to 1. 0 = CPU-only app. Must be >= the app's minimum and >= cpuShare when > 0. Dialed in whole percent. A share > 0 also grants the app the wasi-nn interface: ONNX inference through the enclave's runtime, hardware-capped per process via MPS at exactly this share (SM% = share, VRAM = share x 141 GB). ExecutionTarget gpu is strict - it initializes the CUDA provider or load() fails; no silent CPU fallback. Apps importing wasi:nn fail to instantiate when deployed with gpuShare 0.",
+            "description": "Share of one GPU card (VRAM + compute), 0 to 1. 0 = CPU-only app. Must be >= the app's minimum and >= cpuShare when > 0. Dialed in whole percent. A share > 0 also grants the app the wasi-nn interface: ONNX (ONNX Runtime), GGUF (llama.cpp) and image-diffusion (stable-diffusion.cpp) inference through the enclave's runtime, hardware-capped per process via MPS at exactly this share (SM% = share, VRAM = share x 141 GB). ExecutionTarget gpu is strict - the backend runs on CUDA or load() fails; no silent CPU fallback. Apps importing wasi:nn fail to instantiate when deployed with gpuShare 0.",
             "example": 0.25
           },
           "cpuShare": {

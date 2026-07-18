@@ -150,9 +150,10 @@ PRIV_PORT_MAX  = 1023
 RESERVED_PORTS = {8080, 8091}
 AUDIT_SECS     = float(os.environ.get("WASM_AUDIT_INTERVAL", "10"))
 # wasi-nn GPU interface: a deployment that BUYS a GPU share (gpuShare > 0)
-# is launched with `-S nn`, so the guest can `load()` ONNX models and run
-# inference through the host's ONNX Runtime — ExecutionTarget::Gpu maps to the
-# CUDA execution provider, ::Cpu to the CPU one. Enforcement of the share is
+# is launched with `-S nn`, so the guest can run inference through the host's
+# backends — ONNX Runtime for ONNX graphs, llama.cpp for GGUF, and
+# stable-diffusion.cpp for image checkpoints; ExecutionTarget::Gpu maps to
+# CUDA, ::Cpu to the CPU. Enforcement of the share is
 # the SAME mechanism as the worker backend's PTX children: the tenant's
 # wasmtime process is launched with CUDA_MPS_ACTIVE_THREAD_PERCENTAGE (SM cap)
 # and CUDA_MPS_PINNED_DEVICE_MEM_LIMIT (VRAM cap = gpuShare × GPU_VRAM_GB), so
@@ -857,7 +858,8 @@ def _model_volumes() -> dict:
       2. MODEL_VOLUMES="name:/path[:file.gguf],name2:/path2" - explicit
          name->path, for friendly aliases of the mpk mounts and for local dev;
          the optional third field picks the gguf out of a multi-quant repo.
-    Returns {name: {"name", "path", "bytes", "onnx": bool, "files": [top-level]}}.
+    Returns {name: {"name", "path", "bytes", "onnx": bool, "gguf": bool,
+    "sd": bool, "files": [top-level]}}.
     Only existing directories with a servable name are returned."""
     out = {}
     def add(name, path):

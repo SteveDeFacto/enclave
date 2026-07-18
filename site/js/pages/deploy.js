@@ -693,8 +693,8 @@ async function refreshFleet(){
     for (const e of rows){
       for (const v of ((e.availability && e.availability.volumes) || [])){
         if (!v || !v.name) continue;
-        const cur = byName.get(v.name) || { name: v.name, bytes: 0, onnx: false, gguf: false, count: 0 };
-        cur.bytes = Math.max(cur.bytes, v.bytes || 0); cur.onnx = cur.onnx || !!v.onnx; cur.gguf = cur.gguf || !!v.gguf; cur.count++;
+        const cur = byName.get(v.name) || { name: v.name, bytes: 0, onnx: false, gguf: false, sd: false, count: 0 };
+        cur.bytes = Math.max(cur.bytes, v.bytes || 0); cur.onnx = cur.onnx || !!v.onnx; cur.gguf = cur.gguf || !!v.gguf; cur.sd = cur.sd || !!v.sd; cur.count++;
         byName.set(v.name, cur);
       }
     }

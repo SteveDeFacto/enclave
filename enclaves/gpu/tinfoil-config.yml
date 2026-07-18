@@ -239,8 +239,9 @@ containers:
   # on-chain catalog approval. Apps are wasi:http components.
   # wasi-nn GPU interface: this container holds the card because tenant
   # wasmtime processes ARE the CUDA processes — a deployment that buys a GPU
-  # share is launched with `-S nn` and runs ONNX inference through the host's
-  # ONNX Runtime CUDA provider. Isolation is the SAME scheme as the worker
+  # share is launched with `-S nn` and runs wasi-nn inference on CUDA through
+  # the host's backends (ONNX Runtime, llama.cpp/GGUF, stable-diffusion.cpp).
+  # Isolation is the SAME scheme as the worker
   # backend's PTX children: each tenant process joins the mps-control daemon
   # (shared pipe dir + ipc:host) with CUDA_MPS_ACTIVE_THREAD_PERCENTAGE and
   # CUDA_MPS_PINNED_DEVICE_MEM_LIMIT set from its bought share, so SM% and VRAM

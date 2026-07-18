@@ -745,9 +745,11 @@ function fleetVolumes() {
     const vols = e.availability?.volumes;
     for (const v of (Array.isArray(vols) ? vols.slice(0, MAX_VOLUMES_PER_ENCLAVE) : [])) {
       if (!v || !v.name) continue;
-      const cur = byName.get(v.name) || { name: v.name, bytes: v.bytes || 0, onnx: !!v.onnx, endpoints: [] };
+      const cur = byName.get(v.name) || { name: v.name, bytes: v.bytes || 0, onnx: !!v.onnx, gguf: !!v.gguf, sd: !!v.sd, endpoints: [] };
       cur.bytes = Math.max(cur.bytes, v.bytes || 0);
       cur.onnx = cur.onnx || !!v.onnx;
+      cur.gguf = cur.gguf || !!v.gguf;
+      cur.sd = cur.sd || !!v.sd;
       if (!cur.endpoints.includes(e.endpoint)) cur.endpoints.push(e.endpoint);
       byName.set(v.name, cur);
     }

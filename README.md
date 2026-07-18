@@ -16,14 +16,14 @@ Your wallet is your account: an Ethereum wallet is the identity, and paying is a
 3. **Enclaves claim the work.** Each enclave self-registers in `EnclaveRegistry`, polls for funded work it can serve, claims it, and runs the app in a wasmtime sandbox: per-tenant process isolation, a private RAM-backed `/data`, no network beyond the served HTTP socket unless the app declares firewall ports.
 4. **Every layer attests.** Tinfoil measures the container image (with a Sigstore transparency-log record tying it to this repo's release), the enclave proves the measurement in its attestation quote, and TLS keys never leave it. The site and CLI verify the full chain client-side before connecting.
 
-Beyond plain web apps: GPU inference via `wasi-nn` (ONNX, plus GGUF through a bundled llama.cpp backend, on an MPS-capped slice of an H200), attested read-only **model volumes** mounted at `/models` (Tinfoil Modelwrap; the attestation commits to the exact weight bytes), raw TCP/UDP services behind an SNI relay, and per-deployment dedicated IPv6 (inbound and outbound).
+Beyond plain web apps: GPU inference via `wasi-nn` (ONNX, GGUF through a bundled llama.cpp backend, and image diffusion through a stable-diffusion.cpp backend, on an MPS-capped slice of an H200), attested read-only **model volumes** mounted at `/models` (Tinfoil Modelwrap; the attestation commits to the exact weight bytes), raw TCP/UDP services behind an SNI relay, and per-deployment dedicated IPv6 (inbound and outbound).
 
 ## Repository layout
 
 | path | what it is |
 |---|---|
 | `supervisor.js` | the in-enclave service: REST API, deployment lifecycle, metering, attestation endpoints |
-| `wasm/` | wasm-manager sidecar: the wasmtime sandbox that runs tenant apps, incl. `wasi-nn` inference (ONNX Runtime + llama.cpp/GGUF) on MPS-capped GPU slices |
+| `wasm/` | wasm-manager sidecar: the wasmtime sandbox that runs tenant apps, incl. `wasi-nn` inference (ONNX Runtime + llama.cpp/GGUF + stable-diffusion.cpp) on MPS-capped GPU slices |
 | `worker/` | GPU worker: per-tenant MPS-capped GPU processes for raw PTX submission |
 | `mps-daemon/` | NVIDIA MPS control daemon (fractional GPU shares) |
 | `contracts/` | Solidity on Base: `EnclaveRegistry`, `EnclaveAppCatalog`, `EnclaveDeployments` |
