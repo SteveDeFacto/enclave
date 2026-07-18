@@ -8,6 +8,9 @@
 /* the canvas itself is dark (html background + color-scheme), so nothing
    white can flash through between paints or under transition snapshots */
 html{background:var(--bg);color-scheme:dark;scroll-behavior:smooth;scroll-padding-top:80px;-webkit-text-size-adjust:100%;}
+/* ≤640px the sticky header wraps to three rows (~150px tall) - anchor jumps
+   must still land clear of it (WCAG 2.4.11) */
+@media (max-width:640px){html{scroll-padding-top:150px;}}
 [hidden]{display:none !important;}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto;}}
 
@@ -89,9 +92,15 @@ body::after{
   body::after{animation:none;}
 }
 a{color:inherit;text-decoration:none;}
+/* links sitting INSIDE prose can't rely on color alone (WCAG 1.4.1) -
+   standalone links (nav, footers, cards' CTA buttons) stay clean */
+main p a:not(.btn),.iso-list a,.qd-tos a,.terms-doc a{text-decoration:underline;text-underline-offset:3px;}
 img{max-width:100%;display:block;}
 ::selection{background:rgba(47,230,168,.28);color:#fff;}
 :focus-visible{outline:2px solid var(--jade);outline-offset:2px;border-radius:4px;}
+/* <main> is a skip-link / soft-nav focus target, not an operable control -
+   no ring around the whole page */
+main:focus,main:focus-visible{outline:none;}
 
 .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px;position:relative;z-index:1;}
 .mono{font-family:var(--font-mono);}
@@ -147,13 +156,13 @@ section{padding:84px 0;position:relative;}
 .tok-str{color:var(--jade-2);}
 .tok-num{color:var(--amber-2);}
 .tok-punc{color:var(--text-dim);}
-.tok-com{color:#4B5A6E;font-style:italic;}
+.tok-com{color:#6B7D94;font-style:italic;}
 .tok-bool{color:var(--amber);}
 .tok-meth{color:var(--jade);font-weight:600;}
 /* explicit line-height: the ⧉/▶ symbols come from fallback fonts whose
    line-height:normal differs from the mono font's - buttons would come out
    different heights side by side */
-.copybtn{font-family:var(--font-mono);font-size:.7rem;line-height:1.5;color:var(--text-muted);border:1px solid var(--line);background:var(--surface);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;display:inline-flex;gap:.4em;align-items:center;}
+.copybtn{font-family:var(--font-mono);font-size:.7rem;line-height:1.5;color:var(--text-muted);border:1px solid var(--line);background:var(--surface);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;display:inline-flex;gap:.4em;align-items:center;min-height:24px;min-width:24px;justify-content:center;}
 .copybtn:hover{color:var(--text);border-color:#33465c;}
 .copybtn.ok{color:var(--jade);border-color:rgba(47,230,168,.4);}
 /* margin-left:auto: the codebar is space-between, which centers a THIRD child
@@ -161,7 +170,7 @@ section{padding:84px 0;position:relative;}
    The ▶ lives in ::before (not the label text): as a raw glyph it comes from a
    fallback/emoji font - oversized and off-baseline - and it would leak into the
    textContent the run handler saves/restores around the "running…" state. */
-.runbtn{font-family:var(--font-mono);font-size:.7rem;line-height:1.5;color:var(--jade);border:1px solid var(--jade-dim);background:var(--jade-deep);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;margin-left:auto;margin-right:6px;display:inline-flex;align-items:center;gap:.45em;}
+.runbtn{font-family:var(--font-mono);font-size:.7rem;line-height:1.5;color:var(--jade);border:1px solid var(--jade-dim);background:var(--jade-deep);padding:.32em .6em;border-radius:6px;cursor:pointer;transition:.15s;margin-left:auto;margin-right:6px;display:inline-flex;align-items:center;gap:.45em;min-height:24px;justify-content:center;}
 .runbtn::before{content:"\25B6\FE0E";font-size:.62em;line-height:1;}
 .runbtn:hover{border-color:var(--jade);background:rgba(47,230,168,.16);} .runbtn:disabled{opacity:.5;cursor:default;}
 .runbtn:disabled::before{display:none;}
@@ -182,7 +191,7 @@ section{padding:84px 0;position:relative;}
 .ap-badge{font-family:var(--font-mono);font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;padding:.2em .6em;border-radius:5px;border:1px solid var(--line);}
 .ap-badge.ok{color:var(--jade);border-color:rgba(47,230,168,.45);background:rgba(47,230,168,.08);}
 .ap-badge.info{color:var(--iris);border-color:rgba(143,162,255,.4);background:rgba(143,162,255,.07);}
-.ap-badge.warn{color:var(--amber);border-color:var(--amber-dim);background:rgba(255,145,77,.08);}
+.ap-badge.warn{color:var(--amber);border-color:rgba(255,145,77,.45);background:rgba(255,145,77,.08);}
 .ap-badge.ep-public{background:var(--jade-deep);color:var(--jade);border:1px solid var(--jade-dim);}
 .ap-badge.ep-private{background:transparent;color:var(--text-dim);border:1px solid var(--line);}
 .btn[disabled]{opacity:.45;cursor:not-allowed;pointer-events:none;}

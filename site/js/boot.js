@@ -91,6 +91,10 @@ function swapFrom(doc) {
   const next = document.adoptNode(doc.querySelector("main"));
   document.querySelector("main").replaceWith(next);          // custom elements upgrade + hydrate on connect
   document.title = doc.title;
+  // a soft navigation must move focus like a real one would: land it on the
+  // new <main> (every page's main carries id="main" tabindex="-1"), which
+  // also makes screen readers announce the swapped content
+  next.focus({ preventScroll: true });
 }
 
 let navSeq = 0;
@@ -189,6 +193,26 @@ document.addEventListener("click", (e) => {
 addEventListener("popstate", (e) => {
   navigate(location.href, { push: false, scroll: e.state && e.state.scroll });
 });
+
+/* keyboard-scrollable overflow regions (WCAG 2.1.1): code blocks, schema
+   trees, and table scrollers overflow horizontally; keyboard users need focus
+   to scroll them. Only regions that actually overflow get a tab stop, and
+   only ones this added (data-a11y-scroll) ever get it removed again. */
+const SCROLLABLE_SEL = ".code,.mig-scroll,.schema";
+let _scrollScan;
+function syncScrollFocus() {
+  clearTimeout(_scrollScan);
+  _scrollScan = setTimeout(() => {
+    for (const el of document.querySelectorAll(SCROLLABLE_SEL)) {
+      const overflows = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+      if (overflows && !el.hasAttribute("tabindex")) { el.tabIndex = 0; el.dataset.a11yScroll = "1"; }
+      else if (!overflows && el.dataset.a11yScroll) { el.removeAttribute("tabindex"); delete el.dataset.a11yScroll; }
+    }
+  }, 200);
+}
+new MutationObserver(syncScrollFocus).observe(document.documentElement, { subtree: true, childList: true });
+addEventListener("resize", syncScrollFocus);
+addEventListener("load", syncScrollFocus);
 
 /* boot the page we loaded on, then warm the other pages' HTML in idle time
    so soft navigations are instant even on a cold, slow gateway */

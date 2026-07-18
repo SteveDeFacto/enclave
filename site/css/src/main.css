@@ -81,3 +81,13 @@
 @import "../../components/app-detail/app-detail.css" layer(components);
 @import "../../components/api-reference/api-reference.css" layer(components);
 @import "../../components/admin-console/admin-console.css" layer(components);
+
+/* Form-control boundaries must clear 3:1 against their surroundings
+   (WCAG 1.4.11); every component styles inputs with --line (~1.2:1), so one
+   utilities-layer rule (which outranks the components layer) lifts them all
+   to --line-strong. :focus states keep their own (jade) border feedback. */
+@layer utilities {
+  input:not([type=checkbox], [type=radio], [type=file], :focus),
+  select:not(:focus),
+  textarea:not(:focus) { border-color: var(--line-strong); }
+}

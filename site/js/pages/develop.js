@@ -56,7 +56,11 @@ function devTabOf(id){                                       // which sub-tab ho
 function setDevTab(tab){
   devTab = tab;
   Object.entries(DEV_PANES).forEach(([t, id]) => { const s = document.getElementById(id); if (s) s.hidden = t !== tab; });
-  $$("#devTabs a").forEach(a => a.classList.toggle("on", a.dataset.devtab === tab));
+  $$("#devTabs a").forEach(a => {
+    const on = a.dataset.devtab === tab;
+    a.classList.toggle("on", on);
+    if (on) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current");
+  });
 }
 function gotoAnchor(id, smooth){
   const tab = devTabOf(id) || devTab;
@@ -108,5 +112,6 @@ export function boot() {
   run(() => gotoAnchor((location.hash || "").slice(1) || "docs"));   // pane visibility before the spec arrives
   run(hydrateLivePrices);   // the docs quote real $/hr rates - refresh them from the contract
   run(hydrateLiveSpecs);    // …and real fleet hardware - refresh it from /availability
-  const dl = $("#dlSpec"); if (dl) dl.addEventListener("click", downloadSpec);
+  // #dlSpec is a real <a href="openapi.json" download> (no-JS fallback); JS serves the freshly loaded spec instead
+  const dl = $("#dlSpec"); if (dl) dl.addEventListener("click", e => { e.preventDefault(); downloadSpec(); });
 }

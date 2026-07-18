@@ -13,6 +13,13 @@ c-enclave-panel{display:contents;}
 .enclave-bar{display:flex;align-items:center;justify-content:space-between;
   padding:11px 14px;border-bottom:1px solid var(--line-soft);font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);position:relative;z-index:2;}
 .enclave-bar .lbl{display:flex;align-items:center;gap:.6em;color:var(--text-muted);}
+.enclave-bar .bar-right{display:inline-flex;align-items:center;gap:10px;}
+/* pause control for the particle/sweep animation (WCAG 2.2.2) */
+.ep-pause{min-width:24px;min-height:24px;display:inline-flex;align-items:center;justify-content:center;
+  background:var(--surface-2);border:1px solid var(--line-strong);border-radius:6px;
+  color:var(--text-muted);font-size:.72rem;line-height:1;cursor:pointer;padding:0 4px;}
+.ep-pause:hover{color:var(--text);}
+@media (prefers-reduced-motion:reduce){.ep-pause{display:none;}}   /* animation is already frozen */
 .enclave-bar .seal{color:var(--jade);}
 .enclave-canvas{display:block;width:100%;height:330px;}
 .enclave-foot{position:relative;z-index:2;border-top:1px solid var(--line-soft);padding:10px 14px;font-family:var(--font-mono);font-size:.7rem;color:var(--text-dim);display:flex;justify-content:space-between;gap:10px;overflow:hidden;}

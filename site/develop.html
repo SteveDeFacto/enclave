@@ -59,7 +59,7 @@
 </head>
 <body>
 <c-header current="develop"></c-header>
-<main>
+<main id="main" tabindex="-1">
 <h1 class="sr-only">Develop for Enclave: WebAssembly app guide, CLI, and API reference</h1>
 <section id="develop-home" data-view="develop" aria-label="Developer documentation" style="padding:84px 0 0;">
   <a id="develop"></a>
@@ -68,7 +68,7 @@
       <p>Everything needed to ship a confidential app: the guide takes you from an empty directory to an attested endpoint, the CLI drives every operation from a terminal, and the API reference documents every call the platform answers.</p>
     </c-section-head>
     <nav class="dev-tabs" id="devTabs" aria-label="Developer documentation tabs">
-      <a href="#docs" data-devtab="guide" class="on">Guide</a>
+      <a href="#docs" data-devtab="guide" class="on" aria-current="true">Guide</a>
       <a href="#cli" data-devtab="cli">CLI</a>
       <a href="#api" data-devtab="api">API reference</a>
     </nav>
@@ -85,25 +85,33 @@
       <aside class="docs-side">
         <nav class="docs-nav" aria-label="Guide chapters">
           <div class="grp">Get started</div>
-          <a href="#docs-model" class="on"><span class="n">01</span>The app model</a>
-          <a href="#docs-toolchain"><span class="n">02</span>Toolchain setup</a>
-          <a href="#docs-hello"><span class="n">03</span>Hello, enclave</a>
+          <ul>
+            <li><a href="#docs-model" class="on"><span class="n">01</span>The app model</a></li>
+            <li><a href="#docs-toolchain"><span class="n">02</span>Toolchain setup</a></li>
+            <li><a href="#docs-hello"><span class="n">03</span>Hello, enclave</a></li>
+          </ul>
           <div class="grp">Ship it</div>
-          <a href="#docs-publish"><span class="n">04</span>Publish to the store</a>
-          <a href="#docs-deploy"><span class="n">05</span>Deploy it</a>
-          <a href="#docs-call"><span class="n">06</span>Call your app</a>
+          <ul>
+            <li><a href="#docs-publish"><span class="n">04</span>Publish to the store</a></li>
+            <li><a href="#docs-deploy"><span class="n">05</span>Deploy it</a></li>
+            <li><a href="#docs-call"><span class="n">06</span>Call your app</a></li>
+          </ul>
           <div class="grp">Capabilities</div>
-          <a href="#docs-http"><span class="n">07</span>HTTP in depth</a>
-          <a href="#docs-data"><span class="n">08</span>The /data filesystem</a>
-          <a href="#docs-ports"><span class="n">09</span>Service apps &amp; ports</a>
-          <a href="#docs-tcp"><span class="n">10</span>TCP &amp; in-enclave TLS</a>
-          <a href="#docs-udp"><span class="n">11</span>UDP</a>
-          <a href="#docs-gpu"><span class="n">12</span>GPU inference (wasi-nn)</a>
+          <ul>
+            <li><a href="#docs-http"><span class="n">07</span>HTTP in depth</a></li>
+            <li><a href="#docs-data"><span class="n">08</span>The /data filesystem</a></li>
+            <li><a href="#docs-ports"><span class="n">09</span>Service apps &amp; ports</a></li>
+            <li><a href="#docs-tcp"><span class="n">10</span>TCP &amp; in-enclave TLS</a></li>
+            <li><a href="#docs-udp"><span class="n">11</span>UDP</a></li>
+            <li><a href="#docs-gpu"><span class="n">12</span>GPU inference (wasi-nn)</a></li>
+          </ul>
           <div class="grp">Reference</div>
-          <a href="#docs-attest"><span class="n">13</span>Attestation for users</a>
-          <a href="#docs-langs"><span class="n">14</span>Other languages</a>
-          <a href="#docs-limits"><span class="n">15</span>Limits &amp; sandbox</a>
-          <a href="#docs-troubleshoot"><span class="n">16</span>Troubleshooting</a>
+          <ul>
+            <li><a href="#docs-attest"><span class="n">13</span>Attestation for users</a></li>
+            <li><a href="#docs-langs"><span class="n">14</span>Other languages</a></li>
+            <li><a href="#docs-limits"><span class="n">15</span>Limits &amp; sandbox</a></li>
+            <li><a href="#docs-troubleshoot"><span class="n">16</span>Troubleshooting</a></li>
+          </ul>
         </nav>
       </aside>
 
@@ -242,9 +250,9 @@ wasmtime serve -Scli -Shttp -Sp3 \
           <h3><span class="n">05</span>Deploy it</h3>
           <p>A deployment names an app, a slice of the card, and who may reach it. The app reference is always a <b>catalog listing</b>:</p>
           <div class="tbl"><table class="params">
-            <thead><tr><th>reference</th><th>meaning</th></tr></thead>
+            <thead><tr><th scope="col">reference</th><th scope="col">meaning</th></tr></thead>
             <tbody>
-              <tr><td class="pname">my-hello:1.0.0</td><td>A store app by slug and version (or <code>&lt;publisher&gt;/my-hello:1.0.0</code> to disambiguate). It resolves against the on-chain catalog to that version's exact <code>ipfs://&lt;cid&gt;</code>; the enclave fetches those bytes, verifies every block hashes to the CID (a tampering gateway fails the check), confirms it's a component, and runs it. The verified CID is folded into the attestation.</td></tr>
+              <tr><th scope="row" class="pname">my-hello:1.0.0</th><td>A store app by slug and version (or <code>&lt;publisher&gt;/my-hello:1.0.0</code> to disambiguate). It resolves against the on-chain catalog to that version's exact <code>ipfs://&lt;cid&gt;</code>; the enclave fetches those bytes, verifies every block hashes to the CID (a tampering gateway fails the check), confirms it's a component, and runs it. The verified CID is folded into the attestation.</td></tr>
             </tbody>
           </table></div>
           <p>Unlisted CIDs can't deploy: the catalog listing carries everything a deploy needs on-chain - the resource specs that floor the dials, the open ports, and the owner's approval of that exact CID. Built something new? Publish it first (<a href="#docs-publish">chapter 04</a>), then deploy the slug.</p>
@@ -427,11 +435,11 @@ curl -X POST --data-binary 'round trip' 127.0.0.1:8080/echo</code></pre></c-code
           <h3><span class="n">09</span>Service apps: open ports &amp; ENCLAVE_PORTS</h3>
           <p>Declaring open ports (on the version you publish, prefilled into the deploy request by <b>Use in Deploy</b>) changes how your app runs: instead of <code>wasmtime serve</code> calling your handler, the enclave launches it with <code>wasmtime run</code> as a <b>long-running command component</b> (a <code>main()</code>) granted <code>wasi:sockets</code>: it binds its declared ports itself, and may also make outbound TCP/UDP connections and DNS lookups. Rust's <code>std::net</code> on <code>wasm32-wasip2</code> maps straight onto it.</p>
           <div class="tbl"><table class="params">
-            <thead><tr><th>entry</th><th>meaning</th><th>reached at</th></tr></thead>
+            <thead><tr><th scope="col">entry</th><th scope="col">meaning</th><th scope="col">reached at</th></tr></thead>
             <tbody>
-              <tr><td class="pname">http:N</td><td>your app serves HTTP on port N itself (max one entry)</td><td><code>/x/{id}/…</code>, the same URL as a web app</td></tr>
-              <tr><td class="pname">tcp:N</td><td>a raw TCP listener</td><td><code>/x/{id}/tcp/N</code> bridge · <code>/x/{id}/tls/N</code> + public relay (<a href="#docs-tcp">ch. 10</a>)</td></tr>
-              <tr><td class="pname">udp:N</td><td>a datagram socket</td><td><code>/x/{id}/udp/N</code> bridge · per-deployment IPv6 (<a href="#docs-udp">ch. 11</a>)</td></tr>
+              <tr><th scope="row" class="pname">http:N</th><td>your app serves HTTP on port N itself (max one entry)</td><td><code>/x/{id}/…</code>, the same URL as a web app</td></tr>
+              <tr><th scope="row" class="pname">tcp:N</th><td>a raw TCP listener</td><td><code>/x/{id}/tcp/N</code> bridge · <code>/x/{id}/tls/N</code> + public relay (<a href="#docs-tcp">ch. 10</a>)</td></tr>
+              <tr><th scope="row" class="pname">udp:N</th><td>a datagram socket</td><td><code>/x/{id}/udp/N</code> bridge · per-deployment IPv6 (<a href="#docs-udp">ch. 11</a>)</td></tr>
             </tbody>
           </table></div>
           <p>Declared ports are <b>logical</b>: your app's stable, advertised interface, like a container's <code>EXPOSE</code>. Each deployment gets its own <b>actual</b> loopback bind, so any number of tenants can run "the <code>tcp:5432</code> app" simultaneously with zero conflicts; URLs always use the logical number and route by deployment id. The mapping arrives in one environment variable:</p>
@@ -629,31 +637,31 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
           <h3><span class="n">15</span>Limits &amp; sandbox reference</h3>
           <h4>What your code can touch</h4>
           <div class="tbl"><table class="params">
-            <thead><tr><th>capability</th><th>web app (default)</th><th>service app (declared ports)</th></tr></thead>
+            <thead><tr><th scope="col">capability</th><th scope="col">web app (default)</th><th scope="col">service app (declared ports)</th></tr></thead>
             <tbody>
-              <tr><td class="pname">inbound HTTP</td><td>your handler, fresh instance per request</td><td><code>http:N</code>: you bind and serve it yourself</td></tr>
-              <tr><td class="pname">sockets</td><td>none</td><td>bind assigned actuals · outbound TCP/UDP · DNS lookups</td></tr>
-              <tr><td class="pname">GPU (wasi-nn)</td><td colspan="2">only with <code>gpuShare</code> &gt; 0: ONNX + GGUF (llama.cpp) + image diffusion (stable-diffusion.cpp) via <code>wasi:nn</code> on an MPS-capped slice (SM% = share, VRAM = share × <span data-live-spec="card-vram">140.4</span> GB); no share = no import (<a href="#docs-gpu">ch. 12</a>)</td></tr>
-              <tr><td class="pname">filesystem</td><td colspan="2"><code>/data</code> only: private, RAM-backed, ephemeral, capped by <code>storage_mb</code></td></tr>
-              <tr><td class="pname">environment</td><td>empty</td><td><code>ENCLAVE_PORTS</code> only</td></tr>
-              <tr><td class="pname">memory</td><td colspan="2">linear memory capped at the deployment's <code>cpuShare</code> × node RAM, enforced by the runtime</td></tr>
-              <tr><td class="pname">host / exec / SSH</td><td colspan="2">none: structurally absent, not merely denied</td></tr>
+              <tr><th scope="row" class="pname">inbound HTTP</th><td>your handler, fresh instance per request</td><td><code>http:N</code>: you bind and serve it yourself</td></tr>
+              <tr><th scope="row" class="pname">sockets</th><td>none</td><td>bind assigned actuals · outbound TCP/UDP · DNS lookups</td></tr>
+              <tr><th scope="row" class="pname">GPU (wasi-nn)</th><td colspan="2">only with <code>gpuShare</code> &gt; 0: ONNX + GGUF (llama.cpp) + image diffusion (stable-diffusion.cpp) via <code>wasi:nn</code> on an MPS-capped slice (SM% = share, VRAM = share × <span data-live-spec="card-vram">140.4</span> GB); no share = no import (<a href="#docs-gpu">ch. 12</a>)</td></tr>
+              <tr><th scope="row" class="pname">filesystem</th><td colspan="2"><code>/data</code> only: private, RAM-backed, ephemeral, capped by <code>storage_mb</code></td></tr>
+              <tr><th scope="row" class="pname">environment</th><td>empty</td><td><code>ENCLAVE_PORTS</code> only</td></tr>
+              <tr><th scope="row" class="pname">memory</th><td colspan="2">linear memory capped at the deployment's <code>cpuShare</code> × node RAM, enforced by the runtime</td></tr>
+              <tr><th scope="row" class="pname">host / exec / SSH</th><td colspan="2">none: structurally absent, not merely denied</td></tr>
             </tbody>
           </table></div>
           <h4>Numbers to know</h4>
           <div class="tbl"><table class="params">
-            <thead><tr><th>limit</th><th>value</th><th>notes</th></tr></thead>
+            <thead><tr><th scope="col">limit</th><th scope="col">value</th><th scope="col">notes</th></tr></thead>
             <tbody>
-              <tr><td class="pname">wasm artifact</td><td>≤ 2 GB</td><td>enforced at upload and again at fetch</td></tr>
-              <tr><td class="pname">app specs (vramMb/gpuGflops/memMb/cpuGflops)</td><td>exact MB + GFLOPS, per version</td><td>set the MINIMUM deploy shares (spec ÷ server spec, larger of memory/compute, ceil to %)</td></tr>
-              <tr><td class="pname">memory cap</td><td>= memMb</td><td>exactly what you ask for, runtime-enforced; the CPU share is derived from it</td></tr>
-              <tr><td class="pname">/data cap (storage_mb)</td><td>256 MB default · 0 = no /data</td><td>audit sweep kills on breach</td></tr>
-              <tr><td class="pname">open ports</td><td>≤ 8 entries · labels 1–19999</td><td>8080/8091 reserved · labels &lt; 1024 always remapped</td></tr>
-              <tr><td class="pname">GPU/VRAM share</td><td>0–100% of one card</td><td>0 = CPU-only · VRAM+compute in proportion · floored at the app's minimum · × $<span data-live-price="unit-hr" data-gpu="100">6</span>/hr</td></tr>
-              <tr><td class="pname">CPU/RAM share</td><td>1–100% of the node</td><td>RAM+vCPU in proportion (sets the memory cap) · floored at the app's minimum · ≤ GPU share for GPU apps · × $<span data-live-price="unit-hr" data-cpu="100">3</span>/hr</td></tr>
-              <tr><td class="pname">readiness window</td><td>~20 s</td><td>first <code>http:</code>/<code>tcp:</code> port must accept, or the deploy fails</td></tr>
-              <tr><td class="pname">body writes</td><td>≤ 4096 bytes per call</td><td>chunk larger payloads (<a href="#docs-http">ch. 07</a>)</td></tr>
-              <tr><td class="pname">UDP bridge idle</td><td>120 s</td><td>per WebSocket flow</td></tr>
+              <tr><th scope="row" class="pname">wasm artifact</th><td>≤ 2 GB</td><td>enforced at upload and again at fetch</td></tr>
+              <tr><th scope="row" class="pname">app specs (vramMb/gpuGflops/memMb/cpuGflops)</th><td>exact MB + GFLOPS, per version</td><td>set the MINIMUM deploy shares (spec ÷ server spec, larger of memory/compute, ceil to %)</td></tr>
+              <tr><th scope="row" class="pname">memory cap</th><td>= memMb</td><td>exactly what you ask for, runtime-enforced; the CPU share is derived from it</td></tr>
+              <tr><th scope="row" class="pname">/data cap (storage_mb)</th><td>256 MB default · 0 = no /data</td><td>audit sweep kills on breach</td></tr>
+              <tr><th scope="row" class="pname">open ports</th><td>≤ 8 entries · labels 1–19999</td><td>8080/8091 reserved · labels &lt; 1024 always remapped</td></tr>
+              <tr><th scope="row" class="pname">GPU/VRAM share</th><td>0–100% of one card</td><td>0 = CPU-only · VRAM+compute in proportion · floored at the app's minimum · × $<span data-live-price="unit-hr" data-gpu="100">6</span>/hr</td></tr>
+              <tr><th scope="row" class="pname">CPU/RAM share</th><td>1–100% of the node</td><td>RAM+vCPU in proportion (sets the memory cap) · floored at the app's minimum · ≤ GPU share for GPU apps · × $<span data-live-price="unit-hr" data-cpu="100">3</span>/hr</td></tr>
+              <tr><th scope="row" class="pname">readiness window</th><td>~20 s</td><td>first <code>http:</code>/<code>tcp:</code> port must accept, or the deploy fails</td></tr>
+              <tr><th scope="row" class="pname">body writes</th><td>≤ 4096 bytes per call</td><td>chunk larger payloads (<a href="#docs-http">ch. 07</a>)</td></tr>
+              <tr><th scope="row" class="pname">UDP bridge idle</th><td>120 s</td><td>per WebSocket flow</td></tr>
             </tbody>
           </table></div>
         </article>
@@ -662,20 +670,20 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
         <article class="doc" id="docs-troubleshoot">
           <h3><span class="n">16</span>Troubleshooting</h3>
           <div class="tbl"><table class="params symptoms">
-            <thead><tr><th>symptom</th><th>cause → fix</th></tr></thead>
+            <thead><tr><th scope="col">symptom</th><th scope="col">cause → fix</th></tr></thead>
             <tbody>
-              <tr><td class="pname">"a core wasm module, not a wasi:http component"</td><td>You built a plain module. Build with <code>cargo component</code> (or a toolchain that emits components); the upload gateway and the enclave both check the component layer field.</td></tr>
-              <tr><td class="pname">403 not_approved on deploy</td><td>That version is still Pending (or was Rejected); the catalog owner approves each CID before it can run. Check the status badge on your app card in <a href="apps">Apps</a>.</td></tr>
-              <tr><td class="pname">"firewall: bound unassigned port(s) … app killed"</td><td>The app hardcoded a port. Read <code>ENCLAVE_PORTS</code> and bind the <i>actual</i> ports (<a href="#docs-ports">ch. 09</a>).</td></tr>
-              <tr><td class="pname">"did not open port in time"</td><td>Bind your first <code>http:</code>/<code>tcp:</code> port early in <code>main()</code>; the readiness window is ~20 s.</td></tr>
-              <tr><td class="pname">"storage: /data used … exceeds the cap; app killed"</td><td>Write less, or publish the next version with a larger <code>storage_mb</code>.</td></tr>
-              <tr><td class="pname">502 no_http at /x/{id}</td><td>The app declares only <code>tcp:</code>/<code>udp:</code> ports, so there's no HTTP to proxy. Use the bridge or relay paths (<a href="#docs-tcp">ch. 10</a>–<a href="#docs-udp">11</a>).</td></tr>
-              <tr><td class="pname">409 when opening a tcp/udp bridge</td><td>The app hasn't actually bound that port (yet); the bridge refuses until the enclave confirms the bind. Check the deployment logs.</td></tr>
-              <tr><td class="pname">state vanishes between requests</td><td>Web apps get a fresh instance per request. Persist in <code>/data</code> (<a href="#docs-data">ch. 08</a>).</td></tr>
-              <tr><td class="pname">runs locally, memory-traps deployed</td><td>Local wasmtime is uncapped unless you pass <code>-W max-memory-size</code>. Test with the parity command (<a href="#docs-hello">ch. 03</a>) at your published <code>memMb</code> (the cap at the minimum CPU share).</td></tr>
-              <tr><td class="pname">"component imports instance wasi:nn/… not found in the linker"</td><td>The app imports <code>wasi:nn</code> but the deployment bought no GPU share. Redeploy with <code>resources.gpuShare</code> &gt; 0 (<a href="#docs-gpu">ch. 12</a>).</td></tr>
-              <tr><td class="pname">wasi-nn fails: "Failed while accessing backend: …"</td><td>The suffix carries the actual backend cause (ONNX Runtime, llama.cpp or stable-diffusion.cpp) - read it. Common ones: CUDA can't initialize (target <code>gpu</code> on a CPU-only node or local wasmtime without CUDA libraries - strict on purpose, no silent CPU fallback; use <code>cpu</code> there), an input tensor's name/shape/dtype not matching the model, a model operator the provider doesn't support, a <code>load_by_name()</code> name that doesn't match an attached GGUF or checkpoint volume, or a GGUF prefill batch over the 512-token compute limit (chunk it).</td></tr>
-              <tr><td class="pname">deploy fails: "GPU interface warming up" / "GPU interface unavailable on this node"</td><td>GPU deployments launch only after the enclave's boot-time CUDA readiness probe passes (so a broken GPU path fails your deploy loudly instead of hanging your app). "Warming up" resolves in a minute or two - retry; "unavailable" carries the probe's diagnosis and is an operator problem, not yours.</td></tr>
+              <tr><th scope="row" class="pname">"a core wasm module, not a wasi:http component"</th><td>You built a plain module. Build with <code>cargo component</code> (or a toolchain that emits components); the upload gateway and the enclave both check the component layer field.</td></tr>
+              <tr><th scope="row" class="pname">403 not_approved on deploy</th><td>That version is still Pending (or was Rejected); the catalog owner approves each CID before it can run. Check the status badge on your app card in <a href="apps">Apps</a>.</td></tr>
+              <tr><th scope="row" class="pname">"firewall: bound unassigned port(s) … app killed"</th><td>The app hardcoded a port. Read <code>ENCLAVE_PORTS</code> and bind the <i>actual</i> ports (<a href="#docs-ports">ch. 09</a>).</td></tr>
+              <tr><th scope="row" class="pname">"did not open port in time"</th><td>Bind your first <code>http:</code>/<code>tcp:</code> port early in <code>main()</code>; the readiness window is ~20 s.</td></tr>
+              <tr><th scope="row" class="pname">"storage: /data used … exceeds the cap; app killed"</th><td>Write less, or publish the next version with a larger <code>storage_mb</code>.</td></tr>
+              <tr><th scope="row" class="pname">502 no_http at /x/{id}</th><td>The app declares only <code>tcp:</code>/<code>udp:</code> ports, so there's no HTTP to proxy. Use the bridge or relay paths (<a href="#docs-tcp">ch. 10</a>–<a href="#docs-udp">11</a>).</td></tr>
+              <tr><th scope="row" class="pname">409 when opening a tcp/udp bridge</th><td>The app hasn't actually bound that port (yet); the bridge refuses until the enclave confirms the bind. Check the deployment logs.</td></tr>
+              <tr><th scope="row" class="pname">state vanishes between requests</th><td>Web apps get a fresh instance per request. Persist in <code>/data</code> (<a href="#docs-data">ch. 08</a>).</td></tr>
+              <tr><th scope="row" class="pname">runs locally, memory-traps deployed</th><td>Local wasmtime is uncapped unless you pass <code>-W max-memory-size</code>. Test with the parity command (<a href="#docs-hello">ch. 03</a>) at your published <code>memMb</code> (the cap at the minimum CPU share).</td></tr>
+              <tr><th scope="row" class="pname">"component imports instance wasi:nn/… not found in the linker"</th><td>The app imports <code>wasi:nn</code> but the deployment bought no GPU share. Redeploy with <code>resources.gpuShare</code> &gt; 0 (<a href="#docs-gpu">ch. 12</a>).</td></tr>
+              <tr><th scope="row" class="pname">wasi-nn fails: "Failed while accessing backend: …"</th><td>The suffix carries the actual backend cause (ONNX Runtime, llama.cpp or stable-diffusion.cpp) - read it. Common ones: CUDA can't initialize (target <code>gpu</code> on a CPU-only node or local wasmtime without CUDA libraries - strict on purpose, no silent CPU fallback; use <code>cpu</code> there), an input tensor's name/shape/dtype not matching the model, a model operator the provider doesn't support, a <code>load_by_name()</code> name that doesn't match an attached GGUF or checkpoint volume, or a GGUF prefill batch over the 512-token compute limit (chunk it).</td></tr>
+              <tr><th scope="row" class="pname">deploy fails: "GPU interface warming up" / "GPU interface unavailable on this node"</th><td>GPU deployments launch only after the enclave's boot-time CUDA readiness probe passes (so a broken GPU path fails your deploy loudly instead of hanging your app). "Warming up" resolves in a minute or two - retry; "unavailable" carries the probe's diagnosis and is an operator problem, not yours.</td></tr>
             </tbody>
           </table></div>
           <h4>Ship checklist</h4>
@@ -721,19 +729,19 @@ enclave whoami                     # address, USDC balance, running deployments<
 
           <h4>Command reference</h4>
           <div class="tbl"><table class="params">
-            <thead><tr><th>command</th><th>does</th><th>maps to</th></tr></thead>
+            <thead><tr><th scope="col">command</th><th scope="col">does</th><th scope="col">maps to</th></tr></thead>
             <tbody>
-              <tr><td class="pname">enclave deploy &lt;app&gt; --gpu 0.25 --cpu 0.05 --fund 5</td><td>create + fund + wait until live, one shot; prints the app URL. Shares are fractions of one card / one node; omitted, they default to the app's catalog minimums</td><td><code>EnclaveDeployments.create()</code> · <code>fundWithAuthorization</code> · <code>POST /claim-hint</code></td></tr>
-              <tr><td class="pname">enclave ls</td><td>your deployments, state and funded time remaining</td><td><code>GET /deployments</code> · <code>GET /account</code></td></tr>
-              <tr><td class="pname">enclave status &lt;id&gt;</td><td>one deployment: state, runner, lease, balance, URL</td><td><code>GET /deployments/{id}</code></td></tr>
-              <tr><td class="pname">enclave logs &lt;id&gt; [-f]</td><td>your app's stdout/stderr; <code>-f</code> follows</td><td><code>GET /deployments/{id}/logs</code></td></tr>
-              <tr><td class="pname">enclave fund &lt;id&gt; --usdc 5 | --eth 0.002</td><td>top up runtime by the second</td><td><code>fundWithAuthorization</code> / <code>fundEth</code></td></tr>
-              <tr><td class="pname">enclave attest &lt;id&gt;</td><td>fetch the CPU + GPU attestation reports and verify them locally; prints measurements and the verdict</td><td><code>GET /deployments/{id}/attestation</code></td></tr>
-              <tr><td class="pname">enclave stop &lt;id&gt;</td><td>take the work item off the queue, then terminate; unspent balance stays on the record for a later reactivation (payments are final - nothing is withdrawable)</td><td><code>EnclaveDeployments.setActive(false)</code> · <code>DELETE /deployments/{id}</code></td></tr>
-              <tr><td class="pname">enclave publish app.wasm --slug hello</td><td>validate the component, pin to IPFS, cut a catalog version</td><td><code>ipfs.enclave.host/add-wasm</code> · <code>EnclaveAppCatalog</code></td></tr>
-              <tr><td class="pname">enclave apps [query]</td><td>browse or search the on-chain catalog</td><td><code>EnclaveAppCatalog</code> reads</td></tr>
-              <tr><td class="pname">enclave pricing · availability · gpu</td><td>rates + live ETH quote · fleet headroom · GPU probe state</td><td><code>GET /pricing</code> · <code>/availability</code> · <code>/gpu</code></td></tr>
-              <tr><td class="pname">enclave account</td><td>address, payment forwarder, totals</td><td><code>GET /account</code></td></tr>
+              <tr><th scope="row" class="pname">enclave deploy &lt;app&gt; --gpu 0.25 --cpu 0.05 --fund 5</th><td>create + fund + wait until live, one shot; prints the app URL. Shares are fractions of one card / one node; omitted, they default to the app's catalog minimums</td><td><code>EnclaveDeployments.create()</code> · <code>fundWithAuthorization</code> · <code>POST /claim-hint</code></td></tr>
+              <tr><th scope="row" class="pname">enclave ls</th><td>your deployments, state and funded time remaining</td><td><code>GET /deployments</code> · <code>GET /account</code></td></tr>
+              <tr><th scope="row" class="pname">enclave status &lt;id&gt;</th><td>one deployment: state, runner, lease, balance, URL</td><td><code>GET /deployments/{id}</code></td></tr>
+              <tr><th scope="row" class="pname">enclave logs &lt;id&gt; [-f]</th><td>your app's stdout/stderr; <code>-f</code> follows</td><td><code>GET /deployments/{id}/logs</code></td></tr>
+              <tr><th scope="row" class="pname">enclave fund &lt;id&gt; --usdc 5 | --eth 0.002</th><td>top up runtime by the second</td><td><code>fundWithAuthorization</code> / <code>fundEth</code></td></tr>
+              <tr><th scope="row" class="pname">enclave attest &lt;id&gt;</th><td>fetch the CPU + GPU attestation reports and verify them locally; prints measurements and the verdict</td><td><code>GET /deployments/{id}/attestation</code></td></tr>
+              <tr><th scope="row" class="pname">enclave stop &lt;id&gt;</th><td>take the work item off the queue, then terminate; unspent balance stays on the record for a later reactivation (payments are final - nothing is withdrawable)</td><td><code>EnclaveDeployments.setActive(false)</code> · <code>DELETE /deployments/{id}</code></td></tr>
+              <tr><th scope="row" class="pname">enclave publish app.wasm --slug hello</th><td>validate the component, pin to IPFS, cut a catalog version</td><td><code>ipfs.enclave.host/add-wasm</code> · <code>EnclaveAppCatalog</code></td></tr>
+              <tr><th scope="row" class="pname">enclave apps [query]</th><td>browse or search the on-chain catalog</td><td><code>EnclaveAppCatalog</code> reads</td></tr>
+              <tr><th scope="row" class="pname">enclave pricing · availability · gpu</th><td>rates + live ETH quote · fleet headroom · GPU probe state</td><td><code>GET /pricing</code> · <code>/availability</code> · <code>/gpu</code></td></tr>
+              <tr><th scope="row" class="pname">enclave account</th><td>address, payment forwarder, totals</td><td><code>GET /account</code></td></tr>
             </tbody>
           </table></div>
           <p>Global flags: <code>--json</code> for machine-readable output, <code>-x</code> to print every REST call and transaction before it is sent (the curl-equivalent escape hatch), <code>--base</code> / <code>ENCLAVE_API_BASE</code> to target an enclave directly instead of the gateway, <code>--rpc</code> for your own Base RPC.</p>
@@ -762,7 +770,7 @@ enclave logs 0x3f2a9c1b -f               # watch it serve</code></pre></c-code>
         <span class="chip">OpenAPI <b>3.1</b></span>
         <span class="chip">base <b>https://api.enclave.host/v1</b></span>
         <span class="chip">auth <b>SIWE bearer</b></span>
-        <span class="chip" style="cursor:pointer" id="dlSpec">⬇ <b>openapi.json</b></span>
+        <a class="chip" href="openapi.json" download id="dlSpec">⬇ <b>openapi.json</b></a>
       </div>
     </div>
 

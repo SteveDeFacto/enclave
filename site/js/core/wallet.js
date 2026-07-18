@@ -167,8 +167,8 @@ async function privyPickFlow(host){
     privyCard(host,
       '<div class="wp-h">Sign in with email</div>' +
       '<div class="wp-note">We’ll email you a one-time code. No password needed.</div>' +
-      '<input class="wp-input" id="pvEmail" type="email" autocomplete="email" spellcheck="false" placeholder="you@example.com" />' +
-      '<div class="wp-err" id="pvErr" hidden></div>' +
+      '<input class="wp-input" id="pvEmail" aria-label="Email address" type="email" autocomplete="email" spellcheck="false" placeholder="you@example.com" />' +
+      '<div class="wp-err" id="pvErr" role="alert" hidden></div>' +
       '<button class="wp-item wp-go" id="pvSend" type="button">Continue</button>' +
       '<button class="wp-cancel" type="button">Cancel</button>' +
       (noExt ? '<div class="wp-rec wp-rec-foot">Prefer to hold your own keys? We <b>recommend a browser wallet</b> (MetaMask, Rabby, Coinbase…) — install one, reload, and sign in with it instead.</div>' : "") +
@@ -189,8 +189,8 @@ async function privyPickFlow(host){
     privyCard(host,
       '<div class="wp-h">Check your email</div>' +
       '<div class="wp-note">We sent a 6-digit code to <b>' + esc(email) + '</b>.</div>' +
-      '<input class="wp-input" id="pvCode" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" placeholder="123456" maxlength="6" />' +
-      '<div class="wp-err" id="pvErr" hidden></div>' +
+      '<input class="wp-input" id="pvCode" aria-label="One-time code from the email" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" placeholder="123456" maxlength="6" />' +
+      '<div class="wp-err" id="pvErr" role="alert" hidden></div>' +
       '<button class="wp-item wp-go" id="pvGo" type="button">Sign in</button>' +
       '<button class="wp-cancel" type="button">Cancel</button>');
     const inp = $("#pvCode"); if (inp) inp.focus();
@@ -245,13 +245,43 @@ function noWalletReason(){
   return "No Ethereum wallet detected. Install MetaMask, Rabby, Coinbase, or any EIP-6963 wallet, unlock it, and reload.";
 }
 
+/* modal a11y for every #walletPick use: dialog semantics, focus moved in,
+   Tab trapped, Escape = dismiss, focus restored on close. Returns the
+   teardown; the caller's close() must run it. */
+function modalize(host, onDismiss){
+  host.setAttribute("role", "dialog");
+  host.setAttribute("aria-modal", "true");
+  const h = host.querySelector(".wp-h");
+  if (h){ h.id = h.id || "wpTitle"; host.setAttribute("aria-labelledby", h.id); }
+  const prev = document.activeElement;
+  const focusables = () => [...host.querySelectorAll("button,input,select,textarea,a[href]")].filter(el => !el.disabled && el.offsetParent !== null);
+  // content may be rendered a tick after open (privy flow): retry once
+  const f0 = focusables()[0];
+  if (f0) f0.focus(); else requestAnimationFrame(() => { const f = focusables()[0]; if (f) f.focus(); });
+  const onKey = (e) => {
+    if (e.key === "Escape"){ e.preventDefault(); onDismiss(); return; }
+    if (e.key !== "Tab") return;
+    const f = focusables(); if (!f.length) return;
+    const i = f.indexOf(document.activeElement);
+    if (e.shiftKey && i <= 0){ e.preventDefault(); f[f.length - 1].focus(); }
+    else if (!e.shiftKey && (i === -1 || i === f.length - 1)){ e.preventDefault(); f[0].focus(); }
+  };
+  document.addEventListener("keydown", onKey, true);
+  return () => {
+    document.removeEventListener("keydown", onKey, true);
+    host.removeAttribute("role"); host.removeAttribute("aria-modal"); host.removeAttribute("aria-labelledby");
+    if (prev && prev.focus) try { prev.focus(); } catch(e){}
+  };
+}
+
 /* ---- funding: card purchases (Privy-brokered onramps) + plain deposits ---- */
 // small modal reusing the #walletPick overlay; backdrop / .wp-cancel close it
 function fundModal(inner){
   const host = $("#walletPick"); if (!host) return null;
   host.innerHTML = '<div class="wp-card">' + inner + '</div>';
   host.hidden = false;
-  const close = () => { host.hidden = true; host.innerHTML = ""; host.onclick = null; host.onpointerdown = null; };
+  const close = () => { unmodal(); host.hidden = true; host.innerHTML = ""; host.onclick = null; host.onpointerdown = null; };
+  const unmodal = modalize(host, close);
   // backdrop closes on pointerDOWN so a text selection started inside the
   // card and released over the backdrop doesn't dismiss; buttons stay on click
   host.onpointerdown = (e) => { if (e.target === host) close(); };
@@ -283,13 +313,13 @@ export function openSendModal(){
   const m = fundModal(
     '<div class="wp-h">Send USDC</div>' +
     '<div class="wp-note">Move <b>USDC on Base</b> from your wallet to any address. This leaves Enclave and is <b>final</b> - double-check the address, and send only on the Base network.</div>' +
-    '<input class="wp-input" id="sendTo" placeholder="0x… recipient address" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" />' +
+    '<input class="wp-input" id="sendTo" aria-label="Recipient address" placeholder="0x… recipient address" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" />' +
     '<div class="wp-sendrow">' +
-      '<input class="wp-input" id="sendAmt" inputmode="decimal" placeholder="0.00" autocomplete="off" />' +
+      '<input class="wp-input" id="sendAmt" aria-label="Amount in USDC" inputmode="decimal" placeholder="0.00" autocomplete="off" />' +
       '<button class="wp-mini" id="sendMax" type="button">Max</button>' +
     '</div>' +
     '<div class="wp-note">Balance: <span id="sendBal">…</span> USDC</div>' +
-    '<div class="wp-status" id="sendStatus" hidden></div>' +
+    '<div class="wp-status" id="sendStatus" role="status" hidden></div>' +
     '<button class="wp-item wp-go" id="sendGo" type="button">Send USDC</button>' +
     '<button class="wp-cancel" type="button">Close</button>');
   if (!m) return;
@@ -375,7 +405,9 @@ async function pickWallet(){
     // the embedded wallet is created behind the scenes
     const host = $("#walletPick"); if (!host) throw new EnclaveError(noWalletReason(), 0);
     host.hidden = false;
-    const close = () => { host.hidden = true; host.innerHTML = ""; };
+    const close = () => { unmodal(); host.hidden = true; host.innerHTML = ""; };
+    // Escape routes through the flow's own Cancel so its promise settles
+    const unmodal = modalize(host, () => { const c = host.querySelector(".wp-cancel"); if (c) c.click(); });
     try { const entry = await privyPickFlow(host); close(); return entry; }
     catch(err){ close(); throw (err instanceof EnclaveError ? err : new EnclaveError("Sign-in failed: " + (err && (err.message || err)), 0)); }
   }
@@ -391,8 +423,13 @@ async function pickWallet(){
         '<div class="wp-hint">Easiest start — creates a wallet whose keys are held for you by Privy.</div>' : "") +
       '<button class="wp-cancel">Cancel</button></div>';
     host.hidden = false;
-    const close = () => { host.hidden = true; host.innerHTML = ""; };
+    const close = () => { unmodal(); host.hidden = true; host.innerHTML = ""; };
     let privyBusy = false;
+    const unmodal = modalize(host, () => {
+      // during the email flow, route Escape through ITS Cancel (settles its promise)
+      if (privyBusy){ const c = host.querySelector(".wp-cancel"); if (c) c.click(); return; }
+      close(); reject(new EnclaveError("Wallet selection cancelled.", 0));
+    });
     // backdrop dismissal on pointerDOWN (see fundModal): selection drags out
     // of the card must not cancel the wallet pick
     host.onpointerdown = (e) => {
@@ -484,7 +521,7 @@ export function disconnectWallet(){
   Enclave.token = null; Enclave.address = null; Enclave.provider = null; Enclave.chainId = null; Enclave.walletRdns = null; Enclave.walletEmail = null;
   clearSession();
   runlog.clear();   // don't leave the prior user's deploy narratives in localStorage / on-screen
-  const pop = $("#walletPop"); if (pop){ pop.hidden = true; pop.innerHTML = ""; }
+  const pop = $("#walletPop"); if (pop){ pop.hidden = true; pop.innerHTML = ""; popExpanded(false); }
   refreshWallet();
   emit("enclave:auth", { authed: false });
 }
@@ -554,6 +591,8 @@ export async function restoreSession(){
 }
 
 /* ---- wallet button + popover ---- */
+// disclosure state of the account popover, mirrored on the button (WCAG 4.1.2)
+function popExpanded(open){ const b = $("#walletBtn"); if (b) b.setAttribute("aria-expanded", String(!!open)); }
 export function refreshWallet(){
   const btn = $("#walletBtn");
   if (btn){
@@ -561,8 +600,10 @@ export function refreshWallet(){
       const who = Enclave.walletEmail ? (Enclave.walletEmail.length > 24 ? Enclave.walletEmail.slice(0, 21) + "…" : Enclave.walletEmail) : short(Enclave.address);
       btn.classList.add("connected");
       btn.innerHTML = '<span class="wdot"></span>' + esc(who);
+      if (!btn.hasAttribute("aria-expanded")) btn.setAttribute("aria-expanded", "false");
     } else {
       btn.classList.remove("connected");
+      btn.removeAttribute("aria-expanded");   // signed out: the button starts sign-in, no popover
       btn.innerHTML = 'Sign in <span class="arr">→</span>';
     }
   }
@@ -571,7 +612,7 @@ export function refreshWallet(){
 
 export function toggleWalletPop(){
   const pop = $("#walletPop"); if (!pop) return;
-  if (!pop.hidden){ pop.hidden = true; pop.innerHTML = ""; return; }
+  if (!pop.hidden){ pop.hidden = true; pop.innerHTML = ""; popExpanded(false); return; }
   renderWalletPop();
 }
 
@@ -592,11 +633,12 @@ export async function renderWalletPop(){
     '</div>' +
     '<button class="wp-disc" id="wpDisc">Sign out</button>';
   pop.hidden = false;
+  popExpanded(true);
   const c = $("#wpCopy"); if (c) c.addEventListener("click", () => copyText(Enclave.address));
   const d = $("#wpDisc"); if (d) d.addEventListener("click", disconnectWallet);
-  const bb = $("#wpBuy"); if (bb) bb.addEventListener("click", () => { pop.hidden = true; openBuyModal(); });
-  const dep = $("#wpDep"); if (dep) dep.addEventListener("click", () => { pop.hidden = true; openDepositModal(); });
-  const snd = $("#wpSend"); if (snd) snd.addEventListener("click", () => { pop.hidden = true; openSendModal(); });
+  const bb = $("#wpBuy"); if (bb) bb.addEventListener("click", () => { pop.hidden = true; popExpanded(false); openBuyModal(); });
+  const dep = $("#wpDep"); if (dep) dep.addEventListener("click", () => { pop.hidden = true; popExpanded(false); openDepositModal(); });
+  const snd = $("#wpSend"); if (snd) snd.addEventListener("click", () => { pop.hidden = true; popExpanded(false); openSendModal(); });
   usdcBalanceOf(Enclave.address).then(
     (b) => { const u = $("#wpBalUsdc"); if (u) u.textContent = b.toFixed(2) + " USDC"; },
     ()  => { const u = $("#wpBalUsdc"); if (u) u.textContent = "unavailable"; });

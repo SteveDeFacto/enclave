@@ -10,7 +10,7 @@ c-app-card{display:contents;}
   transition:border-color .2s var(--ease),transform .2s var(--ease);}
 .app-card:hover{border-color:var(--jade-dim);transform:translateY(-2px);}
 /* keyboard focus sits on the title link; the visible ring stays on the whole card */
-.app-card:has(.app-open:focus-visible){border-color:var(--jade-dim);box-shadow:0 0 0 2px var(--jade-deep);}
+.app-card:has(.app-open:focus-visible){border-color:var(--jade);box-shadow:0 0 0 2px var(--jade);}
 .app-card .app-open{color:inherit;text-decoration:none;outline:none;}
 .app-card.verified{border-color:var(--jade-dim);box-shadow:0 0 0 1px var(--jade-deep) inset;}
 .app-thumb{flex:none;width:100%;aspect-ratio:16/9;background:var(--bg-1) center/cover no-repeat;border-bottom:1px solid var(--line-soft);}

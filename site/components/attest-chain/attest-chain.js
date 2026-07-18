@@ -37,10 +37,17 @@ class AttestChain extends EnclaveElement {
     if (this._wired) return;
     this._wired = true;
     const wrap = this.querySelector(".chain");
-    wrap.querySelectorAll(".link").forEach((el, i) => {
+    const links = [...wrap.querySelectorAll(".link")];
+    links.forEach((el, i) => {
+      // one handler serves both: whole-card pointer clicks and the real
+      // <button> inside the heading (keyboard) — button clicks bubble here
       el.addEventListener("click", () => {
-        wrap.querySelectorAll(".link").forEach(x => x.classList.remove("active"));
-        el.classList.add("active"); this.show(i);
+        links.forEach((x, j) => {
+          x.classList.toggle("active", j === i);
+          const b = x.querySelector(".lk-btn");
+          if (b) b.setAttribute("aria-pressed", String(j === i));
+        });
+        this.show(i);
       });
     });
     this.show(0);

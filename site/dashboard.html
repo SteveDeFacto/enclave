@@ -30,7 +30,7 @@
 </head>
 <body>
 <c-header current="dashboard"></c-header>
-<main>
+<main id="main" tabindex="-1">
 <h1 class="sr-only">Your Enclave deployments</h1>
 <section id="dashboard" data-view="dashboard" aria-label="Dashboard">
   <div class="wrap">
@@ -39,7 +39,7 @@
         <p>Everything your wallet is running, in one place: each deployment's status, spend, endpoints, and an in-browser attestation check. Open a deployment's <b>Output</b> panel to watch what it's doing - its deploy narrative and the app's own logs, straight from the enclave. Launch new apps from the <a href="apps">Apps store</a>; the provisioning stream lands here.</p>
       </c-section-head>
       <aside class="dash-fleet" aria-label="Live enclaves">
-        <div class="dash-fleet-h">Live enclaves</div>
+        <h2 class="dash-fleet-h">Live enclaves</h2>
         <c-fleet-list></c-fleet-list>
       </aside>
     </div>

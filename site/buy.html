@@ -38,6 +38,8 @@
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
 <style>
   html,body{margin:0;height:100%;background:#070B10;color:#E8F4EF;font:15px/1.5 system-ui,sans-serif;}
+  main{height:100%;}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0;}
   #msg{display:flex;height:100%;align-items:center;justify-content:center;text-align:center;padding:24px;color:#8FA6B2;}
   #msg b{color:#E8F4EF;}
   a{color:#2FE6A8;}
@@ -58,15 +60,18 @@
 </style>
 </head>
 <body>
+<main>
+<h1 class="sr-only">Buy USDC</h1>
 <div id="root"></div>
-<div id="msg">Loading checkout…</div>
+<div id="msg" role="status">Loading checkout…</div>
+</main>
 <!-- popover=manual: showPopover() lifts the host into the browser TOP LAYER,
      which paints above ANY z-index/DOM-order combination - Privy re-mounts
      its maxed-z-index portal on every screen change, so no ordering trick
      holds. The inline style neutralizes the popover UA sheet (inset/margin/
      border/background), incl. display:flex overriding its display:none -
      harmless: the host is transparent and pointer-events:none when empty. -->
-<div id="toasts" popover="manual" style="position:fixed;top:10px;left:10px;right:10px;bottom:auto;margin:0;border:0;padding:0;width:auto;height:auto;background:transparent;overflow:visible;z-index:2147483647;display:flex;flex-direction:column;gap:8px;pointer-events:none;"></div>
+<div id="toasts" role="alert" aria-live="assertive" popover="manual" style="position:fixed;top:10px;left:10px;right:10px;bottom:auto;margin:0;border:0;padding:0;width:auto;height:auto;background:transparent;overflow:visible;z-index:2147483647;display:flex;flex-direction:column;gap:8px;pointer-events:none;"></div>
 <script type="module">
 /* Buy USDC · runs Privy's FIAT ONRAMP (useFiatOnramp - the Stripe Crypto
    Onramp surface: Stripe/Link checkout in the US+EU, Privy's aggregator
@@ -119,9 +124,11 @@ function errToast(text){
   const body = document.createElement("span");
   body.textContent = text;
   body.style.flex = "1 1 auto";
-  const x = document.createElement("span");
+  const x = document.createElement("button");
+  x.type = "button";
+  x.setAttribute("aria-label", "Dismiss");
   x.textContent = "✕";
-  x.style.cssText = "flex:0 0 auto;color:#ff8f8f;font-weight:700;";
+  x.style.cssText = "flex:0 0 auto;color:#ff8f8f;font-weight:700;background:none;border:0;padding:0;cursor:pointer;font:inherit;min-width:24px;min-height:24px;";
   el.append(body, x);
   el.title = "click to dismiss";
   el.onclick = () => el.remove();
@@ -375,7 +382,7 @@ try {
         .forEach(b => { b.disabled = !ok; b.style.opacity = ok ? "" : ".45"; b.style.pointerEvents = ok ? "" : "none"; });
       if (!ok){
         if (!hint){
-          hint = document.createElement("div"); hint.id = "minHint";
+          hint = document.createElement("div"); hint.id = "minHint"; hint.setAttribute("role", "status");
           hint.style.cssText = "position:fixed;bottom:8px;left:0;right:0;text-align:center;color:#ffb86b;font:12px/1.4 monospace;z-index:2147483647;pointer-events:none;";
           document.body.appendChild(hint);
         }

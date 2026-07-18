@@ -24,19 +24,36 @@ class CodeTabs extends EnclaveElement {
     if (!panels.length) return;
     bar._wired = true;
 
-    const select = (i) => {
+    // stable unique ids to tie tabs to their panels (several
+    // <c-code-tabs> can share a page)
+    const uid = "ctab" + (CodeTabs._seq = (CodeTabs._seq || 0) + 1);
+    bar.setAttribute("aria-label", "Alternative versions of this code");
+    const select = (i, focus) => {
       panels.forEach((p, j) => { p.style.display = j === i ? "" : "none"; });
       bar.querySelectorAll("button").forEach((b, j) => {
         b.classList.toggle("on", j === i);
         b.setAttribute("aria-selected", String(j === i));
+        b.tabIndex = j === i ? 0 : -1;
+        if (focus && j === i) b.focus();
       });
     };
     panels.forEach((p, i) => {
+      p.id = p.id || uid + "-panel-" + i;
+      p.setAttribute("role", "tabpanel");
+      p.setAttribute("aria-labelledby", uid + "-tab-" + i);
       const b = document.createElement("button");
       b.type = "button";
+      b.id = uid + "-tab-" + i;
       b.setAttribute("role", "tab");
+      b.setAttribute("aria-controls", p.id);
       b.textContent = p.getAttribute("tab") || p.getAttribute("fn") || "tab " + (i + 1);
-      b.addEventListener("click", () => select(i));
+      b.addEventListener("click", () => select(i, false));
+      b.addEventListener("keydown", (e) => {
+        const map = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: panels.length - 1 };
+        if (!(e.key in map)) return;
+        e.preventDefault();
+        select((map[e.key] + panels.length) % panels.length, true);
+      });
       bar.appendChild(b);
     });
 

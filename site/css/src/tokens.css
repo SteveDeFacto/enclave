@@ -10,9 +10,12 @@
   --surface-3:#172230;
   --line:#1E2937;
   --line-soft:#16202C;
+  /* form-control borders: ≥3:1 against bg/surface/surface-2 (WCAG 1.4.11) */
+  --line-strong:#566880;
   --text:#E7EEF6;
   --text-muted:#93A1B5;
-  --text-dim:#5E6E83;
+  /* dimmest text tier: ≥4.5:1 on every surface it sits on (WCAG 1.4.3) */
+  --text-dim:#7A8AA0;
   --jade:#2FE6A8;
   --jade-2:#5FF0C0;
   --jade-dim:#1C9C74;
@@ -20,6 +23,7 @@
   --jade-glow:rgba(47,230,168,.14);
   --amber:#FF914D;
   --amber-2:#FFB07A;
+  --amber-dim:#B4622F;
   --amber-deep:#3A2014;
   --iris:#8FA2FF;
   --iris-deep:#1A2150;

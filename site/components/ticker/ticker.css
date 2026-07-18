@@ -3,12 +3,17 @@
    ============================================================ */
 c-ticker{display:contents;}
 
-.ticker{border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);background:var(--bg-1);overflow:hidden;margin-top:34px;}
+.ticker{border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);background:var(--bg-1);overflow:hidden;margin-top:34px;position:relative;}
+.ticker-pause{position:absolute;right:10px;top:50%;transform:translateY(-50%);z-index:1;
+  min-width:28px;min-height:28px;display:inline-flex;align-items:center;justify-content:center;
+  font-size:.8rem;line-height:1;color:var(--text-muted);cursor:pointer;
+  background:var(--surface-2);border:1px solid var(--line-strong);border-radius:6px;}
+.ticker-pause:hover{color:var(--text);}
 /* width:max-content is load-bearing: translateX(-50%) is relative to the
    track's own box, and a block-level flex container would size to the
    viewport - the loop must wrap at exactly one content copy */
 .ticker-track{display:flex;gap:0;white-space:nowrap;width:max-content;animation:scrollx 80s linear infinite;}
-.ticker:hover .ticker-track{animation-play-state:paused;}
+.ticker:hover .ticker-track,.ticker:focus-within .ticker-track,.ticker.paused .ticker-track{animation-play-state:paused;}
 .ticker-track .it{font-family:var(--font-mono);font-size:.78rem;color:var(--text-muted);padding:13px 26px;display:inline-flex;align-items:center;gap:.7em;}
 .ticker-track .it b{color:var(--text);font-weight:600;}
 .ticker-track .it::after{content:"/";color:var(--line);margin-left:26px;}

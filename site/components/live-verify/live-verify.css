@@ -6,7 +6,7 @@ c-live-verify{display:contents;}
 .lv{margin-top:26px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),#0B121A);padding:20px 22px;}
 .lv-h{display:flex;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap;}
 .lv-txt{max-width:660px;}
-.lv-txt h4{margin:0 0 6px;font-family:var(--font-mono);font-size:.98rem;}
+.lv-txt h3{margin:0 0 6px;font-family:var(--font-mono);font-size:.98rem;font-weight:600;}
 .lv-txt p{margin:0;color:var(--text-muted);font-size:.86rem;}
 .lv-steps{list-style:none;margin:18px 0 0;padding:0;display:flex;flex-direction:column;gap:7px;font-family:var(--font-mono);font-size:.8rem;}
 .lv-steps li{display:flex;gap:.6em;align-items:baseline;color:var(--text-muted);}

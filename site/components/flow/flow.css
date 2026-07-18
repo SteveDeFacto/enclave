@@ -7,7 +7,8 @@ c-flow{display:contents;}
 .steps{display:flex;flex-direction:column;gap:8px;}
 .step{display:flex;gap:14px;align-items:flex-start;padding:14px;border:1px solid var(--line-soft);border-radius:var(--radius-sm);background:var(--surface);cursor:pointer;transition:.18s var(--ease);text-align:left;width:100%;font-family:inherit;color:inherit;}
 .step:hover{border-color:var(--line);}
-.step.active{border-color:rgba(47,230,168,.5);background:linear-gradient(180deg,rgba(47,230,168,.07),transparent);}
+/* the inset bar is the non-color "current step" cue (WCAG 1.4.1) */
+.step.active{border-color:rgba(47,230,168,.5);background:linear-gradient(180deg,rgba(47,230,168,.07),transparent);box-shadow:inset 3px 0 0 var(--jade);}
 .step .num{font-family:var(--font-mono);font-size:.8rem;color:var(--text-dim);border:1px solid var(--line);width:30px;height:30px;border-radius:8px;display:grid;place-items:center;flex:none;}
 .step.active .num{color:var(--jade);border-color:rgba(47,230,168,.5);}
 .step .st-t{font-family:var(--font-mono);font-size:.92rem;}

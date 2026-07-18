@@ -104,7 +104,7 @@ class ApiReference extends EnclaveElement {
         const mcls = "m-" + method.toLowerCase();
         const searchStr = (method + " " + path + " " + (op.summary || "") + " " + tag.name).toLowerCase();
 
-        navParts.push('<a data-target="' + id + '" data-search="' + esc(searchStr) + '">'
+        navParts.push('<a href="#' + id + '" data-target="' + id + '" data-search="' + esc(searchStr) + '">'
           + '<span class="mtag ' + mcls + '">' + method + "</span>"
           + '<span style="overflow:hidden;text-overflow:ellipsis;">' + esc(path) + "</span></a>");
 
@@ -140,8 +140,8 @@ class ApiReference extends EnclaveElement {
           this.BODY[oi] = { model: schemaTree(bSch), exampleHtml: hlJson(ex), exampleRaw: exRaw };
           body += '<div class="block-lbl">Request body</div>'
             + '<div class="samples bodytoggle" data-bid="' + oi + '">'
-            + '<button class="on" data-bmode="model">Schema</button>'
-            + '<button data-bmode="example">Example</button></div>'
+            + '<button class="on" data-bmode="model" aria-pressed="true">Schema</button>'
+            + '<button data-bmode="example" aria-pressed="false">Example</button></div>'
             + '<div class="code" data-bbox="' + oi + '"><div class="codebar"><span class="fn">application/json</span>'
             + '<button class="copybtn" data-rawid="' + stash(exRaw) + '">⧉ copy</button></div>'
             + '<div class="schema" data-bview="' + oi + '">' + schemaTree(bSch) + "</div></div>";
@@ -154,9 +154,9 @@ class ApiReference extends EnclaveElement {
           const r = resps[code];
           const cls = "rc-" + code.charAt(0);
           const ex = responseExample(r);
-          body += '<div class="resp-row"><span class="resp-code ' + cls + '">' + esc(code) + "</span>"
+          body += '<button class="resp-row" type="button" aria-expanded="false"><span class="resp-code ' + cls + '">' + esc(code) + "</span>"
             + '<span class="resp-desc">' + esc(r.description || "") + "</span>"
-            + '<span class="resp-chev">›</span></div>';
+            + '<span class="resp-chev" aria-hidden="true">›</span></button>';
           if (ex !== null) {
             const raw = JSON.stringify(ex, null, 2);
             body += '<div class="resp-body"><div class="code"><div class="codebar"><span class="fn">200 example</span>'
@@ -177,21 +177,21 @@ class ApiReference extends EnclaveElement {
           req: { method, url: this.buildUrl(path, op), body: bodyExample(op) } };
         body += '<div class="block-lbl">Code</div>'
           + '<div class="samples sampletoggle" data-sid="' + oi + '">'
-          + '<button class="on" data-mode="fetch">fetch()</button>'
-          + '<button data-mode="curl">cURL</button></div>'
+          + '<button class="on" data-mode="fetch" aria-pressed="true">fetch()</button>'
+          + '<button data-mode="curl" aria-pressed="false">cURL</button></div>'
           + '<div class="code"><div class="codebar"><span class="fn" data-sfn="' + oi + '">request.js</span>'
           + '<button class="runbtn" data-runsamp="' + oi + '" type="button">run</button>'
           + '<button class="copybtn" data-copysamp="' + oi + '">⧉ copy</button></div>'
           + '<pre><code data-sbox="' + oi + '">' + hlCode(sampFill(fetchS)) + "</code></pre></div>"
-          + '<div data-srun="' + oi + '"></div>';
+          + '<div data-srun="' + oi + '" role="status" aria-live="polite"></div>';
 
         body += "</div>"; // op-body
 
         groupHtml += '<div class="op" id="' + id + '" data-search="' + esc(searchStr) + '">'
-          + '<div class="op-sum"><span class="mtag ' + mcls + '">' + method + "</span>"
+          + '<button class="op-sum" type="button" aria-expanded="false"><span class="mtag ' + mcls + '">' + method + "</span>"
           + '<span class="op-path">' + esc(path) + "</span>"
           + '<span class="op-desc">' + esc(op.summary || "") + "</span>"
-          + '<span class="op-chev">›</span></div>' + body + "</div>";
+          + '<span class="op-chev" aria-hidden="true">›</span></button>' + body + "</div>";
         oi++;
       });
 
@@ -253,8 +253,8 @@ class ApiReference extends EnclaveElement {
       const sampBtn = e.target.closest(".sampletoggle button");
       if (sampBtn) {
         const wrap = sampBtn.closest(".sampletoggle"); const oi = wrap.dataset.sid;
-        $$("button", wrap).forEach(b => b.classList.remove("on"));
-        sampBtn.classList.add("on");
+        $$("button", wrap).forEach(b => { b.classList.remove("on"); b.setAttribute("aria-pressed", "false"); });
+        sampBtn.classList.add("on"); sampBtn.setAttribute("aria-pressed", "true");
         const mode = sampBtn.dataset.mode;
         main.querySelector('[data-sbox="' + oi + '"]').innerHTML = hlCode(sampFill(this.SAMP[oi][mode]));
         main.querySelector('[data-sfn="' + oi + '"]').textContent = mode === "curl" ? "terminal" : "request.js";
@@ -269,8 +269,8 @@ class ApiReference extends EnclaveElement {
       const bodyBtn = e.target.closest(".bodytoggle button");
       if (bodyBtn) {
         const wrap = bodyBtn.closest(".bodytoggle"); const oi = wrap.dataset.bid;
-        $$("button", wrap).forEach(b => b.classList.remove("on"));
-        bodyBtn.classList.add("on");
+        $$("button", wrap).forEach(b => { b.classList.remove("on"); b.setAttribute("aria-pressed", "false"); });
+        bodyBtn.classList.add("on"); bodyBtn.setAttribute("aria-pressed", "true");
         const view = main.querySelector('[data-bview="' + oi + '"]');
         if (bodyBtn.dataset.bmode === "model") {
           view.className = "schema"; view.innerHTML = this.BODY[oi].model;
@@ -281,13 +281,14 @@ class ApiReference extends EnclaveElement {
       }
       const respRow = e.target.closest(".resp-row");
       if (respRow) {
-        respRow.classList.toggle("open");
+        const open = respRow.classList.toggle("open");
+        respRow.setAttribute("aria-expanded", String(open));
         const b = respRow.nextElementSibling;
         if (b && b.classList.contains("resp-body")) b.classList.toggle("open");
         return;
       }
       const sum = e.target.closest(".op-sum");
-      if (sum) sum.parentElement.classList.toggle("open");
+      if (sum) sum.setAttribute("aria-expanded", String(sum.parentElement.classList.toggle("open")));
     });
 
     // nav: filter + deep link
@@ -295,7 +296,7 @@ class ApiReference extends EnclaveElement {
       const a = e.target.closest("a[data-target]"); if (!a) return;
       e.preventDefault();
       const op = document.getElementById(a.dataset.target);
-      if (op) { op.classList.add("open"); op.scrollIntoView({ behavior: "smooth", block: "start" }); }
+      if (op) { op.classList.add("open"); const s = op.querySelector(".op-sum"); if (s) s.setAttribute("aria-expanded", "true"); op.scrollIntoView({ behavior: "smooth", block: "start" }); }
     });
     this.querySelector(".api-search-input").addEventListener("input", (e) => {
       const q = e.target.value.trim().toLowerCase();

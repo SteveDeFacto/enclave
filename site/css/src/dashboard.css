@@ -19,6 +19,6 @@
    viewport (minmax min of 300px only when the row itself has the room) */
 .dash-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(min(300px,100%),400px);gap:28px;align-items:start;}
 .dash-fleet{margin-top:6px;}
-.dash-fleet-h{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:10px;}
+.dash-fleet-h{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin:0 0 10px;font-weight:400;}
 .dash-fleet-h .dim{text-transform:none;letter-spacing:0;color:var(--text-dim);}
 @media (max-width:1000px){ .dash-head{grid-template-columns:minmax(0,1fr);} }

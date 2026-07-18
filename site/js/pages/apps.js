@@ -106,7 +106,7 @@ function syncModTabs(me, isOwner){
   const cur = document.querySelector('#storeFilter button[data-filter="' + STORE.filter + '"]');
   if (cur && cur.hidden){
     STORE.filter = "approved";
-    $$("#storeFilter button").forEach(x => x.classList.toggle("on", x.dataset.filter === "approved"));
+    $$("#storeFilter button").forEach(x => { const on = x.dataset.filter === "approved"; x.classList.toggle("on", on); x.setAttribute("aria-pressed", String(on)); });
   }
 }
 
@@ -362,13 +362,13 @@ async function onPubFile(e){
   catch(err){ if (seq !== pubSeq) return; pubStatus(err.message || String(err), true); e.target.value = ""; return; }
   if (seq !== pubSeq) return;
   setPubUploading(true);
-  if (bar){ bar.hidden = false; bar.firstElementChild.style.width = "0%"; }
+  if (bar){ bar.hidden = false; bar.firstElementChild.style.width = "0%"; bar.setAttribute("aria-valuenow", "0"); }
   pubStatus("valid component · uploading to IPFS… 0%");
   try {
     const cid = await putWasm(f, (done, total) => {
       if (seq !== pubSeq || !total) return;
       const pct = Math.min(100, Math.floor(done / total * 100));
-      if (bar) bar.firstElementChild.style.width = pct + "%";
+      if (bar){ bar.firstElementChild.style.width = pct + "%"; bar.setAttribute("aria-valuenow", String(pct)); }
       // 100% sent != done: the gateway still validates + pins before answering
       const label = done >= total ? "upload sent · gateway validating + pinning…"
                                   : "uploading to IPFS… " + pct + "% (" + (done / 1048576).toFixed(1) + " / " + mb + " MB)";
@@ -720,7 +720,7 @@ function initStore(){
     else link.hidden = true;
   }
   $$("#storeFilter button").forEach(b => b.addEventListener("click", () => {
-    $$("#storeFilter button").forEach(x => x.classList.remove("on")); b.classList.add("on");
+    $$("#storeFilter button").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-pressed", String(x === b)); });
     STORE.filter = b.dataset.filter; renderApps();
   }));
   const s = $("#storeSearch"); if (s) s.addEventListener("input", renderApps);

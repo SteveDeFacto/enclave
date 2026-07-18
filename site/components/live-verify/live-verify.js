@@ -36,7 +36,7 @@ class LiveVerify extends EnclaveElement {
   async verify(btn) {
     const body = this.querySelector(".lv-body"), steps = this.querySelector(".lv-steps");
     const verdict = this.querySelector(".lv-verdict"), meta = this.querySelector(".lv-meta");
-    body.hidden = false; btn.disabled = true;
+    body.hidden = false; body.setAttribute("aria-busy", "true"); btn.disabled = true;
     steps.innerHTML = ""; meta.innerHTML = "";
     const status = (t) => { verdict.className = "lv-verdict"; verdict.textContent = t; };
     try {
@@ -78,7 +78,7 @@ class LiveVerify extends EnclaveElement {
     } catch (e) {
       verdict.className = "lv-verdict bad";
       verdict.textContent = "✗ could not run verification: " + (e && e.message ? e.message : e);
-    } finally { btn.disabled = false; }
+    } finally { btn.disabled = false; body.setAttribute("aria-busy", "false"); }
   }
 }
 register("c-live-verify", LiveVerify);

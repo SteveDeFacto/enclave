@@ -48,10 +48,26 @@ class Flow extends EnclaveElement {
     if (this._wired) return;
     this._wired = true;
     const wrap = this.querySelector(".steps");
-    wrap.querySelectorAll(".step").forEach((el, i) => {
-      el.addEventListener("click", () => {
-        wrap.querySelectorAll(".step").forEach(x => x.classList.remove("active"));
-        el.classList.add("active"); this.detail(i);
+    const tabs = [...wrap.querySelectorAll(".step")];
+    const select = (i, focus) => {
+      tabs.forEach((x, j) => {
+        x.classList.toggle("active", j === i);
+        x.setAttribute("aria-selected", j === i ? "true" : "false");
+        x.tabIndex = j === i ? 0 : -1;
+      });
+      const panel = this.querySelector(".flow-detail");
+      if (panel) panel.setAttribute("aria-labelledby", tabs[i].id);
+      if (focus) tabs[i].focus();
+      this.detail(i);
+    };
+    tabs.forEach((el, i) => {
+      el.addEventListener("click", () => select(i, false));
+      // ARIA tabs pattern: arrow keys move + activate within the tablist
+      el.addEventListener("keydown", (e) => {
+        const map = { ArrowDown: i + 1, ArrowRight: i + 1, ArrowUp: i - 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 };
+        if (!(e.key in map)) return;
+        e.preventDefault();
+        select((map[e.key] + tabs.length) % tabs.length, true);
       });
     });
     loadSpec().then(() => this.detail(0), e => console.warn("[c-flow] spec load failed:", e));

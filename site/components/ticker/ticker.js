@@ -18,6 +18,15 @@ class Ticker extends EnclaveElement {
     // one loop = one content copy, at ~50 px/s
     const copy = t.scrollWidth / 2;
     if (copy > 0) t.style.animationDuration = Math.round(copy / 50) + "s";
+    // WCAG 2.2.2: moving content needs a real pause control (hover-pause
+    // alone leaves keyboard/touch users without one)
+    const btn = this.querySelector(".ticker-pause");
+    if (btn) btn.addEventListener("click", () => {
+      const paused = this.querySelector(".ticker").classList.toggle("paused");
+      btn.setAttribute("aria-pressed", String(paused));
+      btn.setAttribute("aria-label", (paused ? "Play" : "Pause") + " the facts ticker");
+      btn.textContent = paused ? "▶︎" : "⏸︎";
+    });
   }
 }
 register("c-ticker", Ticker);

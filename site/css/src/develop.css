@@ -15,13 +15,17 @@ table.params{width:100%;border-collapse:collapse;font-size:.84rem;}
 table.params th{text-align:left;font-family:var(--font-mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);padding:7px 10px;border-bottom:1px solid var(--line-soft);font-weight:500;}
 table.params td{padding:9px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top;}
 table.params td.pname{font-family:var(--font-mono);color:var(--text);white-space:nowrap;}
+/* first-column cells are row headers (<th scope=row class=pname>) for AT; keep the old td.pname look */
+table.params th[scope=row]{font-family:var(--font-mono);color:var(--text);white-space:nowrap;text-align:left;
+  font-size:.84rem;font-weight:400;letter-spacing:0;text-transform:none;padding:9px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top;}
 /* troubleshooting: symptoms are long strings, not parameter names - nowrap
    would size the column to the longest one and cram cause→fix to a sliver */
-table.symptoms td.pname{white-space:normal;width:30%;}
+table.symptoms td.pname,table.symptoms th.pname{white-space:normal;width:30%;}
 
 .docs-layout{display:grid;grid-template-columns:250px 1fr;gap:30px;align-items:start;}
 .docs-side{position:sticky;top:80px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);overflow:hidden;max-height:calc(100vh - 100px);display:flex;flex-direction:column;}
 .docs-nav{overflow:auto;padding:8px;flex:1;}
+.docs-nav ul{margin:0;padding:0;list-style:none;}
 .docs-nav .grp{font-family:var(--font-mono);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);padding:12px 8px 6px;}
 .docs-nav a{display:flex;align-items:baseline;gap:8px;padding:6px 8px;border-radius:7px;font-family:var(--font-mono);font-size:.76rem;color:var(--text-muted);transition:.12s;}
 .docs-nav a:hover{background:var(--bg-1);color:var(--text);}
@@ -33,7 +37,8 @@ table.symptoms td.pname{white-space:normal;width:30%;}
 .dev-tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin-top:26px;}
 .dev-tabs a{font-family:var(--font-mono);font-size:.92rem;color:var(--text-muted);padding:10px 20px;border:1px solid transparent;border-bottom:none;border-radius:9px 9px 0 0;position:relative;top:1px;transition:.15s;}
 .dev-tabs a:hover{color:var(--text);background:var(--surface);}
-.dev-tabs a.on{color:var(--jade);border-color:var(--line);background:var(--bg-1);}
+/* underline: the active tab reads without color (WCAG 1.4.1) */
+.dev-tabs a.on{color:var(--jade);border-color:var(--line);background:var(--bg-1);text-decoration:underline;text-underline-offset:5px;}
 .docs-main{min-width:0;display:grid;gap:56px;}
 .doc{min-width:0;}
 .doc-lead{margin-bottom:26px;}                    /* a tab pane's lead heading, above .docs-layout */
@@ -55,7 +60,7 @@ table.symptoms td.pname{white-space:normal;width:30%;}
 .doc-note.warn .nt{color:var(--amber);}
 .doc .tbl{overflow-x:auto;margin:14px 0;border:1px solid var(--line-soft);border-radius:var(--radius-sm);}
 .doc table.params td{color:var(--text-muted);font-size:.86rem;line-height:1.55;}
-.doc table.params td.pname{color:var(--text);}
+.doc table.params td.pname,.doc table.params th[scope=row]{color:var(--text);font-size:.86rem;line-height:1.55;}
 /* single-column: the chapter nav would stack above the guide as a scroll
    box - not useful there, hide it (the guide reads top-to-bottom) */
 @media(max-width:960px){.docs-layout{grid-template-columns:1fr;}.docs-side{display:none;}}

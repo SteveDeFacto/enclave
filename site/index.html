@@ -111,7 +111,7 @@
 </head>
 <body>
 <c-header current="overview"></c-header>
-<main>
+<main id="main" tabindex="-1">
 <!-- ===================== HERO ===================== -->
 <a id="top"></a>
 <section class="hero" data-view="overview" aria-label="Intro">
@@ -121,7 +121,7 @@
       <h1>Confidential compute,<br>for the&nbsp;<span class="hl">people</span>.</h1>
       <p class="lede">The hardware that used to hide behind enterprise sales calls is now one click away: deploy a <b>WebAssembly app</b> onto a confidential enclave equipped with a <b>flagship NVIDIA GPU</b>, straight from your browser. Pay per second in <b>ETH or USDC</b>. Your wallet is your account. Then check the cryptographic attestation <b>yourself</b> before you send a single byte of data.</p>
       <div class="hero-cta">
-        <a href="apps" class="btn btn-primary">Deploy an app <span class="arr">→</span></a>
+        <a href="apps" class="btn btn-primary">Deploy an app <span class="arr" aria-hidden="true">→</span></a>
         <a href="develop#api" class="btn btn-ghost">Read the API</a>
       </div>
       <div class="hero-foot">
@@ -268,7 +268,7 @@
       <div class="mig-scroll">
       <table class="mig-table">
         <thead>
-          <tr><th>Example</th><th>GPU share</th><th>CPU share</th><th>What the shares grant</th><th>Per hour</th><th>Per second</th></tr>
+          <tr><th scope="col">Example</th><th scope="col">GPU share</th><th scope="col">CPU share</th><th scope="col">What the shares grant</th><th scope="col">Per hour</th><th scope="col">Per second</th></tr>
         </thead>
         <tbody>
           <tr class="full"><td>CPU-only</td><td>0%</td><td>10%</td><td>no GPU · <span data-live-spec="ram" data-cpu="10">6.4</span> GB RAM / <span data-live-spec="vcpu" data-cpu="10">1.6</span> vCPU</td><td>$<span data-live-price="hr" data-cpu="10">0.30</span></td><td>$<span data-live-price="sec" data-cpu="10">0.000084</span></td></tr>
@@ -296,7 +296,7 @@
         <h3>Enclave Host, Inc.</h3>
         <p>The company behind Enclave. Payments forward to it on-chain in the open, and its enclaves prove what they're running before you send them a byte - the whole point is that "trust us" never has to enter the conversation.</p>
         <div class="about-links">
-          <a class="btn btn-ghost" href="https://github.com/EnclaveHost/enclave" target="_blank" rel="noopener">Source on GitHub <span class="arr">↗</span></a>
+          <a class="btn btn-ghost" href="https://github.com/EnclaveHost/enclave" target="_blank" rel="noopener">Source on GitHub <span class="arr" aria-hidden="true">↗</span></a>
           <a class="btn btn-ghost" href="mailto:support@enclave.host">support@enclave.host</a>
         </div>
       </div>
@@ -311,7 +311,7 @@
         </div>
         <p>Steven is a certified application architect focused on serverless architecture, with an extensive consulting background serving large enterprise clients and a passion for decentralized systems. He designs and builds Enclave hands-on: the attested enclave stack, the on-chain contracts, and the site you're reading. Based in Arizona.</p>
         <div class="about-links">
-          <a class="btn btn-ghost" href="https://www.linkedin.com/in/steven-batchelor-50791627/" target="_blank" rel="noopener">LinkedIn <span class="arr">↗</span></a>
+          <a class="btn btn-ghost" href="https://www.linkedin.com/in/steven-batchelor-50791627/" target="_blank" rel="noopener">LinkedIn <span class="arr" aria-hidden="true">↗</span></a>
         </div>
       </div>
     </div>

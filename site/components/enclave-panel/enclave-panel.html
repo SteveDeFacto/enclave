@@ -2,12 +2,12 @@
   <span class="corner tl"></span><span class="corner tr"></span>
   <span class="corner bl"></span><span class="corner br"></span>
   <div class="enclave-bar">
-    <span class="lbl"><span class="seal">◆</span> enclave · sev-snp + nvidia-cc</span>
-    <span id="enclaveState">sealed</span>
+    <span class="lbl"><span class="seal" aria-hidden="true">◆</span> enclave · sev-snp + nvidia-cc</span>
+    <span class="bar-right"><span id="enclaveState" aria-hidden="true">sealed</span><button class="ep-pause" type="button" aria-pressed="false" aria-label="Pause the enclave animation">⏸︎</button></span>
   </div>
-  <canvas class="enclave-canvas" id="enclaveCanvas" aria-label="Animated diagram of data sealed inside a measured enclave"></canvas>
+  <canvas class="enclave-canvas" id="enclaveCanvas" role="img" aria-label="Animated diagram of data sealed inside a measured enclave"></canvas>
   <div class="enclave-foot">
     <span class="k">launch measurement · live</span>
-    <span id="measureHash">fetching …</span>
+    <span id="measureHash" role="status">fetching …</span>
   </div>
 </div>

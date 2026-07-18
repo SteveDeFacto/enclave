@@ -14,4 +14,5 @@ c-code-tabs{display:contents;}
 .code-tabs-bar{margin-bottom:8px;}
 .code-tabs-bar button{font-family:var(--font-mono);font-size:.75rem;line-height:1.5;color:var(--text-muted);border:1px solid var(--line);background:var(--surface);padding:.32em .8em;border-radius:6px;cursor:pointer;transition:.15s;}
 .code-tabs-bar button:hover{color:var(--text);border-color:#33465c;}
-.code-tabs-bar button.on{color:var(--jade);border-color:rgba(47,230,168,.4);background:rgba(47,230,168,.07);}
+/* weight + underline: the selected tab reads without color (WCAG 1.4.1) */
+.code-tabs-bar button.on{color:var(--jade);border-color:rgba(47,230,168,.4);background:rgba(47,230,168,.07);font-weight:700;text-decoration:underline;text-underline-offset:3px;}

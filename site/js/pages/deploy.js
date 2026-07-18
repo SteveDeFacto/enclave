@@ -204,8 +204,16 @@ function renderDeploy(){
   }
   $("#estRuntime").textContent = rate > 0 ? fmtDur(budget / rate) : "–";
 }
-function switchPane(name){
-  $$(".console-tabs button").forEach(b => b.classList.toggle("on", b.dataset.pane === name));
+// seg toggles are aria-pressed buttons: keep the state attribute in step with .on
+const segSet = (x, on) => { x.classList.toggle("on", on); x.setAttribute("aria-pressed", String(on)); };
+function switchPane(name, focus){
+  $$(".console-tabs button").forEach(b => {
+    const on = b.dataset.pane === name;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", String(on));
+    b.tabIndex = on ? 0 : -1;
+    if (on && focus) b.focus();
+  });
   $$(".console-body .pane").forEach(p => p.classList.toggle("on", p.dataset.pane === name));
 }
 /* pre-flight feedback (validation, dry runs) renders inline under the run
@@ -724,7 +732,7 @@ function updatePayAssetUI(){
   if (ethBtn) ethBtn.hidden = privy;
   if (privy && dep.asset === "ETH"){
     dep.asset = "USDC";
-    $$("#cfgAsset button").forEach(x => x.classList.toggle("on", x.dataset.asset === "USDC"));
+    $$("#cfgAsset button").forEach(x => segSet(x, x.dataset.asset === "USDC"));
     renderDeploy();
   }
   updateUsdcBalance();
@@ -840,12 +848,12 @@ function initDeploy(){
   const cpuIn = $("#cfgCpuShare"); if (cpuIn) cpuIn.addEventListener("input", e => { dep.cpuPct = parseFloat(e.target.value) || 0; renderDeploy(); });
   $("#cfgAsset").addEventListener("click", e => {
     const b = e.target.closest("button[data-asset]"); if (!b) return;
-    dep.asset = b.dataset.asset; $$("#cfgAsset button").forEach(x => x.classList.toggle("on", x === b));
+    dep.asset = b.dataset.asset; $$("#cfgAsset button").forEach(x => segSet(x, x === b));
     renderDeploy(); updateUsdcBalance();
   });
   $("#cfgAccess").addEventListener("click", e => {
     const b = e.target.closest("button[data-public]"); if (!b) return;
-    dep.public = b.dataset.public === "1"; $$("#cfgAccess button").forEach(x => x.classList.toggle("on", x === b));
+    dep.public = b.dataset.public === "1"; $$("#cfgAccess button").forEach(x => segSet(x, x === b));
     renderAccessNote(); renderDeploy();
   });
   renderAccessNote();
@@ -853,7 +861,7 @@ function initDeploy(){
   if (cfgWaf){
     cfgWaf.addEventListener("click", e => {
       const b = e.target.closest("button[data-waf]"); if (!b) return;
-      dep.waf = b.dataset.waf === "1"; $$("#cfgWaf button").forEach(x => x.classList.toggle("on", x === b));
+      dep.waf = b.dataset.waf === "1"; $$("#cfgWaf button").forEach(x => segSet(x, x === b));
       const opts = $("#wafOpts"); if (opts) opts.hidden = !dep.waf;
       renderDeploy();
     });
@@ -872,6 +880,16 @@ function initDeploy(){
     renderDeploy();
   });
   $$(".console-tabs button").forEach(b => b.addEventListener("click", () => switchPane(b.dataset.pane)));
+  // roving tabindex on the tablist: arrows/Home/End move focus AND select
+  const tl = $(".console-tabs");
+  if (tl) tl.addEventListener("keydown", e => {
+    const bs = $$(".console-tabs button"), i = bs.indexOf(document.activeElement);
+    const j = e.key === "ArrowRight" ? (i + 1) % bs.length
+            : e.key === "ArrowLeft"  ? (i - 1 + bs.length) % bs.length
+            : e.key === "Home" ? 0 : e.key === "End" ? bs.length - 1 : -1;
+    if (i < 0 || j < 0) return;
+    e.preventDefault(); switchPane(bs[j].dataset.pane, true);
+  });
   // ToS assent is shared with the store's quick-deploy modal (same
   // localStorage key, per terms version) - accepted once = pre-checked here
   const tos = $("#tosAgree");
@@ -890,10 +908,10 @@ function initDeploy(){
     $("#cfgGpuShare").value = "25"; dep.gpuPct = 25;
     const cp0 = $("#cfgCpuShare"); if (cp0) cp0.value = "5"; dep.cpuPct = 5;
     dep.asset = "USDC"; dep.public = true;
-    $$("#cfgAsset button").forEach(x => x.classList.toggle("on", x.dataset.asset === "USDC"));
-    $$("#cfgAccess button").forEach(x => x.classList.toggle("on", x.dataset.public === "1"));
+    $$("#cfgAsset button").forEach(x => segSet(x, x.dataset.asset === "USDC"));
+    $$("#cfgAccess button").forEach(x => segSet(x, x.dataset.public === "1"));
     dep.waf = false;
-    $$("#cfgWaf button").forEach(x => x.classList.toggle("on", x.dataset.waf === "0"));
+    $$("#cfgWaf button").forEach(x => segSet(x, x.dataset.waf === "0"));
     const wo = $("#wafOpts"); if (wo) wo.hidden = true;
     const wr = $("#wafRps"); if (wr) wr.value = "10";
     const wb = $("#wafBurst"); if (wb) wb.value = "40";

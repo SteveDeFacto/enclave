@@ -44,10 +44,19 @@ class WalletButton extends EnclaveElement {
 
     // pointerDOWN, not click: selecting text in the popover and releasing
     // outside must not dismiss it (the click would land on the ancestor)
-    document.addEventListener("pointerdown", (e) => {
-      const pop = this.querySelector("#walletPop"); if (!pop || pop.hidden) return;
-      if (e.target.closest("#walletPop") || e.target.closest("#walletBtn")) return;
+    const dismiss = (refocus) => {
+      const pop = this.querySelector("#walletPop"); if (!pop || pop.hidden) return false;
       pop.hidden = true; pop.innerHTML = "";
+      wb.setAttribute("aria-expanded", "false");
+      if (refocus) wb.focus();
+      return true;
+    };
+    document.addEventListener("pointerdown", (e) => {
+      if (e.target.closest("#walletPop") || e.target.closest("#walletBtn")) return;
+      dismiss(false);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") dismiss(true);
     });
 
     Wallet.init();

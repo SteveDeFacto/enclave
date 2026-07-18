@@ -8,7 +8,8 @@ c-footer{display:contents;}
    footer's (already solid) background - lifted, the surface is truly opaque */
 footer{position:relative;z-index:1;border-top:1px solid var(--line-soft);background:var(--bg-1);padding:56px 0 36px;}
 .foot-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1.1fr;gap:30px;}
-.foot-grid h5{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin:0 0 14px;}
+.foot-grid h2{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin:0 0 14px;font-weight:600;}
+.foot-grid ul{margin:0;padding:0;list-style:none;}
 .foot-grid a{display:block;color:var(--text-muted);font-size:.88rem;padding:4px 0;transition:.12s;}
 .foot-grid a:hover{color:var(--jade);}
 .foot-grid a.foot-mail code{display:block;font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);margin-top:1px;transition:.12s;}

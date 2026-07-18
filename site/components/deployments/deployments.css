@@ -63,6 +63,7 @@ c-deployments{display:contents;}
 .enc-live-bar .elb-k{font-family:var(--font-mono);font-size:.64rem;letter-spacing:.1em;text-transform:uppercase;color:var(--jade);}
 .enc-live-bar .elb-k::before{content:"●";margin-right:6px;animation:encpulse 1.2s ease-in-out infinite;}
 @keyframes encpulse{50%{opacity:.25;}}
+@media (prefers-reduced-motion:reduce){.enc-live-bar .elb-k::before{animation:none;}}
 .enc-live-lbl{font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
 .enc-live-x{background:none;border:0;color:var(--text-dim);cursor:pointer;font-size:.8rem;padding:0 2px;min-width:24px;min-height:24px;display:inline-flex;align-items:center;justify-content:center;}
 .enc-live-x:hover{color:var(--text);}

@@ -55,7 +55,7 @@ class EnclavePanel extends EnclaveElement {
             ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
         }
       parts.forEach(p => {
-        if (!reduce) {
+        if (!reduce && !paused) {
           p.x += p.vx; p.y += p.vy;
           if (p.x < PAD || p.x > W - PAD) p.vx *= -1;
           if (p.y < PAD || p.y > H - PAD) p.vy *= -1;
@@ -64,7 +64,7 @@ class EnclavePanel extends EnclaveElement {
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 3, 0, 7); ctx.fillStyle = "rgba(47,230,168,.06)"; ctx.fill();
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fillStyle = "rgba(130,247,205,.95)"; ctx.fill();
       });
-      if (sweep >= 0) {
+      if (sweep >= 0 && !paused) {
         const y = PAD + sweep * (H - 2 * PAD);
         const g = ctx.createLinearGradient(0, y - 16, 0, y + 16);
         g.addColorStop(0, "rgba(143,162,255,0)"); g.addColorStop(.5, "rgba(143,162,255,.45)"); g.addColorStop(1, "rgba(143,162,255,0)");
@@ -74,16 +74,27 @@ class EnclavePanel extends EnclaveElement {
         if (sweep > 1) { sweep = -1; if (liveHash) $("#measureHash").textContent = liveHash;
           const st = $("#enclaveState"); if (st) st.textContent = "sealed"; }
       }
-      if (!reduce) requestAnimationFrame(frame);
+      if (!reduce && !paused) requestAnimationFrame(frame);
     }
     function tick() {
-      sweep = 0; const st = $("#enclaveState"); if (st) st.textContent = "measuring";
+      if (!paused) { sweep = 0; const st = $("#enclaveState"); if (st) st.textContent = "measuring"; }
       setTimeout(tick, 3800 + Math.random() * 2800);
     }
+    // WCAG 2.2.2: the auto-running animation gets a real pause control
+    // (under prefers-reduced-motion it's static already and the button hides)
+    let paused = false;
+    const pb = $(".ep-pause");
+    if (pb) pb.addEventListener("click", () => {
+      paused = !paused;
+      pb.setAttribute("aria-pressed", String(paused));
+      pb.setAttribute("aria-label", (paused ? "Play" : "Pause") + " the enclave animation");
+      pb.textContent = paused ? "▶︎" : "⏸︎";
+      if (!paused && !reduce) requestAnimationFrame(frame);
+    });
     function revive() {                 // re-sync after anything that can invalidate the bitmap, the
       if (!size()) return;              // DPR transform, or a seed made while the section was hidden
       if (seedW !== W || seedH !== H) seed();
-      if (reduce) frame();
+      if (reduce || paused) frame();   // static: paint one frame, schedule nothing
     }
     // the real fleet measurement (SEV-SNP launch digest; rtmr3/mrTd on a TDX
     // host). No invented fallback: if the API is unreachable we say so.

@@ -15,10 +15,15 @@
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
 <link rel="stylesheet" href="css/site.css" />
+<!-- boot.js renders the header/footer chrome; <base href="/"> resolves it from
+     the root whatever missing path this document is served at. pageOf() finds
+     no page for that path and boots overview.js, whose boot() null-guards
+     every element it touches - harmless on this content. -->
+<script type="module" src="js/boot.js"></script>
 </head>
 <body>
 <c-header current=""></c-header>
-<main>
+<main id="main" tabindex="-1">
 <section class="hero" aria-label="Not found">
   <div class="wrap">
     <div class="hero-copy">
@@ -26,7 +31,7 @@
       <h1>This page doesn't <span class="hl">exist</span>.</h1>
       <p class="lede">The address may be mistyped, out of date, or pointing at something that moved. Everything real is one click away.</p>
       <div class="hero-cta">
-        <a href="./" class="btn btn-primary">Home <span class="arr">→</span></a>
+        <a href="./" class="btn btn-primary">Home <span class="arr" aria-hidden="true">→</span></a>
         <a href="apps" class="btn btn-ghost">Browse apps</a>
         <a href="develop" class="btn btn-ghost">Developer docs</a>
       </div>

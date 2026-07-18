@@ -1,14 +1,14 @@
 <div class="lv">
   <div class="lv-h">
     <div class="lv-txt">
-      <h4>Don't take this page's word for it: run the check now</h4>
+      <h3>Don't take this page's word for it: run the check now</h3>
       <p>Your browser loads Tinfoil's open-source verifier (<code>@tinfoilsh/verifier</code>) and fetches the attestation of <b>one live enclave</b> - the fleet's gateway nominates an active one, and the verdict names exactly which - over your own connection. It validates the hardware report up to the silicon vendor's root of trust (AMD SEV-SNP on today's fleet; the steps below name the technology the enclave actually presented), verifies the release's Sigstore code provenance against the public <a href="https://github.com/EnclaveHost/enclave" target="_blank" rel="noopener">EnclaveHost/enclave</a> repo, and compares the two measurements. Exactly what the API's <code>verify</code> field tells every client to do - and what your dashboard re-runs against the specific enclave each deployment lands on.</p>
     </div>
     <button class="btn btn-primary lv-run" type="button">Verify enclave <span class="arr">→</span></button>
   </div>
   <div class="lv-body" hidden>
     <ul class="lv-steps"></ul>
-    <div class="lv-verdict"></div>
+    <div class="lv-verdict" role="status"></div>
     <div class="lv-meta"></div>
   </div>
   <p class="lv-note">The verifier module is served from this site itself (same-origin, version-pinned), not a third-party CDN; the Sigstore provenance bundles and the silicon vendor's certificate collateral (AMD KDS) it checks come through Tinfoil's CORS proxies. Fully independent path: <code class="lv-cli">tinfoil attestation verify -e &lt;enclave-host&gt; -r EnclaveHost/enclave</code>, via <a href="https://github.com/tinfoilsh/tinfoil-cli" target="_blank" rel="noopener">tinfoil-cli</a> - swap in any enclave's host to put the rest of the fleet through the same check.</p>
