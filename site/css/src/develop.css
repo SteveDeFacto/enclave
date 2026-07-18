@@ -21,6 +21,10 @@ table.params th[scope=row]{font-family:var(--font-mono);color:var(--text);white-
 /* troubleshooting: symptoms are long strings, not parameter names - nowrap
    would size the column to the longest one and cram cause→fix to a sliver */
 table.symptoms td.pname,table.symptoms th.pname{white-space:normal;width:30%;}
+/* the CLI command table: long commands + long API names - wrap BOTH instead
+   of nowrap-ing the first column off the edge of the scroll container */
+table.params.cmds th[scope=row]{white-space:normal;width:34%;overflow-wrap:break-word;}
+table.params.cmds td{overflow-wrap:break-word;}
 
 .docs-layout{display:grid;grid-template-columns:250px 1fr;gap:30px;align-items:start;}
 .docs-side{position:sticky;top:80px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);overflow:hidden;max-height:calc(100vh - 100px);display:flex;flex-direction:column;}

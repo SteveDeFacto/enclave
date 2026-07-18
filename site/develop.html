@@ -787,7 +787,7 @@ enclave whoami                     # address, USDC balance, running deployments<
           <p>Auth is SIWE under the hood: commands that need the API sign a one-time challenge (<code>GET /auth/nonce</code> → <code>POST /auth/login</code>) and cache the bearer token until it expires. On-chain commands (create, fund, publish) sign Base transactions with the same key - the CLI never sends your key anywhere.</p>
 
           <h4>Command reference</h4>
-          <div class="tbl"><table class="params">
+          <div class="tbl"><table class="params cmds">
             <thead><tr><th scope="col">command</th><th scope="col">does</th><th scope="col">maps to</th></tr></thead>
             <tbody>
               <tr><th scope="row" class="pname">enclave deploy &lt;app&gt; --gpu 0.25 --cpu 0.05 --fund 5</th><td>create + fund + wait until live, one shot; prints the app URL. Shares are fractions of one card / one node; omitted, they default to the app's catalog minimums</td><td><code>EnclaveDeployments.create()</code> · <code>fundWithAuthorization</code> · <code>POST /claim-hint</code></td></tr>
@@ -801,7 +801,7 @@ enclave whoami                     # address, USDC balance, running deployments<
               <tr><th scope="row" class="pname">enclave apps [query]</th><td>browse or search the on-chain catalog</td><td><code>EnclaveAppCatalog</code> reads</td></tr>
               <tr><th scope="row" class="pname">enclave encvol message &lt;keyId&gt;</th><td>print the canonical message a wallet signs for a volume key (<a href="#docs-encvol">ch. 13</a>)</td><td>local only - nothing sent anywhere</td></tr>
               <tr><th scope="row" class="pname">enclave encvol derive --key-id K | --sig 0x…</th><td>an encrypted volume's password + salt: the CLI wallet signs the canonical message itself (deterministic, RFC 6979), or derive from a signature made in any other wallet</td><td>local only - nothing sent anywhere</td></tr>
-              <tr><th scope="row" class="pname">enclave encvol seal-creds --key-id K [--access-key A --secret-key S]</th><td>encrypt S3 credentials (default: <code>AWS_*</code> env) under the wallet key → a <code>credsEnvelope</code> value for the public App Config; the app then unlocks with one signature, nothing typed</td><td>local only - nothing sent anywhere</td></tr>
+              <tr><th scope="row" class="pname">enclave encvol seal-creds --key-id K</th><td>encrypt S3 credentials (<code>AWS_*</code> env, or <code>--access-key</code>/<code>--secret-key</code>) under the wallet key → a <code>credsEnvelope</code> value for the public App Config; the app then unlocks with one signature, nothing typed</td><td>local only - nothing sent anywhere</td></tr>
               <tr><th scope="row" class="pname">enclave pricing · availability · gpu</th><td>rates + live ETH quote · fleet headroom · GPU probe state</td><td><code>GET /pricing</code> · <code>/availability</code> · <code>/gpu</code></td></tr>
               <tr><th scope="row" class="pname">enclave account</th><td>address, payment forwarder, totals</td><td><code>GET /account</code></td></tr>
             </tbody>
