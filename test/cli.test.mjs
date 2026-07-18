@@ -51,6 +51,8 @@ const S = {
   active: true,                                // get(ID).active (false = suspended)
   apiDeployment: null,                         // GET /v1/deployments/:id answer
   numVersions: 0n,
+  versionCount: 1,                             // catalog versions the stub app lists
+  v2: null,                                    // overrides for the second version (upgrade tests)
 };
 
 function apiServer() {
@@ -129,6 +131,7 @@ function rpcServer() {
   const version = { cid: CID, version: "1", vramMb: 0, gpuGflops: 0, memMb: 256, cpuGflops: 10,
                     createdAt: 1n, verified: true, yanked: false, ports: "http:8088", approval: 1,
                     config: "" };   // rev-3 Version tuple carries the default config
+  const version2 = () => ({ ...version, version: "2", ...S.v2 });   // the upgrade target (S.v2 shapes it per test)
   function call(to, data) {
     const abi = to === DEPLOYMENTS ? DEP_ABI : to === CATALOG ? CAT_ABI
       : [{ type: "function", name: "balanceOf", stateMutability: "view",
@@ -144,10 +147,10 @@ function rpcServer() {
       secondsFundable: () => [333333n],
       appCount: () => [1n],
       catalogSchema: () => [4n],   // the stub chain plays the current (rev-4) catalog
-      deploymentsSchema: () => [2n],   // ...and the rev-2 (post-sshPubKey) ledger
+      deploymentsSchema: () => [3n],   // ...and the rev-3 (setAppRef version-change) ledger
       getAppsPage: () => [Number(args[0]) === 0 ? [{ appId: APP_ID, publisher: OWNER, slug: "hello-world",
-        name: "Hello World", description: "first app", versionCount: 1, createdAt: 1n, updatedAt: 1n, active: true }] : []],
-      getVersionsPage: () => [Number(args[1]) === 0 ? [version] : []],
+        name: "Hello World", description: "first app", versionCount: S.versionCount, createdAt: 1n, updatedAt: 1n, active: true }] : []],
+      getVersionsPage: () => [Number(args[1]) === 0 ? [version, version2()].slice(0, S.versionCount) : []],
       numVersions: () => [S.numVersions],
       appIdOf: () => [APP_ID],
       cidStatus: () => [true, APP_ID, 0n, 1, false, true, [0, 0, 256, 10]],
@@ -368,6 +371,42 @@ test("resume of an already-active deployment sends no tx", async () => {
   assert.equal(r.code, 0, r.err);
   assert.ok(!S.txs.some((t) => t.functionName === "setActive"), "no setActive tx");
   assert.match(r.out, /already active/);
+});
+
+test("upgrade: setAppRef to the latest approved version + claim-hint nudge", async () => {
+  // a second, smaller approved release exists; the deployment (10% cpu) fits it
+  S.txs.length = 0; S.claimed = true; S.versionCount = 2; S.v2 = { memMb: 64, cpuGflops: 2 };
+  const r = await run(["upgrade", ID]);
+  assert.equal(r.code, 0, r.err);
+  const tx = S.txs.find((t) => t.functionName === "setAppRef");
+  assert.ok(tx, "setAppRef tx sent");
+  assert.equal(tx.args[0].toLowerCase(), ID.toLowerCase());
+  assert.equal(tx.args[1], `catalog://${APP_ID}/1`);        // newest approved version's RECORD
+  const hint = S.apiCalls.findLast((c) => c.path === "/v1/claim-hint" && c.method === "POST");
+  assert.ok(hint, "claim-hint posted");
+  assert.match(r.out, /switched to hello-world:2/);
+  assert.match(r.out, /restarts the app in place/);         // leased: the runner applies it live
+  S.versionCount = 1; S.v2 = null; S.claimed = false;
+});
+
+test("upgrade refuses a version that outgrows the deployment's immutable shares", async () => {
+  // 50 GB of RAM on the stub's 32 GB node = a 100% cpu share; the record bought 1%
+  S.txs.length = 0; S.versionCount = 2; S.v2 = { memMb: 51200 };
+  const r = await run(["upgrade", ID, "2"]);
+  assert.notEqual(r.code, 0, "must refuse before any signature");
+  assert.ok(!S.txs.length, "no tx sent");
+  assert.match(r.err, /needs at least/);
+  assert.match(r.err, /shares are immutable/);
+  S.versionCount = 1; S.v2 = null;
+});
+
+test("upgrade to the version already running is a no-op", async () => {
+  S.txs.length = 0; S.versionCount = 2; S.v2 = { memMb: 64, cpuGflops: 2 };
+  const r = await run(["upgrade", ID, "1"]);                // the record points at index 0 = "1"
+  assert.equal(r.code, 0, r.err);
+  assert.ok(!S.txs.length, "no tx sent");
+  assert.match(r.out, /already runs hello-world:1/);
+  S.versionCount = 1; S.v2 = null;
 });
 
 test("publish: validates the component, pins, cuts a catalog version", async () => {

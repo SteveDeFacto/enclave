@@ -54,6 +54,25 @@
         "type": "bytes32"
       },
       {
+        "indexed": false,
+        "internalType": "string",
+        "name": "appRef",
+        "type": "string"
+      }
+    ],
+    "name": "AppRefSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      },
+      {
         "indexed": true,
         "internalType": "bytes32",
         "name": "enclaveId",
@@ -1115,6 +1134,24 @@
       }
     ],
     "name": "setActive",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "string",
+        "name": "appRef",
+        "type": "string"
+      }
+    ],
+    "name": "setAppRef",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

@@ -94,6 +94,9 @@ const depsAbiFor = (tuple, rev) => [
     inputs: [{ name: "id", type: "bytes32" }], outputs: [] },
   { type: "function", name: "setActive", stateMutability: "nonpayable",
     inputs: [{ name: "id", type: "bytes32" }, { name: "active", type: "bool" }], outputs: [] },
+  // rev-3 ledgers only (deploymentsSchema >= 3): the owner's version change
+  { type: "function", name: "setAppRef", stateMutability: "nonpayable",
+    inputs: [{ name: "id", type: "bytes32" }, { name: "appRef", type: "string" }], outputs: [] },
   { type: "function", name: "get", stateMutability: "view",
     inputs: [{ name: "id", type: "bytes32" }],
     outputs: [{ type: "tuple", components: tuple }] },
@@ -805,6 +808,64 @@ async function cmdResume(rest) {
     say(`re-queued with ${dur(fundable)} of runtime - an enclave claims it shortly (watch: enclave status ${short(id)})`);
 }
 
+// Switch a deployment to another approved version of ITS app (setAppRef) —
+// the upgrade path: paid time, shares and any live lease stay on the record,
+// so a new release never costs a second buy-in; the current runner restarts
+// the app in place on the new version. The same pre-flight gates as deploy
+// run BEFORE the wallet signature: catalog approval, and the new version's
+// minimum shares against the deployment's immutable bought shares (a version
+// no runner accepts would leave the app dark on a still-billing lease).
+async function cmdUpgrade(rest) {
+  const account = loadKey();
+  if (!rest[0]) throw new Error("usage: enclave upgrade <id> [<version>]  (default: the app's latest approved version)");
+  const id = await resolveId(rest[0], account);
+  if (!isB32(id)) throw new Error("only on-chain deployments (bytes32 ids) can change versions");
+  const { rev, abi } = await depAbi();
+  if (rev < 3) throw new Error("the live EnclaveDeployments contract predates version changes (deploymentsSchema < 3); until the ledger upgrade, deploy the new version fresh and stop the old one");
+  const d = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, abi, "get", [id]);
+  if (!d || d.owner === "0x0000000000000000000000000000000000000000") throw new Error(`no deployment ${short(id)} on the ledger`);
+  if (d.owner.toLowerCase() !== account.address.toLowerCase()) throw new Error(`${short(id)} is owned by ${d.owner}, not this key`);
+  const m = /^catalog:\/\/(0x[0-9a-fA-F]{64})\/(\d{1,9})$/.exec(d.appRef || "");
+  if (!m) throw new Error(`${short(id)} references "${d.appRef}" - only catalog-versioned deployments can switch versions`);
+  const appId = m[1], curIdx = Number(m[2]);
+  const app = (await catalogApps()).find((a) => a.appId.toLowerCase() === appId.toLowerCase());
+  if (!app) throw new Error(`the catalog has no app ${appId} (delisted?)`);
+  const versions = await readVersions(app.appId, app.versionCount);
+  let vi;
+  if (rest[1] !== undefined) {
+    vi = versions.findIndex((v) => v.version === rest[1] && !v.yanked);
+    if (vi < 0) throw new Error(`app "${app.slug}" has no (un-yanked) version labeled "${rest[1]}"`);
+  } else {
+    vi = versions.findLastIndex((v) => !v.yanked && Number(v.approval) === 1);
+    if (vi < 0) throw new Error(`app "${app.slug}" has no approved version`);
+  }
+  const ver = versions[vi];
+  if (vi === curIdx) return say(`${short(id)} already runs ${app.slug}:${ver.version} (version index ${vi}); nothing to do`);
+  if (Number(ver.approval) !== 1)
+    throw new Error(`${app.slug}:${ver.version} is ${APPROVAL_WORD[Number(ver.approval)]}; runners only serve approved versions`);
+  // the deployment's bought shares are immutable — the new version must fit them
+  let pricing = null;
+  try { pricing = await api("GET", "/v1/pricing"); } catch {}
+  const mins = minShares(ver, pricing);
+  if (Number(d.gpuMilli) < mins.gpuMilli || Number(d.cpuMilli) < mins.cpuMilli)
+    throw new Error(`${app.slug}:${ver.version} needs at least gpu ${mins.gpuMilli / 10}% / cpu ${mins.cpuMilli / 10}% on the fleet's hardware, `
+                  + `but ${short(id)} bought gpu ${Number(d.gpuMilli) / 10}% / cpu ${Number(d.cpuMilli) / 10}% and shares are immutable - `
+                  + `deploy it fresh instead: enclave deploy ${app.slug}:${ver.version} --fund 5`);
+  const from = versions[curIdx] ? `${app.slug}:${versions[curIdx].version}` : d.appRef;
+  const leased = Number(d.leaseUntil) * 1000 > Date.now();
+  if (!(await confirm(`switch ${short(id)} from ${from} to ${app.slug}:${ver.version}? (paid time carries over`
+                    + `${leased ? "; the runner restarts the app in place within ~a minute" : ""})`))) return say("aborted");
+  await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi,
+    functionName: "setAppRef", args: [id, `catalog://${app.appId}/${vi}`] });
+  // nudge the fleet: relaunches queued/suspended work promptly (a running
+  // instance is restarted by its own runner's next ledger pass)
+  const h = await api("POST", "/v1/claim-hint", { body: { id } }).catch(() => null);
+  if (opt.json) return jout({ id, appRef: `catalog://${app.appId}/${vi}`, version: ver.version, hint: h });
+  say(`switched to ${app.slug}:${ver.version}${leased
+    ? " - the runner restarts the app in place within a minute (paid time and the endpoint carry over)"
+    : " - it launches on the new version when claimed"}; watch: enclave status ${short(id)}`);
+}
+
 async function cmdDeploy(rest) {
   const account = loadKey();
   const f = flags(rest, {
@@ -1191,6 +1252,9 @@ deployments
                              (the remaining balance stays on the deployment)
   resume <id>                setActive(true): re-queue a stopped deployment; it
                              relaunches from its remaining balance
+  upgrade <id> [<version>]   switch to another approved version of the same app
+                             (default: its latest); paid time carries over - the
+                             runner restarts the app in place on the new version
 
 catalog
   publish <app.wasm> --slug S [--version V --name N --desc D --config JSON]
@@ -1220,7 +1284,8 @@ ENCLAVE_KEY overrides the key file. Auth is SIWE; keys never leave this machine.
 const COMMANDS = {
   key: cmdKey, whoami: cmdWhoami, deploy: cmdDeploy, ls: cmdLs, list: cmdLs,
   status: cmdStatus, logs: cmdLogs, fund: cmdFund, attest: cmdAttest,
-  stop: cmdStop, suspend: cmdStop, resume: cmdResume, publish: cmdPublish, apps: cmdApps,
+  stop: cmdStop, suspend: cmdStop, resume: cmdResume, upgrade: cmdUpgrade, "set-version": cmdUpgrade,
+  publish: cmdPublish, apps: cmdApps,
   pricing: cmdPricing, availability: cmdAvailability, gpu: cmdGpu, account: cmdAccount,
   encvol: cmdEncvol,
 };

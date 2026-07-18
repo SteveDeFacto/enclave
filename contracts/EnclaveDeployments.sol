@@ -145,7 +145,10 @@ contract EnclaveDeployments {
     // Struct-shape revision, sniffed by consumers (site/CLI/relay/runners) the
     // way catalogSchema is: rev 1 (no getter — the call reverts there) carried
     // an sshPubKey string in Deployment/create/setConfig; rev 2 dropped it.
-    uint256 public constant deploymentsSchema = 2;
+    // Rev 3 keeps the rev-2 struct byte-for-byte and marks the setAppRef
+    // surface (owner version changes): struct decodes keep gating on >= 2,
+    // the version-change feature gates on >= 3.
+    uint256 public constant deploymentsSchema = 3;
 
     bytes32[] private _ids;                                // every deployment ever created
     mapping(bytes32 => Deployment) private _deployments;
@@ -153,6 +156,7 @@ contract EnclaveDeployments {
     mapping(address => uint64) private _nonces;            // per-creator id salt
 
     event Created(bytes32 indexed id, address indexed owner, string appRef, uint16 gpuMilli, uint16 cpuMilli, uint256 rate);
+    event AppRefSet(bytes32 indexed id, string appRef);
     event ConfigSet(bytes32 indexed id, string configCid);
     event ActiveSet(bytes32 indexed id, bool active);
     event Funded(bytes32 indexed id, address indexed payer, uint256 amount6);
@@ -246,6 +250,25 @@ contract EnclaveDeployments {
         // both shares are paid for; ceil so a 1-milli deployment still pays >= 1 unit/sec
         d.rate = (pricePerSec6 * gpuMilli + cpuPricePerSec6 * cpuMilli + 999) / 1000;
         emit Created(d.id, msg.sender, appRef, gpuMilli, cpuMilli, d.rate);
+    }
+
+    /// @notice Repoint the deployment at another catalog version — the owner's
+    ///         UPGRADE path. Funded time, shares, rate and any live lease all
+    ///         stay on the record, so a new release never costs a second
+    ///         buy-in: the current runner sees the change on its next ledger
+    ///         pass and restarts the app in place onto the new version; an
+    ///         unclaimed deployment simply launches the new version when
+    ///         claimed. The ledger doesn't parse appRefs (same trust model as
+    ///         create) — runners re-gate the new record on catalog approval
+    ///         and on the app's minimum shares. The shares bought at create
+    ///         are immutable, so a version needing more than they cover is
+    ///         refused by every runner; clients pre-check before the
+    ///         signature, exactly as they do for create.
+    function setAppRef(bytes32 id, string calldata appRef) external {
+        Deployment storage d = _requireOwned(id);
+        require(bytes(appRef).length > 0 && bytes(appRef).length <= MAX_APPREF, "appRef length");
+        d.appRef = appRef;
+        emit AppRefSet(id, appRef);
     }
 
     /// @notice Update the portable config; runners apply it on the next (re)launch.

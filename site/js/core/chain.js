@@ -28,8 +28,9 @@ export const hexBig = (h) => (!h || h === "0x") ? 0n : BigInt(h);
    leases - so a deployment outlives any single enclave, its update, or
    its crash. */
 export const DEP_SEL = { create:"11835efe", createV1:"1a8e502a", fund:"e46bbc9e", fundAuth:"209c0069", fundEth:"9f33dca0", get:"8eaa6ac0",
-                         price:"1e897c58", cpuPrice:"3f6195cc", setActive:"6485d678", maxGpuMilli:"4c8c5963",
-                         deploymentsSchema:"5d1b72b6" };  // shape-revision marker (reverts on rev-1 contracts)
+                         price:"1e897c58", cpuPrice:"3f6195cc", setActive:"6485d678", setAppRef:"4d506615", maxGpuMilli:"4c8c5963",
+                         deploymentsSchema:"5d1b72b6" };  // shape-revision marker (reverts on rev-1 contracts;
+                                                         // rev 3 = rev-2 struct + setAppRef version changes)
 export const DEP_CREATED_TOPIC = "0x3b201eb11e77934b296f908775fc0a82679683fd83a1232579f1014bcf7d3239"; // Created(bytes32,address,string,uint16,uint16,uint256)
 export const DEP_SCHEMA = [   // mirrors EnclaveDeployments.Deployment field order exactly (schema rev 2)
   {k:"id",t:"bytes32"},{k:"owner",t:"addr"},{k:"appRef",t:"str"},{k:"ports",t:"str"},

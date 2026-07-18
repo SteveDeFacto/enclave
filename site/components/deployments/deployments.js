@@ -13,13 +13,13 @@ import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { $$, esc, hlJson, fmtDur, statusCls, copyText, showToast, lsGet, lsSet } from "../../js/core/util.js";
 import { APP_DOMAIN, DEPLOYMENTS_ADDRESS } from "../../js/core/config.js";
 import { Enclave } from "../../js/core/api.js";
-import { pad32, encUint, DEP_SEL, depPrices6, rate6Of, waitReceipt } from "../../js/core/chain.js";
+import { pad32, encUint, encCall, DEP_SEL, APPROVAL, depPrices6, rate6Of, depGet, depSchemaRev, waitReceipt } from "../../js/core/chain.js";
 import { authenticate, connectWallet, refreshWallet, saveSession, ensureBaseChain, sendTx } from "../../js/core/wallet.js";
-import { slugOfRef, artOfRef, loadCatalog } from "../../js/core/catalog.js";
+import { slugOfRef, artOfRef, loadCatalog, parseCatalogRef, catalogRef, specOf, STORE } from "../../js/core/catalog.js";
 import { vspecOf, verifyEnclaveInBrowser } from "../../js/core/verify.js";
 import { runlog, paintLine } from "../../js/core/runlog.js";
 import { payForRuntime } from "../../js/core/fund.js";
-import { shareRates } from "../../js/core/pricing.js";
+import { shareRates, minPctsOf, adoptServerSpec } from "../../js/core/pricing.js";
 
 // The app's reachable URL. Through the gateway each deployment gets its OWN
 // origin: a per-deployment subdomain (<id>.app.enclave.host, the base36 part of
@@ -148,7 +148,7 @@ class Deployments extends EnclaveElement {
     // the open panel the user just unlocked - skip the repaint, the poll
     // catches up once the panel closes.
     this._onAuth = (e) => {
-      if (Enclave.address && this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden])")) return;
+      if (Enclave.address && this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden]), .enc-upg:not([hidden])")) return;
       this.refresh({ spinner: !!(e.detail && e.detail.spinner) });
     };
     document.addEventListener("enclave:auth", this._onAuth);
@@ -177,7 +177,7 @@ class Deployments extends EnclaveElement {
     // clobber rule as _onAuth; the regular poll catches up after it closes).
     loadCatalog();
     this._onCat = () => {
-      if (this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden])")) return;
+      if (this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden]), .enc-upg:not([hidden])")) return;
       if (this._list) this._renderRows(this._list);
     };
     document.addEventListener("enclave:catalog", this._onCat);
@@ -331,6 +331,7 @@ class Deployments extends EnclaveElement {
           '<span class="enc-acts">' +
             '<button class="btn btn-sm enc-outbtn" data-id="' + esc(d.id) + '" aria-expanded="false">Output</button>' +
             (live ? '<button class="btn btn-sm enc-fundbtn" data-id="' + esc(d.id) + '" aria-expanded="false" title="Add runtime - a gas-free USDC signature credits the deployment’s on-chain balance">Top up</button>' : '') +
+            (onchain && (live || resumable) ? '<button class="btn btn-sm enc-upgbtn" data-id="' + esc(d.id) + '" aria-expanded="false" title="Switch to another approved version of this app - paid time carries over; the app restarts in place on the new version">Version</button>' : '') +
             '<button class="btn btn-sm enc-verify" data-id="' + esc(d.id) + '" aria-expanded="false">Verify</button>' +
             (resumable ? '<button class="btn btn-sm enc-resume" data-id="' + esc(d.id) + '" title="Put it back on the queue - an enclave re-claims it and the app relaunches fresh from its published version, spending the remaining balance">Resume</button>' : '') +
             (live ? (onchain
@@ -339,11 +340,15 @@ class Deployments extends EnclaveElement {
           '</span>' +
         '</div>' +
         ((st === "failed" || st === "expired") && d.error ? '<div class="enc-err" title="why this deployment ' + esc(st) + '">⚠ ' + esc(d.error) + '</div>' : '') +
+        // a version change the runner could not apply yet (unapproved/oversized
+        // target, catalog unreachable): the OLD version keeps serving; say why
+        (d.versionChange && d.versionChange.error ? '<div class="enc-err" title="the requested version change has not applied - the previous version keeps serving; the runner retries automatically">⚠ version change pending: ' + esc(d.versionChange.error) + '</div>' : '') +
         (st === "queued" ? '<div class="enc-why" data-why="' + esc(d.id) + '" role="status" aria-live="polite" hidden></div>' : '') +
         (ep ? '<button class="enc-ep" data-ep="' + esc(ep) + '">' + esc(ep) + ' ⧉</button>'
               + openCtl(d, ep, this._tls && this._tls.get(d.id)) : '') +
         depIp6Row(d) +
         '<div class="enc-fund" hidden></div>' +
+        '<div class="enc-upg" hidden></div>' +
         '<div class="enc-out" data-id="' + esc(d.id) + '" hidden></div>' +
         '<div class="enc-att" hidden></div>' +
       '</div>';
@@ -352,6 +357,7 @@ class Deployments extends EnclaveElement {
     $$(".enc-ep", body).forEach(b => b.addEventListener("click", () => copyText(b.dataset.ep)));
     $$(".enc-outbtn", body).forEach(b => b.addEventListener("click", () => this._output(b.dataset.id, b)));
     $$(".enc-fundbtn", body).forEach(b => b.addEventListener("click", () => this._fund(b.dataset.id, b)));
+    $$(".enc-upgbtn", body).forEach(b => b.addEventListener("click", () => this._upgrade(b.dataset.id, b)));
     $$(".enc-verify", body).forEach(b => b.addEventListener("click", () => this._verify(b.dataset.id, b)));
     $$(".enc-kill", body).forEach(b => b.addEventListener("click", () => this._kill(b.dataset.id, b)));
     $$(".enc-resume", body).forEach(b => b.addEventListener("click", () => this._resume(b.dataset.id, b)));
@@ -530,6 +536,103 @@ class Deployments extends EnclaveElement {
         const rejected = (e && e.code === 4001) || /reject|denied|declin|cancell/i.test(e && e.message || "");
         paint("warn", rejected ? "[x] rejected in wallet - nothing was paid" : "[x] " + (e.message || String(e)));
       } finally { go.disabled = false; refreshWallet(); }
+    });
+  }
+
+  /* ---- per-row Version: repoint the deployment at another approved version
+     of its app - the owner's UPGRADE path (setAppRef on the ledger). Paid
+     time, shares and any live lease stay on the record: the runner restarts
+     the app in place on the new version within about a minute, so a new
+     release never costs a second buy-in. Candidates are the app's other
+     approved un-yanked versions; ones whose minimums exceed this deployment's
+     bought shares are listed disabled (created shares are immutable - those
+     need a fresh deploy at bigger dials). Checked here BEFORE the wallet
+     signature, the deploy form's floor rule: runners enforce the same gate,
+     and a version no runner accepts would leave the app dark. ---- */
+  async _upgrade(id, btn) {
+    const row = btn.closest(".enc-row"), box = row && row.querySelector(".enc-upg"); if (!box) return;
+    if (!box.hidden){ box.hidden = true; box.innerHTML = ""; btn.setAttribute("aria-expanded", "false"); return; }
+    btn.setAttribute("aria-expanded", "true");
+    box.hidden = false;
+    box.innerHTML = '<div class="ap-attbar">change version · ' + esc(id) + '</div>'
+      + '<div class="term enc-upg-status" role="status" aria-live="polite"><span class="ln dimln">// reading the ledger + catalog…</span></div>';
+    let d = null, rev = 1;
+    try {
+      [rev, d] = await Promise.all([depSchemaRev(), depGet(id)]);
+      await loadCatalog();
+      // adopt the fleet's live hardware for the minimum-share floors (the
+      // deploy dials' rule: a stale spec must over-ask, never under-sell an
+      // unclaimable switch); the pre-fetch fallback constants already over-ask
+      try { adoptServerSpec(await Enclave.getAvailability()); } catch(e){}
+    } catch(e){ d = null; }
+    if (box.hidden || !box.isConnected) return;             // closed while loading
+    const fail = (msg) => { box.querySelector(".enc-upg-status").innerHTML = ""; paintLine(box.querySelector(".enc-upg-status"), "warn", msg); };
+    if (!d) return fail("[x] couldn’t read this deployment from the ledger - try again shortly");
+    const cr = parseCatalogRef(d.appRef);
+    if (!cr) return fail("[x] this deployment doesn’t reference a catalog version (" + (d.appRef || "no appRef") + ") - only catalog deployments can switch versions");
+    const app = STORE.byId[cr.appId];
+    if (!app || !app.versions) return fail("[x] the catalog doesn’t list this deployment’s app (delisted?) - nothing to switch to");
+    if (rev < 3)
+      return fail("[!] the live ledger contract predates version changes - the Version control activates with the next contract upgrade. Until then: deploy the new version fresh, then suspend this one (its balance stays on the record).");
+    // every approved, un-yanked version, newest first; the current one and the
+    // ones this deployment's immutable shares can't cover render disabled
+    const bought = { gpuMilli: Number(d.gpuMilli) || 0, cpuMilli: Number(d.cpuMilli) || 0 };
+    const rows = app.versions
+      .map((v, i) => ({ v, i, mins: minPctsOf(specOf(v)) }))
+      .filter(r => !r.v.yanked && r.v.approval === APPROVAL.approved)
+      .map(r => ({ ...r, fits: r.mins.gpuPct * 10 <= bought.gpuMilli && r.mins.cpuPct * 10 <= bought.cpuMilli }))
+      .reverse();
+    const others = rows.filter(r => r.i !== cr.index);
+    const pick = others.find(r => r.fits);                  // newest fitting release = the natural upgrade
+    if (!others.length)
+      return fail("// " + app.slug + " has no other approved version yet - new releases appear here once the catalog owner approves them");
+    const selId = "euSel" + appLabel(id);
+    box.innerHTML = '<div class="ap-attbar">change version · ' + esc(id) + '</div>'
+      + '<div class="enc-upg-body">'
+      +   '<label for="' + selId + '">Switch ' + esc(app.slug) + ' to</label>'
+      +   '<select class="eu-sel" id="' + selId + '">'
+      +     rows.map(r => '<option value="' + r.i + '"' + ((r.i === cr.index || !r.fits) ? " disabled" : "") + (pick && r.i === pick.i ? " selected" : "") + '>'
+      +       esc(app.slug + ":" + r.v.version)
+      +       (r.i === cr.index ? " · current" : "")
+      +       (!r.fits && r.i !== cr.index ? " · needs ≥ " + (r.mins.gpuPct ? r.mins.gpuPct + "% GPU / " : "") + r.mins.cpuPct + "% CPU" : "")
+      +     '</option>').join("")
+      +   '</select>'
+      +   '<button class="btn btn-sm btn-primary eu-go" type="button">Change version</button>'
+      + '</div>'
+      + '<div class="term enc-upg-status" role="status" aria-live="polite"></div>';
+    const sel = box.querySelector(".eu-sel"), go = box.querySelector(".eu-go"), st = box.querySelector(".enc-upg-status");
+    const paint = (cls, txt) => paintLine(st, cls, txt);
+    paint("info", "// paid time carries over: the runner restarts the app in place on the chosen version (~a minute); the endpoint and balance don’t change, app state is ephemeral");
+    if (others.some(r => !r.fits))
+      paint("dimln", "// disabled entries need more than this deployment’s " + (bought.gpuMilli ? (bought.gpuMilli / 10) + "% GPU / " : "") + (bought.cpuMilli / 10) + "% CPU - shares are immutable, those need a fresh deploy");
+    const upd = () => { const r = rows.find(x => String(x.i) === sel.value); go.disabled = !r || r.i === cr.index || !r.fits; };
+    sel.addEventListener("change", upd); upd();
+    go.addEventListener("click", async () => {
+      const r = rows.find(x => String(x.i) === sel.value);
+      if (!r || r.i === cr.index || !r.fits) return;
+      go.disabled = true;
+      try {
+        // no SIWE: the setAppRef tx is owner-gated on-chain - a connected wallet is all this needs
+        if (!Enclave.provider){ paint("info", "[*] connecting wallet…"); await connectWallet(); }
+        await ensureBaseChain();
+        paint("info", "[*] confirm the version-change transaction in your wallet…");
+        const th = await sendTx(DEPLOYMENTS_ADDRESS, encCall(DEP_SEL.setAppRef,
+          [{ t: "bytes32", v: id }, { t: "str", v: catalogRef(cr.appId, r.i) }]));
+        paint("dimln", "  ↳ sent " + th + " · waiting for confirmation…");
+        await waitReceipt(th);
+        if (this._why) this._why.delete(id);   // a pre-change decline reason must not outlive the switch
+        // nudge the fleet: makes queued/suspended rows relaunch promptly (a
+        // running one is restarted by its own runner's next ledger pass)
+        fetch(Enclave.base + "/claim-hint", { method: "POST",
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) }).catch(() => {});
+        paint("ok", "[✓] switched to " + app.slug + ":" + r.v.version + " - the runner applies it within a minute; paid time and the endpoint carry over");
+        showToast("switched " + id.slice(0, 10) + "… to " + app.slug + ":" + r.v.version);
+        setTimeout(() => { if (box.isConnected && !box.hidden){ box.hidden = true; box.innerHTML = ""; btn.setAttribute("aria-expanded", "false"); } this.refresh(); }, 3500);
+      } catch(e){
+        const rejected = (e && e.code === 4001) || /reject|denied|declin|cancell/i.test(e && e.message || "");
+        paint("warn", rejected ? "[x] rejected in wallet - nothing changed" : "[x] " + (e.message || String(e)));
+        go.disabled = false;
+      } finally { refreshWallet(); }
     });
   }
 
@@ -718,7 +821,7 @@ class Deployments extends EnclaveElement {
     if (this._poll) return;
     this._poll = setInterval(() => {
       if (!Enclave.address){ this._stopPoll(); return; }
-      if (this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden])")) return;   // don't clobber an open attestation/output/top-up view
+      if (this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden]), .enc-upg:not([hidden])")) return;   // don't clobber an open attestation/output/top-up view
       this.refresh();
     }, 10000);
   }

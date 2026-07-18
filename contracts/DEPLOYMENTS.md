@@ -65,7 +65,9 @@ via transaction instead of via one enclave's API).
 
 - **`create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, configCid)`**
   (schema rev 2 — rev-1 contracts carried an extra `sshPubKey` string here and in
-  the `Deployment` struct; consumers sniff `deploymentsSchema()` to pick the shape)
+  the `Deployment` struct; consumers sniff `deploymentsSchema()` to pick the shape.
+  Rev 3 keeps the rev-2 shapes byte-for-byte and only marks the `setAppRef`
+  surface, so struct decodes gate on `>= 2` and version changes on `>= 3`)
   — permissionless; inert until funded. `appRef` is `catalog://<appId>/<versionIndex>`,
   the on-chain record of the catalog VERSION to run (2026-07-09; CID refs are refused
   by runners — a CID names bytes, not a version). The record supplies the wasm,
@@ -117,6 +119,20 @@ via transaction instead of via one enclave's API).
   record. `true` re-queues it — the app relaunches fresh from its published
   version, spending what's left. The dashboard's Suspend/Resume buttons and the
   CLI's `stop`/`resume` are exactly this toggle.
+- **`setAppRef(id, appRef)`** (rev 3+; `deploymentsSchema() >= 3` is the feature
+  probe) — the owner's VERSION CHANGE. Repoints the deployment at another
+  catalog version record; funded time, shares, rate and any live lease all
+  stay, so picking up a new release never costs a second buy-in. The ledger
+  doesn't parse the ref (same trust model as `create`): runners re-gate it on
+  catalog approval + minimum shares. The CURRENT runner restarts the app in
+  place on its next audit pass — new wasm prefetched before the old instance
+  stops, so the gap is ≈ one relaunch — and an unclaimed deployment simply
+  launches the new version when claimed. A change the runner can't apply
+  (unapproved target, minimums over the immutable bought shares, catalog
+  unreachable) keeps the OLD version serving and surfaces why on the record
+  (`versionChange` in the status API), retrying every pass. The dashboard's
+  Version control and the CLI's `upgrade` are this call, both pre-checking
+  approval and share fit before the wallet signature.
 - **`release(id)`** — graceful hand-back; refunds the unused lease tail to
   `balance6`. Called on clean shutdown, after the owner `setActive(false)`,
   or when provisioning fails right after a claim.
@@ -326,6 +342,11 @@ The check is one `eth_call` per adopted deployment per minute — the data path
 itself stays chain-free. The exposure window (serving a few seconds past a
 takeover) is harmless: the new runner is attested identically, app state is
 ephemeral by design, and both instances are the same measured CID.
+
+The same audit pass is where owner **version changes** land: a healthy record
+whose ledger row carries a different `appRef` (the owner sent `setAppRef`) is
+re-gated like a fresh claim and restarted in place onto the new version — see
+`switchTenantVersion` in `supervisor.js`.
 
 ### Graceful shutdown and restart
 

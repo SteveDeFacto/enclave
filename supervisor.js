@@ -611,6 +611,29 @@ if (process.env.SWEEP_SELFTEST) {
   process.exit(0);
 }
 
+// ---- owner version change (setAppRef): does the serving record switch? ------
+// Pure core of the audit's in-place upgrade: a RUNNING record whose ledger row
+// carries a different appRef restarts onto the new record (the lease and the
+// balance carry — that is the whole point of setAppRef). Every other state
+// leaves the new ref to the normal paths: a terminal record is re-claimed with
+// the fresh ref by the sweep, a mid-provision one is caught next audit pass.
+function needsVersionSwitch(status, localRef, chainRef) {
+  return status === "running" && !!chainRef && !!localRef && chainRef !== localRef;
+}
+
+// SWITCH_SELFTEST='{"switch":[{status,localRef,chainRef}],"backoff":[{entry,nowMs,appRef}]}'
+// prints each helper mapped over its inputs as one JSON line and exits — same
+// contract as the seams above (test/version-switch.test.mjs drives it).
+// (Function declarations hoist, so provisionBackoffHolds resolves from here.)
+if (process.env.SWITCH_SELFTEST) {
+  const c = JSON.parse(process.env.SWITCH_SELFTEST);
+  console.log(JSON.stringify({
+    switch: (c.switch || []).map((x) => needsVersionSwitch(x.status, x.localRef, x.chainRef)),
+    backoff: (c.backoff || []).map((x) => provisionBackoffHolds(x.entry, x.nowMs, x.appRef)),
+  }));
+  process.exit(0);
+}
+
 // ---- deployment options envelope (create()'s configCid field, repurposed) ---
 // App CONFIG stays per-version and approval-gated: ENCLAVE_CONFIG comes ONLY
 // from the catalog record, and a deployer-supplied config CID stays refused.
@@ -2264,7 +2287,7 @@ const spentOf = (rec) => (((rec.consumedMs || 0) / 1000) * (rec.rate || 0)).toFi
 const VIEW_FIELDS = ["id", "owner", "status", "public", "firewall", "image", "command",
   "app", "appWasm", "config", "resources", "network", "attestation", "region",
   "createdAt", "startedAt", "paused", "pauseReason", "payDeadline", "digest",
-  "payRef", "paidUsdc", "portMap", "error", "waf"];
+  "payRef", "paidUsdc", "portMap", "error", "waf", "versionChange"];
 const view = (rec) => {
   const o = {};
   for (const k of VIEW_FIELDS) if (k in rec) o[k] = rec[k];
@@ -2434,6 +2457,9 @@ app.post("/v1/deployments", authed, async (req, res) => {
                     + "string configCid) returns (bytes32 id) — appRef is catalog://<appId>/<versionIndex> (runners refuse CID refs: a CID names bytes, not a version); configCid carries either \"\" or the deployment-options envelope {\"waf\":{…}} (app config always comes from the version's approved record, as do ports/appPort — the create fields ride along informational)",
         fundMethod: "fundWithAuthorization(bytes32 id, address from, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce, bytes signature)",
         fundEthMethod: "fundEth(bytes32 id) payable",
+        setAppRefMethod: "setAppRef(bytes32 id, string appRef) — owner-only version change (ledgers with deploymentsSchema() >= 3): "
+                       + "repoint a funded deployment at another approved catalog version; the current runner restarts it in place, "
+                       + "balance and lease carry over — no second buy-in to upgrade",
         hint: "POST /v1/claim-hint {\"id\": \"0x…\"}",
       },
     });
@@ -3763,12 +3789,21 @@ const CLAIM_TERMINAL = TERMINAL_STATUSES;   // claim/resume may re-adopt exactly
 
 // ids that failed provisioning here — exponential claim cooldown (see
 // considerClaim). In-memory on purpose: a reboot is a fresh chance.
-const _provisionBackoff = new Map();          // id -> { n, until }
-function noteProvisionFailure(id) {
-  const n = (_provisionBackoff.get(id)?.n || 0) + 1;
+const _provisionBackoff = new Map();          // id -> { n, until, ref }
+function noteProvisionFailure(id, ref) {
+  const prev = _provisionBackoff.get(id);
+  const n = (prev?.n || 0) + 1;
   const coolMs = Math.min(60 * 60_000, 5 * 60_000 * 2 ** (n - 1));   // 5m, 10m, 20m … cap 1h
-  _provisionBackoff.set(id, { n, until: Date.now() + coolMs });
+  _provisionBackoff.set(id, { n, until: Date.now() + coolMs, ref: ref ?? prev?.ref ?? null });
   return coolMs;
+}
+// A cooldown binds to the appRef that failed: the owner repointing the
+// deployment at another version (setAppRef) is a fresh chance, not the same
+// doomed work item on a timer — without this an upgrade shipped to FIX a
+// broken version would still sit out up to an hour of backoff here.
+function provisionBackoffHolds(entry, nowMs, appRef) {
+  if (!entry || nowMs >= entry.until) return false;
+  return !entry.ref || entry.ref === appRef;
 }
 
 // Release with retries, in the background. A failed release strands the lease
@@ -3829,6 +3864,67 @@ async function renewLeases() {
                  + `lease expires ${new Date(rec._leaseUntil * 1000).toISOString()}`);
     } finally { rec._renewing = false; }
   }
+}
+
+// Owner repointed a SERVING deployment at another catalog version (setAppRef):
+// upgrade IN PLACE. Same lease, same slice, same balance — only the artifact
+// changes: re-gate the new record exactly like a claim (catalog approval +
+// minimum shares, fail closed), prefetch the new wasm BEFORE stopping the old
+// instance (downtime ≈ one relaunch), then relaunch through the normal
+// provisioning path. A refused or unreachable gate keeps the OLD version
+// serving — an upgrade tx racing an approval flip must never leave the user
+// dark; the refusal is logged on change, surfaced on the record
+// (rec.versionChange, the console polls it), and retried every audit pass.
+async function switchTenantVersion(rec, d) {
+  const to = d.appRef;
+  const refuse = (why, transient) => {
+    if (rec.versionChange?.error !== why)
+      console.warn(`[claim] ${rec.id} version change to ${to} ${transient ? "deferred" : "refused"}: ${why}`);
+    rec.versionChange = { to, error: why };
+    saveStateSoon();
+  };
+  let g;
+  try { g = await gateAppReference(to); }
+  catch (e) { g = { error: { status: 503, msg: e.shortMessage || e.message } }; }
+  if (g.error) return refuse(g.error.msg, g.error.status === 503);
+  // the deployment's bought shares are immutable — the new version must fit them
+  const mins = minSharesOf(g.min);
+  const gpuShare = Number(d.gpuMilli) / 1000, cpuShare = Number(d.cpuMilli) / 1000;
+  if (gpuShare < mins.gpuShare - 1e-9 || cpuShare < mins.cpuShare - 1e-9)
+    return refuse(`the new version needs more than this deployment's shares on this hardware `
+                + `(needs gpuShare ${round3(mins.gpuShare)} / cpuShare ${round3(mins.cpuShare)})`);
+  let firewall;
+  try { firewall = parseFirewall({ ports: g.ports ? String(g.ports).split(",") : [] }); }
+  catch (e) { return refuse("the new version's port spec is not servable here: " + e.message); }
+  // fetch + verify + cache the new bytes while the old version keeps serving
+  if (PROVISION_BACKEND === "vm" && /^ipfs:\/\//.test(g.wasmRef)) {
+    try {
+      const r = await vmReq("POST", "/prefetch", { image: g.wasmRef }, 300_000);
+      if (r.status !== 200) throw new Error((r.body && (r.body.error || r.body.message)) || `HTTP ${r.status}`);
+    } catch (e) { return refuse("could not fetch the new version's wasm: " + e.message, true); }
+  }
+  console.log(`[claim] ${rec.id} owner changed version: ${rec.image && rec.image.reference} -> ${to} `
+            + `(${g.app.slug}:${g.app.version}); restarting in place`);
+  try { await stopContainer(rec); } catch {}
+  const httpFw = firewall.find((x) => x.startsWith("http:"));
+  rec.image = { reference: g.ref };
+  rec.app = g.app; rec.appWasm = g.wasmRef; rec.config = g.config || "";
+  rec.firewall = firewall;
+  rec.network.port = httpFw ? +httpFw.slice(5) : 8080;
+  delete rec.portMap;              // the new version's spawn recomputes its own mapping
+  rec._deaths = 0;                 // new code earns a fresh crash budget
+  delete rec.versionChange;
+  rec.status = "claimed";          // the provision path's input state
+  if (await provisionTenant(rec)) {
+    console.log(`[claim] ${rec.id} now serving ${g.app.slug}:${g.app.version} (${g.ref})`);
+  } else {
+    // same contract as every failed provision: keep the failed record as the
+    // owner's evidence, hand the lease back refunded, back off THIS version
+    // here (the backoff clears if the owner switches the version again)
+    noteProvisionFailure(rec.id, to);
+    releaseLease(rec.id, "version change provision failed").catch(() => {});
+  }
+  saveStateSoon();
 }
 
 // Split-brain guard + owner-stop watcher + crash recovery. The chain is the
@@ -3909,12 +4005,21 @@ async function auditClaims(ledgerById) {
       rec._loseStrikes = 0;
       if (!(await provisionTenant(rec))) {
         // keep the "failed" record as the owner's evidence (see adopt())
-        noteProvisionFailure(rec.id);
+        noteProvisionFailure(rec.id, rec.image && rec.image.reference);
         releaseLease(rec.id, "provision failed after crash recovery").catch(() => {});
         saveStateSoon();
       }
     } else {
       rec._loseStrikes = 0;                   // healthy pass: chain agrees the lease is ours
+      // Owner repointed the deployment at another catalog version (setAppRef):
+      // restart it in place onto the new record — lease and balance carry.
+      if (needsVersionSwitch(rec.status, rec.image && rec.image.reference, d.appRef)) {
+        await switchTenantVersion(rec, d);
+        continue;
+      }
+      // a stale refusal must not outlive its cause (the owner switched back,
+      // or the version's approval landed and the switch above succeeded)
+      if (rec.versionChange) { delete rec.versionChange; saveStateSoon(); }
       // Crash recovery for a DIED app instance (fatal signal, OOM-kill): the
       // lease is ours and paid, the wasm is cached - relaunch. Bounded: an
       // app that keeps dying (crash-on-first-request) gets handed back after
@@ -3925,7 +4030,7 @@ async function auditClaims(ledgerById) {
           console.warn(`[claim] ${rec.id} app died ${rec._deaths}x; giving it back`);
           rec.status = "failed"; rec.error = rec.error || "app process kept dying";
           if (rec._gpu) { releaseGpu(rec._gpu); rec._gpu = null; }
-          noteProvisionFailure(rec.id);
+          noteProvisionFailure(rec.id, rec.image && rec.image.reference);
           releaseLease(rec.id, "app kept dying").catch(() => {});
           saveStateSoon();
           continue;
@@ -3934,7 +4039,7 @@ async function auditClaims(ledgerById) {
         try { if (rec._vmId) await vmReq("DELETE", `/vms/${encodeURIComponent(rec._vmId)}`, null, 15000).catch(() => {}); } catch {}
         rec.status = "claimed";               // provision path's input state
         if (!(await provisionTenant(rec))) {
-          noteProvisionFailure(rec.id);
+          noteProvisionFailure(rec.id, rec.image && rec.image.reference);
           releaseLease(rec.id, "relaunch after app death failed").catch(() => {});
         }
         saveStateSoon();
@@ -4038,7 +4143,7 @@ async function considerClaim(d, { hinted = false, background = false } = {}) {
   // Back off ids that just failed provisioning HERE: without this a broken
   // app (or a transient local fault) claims / fails / releases in a loop.
   const pf = _provisionBackoff.get(d.id);
-  if (pf && Date.now() < pf.until) return "provisioning failed here recently; backing off";
+  if (provisionBackoffHolds(pf, Date.now(), d.appRef)) return "provisioning failed here recently; backing off";
   const ev = _evacuated.get(d.id);
   if (ev && Date.now() < ev) return "evacuated from here for consolidation; leaving it for another enclave";
   const gpuShare = Number(d.gpuMilli) / 1000, cpuShare = Number(d.cpuMilli) / 1000;
@@ -4102,7 +4207,7 @@ async function tryClaim(d, g, firewall, slice, { hinted = false, resume = false 
       if (r.status !== 200) throw new Error((r.body && (r.body.error || r.body.message)) || `HTTP ${r.status}`);
       if (r.body && r.body.seconds > 1) console.log(`[claim] ${d.id} prefetched ${r.body.bytes} bytes in ${r.body.seconds}s`);
     } catch (e) {
-      const coolMs = noteProvisionFailure(d.id);
+      const coolMs = noteProvisionFailure(d.id, d.appRef);
       console.warn(`[claim] ${d.id} prefetch failed (${e.message}); not claiming, backing off ${Math.round(coolMs / 60000)}min`);
       return;
     }
@@ -4201,7 +4306,7 @@ async function adopt(d, g, firewall, slice) {
     // provisionTenant stamped status "failed" + rec.error, and that record is
     // the owner's only evidence of WHY (the console polls it). "failed" is in
     // CLAIM_TERMINAL, so any enclave (this one included) may still re-adopt.
-    const coolMs = noteProvisionFailure(rec.id);
+    const coolMs = noteProvisionFailure(rec.id, rec.image && rec.image.reference);
     console.warn(`[claim] provision failed for ${rec.id} (${rec.error || "?"}); backing off ${Math.round(coolMs / 60000)}min here`);
     releaseLease(rec.id, "provision failed").catch(() => {});
   }
