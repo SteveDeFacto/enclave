@@ -195,7 +195,11 @@ export function createFleet(cfg, log = () => {}) {
         functionName: "deploymentsSchema" }));
       _depShape = { addr, abi: depAbiFor(rev >= 2 ? DEP_TUPLE : DEP_TUPLE_V1) };
     } catch (e) {
-      if (/ContractFunction|CallExecution/.test(e?.name || "")) _depShape = { addr, abi: depAbiFor(DEP_TUPLE_V1) };
+      // revert = a real rev-1 contract; "returned no data"/anything else may
+      // be a lagging or throttled provider — never cache rev 1 on those
+      // (message-based on purpose: viem's ContractFunction* wrapper names
+      // cover reverts AND zero-data alike; see supervisor.js sniffCachePolicy)
+      if (/revert/i.test(e?.shortMessage || e?.message || "")) _depShape = { addr, abi: depAbiFor(DEP_TUPLE_V1) };
       else return depAbiFor(DEP_TUPLE_V1);   // transport error: don't cache, retry next call
     }
     return _depShape.abi;
@@ -206,13 +210,21 @@ export function createFleet(cfg, log = () => {}) {
     const addr = await deploymentsAddress(c);
     if (!addr) return [];
     const abi = await depAbi(c, addr);
-    const total = Number(await c.readContract({ address: addr, abi, functionName: "count" }));
-    const rows = [];
-    for (let start = 0; start < total; start += 50)
-      rows.push(...await c.readContract({ address: addr, abi,
-        functionName: "getPage", args: [BigInt(start), 50n] }));
-    _ledger = { rows, at: Date.now() };
-    return rows;
+    try {
+      const total = Number(await c.readContract({ address: addr, abi, functionName: "count" }));
+      const rows = [];
+      for (let start = 0; start < total; start += 50)
+        rows.push(...await c.readContract({ address: addr, abi,
+          functionName: "getPage", args: [BigInt(start), 50n] }));
+      _ledger = { rows, at: Date.now() };
+      return rows;
+    } catch (e) {
+      // a misaligned decode means the cached shape is wrong for this ledger:
+      // drop the sniff cache so the next tick re-sniffs instead of wedging
+      if (/safe integer range|out[- ]of[- ]bounds|data size|not a valid boolean/i.test(e?.shortMessage || e?.message || ""))
+        _depShape = { addr: null, abi: _depShape.abi };
+      throw e;
+    }
   }
   async function runnerEndpointFor(id) {
     const h = String(id).toLowerCase();

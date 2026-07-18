@@ -611,6 +611,37 @@ if (process.env.SWEEP_SELFTEST) {
   process.exit(0);
 }
 
+// The pure half of the ledger schema-sniff machinery (depsAbi below). A REAL
+// pre-deploymentsSchema ledger has code at its address, so probing the unknown
+// selector REVERTS; "returned no data"/"0x" means the RPC saw NO CODE there —
+// with a multi-provider pool that's a lagging or throttled member answering
+// for a freshly migrated ledger, never proof of a rev-1 contract. Caching
+// rev 1 on it poisoned every get/getPage decode until reboot (observed live
+// 2026-07-17 on kryptos: claim/resume/hint all 502'd IntegerOutOfRange while
+// the box sat 99.6% free and its tenants' leases lapsed).
+function sniffCachePolicy(errMsg) {
+  return /revert/i.test(errMsg || "") ? "cache-rev1" : "retry";
+}
+// Does a get/getPage failure mean OUR cached component list is wrong for the
+// bytes the ledger returned? Misaligned tuple decodes surface as viem's
+// integer-range / bounds / data-size / boolean errors, never as transport
+// errors — those keep the shape and bubble as chain_unreachable.
+function shapeDecodeError(errMsg) {
+  return /safe integer range|out[- ]of[- ]bounds|data size|not a valid boolean/i.test(errMsg || "");
+}
+
+// SNIFF_SELFTEST='{"probeErrors":["…"],"decodeErrors":["…"]}' prints each
+// message's classification as one JSON line and exits — same contract as the
+// seams above (test/ledger-sniff.test.mjs drives it).
+if (process.env.SNIFF_SELFTEST) {
+  const c = JSON.parse(process.env.SNIFF_SELFTEST);
+  console.log(JSON.stringify({
+    probe: (c.probeErrors || []).map(sniffCachePolicy),
+    decode: (c.decodeErrors || []).map(shapeDecodeError),
+  }));
+  process.exit(0);
+}
+
 // ---- resource model: EXACT RESOURCES -> TWO CALCULATED SHARES ---------------
 // Apps specify EXACT resources on four axes: vramGb + gpuTflops of one GPU card
 // (both 0 = CPU-only app) and memMb + cpuGflops of the node. CPU compute is
@@ -3356,12 +3387,13 @@ async function depsAbi() {
                   abi: depsAbiFor(rev >= 2 ? DEPLOYMENT_COMPONENTS : DEPLOYMENT_COMPONENTS_V1) };
     console.log(`[claim] ledger ${DEPLOYMENTS_ADDRESS} struct schema rev ${rev}`);
   } catch (e) {
-    if (/revert|returned no data|zero data/i.test(e.shortMessage || e.message || "")) {
+    if (sniffCachePolicy(e.shortMessage || e.message || "") === "cache-rev1") {
       _depShape = { addr: DEPLOYMENTS_ADDRESS, rev: 1, abi: depsAbiFor(DEPLOYMENT_COMPONENTS_V1) };
       console.log(`[claim] ledger ${DEPLOYMENTS_ADDRESS} struct schema rev 1 (pre-deploymentsSchema contract)`);
     }
-    // transport trouble: don't cache - serve the last known shape this round
-    // and re-sniff on the next call
+    // anything else — transport trouble AND "returned no data" (an RPC that
+    // sees no code at the address yet) — don't cache: serve the last known
+    // shape this round and re-sniff on the next call
   }
   return _depShape;
 }
@@ -3412,8 +3444,22 @@ function sendOperatorTx(address, abi, functionName, args) {
   return p;            // receipt wait instead of polling for it a second time
 }
 const sendClaimTx = (functionName, args) => sendOperatorTx(DEPLOYMENTS_ADDRESS, CLAIM_TX_ABI, functionName, args);
-const readOnchainDeployment = async (id) => chainClient.readContract({
-  address: getAddress(DEPLOYMENTS_ADDRESS), abi: (await depsAbi()).abi, functionName: "get", args: [id] });
+// get/getPage through the sniffed shape, with one self-heal retry: a decode
+// error means the cached shape is wrong for this ledger however it got there
+// (a poisoned sniff, a mid-flight migration) — drop the cache, re-sniff, and
+// re-read once instead of staying wedged until the next reboot or repoint.
+async function readLedgerContract(functionName, args) {
+  const read = async () => chainClient.readContract({
+    address: getAddress(DEPLOYMENTS_ADDRESS), abi: (await depsAbi()).abi, functionName, args });
+  try { return await read(); }
+  catch (e) {
+    if (!shapeDecodeError(e.shortMessage || e.message)) throw e;
+    console.warn(`[claim] ledger ${functionName} misdecoded with the cached rev-${_depShape.rev} shape — re-sniffing (${e.shortMessage || e.message})`);
+    _depShape = { ..._depShape, addr: null };
+    return read();
+  }
+}
+const readOnchainDeployment = (id) => readLedgerContract("get", [id]);
 
 // local rec states that no longer hold the lease — safe to re-adopt over
 // "stopping" is the pre-terminated legacy name, kept so records persisted by an
@@ -3610,8 +3656,7 @@ async function auditClaims(ledgerById) {
 async function fetchLedger() {
   const all = [];
   for (let start = 0n; ; start += BigInt(CLAIM_PAGE)) {
-    const page = await chainClient.readContract({ address: getAddress(DEPLOYMENTS_ADDRESS),
-      abi: (await depsAbi()).abi, functionName: "getPage", args: [start, BigInt(CLAIM_PAGE)] });
+    const page = await readLedgerContract("getPage", [start, BigInt(CLAIM_PAGE)]);
     all.push(...page);
     if (page.length < CLAIM_PAGE) break;
   }

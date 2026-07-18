@@ -280,12 +280,20 @@ async function depAbi(c) {
       functionName: "deploymentsSchema" }));
     _depShape = { addr: DEPLOYMENTS_ADDRESS, abi: depAbiFor(rev >= 2 ? DEP_TUPLE : DEP_TUPLE_V1) };
   } catch (e) {
-    const definitive = /ContractFunction|CallExecution/.test(e?.name || "");
-    if (definitive) _depShape = { addr: DEPLOYMENTS_ADDRESS, abi: depAbiFor(DEP_TUPLE_V1) };
+    // Only a genuine REVERT proves a rev-1 contract (it has code but not the
+    // selector). "returned no data" means THIS provider sees no code at the
+    // address — a lagging/throttled pool member during a migration — and
+    // viem's wrapper names (ContractFunction*) cover both, so classify by
+    // message. Caching rev 1 on a transient wedged the supervisor's whole
+    // claim path 2026-07-17 (supervisor.js sniffCachePolicy).
+    if (/revert/i.test(e?.shortMessage || e?.message || "")) _depShape = { addr: DEPLOYMENTS_ADDRESS, abi: depAbiFor(DEP_TUPLE_V1) };
     else return depAbiFor(DEP_TUPLE_V1);
   }
   return _depShape.abi;
 }
+// a misaligned tuple decode (wrong cached shape for this ledger) — drop the
+// sniff cache so the next tick re-sniffs instead of staying wedged
+const shapeDecodeError = (e) => /safe integer range|out[- ]of[- ]bounds|data size|not a valid boolean/i.test(e?.shortMessage || e?.message || "");
 async function resolveDeployments() {
   if (!ADDRESS_BOOK) return;
   try {
@@ -314,6 +322,9 @@ async function ledgerRows() {
           functionName: "getPage", args: [BigInt(start), 50n] }));
       _ledger.rows = rows; _ledger.at = Date.now();
       return rows;
+    } catch (e) {
+      if (shapeDecodeError(e)) _depShape = { addr: null, abi: _depShape.abi };
+      throw e;
     } finally { _ledger.inflight = null; }
   })();
   return _ledger.inflight;
