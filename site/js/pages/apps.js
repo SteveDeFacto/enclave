@@ -200,8 +200,8 @@ function quickDeploy(app, v, idx){
   // say so here, in the modal, not after a redirect to the dashboard
   depMaxGpuMilli().then(cap => {
     if (mins.gpuPct * 10 > cap){
-      capMsg = "This app needs at least a " + mins.gpuPct + "% GPU share, but the platform caps deployments at "
-        + (cap / 10) + "% of a card - it can stay published, it just can’t be deployed until the cap is raised.";
+      capMsg = "This app needs at least a " + mins.gpuPct + "% GPU share, but the platform currently caps deployments at "
+        + (cap / 10) + "% of a card - it can’t be deployed right now.";
       est();
     }
   }).catch(() => {});

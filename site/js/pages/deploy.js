@@ -633,7 +633,7 @@ export async function gpuCapRefusal(gpuMilli, minGpuPct){
   const cap = await depMaxGpuMilli();
   if (!(gpuMilli > cap)) return null;
   return minGpuPct != null && minGpuPct * 10 > cap
-    ? "this app needs at least a " + minGpuPct + "% GPU share, but the platform caps deployments at " + (cap / 10) + "% of a card - it can be published, it just can't be deployed until the cap is raised."
+    ? "this app needs at least a " + minGpuPct + "% GPU share, but the platform currently caps deployments at " + (cap / 10) + "% of a card - it can't be deployed right now."
     : "the platform caps GPU deployments at " + (cap / 10) + "% of a card - lower the GPU share (asked: " + (gpuMilli / 10) + "%).";
 }
 
