@@ -78,7 +78,7 @@
   <div class="wrap">
     <article class="doc doc-lead">
       <h3>Build your first Wasm app.</h3>
-      <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code. That covers HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, and attestation your users can check themselves. Everything here runs against the same <a href="#api">public API</a> the <a href="apps/deploy">Deploy console</a> uses.</p>
+      <p>This guide takes you from an empty directory to a paid, attested, publicly reachable app: first the <b>Hello</b> walkthrough end to end, then a worked example for every capability the platform gives your code. That covers HTTP handling, the <span class="mono">/data</span> scratch filesystem, raw TCP/UDP service ports, GPU inference, user-held-key encrypted volumes, and attestation your users can check themselves. Everything here runs against the same <a href="#api">public API</a> the <a href="apps/deploy">Deploy console</a> uses.</p>
     </article>
 
     <div class="docs-layout">
@@ -104,13 +104,14 @@
             <li><a href="#docs-tcp"><span class="n">10</span>TCP &amp; in-enclave TLS</a></li>
             <li><a href="#docs-udp"><span class="n">11</span>UDP</a></li>
             <li><a href="#docs-gpu"><span class="n">12</span>GPU inference (wasi-nn)</a></li>
+            <li><a href="#docs-encvol"><span class="n">13</span>Encrypted volumes</a></li>
           </ul>
           <div class="grp">Reference</div>
           <ul>
-            <li><a href="#docs-attest"><span class="n">13</span>Attestation for users</a></li>
-            <li><a href="#docs-langs"><span class="n">14</span>Other languages</a></li>
-            <li><a href="#docs-limits"><span class="n">15</span>Limits &amp; sandbox</a></li>
-            <li><a href="#docs-troubleshoot"><span class="n">16</span>Troubleshooting</a></li>
+            <li><a href="#docs-attest"><span class="n">14</span>Attestation for users</a></li>
+            <li><a href="#docs-langs"><span class="n">15</span>Other languages</a></li>
+            <li><a href="#docs-limits"><span class="n">16</span>Limits &amp; sandbox</a></li>
+            <li><a href="#docs-troubleshoot"><span class="n">17</span>Troubleshooting</a></li>
           </ul>
         </nav>
       </aside>
@@ -148,7 +149,7 @@
         <!-- 02 ------------------------------------------------------------ -->
         <article class="doc" id="docs-toolchain">
           <h3><span class="n">02</span>Toolchain setup</h3>
-          <p>The walkthrough uses <b>Rust</b>, the most mature component toolchain today (other languages in <a href="#docs-langs">chapter 14</a>). You need the WASI 0.2 target, <code>cargo-component</code>, and, for local testing, the same <code>wasmtime</code> runtime the enclave uses:</p>
+          <p>The walkthrough uses <b>Rust</b>, the most mature component toolchain today (other languages in <a href="#docs-langs">chapter 15</a>). You need the WASI 0.2 target, <code>cargo-component</code>, and, for local testing, the same <code>wasmtime</code> runtime the enclave uses:</p>
           <c-code fn="terminal"><pre><code># Rust component toolchain
 rustup target add wasm32-wasip2
 cargo install cargo-component
@@ -425,7 +426,7 @@ curl -X POST --data-binary 'round trip' 127.0.0.1:8080/echo</code></pre></c-code
           <p>Test locally with the parity flag from chapter 03 (<code>--dir scratch::/data</code>). Know exactly what <code>/data</code> is:</p>
           <ul>
             <li><b>Private</b>: your app sees only its own <code>/data</code>; there is no preopen for anything else, and escaping paths are refused by the runtime. Isolation is the wasi capability model, not a convention.</li>
-            <li><b>Ephemeral</b>: it's RAM-backed scratch inside the enclave's already-encrypted memory, torn down when the deployment ends. No persistence, no shared storage: treat it as scratch, not a database of record.</li>
+            <li><b>Ephemeral</b>: it's RAM-backed scratch inside the enclave's already-encrypted memory, torn down when the deployment ends. No persistence, no shared storage: treat it as scratch, not a database of record. For data that persists under a key only your user holds, see <a href="#docs-encvol">encrypted volumes (ch. 13)</a>.</li>
             <li><b>Capped</b>: usage is limited by the version's <code>storage_mb</code> (default 256 MB); an app that exceeds it is killed by the audit sweep, since ramdisk files consume RAM the memory cap doesn't cover. Publish with <code>storage_mb: 0</code> to opt out of <code>/data</code> entirely.</li>
           </ul>
         </article>
@@ -598,8 +599,66 @@ let out    = ctx.compute(vec![
         </article>
 
         <!-- 13 ------------------------------------------------------------ -->
+        <article class="doc" id="docs-encvol">
+          <h3><span class="n">13</span>Encrypted volumes</h3>
+          <p>Confidential storage where <b>only your user holds the key</b>. A directory is encrypted client-side with <a href="https://rclone.org/crypt/" rel="noopener">rclone crypt</a> and the ciphertext pushed to any S3-compatible bucket the owner controls; the deployment's App Config names <i>where</i> that ciphertext lives - never a key. At unlock time the key enters through the app, over the deployment's in-enclave-terminated TLS, and the enclave pulls and decrypts into a live mount. The bucket, the network, and the operator's host only ever see ciphertext: file <i>names</i> and contents are both encrypted at rest, and plaintext exists only on the CVM's encrypted ramdisk while the volume is unlocked.</p>
+
+          <h4>Push data</h4>
+          <p><code>scripts/enclave-encvol.sh</code> in the <a href="https://github.com/EnclaveHost/enclave" rel="noopener">Enclave repo</a> is the client half: it encrypts locally and syncs ciphertext up, mirroring exactly what the enclave runs at unlock, so a push here always pulls there.</p>
+          <c-code fn="terminal · encrypt + upload"><pre><code>AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… \
+ENCVOL_PASSWORD=… ENCVOL_SALT=… \
+  scripts/enclave-encvol.sh push ./my-data \
+  --endpoint https://s3.example.com --bucket my-bucket --path vol --name docs</code></pre></c-code>
+          <p>It prints the exact <code>encVolumes</code> App Config snippet to publish. <code>pull</code> and <code>ls</code> round-trip the volume from anywhere else you hold the key.</p>
+
+          <h4>Name it in the App Config</h4>
+          <p>Everything in the config is public and non-secret - it says where ciphertext lives and how it was packed:</p>
+          <div class="tbl"><table class="params">
+            <thead><tr><th scope="col">field</th><th scope="col">meaning</th></tr></thead>
+            <tbody>
+              <tr><th scope="row" class="pname">name</th><td>the mount: your app sees <code>/enc/&lt;name&gt;</code></td></tr>
+              <tr><th scope="row" class="pname">endpoint · bucket · path</th><td>where the ciphertext lives (any S3-compatible endpoint; public hosts only)</td></tr>
+              <tr><th scope="row" class="pname">provider · region</th><td>S3 dialect hints, when the endpoint needs them</td></tr>
+              <tr><th scope="row" class="pname">filenameEncryption · directoryNameEncryption</th><td>how names were packed (defaults: <code>standard</code>, on - must match the push)</td></tr>
+              <tr><th scope="row" class="pname">maxMb</th><td>plaintext cap (default 1024); like <code>/data</code>, it is RAM-backed, and a volume that outgrows it gets the app killed by the audit sweep</td></tr>
+              <tr><th scope="row" class="pname">readOnly</th><td>drop the S3 credentials right after the pull; disables push-back</td></tr>
+              <tr><th scope="row" class="pname">unlock · keyId</th><td>UI hints: lead with wallet or password; <code>keyId</code> is the stable label the wallet signs, so renaming a volume doesn't change its key</td></tr>
+              <tr><th scope="row" class="pname">credsEnvelope</th><td>S3 credentials, sealed under the owner's wallet key - safe to publish (below)</td></tr>
+            </tbody>
+          </table></div>
+
+          <h4>What your app sees</h4>
+          <p>The deployment starts <b>immediately</b>, with an empty live preopen per volume - no key ceremony on the critical path. After unlock, decrypted files appear in place; your code needs <b>no crypto and no S3 client</b>, just <code>std::fs</code> reads. Three environment variables are the whole contract:</p>
+          <c-code fn="the ENCLAVE_ENC contract"><pre><code>ENCLAVE_ENC=docs,models          # volume names; each mounted at /enc/&lt;name&gt;
+ENCLAVE_ENC_API=http://…         # the in-enclave manager's loopback unlock plane
+ENCLAVE_ENC_TOKEN=…              # bearer for that plane - only your app holds it</code></pre></c-code>
+          <p>Your app drives the plane over loopback: <code>GET $ENCLAVE_ENC_API</code> for per-volume status (<code>locked</code> / <code>syncing</code> / <code>unlocked</code> / <code>pushing</code>), and <code>POST …/unlock</code> (password, optional salt, optional S3 credentials), <code>…/sync</code> (encrypt local edits back to the bucket), <code>…/lock</code> (wipe plaintext, drop credentials) - all authenticated with the token, which must never reach a browser. The first-party <b>encrypted-volumes</b> app in the store is the reference implementation: a complete unlock UI whose <code>/api/*</code> proxy keeps the token server-side.</p>
+
+          <h4>Three ways to unlock</h4>
+          <p><b>Password.</b> The manager takes an opaque password (+ optional salt) and runs the pull. Simplest, and what headless automation uses.</p>
+          <p><b>Wallet.</b> No password to keep: the key is <i>derived</i> from a deterministic ECDSA <code>personal_sign</code> over a canonical message naming the volume - only the wallet holder can reproduce it, nothing is stored or verified server-side, and no transaction is made. The contract is byte-exact across the CLI, the push script, and the app:</p>
+          <c-code fn="the derivation contract (v1)"><pre><code>message  = "Enclave encrypted volume key v1\nvolume: &lt;keyId&gt;\n\n
+            Signing derives this volume's encryption key. Only sign in
+            apps you trust with its contents."
+sig      = lowercase 65-byte personal_sign hex, 0x-prefixed
+password = sha256_hex( sig + "\n" + "enclave-encvol-v1:password" )
+salt     = sha256_hex( sig + "\n" + "enclave-encvol-v1:salt" )</code></pre></c-code>
+          <p><b>Wallet + sealed credentials: one signature, nothing typed.</b> Bucket credentials can ride the public config encrypted under the <i>same</i> signature - <code>enclave encvol seal-creds</code> prints the <code>credsEnvelope</code> value. At unlock, one signature derives the crypt key <i>and</i> opens the credentials, in the browser, before anything is sent:</p>
+          <c-code fn="the credentials envelope (v1)"><pre><code>encKey / macKey = sha256( sig + "\n" + "enclave-encvol-v1:creds-enc" / ":creds-mac" )
+envelope        = "encv1:" + base64( iv[16] || AES-256-CTR(encKey, iv, credsJSON)
+                                            || HMAC-SHA256(macKey, iv || ct)[32] )</code></pre></c-code>
+
+          <h4>Restarts, locking, write-back</h4>
+          <p>Nothing survives a restart, <b>by design</b>: an unlocked volume is plaintext in enclave RAM plus credentials in the manager's memory, and a re-claim, update, or crash returns the volume to <code>locked</code> - someone holding the key must unlock again. Wallet mode makes that a ten-second signature rather than a secret to retrieve; <b>Lock</b> is the same wipe on demand. Push-back (<code>sync</code>) re-encrypts local edits to the bucket with the same key - it needs write-capable credentials at unlock and a volume not marked <code>readOnly</code>.</p>
+          <div class="doc-note warn">
+            <span class="nt">Trust fine print</span>
+            <p>rclone crypt authenticates file <i>contents</i>, not the <i>tree</i>: a malicious bucket can serve a stale or partial file set, though never forged bytes. The <code>credsEnvelope</code> is exactly as sensitive as the volume - the wallet that signs for the key opens the credentials, so guard that wallet accordingly. Wallet unlock needs a deterministic (RFC&nbsp;6979) EOA signer - MetaMask, Ledger, and the CLI wallet qualify; smart-contract and randomized MPC wallets don't, so give those users password mode.</p>
+          </div>
+        </article>
+
+        <!-- 14 ------------------------------------------------------------ -->
         <article class="doc" id="docs-attest">
-          <h3><span class="n">13</span>Attestation for your users</h3>
+          <h3><span class="n">14</span>Attestation for your users</h3>
           <p>The platform's core promise extends to your app: a user can verify, cryptographically and before sending a byte of data, that they're talking to an attested enclave running exactly the code that was measured. For apps deployed by CID, the attestation includes <b>your app</b>: its <code>app.cid</code> field names the exact bytes that ran, hash-verified against the CID inside the enclave by the measured runtime, with a <code>coverage</code> note stating precisely what covers it (the boot measurement covers the runtime; the runtime pins your app).</p>
           <c-code fn="verify.js · attested client"><pre><code>import { SecureClient } from "tinfoil";
 
@@ -617,9 +676,9 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
           <p>Point your users at the <a href="./#attest">attestation walkthrough</a> for what each link in the chain proves, or embed the check in your own client as above. For raw-TCP services, add the <a href="#docs-tcp">bridge-cert pin</a> so even the TLS session is bound to the measured enclave.</p>
         </article>
 
-        <!-- 14 ------------------------------------------------------------ -->
+        <!-- 15 ------------------------------------------------------------ -->
         <article class="doc" id="docs-langs">
-          <h3><span class="n">14</span>Other languages</h3>
+          <h3><span class="n">15</span>Other languages</h3>
           <p>The platform runs <b>components</b>, not a language: anything that emits a <code>wasi:http</code> component works. Mature routes today:</p>
           <ul>
             <li><b>Rust</b>: <code>cargo-component</code>, as used throughout this guide. The most complete support, including <code>std::net</code> for service apps.</li>
@@ -632,9 +691,9 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
           <p>One caveat for service apps: raw-socket support (<code>wasi:sockets</code>) varies by toolchain: Rust's stdlib maps today; check yours before designing around <code>tcp:</code>/<code>udp:</code> ports.</p>
         </article>
 
-        <!-- 15 ------------------------------------------------------------ -->
+        <!-- 16 ------------------------------------------------------------ -->
         <article class="doc" id="docs-limits">
-          <h3><span class="n">15</span>Limits &amp; sandbox reference</h3>
+          <h3><span class="n">16</span>Limits &amp; sandbox reference</h3>
           <h4>What your code can touch</h4>
           <div class="tbl"><table class="params">
             <thead><tr><th scope="col">capability</th><th scope="col">web app (default)</th><th scope="col">service app (declared ports)</th></tr></thead>
@@ -666,9 +725,9 @@ curl -H "Authorization: Bearer $LOGIN_TOKEN" \
           </table></div>
         </article>
 
-        <!-- 16 ------------------------------------------------------------ -->
+        <!-- 17 ------------------------------------------------------------ -->
         <article class="doc" id="docs-troubleshoot">
-          <h3><span class="n">16</span>Troubleshooting</h3>
+          <h3><span class="n">17</span>Troubleshooting</h3>
           <div class="tbl"><table class="params symptoms">
             <thead><tr><th scope="col">symptom</th><th scope="col">cause → fix</th></tr></thead>
             <tbody>
@@ -740,6 +799,9 @@ enclave whoami                     # address, USDC balance, running deployments<
               <tr><th scope="row" class="pname">enclave stop &lt;id&gt;</th><td>take the work item off the queue, then terminate; unspent balance stays on the record for a later reactivation (payments are final - nothing is withdrawable)</td><td><code>EnclaveDeployments.setActive(false)</code> · <code>DELETE /deployments/{id}</code></td></tr>
               <tr><th scope="row" class="pname">enclave publish app.wasm --slug hello</th><td>validate the component, pin to IPFS, cut a catalog version</td><td><code>ipfs.enclave.host/add-wasm</code> · <code>EnclaveAppCatalog</code></td></tr>
               <tr><th scope="row" class="pname">enclave apps [query]</th><td>browse or search the on-chain catalog</td><td><code>EnclaveAppCatalog</code> reads</td></tr>
+              <tr><th scope="row" class="pname">enclave encvol message &lt;keyId&gt;</th><td>print the canonical message a wallet signs for a volume key (<a href="#docs-encvol">ch. 13</a>)</td><td>local only - nothing sent anywhere</td></tr>
+              <tr><th scope="row" class="pname">enclave encvol derive --key-id K | --sig 0x…</th><td>an encrypted volume's password + salt: the CLI wallet signs the canonical message itself (deterministic, RFC 6979), or derive from a signature made in any other wallet</td><td>local only - nothing sent anywhere</td></tr>
+              <tr><th scope="row" class="pname">enclave encvol seal-creds --key-id K [--access-key A --secret-key S]</th><td>encrypt S3 credentials (default: <code>AWS_*</code> env) under the wallet key → a <code>credsEnvelope</code> value for the public App Config; the app then unlocks with one signature, nothing typed</td><td>local only - nothing sent anywhere</td></tr>
               <tr><th scope="row" class="pname">enclave pricing · availability · gpu</th><td>rates + live ETH quote · fleet headroom · GPU probe state</td><td><code>GET /pricing</code> · <code>/availability</code> · <code>/gpu</code></td></tr>
               <tr><th scope="row" class="pname">enclave account</th><td>address, payment forwarder, totals</td><td><code>GET /account</code></td></tr>
             </tbody>
