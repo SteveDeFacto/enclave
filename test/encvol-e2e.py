@@ -18,7 +18,9 @@ Needs: wasmtime (serve-capable), rclone >= 1.57 (stage 2 wants >= 1.65 for
 in the sibling checkout (cargo component build --release --target
 wasm32-wasip2 in enclave-apps/encrypted-volumes). Overrides: RCLONE_BIN,
 ENCVOL_APP_WASM."""
+import base64
 import hashlib
+import hmac
 import json
 import os
 import pathlib
@@ -283,6 +285,34 @@ try:
               "Signing derives this volume's encryption key. "
               "Only sign in apps you trust with its contents.\n")
 
+        # credentials envelope: seal with the script, then verify the BYTE-EXACT
+        # contract with an independent reference (key derivation + HMAC in pure
+        # python, the CTR cipher via openssl) - the app's JS implements the same
+        # spec, so this pins what a browser must be able to open.
+        envelope = None
+        if shutil.which("openssl"):
+            iv_hex = "000102030405060708090a0b0c0d0e0f"
+            r = subprocess.run([script, "seal-creds", "--sig", sig],
+                               env=dict(os.environ, AWS_ACCESS_KEY_ID=key, AWS_SECRET_ACCESS_KEY=sec,
+                                        ENCVOL_SEAL_IV=iv_hex),
+                               capture_output=True, text=True)
+            check("script seal-creds succeeds", r.returncode == 0, r.stderr[-300:])
+            envelope = r.stdout.strip()
+            check("envelope has the encv1 shape", envelope.startswith("encv1:"))
+            raw = base64.b64decode(envelope[6:])
+            ivct, tag = raw[:-32], raw[-32:]
+            check("envelope iv is the pinned test iv", ivct[:16].hex() == iv_hex)
+            mac_key = hashlib.sha256((sig + "\nenclave-encvol-v1:creds-mac").encode()).digest()
+            check("envelope HMAC verifies (pure-python reference)",
+                  hmac.compare_digest(hmac.new(mac_key, ivct, hashlib.sha256).digest(), tag))
+            enc_key = hashlib.sha256((sig + "\nenclave-encvol-v1:creds-enc").encode()).hexdigest()
+            d = subprocess.run(["openssl", "enc", "-d", "-aes-256-ctr", "-K", enc_key, "-iv", iv_hex],
+                               input=ivct[16:], capture_output=True)
+            check("envelope decrypts to the sealed credentials",
+                  json.loads(d.stdout or b"{}") == {"accessKeyId": key, "secretAccessKey": sec})
+        else:
+            print("  (openssl not found - envelope pin checks skipped)")
+
         wplain = WORK / "wplain"; wplain.mkdir()
         (wplain / "wallet.txt").write_text("wallet-gated data\n")
         script_env = dict(os.environ, ENCVOL_WALLET_SIG=sig,
@@ -295,12 +325,17 @@ try:
         check("push snippet advertises wallet unlock", '"unlock": "wallet"' in r.stderr)
 
         wcfg = {"encVolumes": [{"name": "wvol", "endpoint": endpoint, "bucket": "bkt",
-                                "path": "wvol", "unlock": "wallet", "maxMb": 64}]}
+                                "path": "wvol", "unlock": "wallet", "maxMb": 64,
+                                **({"credsEnvelope": envelope} if envelope else {})}]}
         vm = req(base2 + "/vms", body={"image": app_wasm2, "cpuShare": 0.05,
                                        "config": json.dumps(wcfg)}, headers=CTRL, ok=(201,))
         check("wallet volume launches", vm["status"] == "running", str(vm.get("error")))
         check("record carries the UI hints", vm["encVolumes"][0]["unlock"] == "wallet"
               and vm["encVolumes"][0]["keyId"] == "wvol")
+        if envelope:
+            st3 = req(f"http://127.0.0.1:{vm['hostPort']}" + "/api/status")
+            check("app grafts credsEnvelope from ENCLAVE_CONFIG onto /api/status",
+                  st3["volumes"][0].get("credsEnvelope") == envelope)
         bad = {"encVolumes": [{"name": "x", "endpoint": endpoint, "bucket": "b", "unlock": "retina-scan"}]}
         vm2 = req(base2 + "/vms", body={"image": app_wasm2, "cpuShare": 0.05,
                                         "config": json.dumps(bad)}, headers=CTRL, ok=(500,))

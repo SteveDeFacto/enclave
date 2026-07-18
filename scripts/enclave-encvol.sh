@@ -15,6 +15,8 @@
 #   enclave-encvol.sh ls          --endpoint URL --bucket B [--path P]   list the volume's decrypted names
 #   enclave-encvol.sh message <keyId>                                    print the exact message a wallet signs
 #   enclave-encvol.sh derive  --sig 0x…                                  print the password/salt a signature derives
+#   enclave-encvol.sh seal-creds --sig 0x…                               encrypt AWS_* creds under the wallet key -> a
+#                                                                        credsEnvelope value for the (public) App Config
 #
 # WALLET MODE (the encrypted-volumes app's primary flow): the key is DERIVED
 # from a deterministic ECDSA personal_sign of the canonical message (printed
@@ -27,6 +29,20 @@
 # or anywhere else, e.g.:  cast wallet sign "$(enclave-encvol.sh message myvol)"
 # Wallets must sign deterministically (RFC 6979 - MetaMask, Ledger, EOAs
 # generally do); if two signatures of the same message differ, use a password.
+#
+# CREDENTIALS ENVELOPE (seal-creds): S3 credentials can ride the PUBLIC App
+# Config encrypted under the same wallet signature, so one signature in the
+# app unlocks everything - no S3 fields to type. Byte-exact contract, shared
+# with the encrypted-volumes app's JS (pinned by test/encvol-e2e.py):
+#     encKey   = SHA-256( sig + "\n" + "enclave-encvol-v1:creds-enc" )   32 raw bytes
+#     macKey   = SHA-256( sig + "\n" + "enclave-encvol-v1:creds-mac" )   32 raw bytes
+#     iv       = 16 random bytes
+#     ct       = AES-256-CTR( encKey, iv, '{"accessKeyId":"…","secretAccessKey":"…"[,"sessionToken":"…"]}' )
+#     tag      = HMAC-SHA256( macKey, iv || ct )
+#     envelope = "encv1:" + base64( iv || ct || tag )
+# The envelope is exactly as sensitive as the volume itself (same wallet
+# guards both); it goes in the encVolumes entry as "credsEnvelope". The
+# manager ignores it; the app decrypts it in the browser at unlock time.
 #
 # Options / environment:
 #   --endpoint URL      S3 endpoint (https://s3.eu-central-1.amazonaws.com, any S3-compatible)
@@ -62,7 +78,7 @@ _derive() {  # $1 = signature; sets ENCVOL_PASSWORD / ENCVOL_SALT
   ENCVOL_SALT="$(printf '%s\n%s' "$sig" "enclave-encvol-v1:salt" | _sha256)"
 }
 
-CMD="${1:-}"; case "$CMD" in push|pull|ls|message|derive) shift ;; *) die "usage: enclave-encvol.sh <push|pull|ls|message|derive> …" ;; esac
+CMD="${1:-}"; case "$CMD" in push|pull|ls|message|derive|seal-creds) shift ;; *) die "usage: enclave-encvol.sh <push|pull|ls|message|derive|seal-creds> …" ;; esac
 
 if [[ "$CMD" == "message" ]]; then
   KEYID="${1:-}"; [[ -n "$KEYID" ]] || die "usage: enclave-encvol.sh message <keyId>"
@@ -92,6 +108,43 @@ if [[ "$CMD" == "derive" ]]; then
   _derive "$SIG"
   echo "export ENCVOL_PASSWORD=$ENCVOL_PASSWORD"
   echo "export ENCVOL_SALT=$ENCVOL_SALT"
+  exit 0
+fi
+
+if [[ "$CMD" == "seal-creds" ]]; then
+  [[ -n "$SIG" ]] || die "seal-creds needs --sig 0x… (or ENCVOL_WALLET_SIG)"
+  command -v openssl >/dev/null 2>&1 || die "seal-creds needs openssl"
+  [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]] \
+    || die "seal-creds reads AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (and optional AWS_SESSION_TOKEN) from the environment"
+  sig="$(printf '%s' "$SIG" | tr -d '[:space:]' | tr 'A-Z' 'a-z')"
+  [[ "$sig" =~ ^0x[0-9a-f]{130}$ ]] || die "signature must be 65-byte ECDSA hex (0x + 130 hex chars); got ${#sig} chars"
+  ENC_KEY="$(printf '%s\n%s' "$sig" "enclave-encvol-v1:creds-enc" | _sha256)"
+  MAC_KEY="$(printf '%s\n%s' "$sig" "enclave-encvol-v1:creds-mac" | _sha256)"
+  # ENCVOL_SEAL_IV: test hook so the pinned e2e vector is reproducible.
+  IV="${ENCVOL_SEAL_IV:-$(openssl rand -hex 16)}"
+  [[ "$IV" =~ ^[0-9a-f]{32}$ ]] || die "ENCVOL_SEAL_IV must be 32 lowercase hex chars"
+  _jesc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+  PT="{\"accessKeyId\":\"$(_jesc "$AWS_ACCESS_KEY_ID")\",\"secretAccessKey\":\"$(_jesc "$AWS_SECRET_ACCESS_KEY")\""
+  [[ -n "${AWS_SESSION_TOKEN:-}" ]] && PT="$PT,\"sessionToken\":\"$(_jesc "$AWS_SESSION_TOKEN")\""
+  PT="$PT}"
+  TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+  # iv || ct  (iv hex -> raw bytes; plaintext never lands on disk or argv)
+  printf '%b' "$(printf '%s' "$IV" | sed 's/../\\x&/g')" > "$TMP/ivct"
+  printf '%s' "$PT" | openssl enc -aes-256-ctr -K "$ENC_KEY" -iv "$IV" >> "$TMP/ivct"
+  openssl dgst -sha256 -mac hmac -macopt "hexkey:$MAC_KEY" -binary "$TMP/ivct" > "$TMP/tag"
+  ENVELOPE="encv1:$(cat "$TMP/ivct" "$TMP/tag" | base64 | tr -d '\n')"
+  echo "$ENVELOPE"
+  cat >&2 <<EOF
+
+Sealed. Add "credsEnvelope" to the volume's encVolumes entry in the (public)
+App Config - it is ciphertext under the SAME wallet that guards the volume:
+
+      "unlock": "wallet",
+      "credsEnvelope": "$ENVELOPE"
+
+One signature in the app then derives the crypt key AND opens these
+credentials - no S3 fields to enter, after any restart.
+EOF
   exit 0
 fi
 
@@ -153,7 +206,7 @@ box, or \`enclave publish --config\`) and unlock from the app after deploying:
       "bucket": "$BUCKET"$( [[ -n "$VPATH" ]] && printf ',\n      "path": "%s"' "$VPATH" )$( [[ -n "$SIG" ]] && printf ',\n      "unlock": "wallet"' )$( [[ "$FENC" != standard ]] && printf ',\n      "filenameEncryption": "%s"' "$FENC" )$( [[ "$DENC" == false ]] && printf ',\n      "directoryNameEncryption": false' )
   } ] }
 
-(maxMb defaults to 1024; readOnly: true drops push-back credentials at unlock.$( [[ -n "$SIG" ]] && printf '\nWallet mode: if the keyId you signed differs from "%s", add "keyId" too.' "$NAME" ))
+(maxMb defaults to 1024; readOnly: true drops push-back credentials at unlock.$( [[ -n "$SIG" ]] && printf '\nWallet mode: if the keyId you signed differs from "%s", add "keyId" too.\nTip: `seal-creds` prints a "credsEnvelope" field so wallet unlocks need no S3 fields.' "$NAME" ))
 EOF
     ;;
   pull) rclone sync encvol: "$DIR" --progress ;;
