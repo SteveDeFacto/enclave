@@ -2042,6 +2042,17 @@ def _build_cmd(pspec, wasm, serve_port: int, mem_bytes: int, port_map=None, fsdi
         vram_bytes = int(gpu_share * GPU_VRAM_GB * (1 << 30)) if gpu_share > 0 else 0
         if vram_bytes:
             vol_args += ["--env", f"ENCLAVE_VRAM_BYTES={vram_bytes}"]
+        # Forward the node's ggml context tuning to the GUEST too: with the
+        # window and KV cache type known, an app can price a model's KV cache
+        # (weights + n_ctx x kv-bytes/token + working set) and refuse models
+        # the share certainly cannot SERVE - not just cannot load. That
+        # matters because a CUDA OOM inside compute ABORTS the wasmtime
+        # process (ggml_abort - no error ever reaches the guest), so a
+        # "let's try it" probe of a too-big model kills the whole tenant.
+        for k in ("ENCLAVE_GGML_N_CTX", "ENCLAVE_GGML_KV_CACHE_TYPE",
+                  "ENCLAVE_GGML_KV_CACHE_TYPE_V"):
+            if os.environ.get(k, "").strip():
+                vol_args += ["--env", f"{k}={os.environ[k].strip()}"]
         vram_stages = []  # (bytes, name, kind, stage)
         for name, host_path in vol_mounts.items():
             # MODEL_VOLUMES_SD volumes preload through the sdcpp backend
