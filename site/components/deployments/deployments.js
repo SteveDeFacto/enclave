@@ -53,6 +53,26 @@ function safeHref(u){
   return "";
 }
 
+/* ---- TLS-gated Open control ----
+   An app origin's certificate is minted INSIDE the enclave (ACME dns-01),
+   which takes a moment after the app reaches running - and every enclave
+   release re-mints all of them (CVMs keep no disk). Until issuance the origin
+   serves the self-signed fallback pair, so "open ↗" would land the user on a
+   browser certificate warning. The control therefore starts as a DISABLED
+   button with an amber OPEN padlock and only becomes the live link (closed
+   jade padlock) once a probe from THIS browser completes a real handshake
+   (_probeTls below) - the browser's own trust decision is the ground truth,
+   not any server-side claim. */
+const LOCK_OPEN = '<svg class="enc-lock" viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M9 11V7a3.5 3.5 0 0 1 6.9-.9"/></svg>';
+const LOCK_SHUT = '<svg class="enc-lock" viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M9 11V7a3.5 3.5 0 0 1 7 0v4"/></svg>';
+function openCtl(d, ep, tls){
+  const href = safeHref(ep);
+  if (!(d && d.public && (d.status || "") === "running" && href)) return "";
+  return (tls && tls.state === "ok")
+    ? '<a class="enc-open" data-tls="' + esc(d.id) + '" href="' + esc(href) + '/" target="_blank" rel="noopener" aria-label="Open app (new tab) - TLS certificate valid" title="TLS certificate valid - issued inside the enclave, verified by this browser">' + LOCK_SHUT + ' open ↗</a>'
+    : '<button class="enc-open" data-tls="' + esc(d.id) + '" type="button" disabled aria-label="Open app - waiting for its TLS certificate" title="waiting for the app’s TLS certificate - minted inside the enclave, usually ready within a minute">' + LOCK_OPEN + ' open ↗</button>';
+}
+
 function shortImg(s){ if (!s) return ""; return s.length > 44 ? s.slice(0, 42) + "…" : s; }
 // Status buckets for the filter bar: coarse groups beat ten raw statuses.
 // Unknown/new statuses land in "ended" rather than vanishing.
@@ -321,7 +341,7 @@ class Deployments extends EnclaveElement {
         ((st === "failed" || st === "expired") && d.error ? '<div class="enc-err" title="why this deployment ' + esc(st) + '">⚠ ' + esc(d.error) + '</div>' : '') +
         (st === "queued" ? '<div class="enc-why" data-why="' + esc(d.id) + '" role="status" aria-live="polite" hidden></div>' : '') +
         (ep ? '<button class="enc-ep" data-ep="' + esc(ep) + '">' + esc(ep) + ' ⧉</button>'
-              + (d.public && st === "running" && safeHref(ep) ? '<a class="enc-open" href="' + esc(safeHref(ep)) + '/" target="_blank" rel="noopener">open ↗</a>' : '') : '') +
+              + openCtl(d, ep, this._tls && this._tls.get(d.id)) : '') +
         depIp6Row(d) +
         '<div class="enc-fund" hidden></div>' +
         '<div class="enc-out" data-id="' + esc(d.id) + '" hidden></div>' +
@@ -337,6 +357,7 @@ class Deployments extends EnclaveElement {
     $$(".enc-resume", body).forEach(b => b.addEventListener("click", () => this._resume(b.dataset.id, b)));
     this._fillWhy();               // cached decline reasons repaint instantly with the rows
     this._probeWhy(pageRows);      // then refresh them (throttled per row)
+    this._probeTls(pageRows);      // TLS-gate the Open controls (throttled per row)
     this._renderPager(pages, shown.length, PER_PAGE);
     // finished runs' strips yield to their rows the moment those render
     [...this._strips.keys()].forEach(r => this._retireStrip(r));
@@ -389,6 +410,50 @@ class Deployments extends EnclaveElement {
           + " (a deployment’s shares are immutable: suspend it and redeploy at the app’s current minimums)"
         : '<span class="dim">fleet: ' + esc(c.reason) + " - retrying automatically</span>";
       el.hidden = false;
+    });
+  }
+
+  /* ---- Open-control TLS probes: does THIS browser trust the app origin? ----
+     A no-cors HEAD resolves (opaque) iff DNS + TCP + the TLS handshake all
+     succeeded with a certificate this browser trusts - the self-signed
+     fallback rejects, which is exactly the "cert not through yet" state.
+     Redirects follow (no-cors REQUIRES follow - manual throws a TypeError),
+     so an app whose / redirects somewhere broken or insecure stays amber:
+     right call, since that's also what greets whoever clicks open.
+     Throttle: pending rows retry each ~10s poll; a green row re-verifies
+     every 5 min (an enclave release re-mints every cert, so green can regress)
+     and only flips back on an actual failed probe - never while in flight. ---- */
+  async _probeTls(rows) {
+    this._tls = this._tls || new Map();
+    for (const d of rows) {
+      if (!(d.public && (d.status || "") === "running")) { this._tls.delete(d.id); continue; }
+      const href = safeHref(appEndpoint(d));
+      if (!/^https:\/\//i.test(href)) continue;   // only absolute https origins render an Open control
+      const c = this._tls.get(d.id);
+      if (c && Date.now() - c.at < (c.state === "ok" ? 300_000 : 8_000)) continue;
+      this._tls.set(d.id, { state: c ? c.state : "wait", at: Date.now() });   // stamp before the await: overlapping polls must not double-probe
+      try {
+        await fetch(href + "/", { method: "HEAD", mode: "no-cors", cache: "no-store",
+                                  signal: AbortSignal.timeout(8000) });
+        this._tls.set(d.id, { state: "ok", at: Date.now() });
+      } catch (e) {
+        this._tls.set(d.id, { state: "wait", at: Date.now() });
+      }
+    }
+    this._fillTls();
+  }
+  /* swap Open controls in place when a probe verdict differs from what's
+     rendered - the 10s poll skips repaints while a panel is open, and the
+     first probe usually lands between two paints */
+  _fillTls() {
+    if (!this._tls) return;
+    $$("[data-tls]", this).forEach(el => {
+      const c = this._tls.get(el.dataset.tls);
+      const ok = !!(c && c.state === "ok");
+      if (ok === (el.tagName === "A")) return;
+      const d = (this._list || []).find(x => x.id === el.dataset.tls);
+      const html = d ? openCtl(d, appEndpoint(d), c) : "";
+      if (html) el.outerHTML = html;
     });
   }
 

@@ -84,8 +84,17 @@ c-deployments{display:contents;}
 .enc-out-term{max-height:360px;}
 .enc-out-nar:not(:empty){padding-bottom:8px;margin-bottom:8px;border-bottom:1px dashed var(--line-soft);}
 .enc-out-info:not(:empty){padding-bottom:8px;margin-bottom:8px;border-bottom:1px dashed var(--line-soft);}
-.enc-open{margin-left:8px;font-family:var(--font-mono);font-size:.7rem;color:var(--jade);border:1px solid var(--jade-dim);border-radius:6px;padding:.15em .5em;}
+/* the Open control is TLS-GATED (deployments.js probes the app origin from
+   this browser): until the in-enclave ACME cert actually handshakes it is a
+   disabled <button> - amber, open padlock - then swaps to the live <a> with
+   the closed padlock in the usual jade */
+.enc-open{margin-left:8px;font-family:var(--font-mono);font-size:.7rem;color:var(--jade);border:1px solid var(--jade-dim);border-radius:6px;padding:.15em .5em;background:none;}
 .enc-open:hover{background:var(--jade-deep);}
+.enc-open[disabled]{color:var(--amber);border-color:var(--amber-dim);cursor:default;}
+.enc-open[disabled]:hover{background:none;}
+.enc-lock{vertical-align:-1px;margin-right:2px;}
+.enc-open[disabled] .enc-lock{animation:encpulse 1.2s ease-in-out infinite;}   /* "being issued" reads as activity, not a dead end */
+@media (prefers-reduced-motion:reduce){.enc-open[disabled] .enc-lock{animation:none;}}
 .enc-vbadge{float:right;text-transform:none;letter-spacing:0;font-size:.7rem;}
 .enc-vbadge.ok{color:var(--jade);} .enc-vbadge.bad{color:var(--amber);}
 .ap-attbar{font-family:var(--font-mono);font-size:.66rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;padding:9px 18px;background:#0b1119;border-bottom:1px solid var(--line-soft);overflow-wrap:anywhere;}   /* wrap (don't ellipsize) the id: nowrap would clip the floated verify badge */
