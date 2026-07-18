@@ -68,6 +68,8 @@
 .qd-est{font-family:var(--font-mono);font-size:.78rem;color:var(--text-muted);margin-top:9px;}
 .qd-est b{color:var(--jade);}
 .qd-note{font-family:var(--font-mono);font-size:.74rem;color:var(--amber);margin-top:8px;}
+.qd-card.capq{border-color:color-mix(in srgb, var(--amber) 45%, var(--line));}
+.qd-card.capq .qd-h{color:var(--amber);}
 .qd-tos{display:flex;align-items:flex-start;gap:.6em;margin-top:14px;font-family:var(--font-mono);font-size:.72rem;line-height:1.55;color:var(--text-muted);cursor:pointer;user-select:none;}
 .qd-tos input{accent-color:var(--jade);width:14px;height:14px;flex:none;margin-top:.15em;cursor:pointer;}
 .qd-tos a{color:var(--jade);}

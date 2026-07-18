@@ -217,7 +217,6 @@ function quickDeploy(app, v, idx){
   host.querySelector(".qd-adv").addEventListener("click", () => { closeQuick(); useInDeploy(app, v, idx); });
   go.addEventListener("click", async () => {
     const usd = parseFloat(amt.value) || 0; if (!(usd >= 0.01)) return;
-    closeQuick();
     // the flow lives in the deploy chunk; it navigates to the dashboard and
     // narrates into the run log (deployOnChain never throws)
     const m = await import("./deploy.js");
@@ -226,6 +225,10 @@ function quickDeploy(app, v, idx){
     // runners' floor mints an unclaimable deployment (created shares are
     // immutable, funding unrecoverable)
     const m2 = minPctsOf(specOf(v));
+    // full fleet? the queue-confirm overlay stacks over this modal; cancel
+    // keeps the user here with their amount intact
+    if (!(await m.confirmQueuedDeploy(m2.gpuPct, m2.cpuPct))) return;
+    closeQuick();
     // the appRef IS the version record: the enclave applies its config,
     // volumes and ports from the chain - nothing rides the deployment
     m.deployOnChain({ reference: catalogRef(app.appId, idx), gpuMilli: m2.gpuPct * 10, cpuMilli: m2.cpuPct * 10,

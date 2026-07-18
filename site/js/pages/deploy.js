@@ -254,6 +254,10 @@ async function runDeploy(){
   if (!(tos && tos.checked))
     return note([["warn", "[!] real deploys need the Terms of Service box ticked (payments are crypto-only, non-custodial and final; uptime isn’t guaranteed)"]]);
 
+  // capacity gate: a size the fleet can't start right now proceeds only
+  // through the queue-confirm modal's explicit checkbox
+  if (!(await confirmQueuedDeploy(gpuMilli / 10, cpuMilli / 10))) return;
+
   btn.disabled = true; const lbl = btn.textContent; btn.textContent = "working…";
   try {
     await deployOnChain({ reference: rref.reference, gpuMilli, cpuMilli, ports,
@@ -554,6 +558,46 @@ function queuedVerdict(gpuPct, cpuPct){
   const cpuFreeHere = gpuPct > 0 ? freePct.cpuOnGpuNode : freePct.cpuAny;
   const overC = cpuPct > cpuFreeHere;
   return (overG || overC) ? { overG, overC, cpuFreeHere } : null;
+}
+/* The commit-time capacity gate, shared by the console's Deploy button and
+   the store's quick-deploy modal. #capWarn under the dials is ambient; THIS
+   is the deliberate stop: a size the fleet can't start right now only
+   proceeds through an explicit checkbox, because the user is about to sign
+   final, non-withdrawable funding for a deployment that will sit Queued.
+   Fresh /availability read at click time (the 20s poll may be stale, and
+   quick-deploy may never have polled). Resolves true to proceed -
+   immediately when the size fits or capacity is unknown - false on cancel. */
+export async function confirmQueuedDeploy(gpuPct, cpuPct){
+  try { adoptFreePct(await Enclave.getAvailability()); } catch(e){}
+  const q = queuedVerdict(gpuPct, cpuPct);
+  if (!q) return true;
+  return new Promise((resolve) => {
+    const host = document.createElement("div");
+    host.className = "qd-overlay"; host.id = "capConfirm";
+    const freeLine = gpuPct > 0
+      ? freePct.gpu + "% of a card / " + q.cpuFreeHere + "% of its node are free right now; this deployment asks for " + gpuPct + "% / " + cpuPct + "%"
+      : freePct.cpuAny + "% of the node is free right now; this deployment asks for " + cpuPct + "%";
+    host.innerHTML =
+      '<div class="qd-card capq" role="dialog" aria-modal="true" aria-label="Not enough free capacity">' +
+        '<div class="qd-h">⚠ The fleet is full for this size</div>' +
+        '<p class="qd-sub">' + esc(freeLine) + '. You can still deploy: the deployment is created on-chain, waits as <b>Queued</b>, and starts automatically the moment capacity frees up.</p>' +
+        '<p class="qd-sub">Queued time is never billed - the balance only burns while the app runs. But payments are final: the funding stays on the deployment until it runs, it cannot be withdrawn back to your wallet.</p>' +
+        '<label class="qd-tos"><input type="checkbox" class="capq-ck" /> <span>I understand this deployment will <b>wait in the queue</b> - possibly for a while - and start on its own once capacity frees up.</span></label>' +
+        '<div class="qd-actions">' +
+          '<button class="btn btn-primary capq-go" type="button" disabled>▸ Deploy and queue</button>' +
+          '<button class="btn capq-cancel" type="button">Cancel</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(host);
+    const onKey = (e) => { if (e.key === "Escape") done(false); };
+    const done = (ok) => { host.remove(); document.removeEventListener("keydown", onKey); resolve(ok); };
+    document.addEventListener("keydown", onKey);
+    const ck = host.querySelector(".capq-ck"), go = host.querySelector(".capq-go");
+    ck.addEventListener("change", () => { go.disabled = !ck.checked; });
+    go.addEventListener("click", () => done(true));
+    host.querySelector(".capq-cancel").addEventListener("click", () => done(false));
+    host.addEventListener("click", (e) => { if (e.target === host) done(false); });
+  });
 }
 async function refreshAvailability(){
   const gIn = $("#cfgGpuShare"), capG = $("#gpuShareCap");
