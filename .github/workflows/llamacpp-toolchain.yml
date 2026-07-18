@@ -80,6 +80,16 @@ jobs:
           git clone https://github.com/ggml-org/llama.cpp /tmp/llama.cpp
           cd /tmp/llama.cpp
           git checkout "$LLAMA_COMMIT"
+          # sd19 TF32 patch: common.cuh already sets CUBLAS_TF32_TENSOR_OP_MATH
+          # (covers the cublasSgemm f32 path), but the batched GEMMs pass an
+          # explicit CUBLAS_COMPUTE_32F which pins them to slow FP32 cores. Flip
+          # the GGML_TYPE_F32 traits' compute type to FAST_TF32 so cublasGemmEx/
+          # StridedBatchedEx/BatchedEx also use TF32 tensor cores (~7x, f32 range
+          # so no f16 NaN, 10-bit mantissa - the f32 build already ran TF32 via
+          # the math mode and was CLEAN). Range-limited to the F32 traits struct
+          # so the BF16 traits (also CUBLAS_COMPUTE_32F) stay untouched.
+          sed -i '/struct batched_mul_mat_traits<GGML_TYPE_F32>/,/};/ s/compute_type = CUBLAS_COMPUTE_32F;/compute_type = CUBLAS_COMPUTE_32F_FAST_TF32;/' ggml/src/ggml-cuda/ggml-cuda.cu
+          grep -q "CUBLAS_COMPUTE_32F_FAST_TF32" ggml/src/ggml-cuda/ggml-cuda.cu || { echo "::error::sd19 TF32 patch did not apply (struct/line moved)"; exit 1; }
 
       - name: Build (Release, CUDA, shared libs, sm_86+sm_90, portable CPU)
         run: |
@@ -99,13 +109,14 @@ jobs:
             -DBUILD_SHARED_LIBS=ON \
             -DGGML_BACKEND_DL=ON \
             -DGGML_CUDA=ON \
+            `# sd19: FORCE_CUBLAS bypasses the int8 MMQ path entirely. MMQ is the` \
+            `# fast native path but its sm_90 shared-store bug speckles qwen's 20B` \
+            `# shapes (#24399); cuBLAS is clean for BOTH models. Paired with the` \
+            `# TF32 traits patch above (tensor cores, not slow FP32 cores) and the` \
+            `# WanVAE f32 patch below, this makes qwen fast AND clean.` \
+            -DGGML_CUDA_FORCE_CUBLAS=ON \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.4/bin/nvcc \
             -DCMAKE_CUDA_ARCHITECTURES="86-real;90-real" \
-            `# NATIVE int8 MMQ Q8_0 built with CUDA 12.4 nvcc/ptxas (older than the` \
-            `# fleet's 12.6). The sm_90 MMQ shared-store speckle survives nvcc AND` \
-            `# clang frontends and ptxas -O0, so it is in the ptxas BACKEND; this` \
-            `# tests a DIFFERENT ptxas version. Runtime-safe: 12.4 code runs on the` \
-            `# fleet's 12.6 runtime (CUDA backward compat).` \
             -DGGML_NATIVE=OFF \
             -DCMAKE_C_FLAGS="-DGGML_MAX_NAME=128" \
             -DCMAKE_CXX_FLAGS="-DGGML_MAX_NAME=128" \
@@ -154,6 +165,15 @@ jobs:
           git clone https://github.com/leejet/stable-diffusion.cpp /tmp/sd.cpp
           cd /tmp/sd.cpp
           git checkout "$SD_COMMIT"
+          # sd19 WanVAE f32 patch: qwen-image's WanVAE decoder overflows F16
+          # (>65504) on the GPU -> crystalline speckle, which forced the slow CPU
+          # VAE decode. CausalConv3d hardcodes an F16 weight (init_params); pin it
+          # to F32 so the decoder computes in f32 range ON the GPU (fast + clean).
+          # Range-limited to the CausalConv3d class (WanVAE-only); z-image's
+          # AutoEncoderKL does not use CausalConv3d and is untouched.
+          sed -i '/class CausalConv3d/,/^    };/ s/GGML_TYPE_F16,/GGML_TYPE_F32,/' src/model/vae/wan_vae.hpp
+          sed -n '/class CausalConv3d/,/^    };/p' src/model/vae/wan_vae.hpp | grep -q "GGML_TYPE_F16" && { echo "::error::sd19 WanVAE f32 patch left F16 in CausalConv3d"; exit 1; } || true
+          grep -q "GGML_TYPE_F32," src/model/vae/wan_vae.hpp || { echo "::error::sd19 WanVAE f32 patch did not apply"; exit 1; }
           # the clone leaves an EMPTY ggml/ dir for the uninitialized
           # submodule - remove it or the symlink lands inside it
           rm -rf ggml
