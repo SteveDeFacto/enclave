@@ -584,7 +584,7 @@ export async function confirmQueuedDeploy(gpuPct, cpuPct){
         '<p class="qd-sub">Queued time is never billed - the balance only burns while the app runs. But payments are final: the funding stays on the deployment until it runs, it cannot be withdrawn back to your wallet.</p>' +
         '<label class="qd-tos"><input type="checkbox" class="capq-ck" /> <span>I understand this deployment will <b>wait in the queue</b> - possibly for a while - and start on its own once capacity frees up.</span></label>' +
         '<div class="qd-actions">' +
-          '<button class="btn btn-primary capq-go" type="button" disabled>▸ Deploy and queue</button>' +
+          '<button class="btn btn-primary capq-go" type="button" disabled>▸ Queue for Deployment</button>' +
           '<button class="btn capq-cancel" type="button">Cancel</button>' +
         '</div>' +
       '</div>';
