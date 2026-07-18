@@ -358,6 +358,15 @@ containers:
       # at graph allocation ("sampling for image 1/1 failed" in <1s, seen
       # live). With FA the 2048px diffusion buffer is a few GB.
       - ENCLAVE_SD_FLASH_ATTN: "1"
+      # VAE decode on the GPU (the SPEED fix). The shim defaults the VAE to the
+      # CPU (backend "vae=cpu") to dodge qwen-image's WanVAE F16-overflow
+      # speckle - but a CPU f32 VAE decode is MAGNITUDES slower and scales
+      # badly with resolution (it dominated z-image 1024: 512 ~18s, 1024 ~156s).
+      # z-image's AutoEncoderKL is GPU-safe (does NOT overflow), so on the GPU
+      # it is fast AND clean. qwen's WanVAE speckles on the GPU, but qwen already
+      # speckles on native MMQ (secondary), so no loss. Node-global; flip to "1"
+      # (or unset) if a qwen-clean cuBLAS build is ever led with again.
+      - ENCLAVE_SD_VAE_ON_CPU: "0"
       # NATIVE Q8_0 MMQ (ELL sd17) - the FAST path, chosen to lead with
       # z-image-turbo. The sm_90 (H200) int8 MMQ speckle (open llama.cpp #24399)
       # bites qwen-image-2512's 20B shapes but NOT z-image-turbo's 6B shapes:
