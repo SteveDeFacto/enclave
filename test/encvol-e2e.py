@@ -210,6 +210,7 @@ try:
 
     for bad, why in [({"encVolumes": [{"name": "UPPER", "endpoint": "https://x", "bucket": "b"}]}, "bad name"),
                      ({"encVolumes": [{"name": "a", "endpoint": "ftp://x", "bucket": "b"}]}, "bad endpoint"),
+                     ({"encVolumes": [{"name": "a", "endpoint": "https://10.0.0.1", "bucket": "b"}]}, "SSRF private endpoint"),
                      ({"encVolumes": [{"name": "a", "endpoint": "https://x", "bucket": "b", "maxMb": 999999}]}, "maxMb over ceiling")]:
         vm = req(base + "/vms", body={"image": app_wasm, "cpuShare": 0.05,
                                       "config": json.dumps(bad)}, headers=CTRL, ok=(500,))
@@ -239,17 +240,18 @@ try:
         subprocess.run([RCLONE, "sync", str(plain), "encvol:"], env=env2, check=True, capture_output=True)
         print("  ok: client pushed over the s3 protocol")
 
-        mgr2, base2 = start_manager("s2", {})
+        mgr2, base2 = start_manager("s2", {"SECRET": "ctrl-e2e",
+                                           "WASM_ENC_ALLOW_PRIVATE_ENDPOINT": "1"})
         procs.append(mgr2)
         app_wasm2 = str(WORK / "s2/apps/encvols.wasm")
         cfg = {"encVolumes": [{"name": "cloud", "endpoint": endpoint, "bucket": "bkt",
                                "path": "vol", "maxMb": 64}]}
         vm = req(base2 + "/vms", body={"image": app_wasm2, "cpuShare": 0.05,
-                                       "config": json.dumps(cfg)}, ok=(201,))
+                                       "config": json.dumps(cfg)}, headers=CTRL, ok=(201,))
         check("launched against a real S3 endpoint", vm["status"] == "running", str(vm.get("error")))
         bad = {"encVolumes": [{"name": "x", "endpoint": "local:/etc", "bucket": "b"}]}
         vm2 = req(base2 + "/vms", body={"image": app_wasm2, "cpuShare": 0.05,
-                                        "config": json.dumps(bad)}, ok=(500,))
+                                        "config": json.dumps(bad)}, headers=CTRL, ok=(500,))
         check("local: endpoint refused in prod posture", "test hook" in vm2["error"])
         app2 = f"http://127.0.0.1:{vm['hostPort']}"
         req(app2 + "/api/unlock", body={"name": "cloud", "password": PASSWORD}, ok=(202,))
@@ -295,13 +297,13 @@ try:
         wcfg = {"encVolumes": [{"name": "wvol", "endpoint": endpoint, "bucket": "bkt",
                                 "path": "wvol", "unlock": "wallet", "maxMb": 64}]}
         vm = req(base2 + "/vms", body={"image": app_wasm2, "cpuShare": 0.05,
-                                       "config": json.dumps(wcfg)}, ok=(201,))
+                                       "config": json.dumps(wcfg)}, headers=CTRL, ok=(201,))
         check("wallet volume launches", vm["status"] == "running", str(vm.get("error")))
         check("record carries the UI hints", vm["encVolumes"][0]["unlock"] == "wallet"
               and vm["encVolumes"][0]["keyId"] == "wvol")
         bad = {"encVolumes": [{"name": "x", "endpoint": endpoint, "bucket": "b", "unlock": "retina-scan"}]}
         vm2 = req(base2 + "/vms", body={"image": app_wasm2, "cpuShare": 0.05,
-                                        "config": json.dumps(bad)}, ok=(500,))
+                                        "config": json.dumps(bad)}, headers=CTRL, ok=(500,))
         check("refused: bad unlock mode", "unlock" in vm2["error"])
         app3 = f"http://127.0.0.1:{vm['hostPort']}"
         req(app3 + "/api/unlock", body={"name": "wvol", "password": expect_pw, "salt": expect_salt,
