@@ -65,11 +65,12 @@
   <a id="develop"></a>
   <div class="wrap">
     <c-section-head eyebrow="Develop" heading="From idea to enclave.">
-      <p>Everything needed to ship a confidential app: the guide takes you from an empty directory to an attested endpoint, the CLI drives every operation from a terminal, and the API reference documents every call the platform answers. Coding agents plug in over MCP: see the <a href="#docs-mcp">MCP server</a> under the API reference.</p>
+      <p>Everything needed to ship a confidential app: the guide takes you from an empty directory to an attested endpoint, the CLI drives every operation from a terminal, coding agents plug in over <a href="#mcp">MCP</a>, and the API reference documents every call the platform answers.</p>
     </c-section-head>
     <nav class="dev-tabs" id="devTabs" aria-label="Developer documentation tabs">
       <a href="#docs" data-devtab="guide" class="on" aria-current="true">Guide</a>
       <a href="#cli" data-devtab="cli">CLI</a>
+      <a href="#mcp" data-devtab="mcp">MCP</a>
       <a href="#api" data-devtab="api">API reference</a>
     </nav>
   </div>
@@ -829,6 +830,56 @@ enclave logs 0x3f2a9c1b -f               # watch it serve</code></pre></c-code>
   </div>
 </section>
 
+<!-- ===================== MCP SERVER ===================== -->
+<section id="mcp" data-view="develop" aria-label="MCP server for coding agents" hidden>
+  <div class="wrap">
+    <div class="docs-main" style="max-width:920px;">
+        <article class="doc" id="docs-mcp">
+          <h3>The MCP server</h3>
+          <p>Coding agents connect over the Model Context Protocol at <code>https://mcp.enclave.host</code> (Streamable HTTP). It exposes the full platform surface as typed tools: the catalog, pricing, live capacity, deployments, logs, attestation, sign-in, and uploads. An agent holding a funded key can browse the catalog, deploy, fund, watch logs, publish, and verify attestation end to end.</p>
+
+          <h4>Connect</h4>
+          <p>One URL, no signup, no API key. Pick your client:</p>
+          <c-code-tabs>
+            <c-code tab="Claude Code" fn="connect · Claude Code"><pre><code>claude mcp add --transport http enclave https://mcp.enclave.host</code></pre></c-code>
+            <c-code tab="Cursor / mcp.json" fn="connect · mcp.json (Cursor and most IDE agents)"><pre><code>{ "mcpServers": { "enclave": { "url": "https://mcp.enclave.host" } } }</code></pre></c-code>
+            <c-code tab="VS Code" fn="connect · VS Code"><pre><code>code --add-mcp '{"name":"enclave","type":"http","url":"https://mcp.enclave.host"}'</code></pre></c-code>
+            <c-code tab="Any client" fn="connect · raw JSON-RPC"><pre><code>curl -s https://mcp.enclave.host -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</code></pre></c-code>
+          </c-code-tabs>
+          <p>Once connected, the <code>guide</code> tool (topic <code>getting-started</code>) walks the agent through everything below on its own.</p>
+
+          <h4>No keys, by design</h4>
+          <p>No tool accepts a private key, signs anything, or submits a transaction. Reads are direct; every state change comes back as an <b>unsigned Base transaction</b> <code>{chainId, to, data, value}</code>, validated against live chain state first (catalog approval, share minimums, the GPU cap, publisher fee snapshots), for the agent to sign with your own wallet. Sign-in and uploads take locally produced signatures. Session tokens for owner-scoped reads ride per-call parameters or the Authorization header; transactions never need a session.</p>
+
+          <h4>Tool reference</h4>
+          <div class="tbl"><table class="params cmds">
+            <thead><tr><th scope="col">tool</th><th scope="col">does</th></tr></thead>
+            <tbody>
+              <tr><th scope="row" class="pname">guide</th><td>how-to guides: getting-started, deploy, publish, funding, attestation, volumes, networking, fees, cli</td></tr>
+              <tr><th scope="row" class="pname">pricing · availability · gpu_capacity · platform_status</th><td>live rates, free GPU/CPU shares, model volumes, per-tenant GPU grants, gateway health</td></tr>
+              <tr><th scope="row" class="pname">list_apps · get_app</th><td>the on-chain catalog: versions, approval state, resource specs, ports, publisher fees</td></tr>
+              <tr><th scope="row" class="pname">list_deployments · get_deployment</th><td>a wallet's work, live fleet view merged with the on-chain ledger; status, rate, balance, network addresses</td></tr>
+              <tr><th scope="row" class="pname">deployment_logs · restart_deployment · terminate_hosted · account</th><td>owner-scoped operations (session token)</td></tr>
+              <tr><th scope="row" class="pname">fleet_attestation · deployment_attestation</th><td>attestation documents; real verification stays client-side against the pinned repo</td></tr>
+              <tr><th scope="row" class="pname">auth_nonce · auth_login</th><td>SIWE sign-in: fetch the message, sign it locally, trade the signature for a session token</td></tr>
+              <tr><th scope="row" class="pname">upload_token</th><td>wallet-signed authorization for pinning wasm and images to IPFS</td></tr>
+              <tr><th scope="row" class="pname">plan_deploy</th><td>validate + price a deployment, returns the unsigned <code>create()</code> transaction</td></tr>
+              <tr><th scope="row" class="pname">build_fund</th><td>unsigned funding transactions: USDC approve + fund, or payable <code>fundEth</code></td></tr>
+              <tr><th scope="row" class="pname">build_stop · build_resume · build_upgrade</th><td>unsigned lifecycle transactions; upgrade validates approval, share fit, and the fee snapshot</td></tr>
+              <tr><th scope="row" class="pname">build_publish</th><td>unsigned <code>publishVersion</code> transaction from a pinned CID</td></tr>
+              <tr><th scope="row" class="pname">claim_hint</th><td>nudge the fleet to claim funded work right now</td></tr>
+            </tbody>
+          </table></div>
+
+          <h4>A typical deploy, agent-side</h4>
+          <p><code>list_apps</code> → <code>plan_deploy</code> → sign and send the create transaction → read the new id from the receipt's <code>Created</code> event → <code>build_fund</code> → sign and send → <code>claim_hint</code> → poll <code>get_deployment</code> until <code>running</code>. The app serves at its own origin, <code>https://&lt;first-8-hex-of-id&gt;.app.enclave.host</code>.</p>
+          <p>The <a href="#docs-cli">CLI</a> and MCP are equivalent surfaces: anything an agent plans over MCP can also be run with <code>enclave</code> one-liners, and both talk to the same <a href="#api">API</a> and contracts underneath.</p>
+        </article>
+    </div>
+  </div>
+</section>
+
 <!-- ===================== API REFERENCE ===================== -->
 <section class="api" id="api" data-view="develop" aria-label="API reference" hidden>
   <div class="wrap">
@@ -846,18 +897,6 @@ enclave logs 0x3f2a9c1b -f               # watch it serve</code></pre></c-code>
     </div>
 
     <c-api-reference></c-api-reference>
-
-    <article class="doc" id="docs-mcp" style="margin-top:56px; max-width:920px;">
-      <h3>MCP server</h3>
-      <p>Coding agents connect over the Model Context Protocol at <code>https://mcp.enclave.host</code> (Streamable HTTP). It exposes the full platform surface as typed tools: catalog, pricing, live capacity, deployments, logs, attestation, sign-in, and uploads. It never touches keys: every state change comes back as an unsigned Base transaction for your own wallet to sign, so an agent holding a funded key can browse the catalog, deploy, fund, watch logs, publish, and verify attestation end to end.</p>
-      <c-code fn="connect an agent"><pre><code># Claude Code
-claude mcp add --transport http enclave https://mcp.enclave.host
-
-# any MCP client: POST JSON-RPC (initialize, tools/list, tools/call)
-curl -s https://mcp.enclave.host -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</code></pre></c-code>
-      <p>Start with the <code>guide</code> tool (topic <code>getting-started</code>). Session tokens for owner-scoped reads ride per-call parameters or the Authorization header; transactions never need a session. The <a href="#docs-cli">CLI</a> and MCP are equivalent surfaces, so anything an agent plans over MCP can also be run with <code>enclave</code> one-liners.</p>
-    </article>
   </div>
 </section>
 </main>

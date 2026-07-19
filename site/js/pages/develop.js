@@ -44,11 +44,12 @@ function initDocs(){
    Sub-tabs: Guide | CLI | API reference (all on this page; the
    tab bar switches which pane section is visible)
    ============================================================ */
-let devTab = "guide";                                        // develop sub-tab: guide | cli | api
-const DEV_PANES = { guide: "docs", cli: "cli", api: "api" }; // tab -> pane section id
+let devTab = "guide";                                        // develop sub-tab: guide | cli | mcp | api
+const DEV_PANES = { guide: "docs", cli: "cli", mcp: "mcp", api: "api" }; // tab -> pane section id
 function devTabOf(id){                                       // which sub-tab holds this element?
   const el = id && document.getElementById(id); if (!el || !el.closest) return null;
   if (el.closest("#api")) return "api";
+  if (el.closest("#mcp")) return "mcp";
   if (el.closest("#cli")) return "cli";
   if (el.closest("#docs")) return "guide";
   return null;
