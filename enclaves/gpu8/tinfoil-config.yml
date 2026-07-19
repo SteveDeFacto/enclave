@@ -91,7 +91,11 @@ containers:
       - SIWE_URI: "https://enclave.host"
       - CHAIN_ID: "8453"
       - CORS_ORIGINS: "https://enclave.host"
-      - BASE_RPC: "https://mainnet.base.org"
+      # BASE_RPC moved to `secrets:` 2026-07-19 - a dedicated endpoint URL
+      # embeds an API key and must not sit in this public config. Unset, the
+      # supervisor defaults to the free public pool (mainnet.base.org +
+      # publicnode/drpc/1rpc fallbacks), whose rate limits capped the fleet's
+      # tx pipeline at ~30 apps' renewal demand (the 2026-07-19 ceiling).
       # pay-per-deploy (no custody): supervisor WATCHES this forwarder for payments.
       # FORWARDER_ADDRESS = deployed EnclavePay contract. USDC funds go straight to the
       # payout wallet set INSIDE that contract (the operator's cold wallet) - never here.
@@ -232,6 +236,7 @@ containers:
       - /mnt/ramdisk/enclave-state:/var/lib/enclave
     secrets:
       - SECRET                   # manager control-token (VMMGR_TOKEN) + DNS-push HMAC seed; NO LONGER signs session JWTs (those use the in-enclave ES256 key). Fleet-wide.
+      - BASE_RPC                 # dedicated Base RPC URL (key-bearing, e.g. Alchemy/QuickNode). Unset = public-pool fallback. Same creation-binding rule as every new secret name.
       - ADMIN_TOKEN              # operator token for POST /v1/admin/deployments/:id/provision
       - WORKER_TOKEN             # shared bearer with the worker container (SAME Tinfoil secret); the supervisor sends it on worker-manager calls. Unset = not sent.
       - REGISTRY_PRIVATE_KEY     # EnclaveRegistry operator EOA (owns this enclave's entry, pays heartbeat gas on Base)
