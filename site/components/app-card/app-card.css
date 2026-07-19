@@ -26,6 +26,10 @@ c-app-card{display:contents;}
 .app-badge.del{border-color:var(--amber-dim);color:var(--amber);background:transparent;}
 .app-card.delisted{opacity:.7;border-style:dashed;}
 .app-card.delisted:hover{opacity:1;}
+/* rating line (hidden until the app has one - see app-card.js) */
+.app-rating{display:flex;align-items:center;gap:7px;margin-top:-2px;
+  font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);}
+.app-rating-n{color:var(--text-muted);}
 .app-desc{margin:0;font-size:.88rem;color:var(--text-muted);line-height:1.5;}
 .app-metaline{display:flex;flex-wrap:wrap;gap:8px;font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);}
 .app-cid{display:flex;align-items:center;gap:6px;background:var(--bg-1);border:1px solid var(--line-soft);border-radius:var(--radius-sm);padding:6px 8px;}

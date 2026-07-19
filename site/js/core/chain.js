@@ -4,7 +4,7 @@
    EnclaveDeployments / EnclaveAppCatalog contract surface.
    No web3 library loads on the site.
    ============================================================ */
-import { APP_CATALOG_ADDRESS, DEPLOYMENTS_ADDRESS, FEATURED_ADDRESS, APP_CATALOG_CHAIN, APP_CATALOG_RPCS } from "./config.js";
+import { APP_CATALOG_ADDRESS, DEPLOYMENTS_ADDRESS, FEATURED_ADDRESS, REVIEWS_ADDRESS, APP_CATALOG_CHAIN, APP_CATALOG_RPCS } from "./config.js";
 import { EnclaveError } from "./api.js";
 import { wait } from "./util.js";
 
@@ -114,6 +114,62 @@ export async function featGetCampaigns(){
 }
 export async function featMaxBid(){ return hexBig(await featCall("0x" + FEAT_SEL.maxBidPerView6)); }
 
+/* ---- EnclaveReviews: 1-5 stars + comments, gated on a funded deployment ----
+   The contract checks the receipt itself (it reads EnclaveDeployments), so
+   the site's job is only to FIND the caller's qualifying deployment and hand
+   its id to post(). Selectors from site/js/gen/contract-artifacts.js. */
+export const REV_SEL = {
+  post:"131c2e70", setHidden:"4431f07c", canReview:"efc9ce6a",
+  reviewCount:"2891e4ce", getReviewsPage:"0f9f0a97", getReview:"df46153a",
+  tallyOf:"b4a6def1", talliesOf:"e6f706f7", reviewsSchema:"7e9ca439",
+  owner:"8da5cb5b", deployments:"08483906", setDeployments:"a1e7a7c7", MAX_BODY:"f77b4942",
+};
+export const REVIEW_SCHEMA = [   // mirrors EnclaveReviews.Review field order exactly (reviewsSchema 1)
+  {k:"reviewer",t:"addr"},{k:"stars",t:"uint"},{k:"hidden",t:"bool"},
+  {k:"createdAt",t:"uint"},{k:"updatedAt",t:"uint"},{k:"deployment",t:"bytes32"},{k:"body",t:"str"},
+];
+export const REVIEW_MAX_BODY = 2000;   // the contract's cap; the form counts against it before the wallet opens
+export function revConfigured(){ return REVIEWS_ADDRESS && !/^0x0+$/i.test(REVIEWS_ADDRESS); }
+export async function revCall(data){
+  return (await baseRpc("eth_call", [{ to: REVIEWS_ADDRESS, data }, "latest"], { emptyRetry: true })) || "0x";
+}
+// decode talliesOf's (uint32[] counts, uint32[] sums) back onto the appIds we
+// asked about - two parallel arrays, so the pairing is positional
+export function decodeTallies(hex, appIds){
+  const buf = (hex || "").replace(/^0x/, "");
+  if (buf.length < 128) return [];
+  const ru = (o) => Number(BigInt("0x" + buf.slice(o * 2, o * 2 + 64)));
+  const cOff = ru(0), sOff = ru(32);
+  const n = Math.min(ru(cOff), ru(sOff), appIds.length);
+  const out = [];
+  for (let i = 0; i < n; i++) out.push({ appId: appIds[i], count: ru(cOff + 32 + i * 32), sum: ru(sOff + 32 + i * 32) });
+  return out;
+}
+// every visible rating for a set of apps in ONE call - the store grid's read
+// (returns [{appId, count, sum}], count 0 = unrated)
+export async function revTallies(appIds){
+  if (!appIds.length) return [];
+  return decodeTallies(await revCall(encCall(REV_SEL.talliesOf, [{ t:"bytes32[]", v: appIds }])), appIds);
+}
+// one app's reviews, every page (an app with thousands of them is a good
+// problem; the list view pages client-side)
+export async function revGetReviews(appId){
+  const n = Number(hexBig(await revCall(encCall(REV_SEL.reviewCount, [{ t:"bytes32", v: appId }]))));
+  const out = []; const PAGE = 50;
+  for (let s = 0; s < n; s += PAGE)
+    out.push(...decodeStructArray(await revCall(encCall(REV_SEL.getReviewsPage,
+      [{ t:"bytes32", v: appId }, { t:"uint", v: s }, { t:"uint", v: PAGE }])), REVIEW_SCHEMA));
+  return out;
+}
+// does the contract accept this (app, deployment, wallet) triple? Asked BEFORE
+// the wallet signature, so a refusal is a sentence and not a reverted tx.
+export async function revCanReview(appId, deploymentId, who){
+  const r = await revCall(encCall(REV_SEL.canReview,
+    [{ t:"bytes32", v: appId }, { t:"bytes32", v: deploymentId }, { t:"addr", v: who }]));
+  return hexBig(r) === 1n;
+}
+export async function revOwner(){ const r = await revCall("0x" + REV_SEL.owner); return "0x" + (r || "").replace(/^0x/, "").slice(24).padStart(40, "0"); }
+
 /* ---- read side: JSON-RPC against a POOL of public Base RPCs ----
    Rotates to the next endpoint on transport errors and rate limits; a
    contract REVERT is deterministic and thrown immediately (retrying it 8x
@@ -162,20 +218,8 @@ export async function depCall(data){
 // contains dynamic strings, so the return is offset-prefixed like a dynamic type.
 export async function depGet(id){
   const schema = (await depSchemaRev()) >= 2 ? DEP_SCHEMA : DEP_SCHEMA_V1;
-  const hex = (await depCall("0x" + DEP_SEL.get + pad32(id.replace(/^0x/, "")))).replace(/^0x/, "");
-  if (hex.length < 64) return null;
-  const ru   = (o) => BigInt("0x" + hex.slice(o * 2, o * 2 + 64));
-  const ts   = Number(ru(0));                                 // offset to the tuple head
-  const obj = {};
-  schema.forEach((f, fi) => {
-    const w = ts + fi * 32;
-    if (f.t === "str"){ const so = ts + Number(ru(w)); const len = Number(ru(so)); obj[f.k] = hexToUtf8(hex.slice((so + 32) * 2, (so + 32) * 2 + len * 2)); }
-    else if (f.t === "uint") obj[f.k] = Number(ru(w));
-    else if (f.t === "addr") obj[f.k] = "0x" + hex.slice(w * 2 + 24, w * 2 + 64);
-    else if (f.t === "bool") obj[f.k] = ru(w) !== 0n;
-    else obj[f.k] = "0x" + hex.slice(w * 2, w * 2 + 64);      // bytes32
-  });
-  return Number(obj.createdAt) ? obj : null;
+  const obj = decodeStruct(await depCall("0x" + DEP_SEL.get + pad32(id.replace(/^0x/, ""))), schema);
+  return obj && Number(obj.createdAt) ? obj : null;           // a never-created id decodes to an all-zero record
 }
 // The contract's live full-card / full-node per-second prices (6dp USDC),
 // read once and cached: EVERY money estimate must come from these - the
@@ -227,11 +271,16 @@ export function encStr(s){
   for (const x of b) h += x.toString(16).padStart(2, "0");
   return { body: encUint(b.length) + h.padEnd(Math.ceil(h.length / 64) * 64, "0"), words: 1 + Math.ceil(b.length / 32) };
 }
-// args: [{t:'str'|'uint'|'bool'|'addr'|'bytes32', v}]; head (offsets/inline) then string tails.
+// args: [{t:'str'|'uint'|'bool'|'addr'|'bytes32'|'bytes32[]', v}]; head (offsets/inline) then dynamic tails.
 export function encCall(selector, args){
   let off = args.length * 32; const heads = [], bodies = [];
   for (const a of args){
     if (a.t === "str"){ const e = encStr(a.v); heads.push(encUint(off)); off += e.words * 32; bodies.push(e.body); }
+    else if (a.t === "bytes32[]"){
+      const items = a.v.map(x => pad32(String(x).replace(/^0x/, "")));
+      heads.push(encUint(off)); off += (1 + items.length) * 32;
+      bodies.push(encUint(items.length) + items.join(""));
+    }
     else if (a.t === "uint") heads.push(encUint(a.v));
     else if (a.t === "bool") heads.push(encUint(a.v ? 1 : 0));
     else heads.push(pad32(a.v.replace(/^0x/, "")));   // addr | bytes32
@@ -239,6 +288,26 @@ export function encCall(selector, args){
   return "0x" + selector + heads.join("") + bodies.join("");
 }
 export function hexToUtf8(h){ const b = new Uint8Array(h.length / 2); for (let i = 0; i < b.length; i++) b[i] = parseInt(h.substr(i * 2, 2), 16); return new TextDecoder().decode(b); }
+// decode ONE returned struct (a getter's `T memory`): the return is
+// offset-prefixed like any dynamic type, then the tuple's own head. Field
+// offsets inside a tuple are relative to the TUPLE's start, so a schema that
+// stops short of a contract's appended fields still decodes correctly.
+export function decodeStruct(hex, schema){
+  const buf = (hex || "").replace(/^0x/, "");
+  if (buf.length < 64) return null;
+  const ru = (o) => BigInt("0x" + buf.slice(o * 2, o * 2 + 64));
+  const ts = Number(ru(0));                                    // offset to the tuple head
+  const obj = {};
+  schema.forEach((f, fi) => {
+    const w = ts + fi * 32;
+    if (f.t === "str"){ const so = ts + Number(ru(w)); const len = Number(ru(so)); obj[f.k] = hexToUtf8(buf.slice((so + 32) * 2, (so + 32) * 2 + len * 2)); }
+    else if (f.t === "uint") obj[f.k] = Number(ru(w));
+    else if (f.t === "addr") obj[f.k] = "0x" + buf.slice(w * 2 + 24, w * 2 + 64);
+    else if (f.t === "bool") obj[f.k] = ru(w) !== 0n;
+    else obj[f.k] = "0x" + buf.slice(w * 2, w * 2 + 64);       // bytes32
+  });
+  return obj;
+}
 // decode a dynamic T[] where T is a tuple of str|uint|bool|addr|bytes32 fields (per `schema`).
 export function decodeStructArray(hex, schema){
   const buf = (hex || "").replace(/^0x/, "");

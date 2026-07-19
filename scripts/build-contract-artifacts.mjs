@@ -38,6 +38,7 @@ const DEFS = [
   { name: "EnclavePay",          bookKey: "enclavePay" },
   { name: "EnclaveDeployments",  bookKey: "deployments" },
   { name: "EnclaveFeatured",     bookKey: "featured" },
+  { name: "EnclaveReviews",      bookKey: "reviews" },
 ];
 
 function compile(name, viaIR) {
@@ -97,4 +98,4 @@ const banner = `/* ============================================================
 `;
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, banner + "export const CONTRACTS = " + JSON.stringify(artifacts, null, 2) + ";\n");
-console.log(`[artifacts] wrote ${path.relative(REPO, OUT)} (${(fs.statSync(OUT).size / 1024).toFixed(1)} KB) + 6 abi.json`);
+console.log(`[artifacts] wrote ${path.relative(REPO, OUT)} (${(fs.statSync(OUT).size / 1024).toFixed(1)} KB) + ${DEFS.length} abi.json`);

@@ -30,7 +30,7 @@ const ZERO = "0x" + "0".repeat(40);
 const KEY_RE = /^[A-Za-z0-9_-]{1,31}$/;
 
 /* the book panel's row order; other (custom) keys found on-chain follow */
-const BOOK_KEYS = ["registry", "deployments", "appCatalog", "enclavePay", "featured"];
+const BOOK_KEYS = ["registry", "deployments", "appCatalog", "enclavePay", "featured", "reviews"];
 
 const lc = (a) => (a || "").toLowerCase();
 const isZero = (a) => !a || /^0x0{40}$/i.test(a);
@@ -134,8 +134,9 @@ class AdminConsole extends EnclaveElement {
       S.book.entries = decodeBook(allHex);
       const E = S.book.entries;
 
-      const dep = E.deployments, cat = E.appCatalog, pay = E.enclavePay, feat = E.featured;
-      const dSel = CONTRACTS.EnclaveDeployments.sel, pSel = CONTRACTS.EnclavePay.sel, fSel = CONTRACTS.EnclaveFeatured.sel;
+      const dep = E.deployments, cat = E.appCatalog, pay = E.enclavePay, feat = E.featured, rev = E.reviews;
+      const dSel = CONTRACTS.EnclaveDeployments.sel, pSel = CONTRACTS.EnclavePay.sel, fSel = CONTRACTS.EnclaveFeatured.sel,
+            rSel = CONTRACTS.EnclaveReviews.sel;
       // the featured campaign list + the gateway's view counter (both soft:
       // a fresh deploy has no campaigns, the relay may not be updated yet)
       const readCampaigns = async () => {
@@ -145,7 +146,7 @@ class AdminConsole extends EnclaveElement {
           out.push(...decodeStructArray(await call(feat, encCall(fSel.getCampaignsPage, [{ t: "uint", v: s }, { t: "uint", v: 100 }])), CAMPAIGN_SCHEMA));
         return out;
       };
-      [S.dep, S.cat, S.pay, S.feat] = await Promise.all([
+      [S.dep, S.cat, S.pay, S.feat, S.rev] = await Promise.all([
         dep ? Promise.all([rdAddr(dep, dSel.owner), rdAddr(dep, dSel.payout), rdUint(dep, dSel.pricePerSec6), rdUint(dep, dSel.cpuPricePerSec6), rdUint(dep, dSel.leaseSec), rdAddr(dep, dSel.ethUsdFeed), rdAddrSoft(dep, dSel.pendingOwner), rdUintSoft(dep, dSel.maxGpuMilli), rdUintSoft(dep, dSel.maxFeePerSec6)])
               .then(([owner, payout, gpu, cpu, lease, feed, pending, maxGpu, maxFee]) => ({ addr: dep, owner, payout, gpu, cpu, lease, feed, pending, maxGpu, maxFee })) : null,
         cat ? Promise.all([rdAddr(cat, CONTRACTS.EnclaveAppCatalog.sel.owner), rdAddrSoft(cat, CONTRACTS.EnclaveAppCatalog.sel.pendingOwner), rdUintSoft(cat, CONTRACTS.EnclaveAppCatalog.sel.maxFeePerSec6)])
@@ -156,6 +157,8 @@ class AdminConsole extends EnclaveElement {
                             readCampaigns().catch(() => []),
                             fetch(DEFAULT_API_BASE + "/featured-views").then((r) => r.json()).then((j) => j.views || {}).catch(() => null)])
               .then(([owner, payout, maxBid, pending, campaigns, views]) => ({ addr: feat, owner, payout, maxBid, pending, campaigns, views })) : null,
+        rev ? Promise.all([rdAddr(rev, rSel.owner), rdAddrSoft(rev, rSel.pendingOwner), rdAddr(rev, rSel.deployments)])
+              .then(([owner, pending, ledger]) => ({ addr: rev, owner, pending, ledger })) : null,
       ]);
       this._note.hidden = true;
       this._paint();
@@ -185,6 +188,7 @@ class AdminConsole extends EnclaveElement {
     chip("catalog", S.cat && S.cat.owner);
     chip("pay", S.pay && S.pay.owner);
     chip("featured", S.feat && S.feat.owner);
+    chip("reviews", S.rev && S.rev.owner);
     el.innerHTML = `<span class="ac-who">signing as <b class="ac-addr">${esc(Enclave.address)}</b></span>${chips.join("")}
       <button class="btn btn-sm ac-refresh" data-refresh>↻ Refresh</button>`;
     const r = el.querySelector("[data-refresh]");
@@ -284,6 +288,20 @@ class AdminConsole extends EnclaveElement {
         (rows || `<div class="ac-row"><div class="ac-lbl">Campaigns</div><div class="ac-cur"><span class="dim">none yet - publishers open them from the Apps page ("Promote your app")</span></div><span></span><span></span><span></span></div>`)));
     }
 
+    /* -- reviews -- */
+    if (S.rev) {
+      const r = S.rev;
+      // the gate that decides who may review reads THIS pointer, not the
+      // address book: a redeployed ledger that isn't mirrored here silently
+      // stops accepting every new review (the old ledger has no new records)
+      const stale = S.dep && lc(r.ledger) !== lc(S.dep.addr);
+      parts.push(sec(`EnclaveReviews · ${link(r.addr)}`,
+        `1-5 star ratings with comments. A review is only accepted from a wallet with a FUNDED deployment of that app, checked against the ledger below - so ratings come from people who ran the app. Per-review moderation (hide / unhide) lives on the <a href="apps">Apps page</a> when you browse an app with the owner wallet; it isn't duplicated here. Hiding drops a review from the average and keeps its bytes on-chain. Owner ${mono(r.owner)}.`,
+        this._row("Deployments ledger <code>setDeployments</code>",
+          `${mono(r.ledger)}${stale ? ` <b class="ac-warn">≠ book (${esc(short(S.dep.addr))}) - new reviews are being refused</b>` : ""}`,
+          "rev-deployments", { owner: r.owner, placeholder: (S.dep && S.dep.addr) || "0x…" })));
+    }
+
     /* -- catalog pointer -- */
     if (S.cat) {
       parts.push(sec(`EnclaveAppCatalog · ${link(S.cat.addr)}`,
@@ -352,6 +370,7 @@ class AdminConsole extends EnclaveElement {
         S.cat && { label: "EnclaveAppCatalog", fn: "transferOwnership", to: S.cat.addr, cur: S.cat.owner, pending: S.cat.pending, sel: cSel.transferOwnership, accSel: cSel.acceptOwnership, act: "own-cat" },
         S.pay && { label: "EnclavePay", fn: "setOwner", to: S.pay.addr, cur: S.pay.owner, pending: S.pay.pending, sel: pSel.setOwner, accSel: pSel.acceptOwnership, act: "own-pay" },
         S.feat && { label: "EnclaveFeatured", fn: "transferOwnership", to: S.feat.addr, cur: S.feat.owner, pending: S.feat.pending, sel: CONTRACTS.EnclaveFeatured.sel.transferOwnership, accSel: CONTRACTS.EnclaveFeatured.sel.acceptOwnership, act: "own-feat" },
+        S.rev && { label: "EnclaveReviews", fn: "transferOwnership", to: S.rev.addr, cur: S.rev.owner, pending: S.rev.pending, sel: CONTRACTS.EnclaveReviews.sel.transferOwnership, accSel: CONTRACTS.EnclaveReviews.sel.acceptOwnership, act: "own-rev" },
       ].filter(Boolean);
       this._ownRows = Object.fromEntries(rows.map((r) => [r.act, r]));
       const inner = rows.map((r) => {
@@ -488,7 +507,7 @@ class AdminConsole extends EnclaveElement {
         if (!need(/^\d+$/.test(v) && +v >= 60 && +v <= 86400, "lease must be 60…86400 seconds")) return;
         return void this._tx(S.dep.addr, encCall(dSel.setLeaseSec, [{ t: "uint", v }]), `setLeaseSec(${v})`, panelStatus, true);
       }
-      if (act === "dep-feed" || act === "dep-payout" || act === "pay-payout" || act === "feat-payout") {
+      if (act === "dep-feed" || act === "dep-payout" || act === "pay-payout" || act === "feat-payout" || act === "rev-deployments") {
         const v = inputFor(act);
         if (!need(ADDR_RE.test(v), "enter a 0x… address (40 hex)")) return;
         if (act !== "dep-feed" && !need(!isZero(v), "the zero address is rejected by the contract")) return;
@@ -497,6 +516,7 @@ class AdminConsole extends EnclaveElement {
           "dep-payout": [S.dep.addr, dSel.setPayout, "setPayout"],
           "pay-payout": [S.pay.addr, CONTRACTS.EnclavePay.sel.setPayout, "setPayout"],
           "feat-payout": [S.feat && S.feat.addr, CONTRACTS.EnclaveFeatured.sel.setPayout, "setPayout"],
+          "rev-deployments": [S.rev && S.rev.addr, CONTRACTS.EnclaveReviews.sel.setDeployments, "setDeployments"],
         };
         const [to, sel, fn] = map[act];
         return void this._tx(to, encCall(sel, [{ t: "addr", v }]), `${fn}(${short(v)})`, panelStatus, true);

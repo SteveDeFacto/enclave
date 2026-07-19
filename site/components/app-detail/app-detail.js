@@ -15,6 +15,7 @@ import { IPFS_GATEWAY, IPFS_IMG_GATEWAY } from "../../js/core/config.js";
 import { Enclave } from "../../js/core/api.js";
 import { APPROVAL, catVersionFee } from "../../js/core/chain.js";
 import { STORE, selIdx, appOfficial, mediaOf, verVisible, visibleVerIdxs } from "../../js/core/catalog.js";
+import { tallyOf, avgOf, starsHtml } from "../../js/core/reviews.js";
 import { minPctsOf } from "../../js/core/pricing.js";
 
 class AppDetail extends EnclaveElement {
@@ -59,10 +60,16 @@ class AppDetail extends EnclaveElement {
     this.querySelector(".app-badges").innerHTML = officialBadge + badge + apBadge + delistBadge;
 
     const nVis = visibleVerIdxs(app).length;   // yanked/rejected count only for the publisher + owner
+    // the rating rides in the meta line and links to the reviews block below
+    // (unrated apps show nothing - see <c-app-reviews>)
+    const t = tallyOf(app.appId), avg = avgOf(app.appId);
+    const rating = avg == null ? '' :
+      '<span>·</span><a class="appd-rating" href="#revsHead">' + starsHtml(avg)
+      + '<span>' + avg.toFixed(1) + '</span><span>(' + t.count + ')</span></a>';
     this.querySelector(".appd-meta").innerHTML =
       '<span title="slug (stable id in the publisher’s namespace)">' + esc(app.slug) + '</span><span>·</span>'
       + '<span title="publisher (msg.sender)">' + short(app.publisher) + '</span><span>·</span>'
-      + '<span>' + nVis + (nVis === 1 ? ' version' : ' versions') + '</span>';
+      + '<span>' + nVis + (nVis === 1 ? ' version' : ' versions') + '</span>' + rating;
 
     this.querySelector(".appd-desc").innerHTML = app.description ? esc(app.description) : '<span class="dim">no description</span>';
 

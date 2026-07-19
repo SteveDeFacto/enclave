@@ -40,6 +40,7 @@
 .ac-row:first-of-type { border-top: 0; }
 .ac-lbl { color: var(--text-muted); }
 .ac-hint { display: block; color: var(--text-dim); font-size: 11px; font-family: var(--font-mono); }
+.ac-warn { color: var(--amber); font-weight: 600; }
 .ac-cur { min-width: 0; }
 .ac-live { font-family: var(--font-mono); font-size: 11.5px; color: var(--jade-2); white-space: nowrap; }
 

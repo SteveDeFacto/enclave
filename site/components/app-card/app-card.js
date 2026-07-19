@@ -14,6 +14,7 @@ import { IPFS_IMG_GATEWAY } from "../../js/core/config.js";
 import { Enclave } from "../../js/core/api.js";
 import { APPROVAL } from "../../js/core/chain.js";
 import { STORE, selIdx, appOfficial, appMedia, placeholderArt } from "../../js/core/catalog.js";
+import { tallyOf, avgOf, starsHtml } from "../../js/core/reviews.js";
 
 class AppCard extends EnclaveElement {
   static properties = { app: null };
@@ -58,6 +59,18 @@ class AppCard extends EnclaveElement {
     const delistBadge = app.active ? ''
       : '<span class="app-badge del" title="Delisted: hidden from the public store; only you (its publisher) and the catalog owner see it.">delisted</span>';
     this.querySelector(".app-badges").innerHTML = officialBadge + badge + apBadge + delistBadge;
+
+    // rating - only once someone has rated it. An unrated app shows nothing
+    // rather than an empty five stars, which reads as "rated, and badly"
+    // (tallies arrive async from EnclaveReviews; the grid repaints on
+    // `enclave:reviews`, so this fills in without a card rebuild)
+    const rate = this.querySelector(".app-rating"), t = tallyOf(app.appId), avg = avgOf(app.appId);
+    if (avg == null){ rate.hidden = true; rate.innerHTML = ""; }
+    else {
+      rate.hidden = false;
+      rate.innerHTML = starsHtml(avg) + '<span class="app-rating-n">' + avg.toFixed(1) + '</span>'
+        + '<span class="app-rating-c">(' + t.count + ')</span>';
+    }
 
     this.querySelector(".app-desc").innerHTML = app.description ? esc(app.description) : '<span class="dim">no description</span>';
 

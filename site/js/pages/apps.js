@@ -10,11 +10,13 @@ import "../../components/toast/toast.js";
 import "../../components/section-head/section-head.js";
 import "../../components/app-card/app-card.js";
 import "../../components/app-detail/app-detail.js";
+import "../../components/app-reviews/app-reviews.js";
 import { $, $$, esc, short, blen, fmtDur, showToast, on, tosAccepted, setTosAccepted } from "../core/util.js";
-import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, FEATURED_ADDRESS, USDC_BASE, IPFS_UPLOAD_URL, IPFS_IMAGE_UPLOAD_URL, IPFS_IMG_GATEWAY, MAX_WASM_MB, MAX_WASM_BYTES, MAX_IMAGE_MB, MAX_IMAGE_BYTES, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
+import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, FEATURED_ADDRESS, REVIEWS_ADDRESS, USDC_BASE, IPFS_UPLOAD_URL, IPFS_IMAGE_UPLOAD_URL, IPFS_IMG_GATEWAY, MAX_WASM_MB, MAX_WASM_BYTES, MAX_IMAGE_MB, MAX_IMAGE_BYTES, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
-import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, depMaxGpuMilli, rate6Of, waitReceipt, catSchemaRev, catMaxFeePerSec6, catVersionFee, featConfigured, featMaxBid, FEAT_SEL } from "../core/chain.js";
+import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, depMaxGpuMilli, rate6Of, waitReceipt, catSchemaRev, catMaxFeePerSec6, catVersionFee, featConfigured, featMaxBid, FEAT_SEL, revConfigured, REV_SEL } from "../core/chain.js";
 import { FEATURED, loadCampaigns, pickFeatured, beaconView } from "../core/featured.js";
+import { loadTallies, loadReviews, confirmReceipt } from "../core/reviews.js";
 import { payForRuntime } from "../core/fund.js";
 import { connectWallet, authenticate, ensureBaseChain, sendTx, usdcBalanceOf, openBuyModal } from "../core/wallet.js";
 import { STORE, loadCatalog, selIdx, defaultIdx, appVerified, appPrivileged, visibleVerIdxs, validPortsCsv, REF_CACHE, PORTS_CACHE, SPECS_CACHE, specOf, CONFIG_CACHE, catalogRef, mediaOf, appMedia, stripMedia, withMedia } from "../core/catalog.js";
@@ -92,11 +94,15 @@ function renderApps(){
   const pages = Math.max(1, Math.ceil(apps.length / pageSize));
   storePage = Math.min(Math.max(storePage, 0), pages - 1);
   renderPager(apps.length, pages);
-  grid.replaceChildren(...apps.slice(storePage * pageSize, (storePage + 1) * pageSize).map(a => {
+  const page = apps.slice(storePage * pageSize, (storePage + 1) * pageSize);
+  grid.replaceChildren(...page.map(a => {
     const el = document.createElement("c-app-card");
     el.app = a;
     return el;
   }));
+  // ratings for exactly the tiles on screen - one eth_call for the page
+  // (`enclave:reviews` repaints them when it lands)
+  loadTallies(page.map(a => a.appId));
 }
 // the page size tracks the responsive column count - a resize that changes it
 // re-slices the current page (module-load-once; inert off the store view)
@@ -824,6 +830,60 @@ const setVerifiedTx = (appId, idx, v) => catTx(encCall(CAT_SEL.setVerified, [{t:
 // owner-only deploy gate: the wallet signature on this tx IS the approval/rejection
 const setApprovalTx = (appId, idx, st) => catTx(encCall(CAT_SEL.setApproval, [{t:"bytes32",v:appId},{t:"uint",v:idx},{t:"uint",v:st}]), st === APPROVAL.approved ? "approving" : "rejecting");
 
+/* ---- reviews (EnclaveReviews) ----
+   Same shape as catTx, against the reviews contract: the wallet signature IS
+   the review. The block re-reads afterwards so the average moves without a
+   page refresh. */
+async function revTx(data, verb){
+  if (!Enclave.provider) await connectWallet();
+  await ensureCatalogChain();
+  const hash = await sendTx(REVIEWS_ADDRESS, data);
+  showToast(verb + " · " + hash.slice(0, 12) + "…");
+  await waitReceipt(hash);
+  return hash;
+}
+async function postReviewTx(block, app, stars, body, deploymentId){
+  block.setBusy(true);
+  try {
+    if (!Enclave.provider) await connectWallet();
+    // the chain is the authority on eligibility: ask it before the wallet
+    // opens, so a stale receipt reads as a sentence, not a reverted tx
+    if (!(await confirmReceipt(app.appId, deploymentId))){
+      block.recheckReceipt();
+      throw new EnclaveError("That deployment no longer proves you ran this app - reload and try again.", 0);
+    }
+    await revTx(encCall(REV_SEL.post, [{ t:"bytes32", v: app.appId }, { t:"bytes32", v: deploymentId },
+                                       { t:"uint", v: stars }, { t:"str", v: body || "" }]), "posting review");
+    block.clearDraft();
+    await loadReviews(app.appId, true);
+    showToast("review posted · thanks");
+  } catch(e){
+    showToast(e && (e.code === 4001 || /reject|denied|declin|cancell/i.test(e.message || ""))
+      ? "review canceled: you declined the wallet signature." : (e.message || String(e)));
+  }
+  block.setBusy(false);
+}
+async function hideReviewTx(block, app, reviewer, hidden){
+  block.setBusy(true);
+  try {
+    await revTx(encCall(REV_SEL.setHidden, [{ t:"bytes32", v: app.appId }, { t:"addr", v: reviewer }, { t:"bool", v: hidden }]),
+      hidden ? "hiding review" : "unhiding review");
+    await loadReviews(app.appId, true);
+  } catch(e){ showToast(e.message || String(e)); }
+  block.setBusy(false);
+}
+function onReviewAction(e){
+  const { act, app, stars, body, deploymentId, reviewer, hidden } = e.detail;
+  const block = e.target.closest("c-app-reviews");
+  if (act === "connect"){ connectWallet().then(() => block && block.recheckReceipt()).catch(err => showToast(err.message || String(err))); return; }
+  if (!block || !app) return;
+  if (act === "post") postReviewTx(block, app, stars, body, deploymentId);
+  else if (act === "hide" || act === "unhide"){
+    if (act === "hide" && !confirm("Hide this review? It stays on-chain but drops out of the app's rating - use this for abuse, not for criticism.")) return;
+    hideReviewTx(block, app, reviewer, hidden);
+  }
+}
+
 function resetPublish(){
   pubSeq++;                                                  // orphan any in-flight upload's callbacks
   if (pubXhr){ try { pubXhr.abort(); } catch(_){} pubXhr = null; }
@@ -943,6 +1003,13 @@ function renderDetail(appId){
   let el = host.querySelector("c-app-detail");
   if (!el){ host.innerHTML = ""; el = document.createElement("c-app-detail"); host.appendChild(el); }
   el.app = app;
+  // the ratings block is a SIBLING of the detail card, not part of it: it owns
+  // its own reads (the reviews themselves) and its own lifecycle
+  if (revConfigured()){
+    let rv = host.querySelector("c-app-reviews");
+    if (!rv){ rv = document.createElement("c-app-reviews"); host.appendChild(rv); }
+    rv.app = app;
+  }
 }
 /* pick the renderer for whichever view is live (grid vs a single app's page),
    so catalog/wallet refreshes repaint the right one */
@@ -1010,7 +1077,8 @@ function initStore(){
   // wallet-tx / navigation actions the cards + detail page bubble up (data
   // down, events up) - the grid tile opens the page, the page carries the rest
   grid.addEventListener("card-action", onCardAction);
-  const det = $("#appDetailView"); if (det) det.addEventListener("card-action", onCardAction);
+  const det = $("#appDetailView");
+  if (det){ det.addEventListener("card-action", onCardAction); det.addEventListener("review-action", onReviewAction); }
   const feat = $("#featuredSlot"); if (feat) feat.addEventListener("card-action", onCardAction);
 }
 function onCardAction(e){
@@ -1044,6 +1112,9 @@ on("enclave:catalog", (d) => {
 });
 on("enclave:wallet", () => { if (STORE.loaded) renderActiveView(); });   // publisher/owner buttons follow the connected wallet
 on("enclave:featured", () => { if (STORE.loaded) renderFeatured(); });   // campaign reads land after the catalog
+// ratings land after the grid paints (and after a review tx) - repaint the
+// tiles/detail so the stars appear without a navigation
+on("enclave:reviews", (d) => { if (d.type !== "error" && STORE.loaded) renderActiveView(); });
 // (the subscriptions are module-load-once; renderApps/renderFeatured null-guard
 // their mounts, so they're inert while another page's <main> is mounted)
 

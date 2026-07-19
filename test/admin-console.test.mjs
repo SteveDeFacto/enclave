@@ -240,15 +240,15 @@ test("artifacts stay in sync with contracts/*.sol (regenerate check)", () => {
   // cheap staleness guard: every contract source is older-or-equal than the
   // generated module, or the build regenerates it anyway (build-site.mjs runs
   // the artifact builder first). Here we just assert the module carries all
-  // six contracts with bytecode + the five book keys.
+  // seven contracts with bytecode + the six book keys.
   assert.deepEqual(Object.keys(CONTRACTS).sort(), [
     "EnclaveAddressBook", "EnclaveAppCatalog", "EnclaveDeployments",
-    "EnclaveFeatured", "EnclavePay", "EnclaveRegistry"]);
+    "EnclaveFeatured", "EnclavePay", "EnclaveRegistry", "EnclaveReviews"]);
   for (const [name, c] of Object.entries(CONTRACTS)) {
     assert.match(c.bytecode, /^0x[0-9a-f]{100,}$/i, name + " bytecode");
     for (const a of c.ctor) assert.equal(a.type, "address", name + " ctor args are all addresses (the console's deploy encoder assumes this)");
   }
   assert.deepEqual(
     Object.values(CONTRACTS).map((c) => c.bookKey).filter(Boolean).sort(),
-    ["appCatalog", "deployments", "enclavePay", "featured", "registry"]);
+    ["appCatalog", "deployments", "enclavePay", "featured", "registry", "reviews"]);
 });

@@ -58,6 +58,7 @@ const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const ADDR = {
   deployments: (process.env.DEPLOYMENTS_ADDRESS || "0x0A7dE5D205c10B812AbaF0b89f3A243466bCEe01").trim(),
   appCatalog: (process.env.APP_CATALOG_ADDRESS || "0xaB0462E55c18E295A221e4Eaa8738F25eB0696D7").trim(),
+  reviews: (process.env.REVIEWS_ADDRESS || "").trim(),     // "" until EnclaveReviews is in the address book
 };
 const API_BASE = "https://api.enclave.host";
 const APP_DOMAIN = "app.enclave.host";
@@ -81,7 +82,7 @@ const BOOK_ABI = [{ type: "function", name: "addr", stateMutability: "view",
 let _bookAt = 0;
 async function addresses() {
   if (!BOOK_ADDRESS || Date.now() - _bookAt < 600_000) return ADDR;
-  for (const [key, field] of [["deployments", "deployments"], ["appCatalog", "appCatalog"]]) {
+  for (const [key, field] of [["deployments", "deployments"], ["appCatalog", "appCatalog"], ["reviews", "reviews"]]) {
     try {
       const a = await read(BOOK_ADDRESS, BOOK_ABI, "addr", [bookKey(key)]);
       if (a && !/^0x0{40}$/i.test(a)) ADDR[field] = a;
@@ -213,6 +214,30 @@ async function readVersions(appId, count) {
   const versions = await read(appCatalog, abi, "getVersionsPage", [appId, 0n, BigInt(Math.max(1, Number(count)))]);
   return versions.map((v) => ({ config: "", ...v }));
 }
+// ---- EnclaveReviews (1-5 stars + comments, gated on a funded deployment) ------
+const REVIEW_TUPLE = [
+  { name: "reviewer", type: "address" }, { name: "stars", type: "uint8" }, { name: "hidden", type: "bool" },
+  { name: "createdAt", type: "uint64" }, { name: "updatedAt", type: "uint64" },
+  { name: "deployment", type: "bytes32" }, { name: "body", type: "string" },
+];
+const REVIEWS_ABI = [
+  { type: "function", name: "reviewCount", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "getReviewsPage", stateMutability: "view",
+    inputs: [{ type: "bytes32" }, { type: "uint256" }, { type: "uint256" }],
+    outputs: [{ type: "tuple[]", components: REVIEW_TUPLE }] },
+  { type: "function", name: "tallyOf", stateMutability: "view", inputs: [{ type: "bytes32" }],
+    outputs: [{ type: "uint32" }, { type: "uint32" }] },
+  { type: "function", name: "canReview", stateMutability: "view",
+    inputs: [{ type: "bytes32" }, { type: "bytes32" }, { type: "address" }], outputs: [{ type: "bool" }] },
+  { type: "function", name: "post", stateMutability: "nonpayable",
+    inputs: [{ type: "bytes32" }, { type: "bytes32" }, { type: "uint8" }, { type: "string" }], outputs: [] },
+];
+async function reviewsAddress() {
+  const { reviews } = await addresses();
+  if (!reviews || /^0x0{40}$/i.test(reviews))
+    throw new Error("reviews aren't live on this deployment yet (no EnclaveReviews in the address book)");
+  return reviews;
+}
 async function versionFee6(appId, index) {
   if ((await catRev()) < 5) return 0n;
   const { appCatalog } = await addresses();
@@ -222,6 +247,18 @@ async function versionFee6(appId, index) {
 // [publisher/]slug[:version] -> the on-chain version RECORD (same resolution +
 // approval gate as the CLI: runners re-check on their side, this fails fast
 // with a readable reason; CIDs are refused — a CID names bytes, not a version)
+// [publisher/]slug -> the app RECORD (no version, no approval gate): what
+// get_app and the review tools need, where resolveAppRef's version resolution
+// would be wrong (a review is about the app, not one release).
+async function resolveApp(input) {
+  const m = String(input).match(/^(?:([0-9a-zA-Z.]+|0x[0-9a-fA-F]{40})\/)?([a-z0-9][a-z0-9-]*)$/);
+  if (!m) throw new Error(`"${input}" is not [publisher/]slug`);
+  let apps = (await catalogApps()).filter((a) => a.slug === m[2]);
+  if (m[1]) apps = apps.filter((a) => a.publisher.toLowerCase() === m[1].toLowerCase());
+  if (!apps.length) throw new Error(`no catalog app with slug "${m[2]}"`);
+  if (apps.length > 1) throw new Error(`slug "${m[2]}" has ${apps.length} publishers; use <publisher>/${m[2]}`);
+  return apps[0];
+}
 async function resolveAppRef(input) {
   if (/^ipfs:\/\//i.test(input) || /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|baf[a-z0-9]{20,})$/.test(String(input)))
     throw new Error("CIDs can't deploy: a CID names bytes, not a version. Use [publisher/]slug[:version] from the catalog (list_apps).");
@@ -487,13 +524,7 @@ const TOOLS = [
     description: "One catalog app with all its versions: approval status, resource specs, ports, per-version config, publisher fee.",
     inputSchema: S({ app: { type: "string", description: "[publisher/]slug (no version)" } }, ["app"]),
     handler: async ({ app }) => {
-      const m = String(app).match(/^(?:([0-9a-zA-Z.]+|0x[0-9a-fA-F]{40})\/)?([a-z0-9][a-z0-9-]*)$/);
-      if (!m) throw new Error(`"${app}" is not [publisher/]slug`);
-      let apps = (await catalogApps()).filter((a) => a.slug === m[2]);
-      if (m[1]) apps = apps.filter((a) => a.publisher.toLowerCase() === m[1].toLowerCase());
-      if (!apps.length) throw new Error(`no catalog app with slug "${m[2]}"`);
-      if (apps.length > 1) throw new Error(`slug "${m[2]}" has ${apps.length} publishers; use <publisher>/${m[2]}`);
-      const a = apps[0];
+      const a = await resolveApp(app);
       const versions = await readVersions(a.appId, a.versionCount);
       const fees = await Promise.all(versions.map((_, i) => versionFee6(a.appId, i).catch(() => 0n)));
       return {
@@ -504,6 +535,33 @@ const TOOLS = [
           yanked: v.yanked, ports: v.ports, config: v.config || "",
           specs: { vramMb: Number(v.vramMb), gpuGflops: Number(v.gpuGflops), memMb: Number(v.memMb), cpuGflops: Number(v.cpuGflops) },
           publisherFeePerHour: fees[i] > 0n ? usdHr(fees[i]) : null,
+        })),
+      };
+    },
+  },
+  {
+    name: "app_reviews",
+    description: "An app's on-chain ratings: the average, the star distribution, and the reviews themselves (1-5 stars with comments). Reviews come only from wallets that funded a deployment of the app, so the sample is people who ran it. Hidden (moderated) reviews are excluded from both the list and the average.",
+    inputSchema: S({ app: { type: "string", description: "[publisher/]slug (no version)" },
+                     limit: { type: "number", description: "Max reviews to return, newest first (default 20)" } }, ["app"]),
+    handler: async ({ app, limit }) => {
+      const a = await resolveApp(app);
+      const reviews = await reviewsAddress();
+      const n = Number(await read(reviews, REVIEWS_ABI, "reviewCount", [a.appId]));
+      const all = [];
+      for (let s = 0; s < n; s += 50)
+        all.push(...await read(reviews, REVIEWS_ABI, "getReviewsPage", [a.appId, BigInt(s), 50n]));
+      const visible = all.filter((r) => !r.hidden).sort((x, y) => Number(y.updatedAt) - Number(x.updatedAt));
+      const count = visible.length, sum = visible.reduce((t, r) => t + Number(r.stars), 0);
+      return {
+        app: `${a.slug}`, appId: a.appId,
+        average: count ? Number((sum / count).toFixed(2)) : null,
+        count,
+        distribution: Object.fromEntries([5, 4, 3, 2, 1].map((s) => [s, visible.filter((r) => Number(r.stars) === s).length])),
+        reviews: visible.slice(0, Math.max(1, Math.min(Number(limit) || 20, 100))).map((r) => ({
+          reviewer: r.reviewer, stars: Number(r.stars), body: r.body,
+          postedAt: new Date(Number(r.createdAt) * 1000).toISOString(),
+          edited: Number(r.updatedAt) > Number(r.createdAt),
         })),
       };
     },
@@ -806,6 +864,48 @@ const TOOLS = [
           description: a.description || "", version, cid: a.cid, res, ports: a.ports || "",
           config: a.config || "", feePerSec6 })],
         next: `sign+send with ${a.publisher} (the publisher identity). Approval starts pending; deploy once approved: plan_deploy { app: "${a.slug}:${version}" }`,
+      };
+    },
+  },
+  {
+    name: "build_review",
+    description: "Unsigned transaction posting a 1-5 star review (with an optional comment) for a catalog app. Only a wallet that FUNDED a deployment of that app may review it: the tx names one of the reviewer's deployments as the receipt and the contract verifies it. This tool finds that deployment from the reviewer's ledger rows, or takes an explicit one. Posting again from the same wallet replaces that wallet's review.",
+    inputSchema: S({
+      app: { type: "string", description: "[publisher/]slug (no version) - a review is about the app, not one release" },
+      reviewer: { type: "string", description: "The wallet that will sign (must have a funded deployment of the app)" },
+      stars: { type: "number", description: "1..5" },
+      comment: { type: "string", description: "Optional review text (max 2000 bytes)" },
+      deployment: { type: "string", description: "Receipt override: a specific deployment id of yours (default: your highest-funded one for this app)" },
+    }, ["app", "reviewer", "stars"]),
+    handler: async ({ app, reviewer, stars, comment, deployment }) => {
+      if (!isAddr(reviewer)) throw new Error("reviewer must be a 0x… wallet address");
+      const n = Math.round(Number(stars));
+      if (!(n >= 1 && n <= 5)) throw new Error("stars must be 1..5");
+      if (comment && Buffer.byteLength(comment) > 2000) throw new Error("comment too long (max 2000 bytes)");
+      const a = await resolveApp(app);
+      const reviews = await reviewsAddress();
+
+      let receipt = deployment ? await resolveFullId(deployment) : null;
+      if (!receipt) {
+        // the receipt hunt, same rule the site applies: my deployments of THIS
+        // app that money actually went into (paidUsdc = balance + spent)
+        const rows = await self("GET", `/v1/deployments?owner=${reviewer}`).catch(() => []);
+        const list = (Array.isArray(rows) ? rows : rows.deployments || [])
+          .filter((d) => String(d?.image?.reference || "").toLowerCase().startsWith(`catalog://${a.appId.toLowerCase()}/`))
+          .filter((d) => parseFloat(d.paidUsdc || "0") > 0)
+          .sort((x, y) => parseFloat(y.paidUsdc || "0") - parseFloat(x.paidUsdc || "0"));
+        if (!list.length)
+          throw new Error(`${reviewer} has no funded deployment of ${a.slug}; only wallets that ran the app can review it (plan_deploy -> build_fund)`);
+        receipt = list[0].id;
+      }
+      // ask the contract, not our own reasoning - it is the gate that matters
+      if (!await read(reviews, REVIEWS_ABI, "canReview", [a.appId, receipt, reviewer]))
+        throw new Error(`the contract refuses ${receipt} as proof that ${reviewer} ran ${a.slug} (wrong owner, wrong app, or never funded)`);
+      return {
+        app: a.slug, appId: a.appId, stars: n, receipt,
+        transactions: [tx(reviews, encodeFunctionData({ abi: REVIEWS_ABI, functionName: "post",
+          args: [a.appId, receipt, n, comment || ""] }), 0n, `EnclaveReviews.post(${a.slug}, ${n}★)`)],
+        next: `sign+send with ${reviewer}; read it back with app_reviews { app: "${a.slug}" }`,
       };
     },
   },

@@ -19,6 +19,8 @@ c-app-detail{display:block;}
 .appd-titlerow .app-badges{justify-content:flex-end;margin-top:4px;}
 .appd-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-family:var(--font-mono);font-size:.74rem;color:var(--text-dim);}
 .appd-desc{margin:0;font-size:.98rem;color:var(--text-muted);line-height:1.6;}
+.appd-rating{display:inline-flex;align-items:center;gap:6px;color:var(--text-dim);}
+.appd-rating:hover{color:var(--text);}
 
 .appd .app-verrow{gap:10px;}
 .appd .app-actions{margin-top:2px;}

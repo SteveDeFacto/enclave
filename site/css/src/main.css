@@ -79,6 +79,7 @@
 @import "../../components/deployments/deployments.css" layer(components);
 @import "../../components/app-card/app-card.css" layer(components);
 @import "../../components/app-detail/app-detail.css" layer(components);
+@import "../../components/app-reviews/app-reviews.css" layer(components);
 @import "../../components/api-reference/api-reference.css" layer(components);
 @import "../../components/admin-console/admin-console.css" layer(components);
 
