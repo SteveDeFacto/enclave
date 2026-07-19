@@ -781,6 +781,20 @@ async function cmdStop(rest) {
         : "deactivated on-chain; no enclave was serving it");
 }
 
+// Restart in place: the enclave stops the app instance and relaunches it on
+// the same version, lease and balance - a pure API action (no wallet tx; SIWE
+// auth only). The remedy for a wedged instance the crash detector can't see:
+// the process answers, it just can't do its job (e.g. it booted before its
+// model volume finished mounting and can never load the model).
+async function cmdRestart(rest) {
+  const account = loadKey();
+  if (!rest[0]) throw new Error("usage: enclave restart <id>");
+  const id = await resolveId(rest[0], account);
+  const r = await api("POST", `/v1/deployments/${id}/restart`, { auth: account });
+  if (opt.json) return jout(r);
+  say(`${r.status}${r.note ? ` (${r.note})` : ""}`);
+}
+
 // The other half of stop: setActive(true) re-queues the work item (its balance
 // never left the record), then one claim-hint nudges the fleet so the relaunch
 // doesn't wait for the next sweep. The app relaunches FRESH from its published
@@ -1248,6 +1262,9 @@ deployments
   logs <id> [-f] [--tail N]  the app's stdout/stderr (-f polls)
   fund <id> --usdc 5|--eth 0.002   top up runtime by the second
   attest [<id>]              fetch attestation + verify it LOCALLY; nonzero exit on FAIL
+  restart <id>               stop + relaunch the app in place (same version,
+                             endpoint and balance; app state is ephemeral) - the
+                             fix for a wedged instance, no wallet tx needed
   stop <id>                  suspend: setActive(false) on-chain + DELETE the instance
                              (the remaining balance stays on the deployment)
   resume <id>                setActive(true): re-queue a stopped deployment; it
@@ -1284,7 +1301,8 @@ ENCLAVE_KEY overrides the key file. Auth is SIWE; keys never leave this machine.
 const COMMANDS = {
   key: cmdKey, whoami: cmdWhoami, deploy: cmdDeploy, ls: cmdLs, list: cmdLs,
   status: cmdStatus, logs: cmdLogs, fund: cmdFund, attest: cmdAttest,
-  stop: cmdStop, suspend: cmdStop, resume: cmdResume, upgrade: cmdUpgrade, "set-version": cmdUpgrade,
+  restart: cmdRestart, stop: cmdStop, suspend: cmdStop, resume: cmdResume,
+  upgrade: cmdUpgrade, "set-version": cmdUpgrade,
   publish: cmdPublish, apps: cmdApps,
   pricing: cmdPricing, availability: cmdAvailability, gpu: cmdGpu, account: cmdAccount,
   encvol: cmdEncvol,

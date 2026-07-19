@@ -332,6 +332,7 @@ class Deployments extends EnclaveElement {
             '<button class="btn btn-sm enc-outbtn" data-id="' + esc(d.id) + '" aria-expanded="false">Output</button>' +
             (live ? '<button class="btn btn-sm enc-fundbtn" data-id="' + esc(d.id) + '" aria-expanded="false" title="Add runtime - a gas-free USDC signature credits the deployment’s on-chain balance">Top up</button>' : '') +
             (onchain && (live || resumable) ? '<button class="btn btn-sm enc-upgbtn" data-id="' + esc(d.id) + '" aria-expanded="false" title="Switch to another approved version of this app - paid time carries over; the app restarts in place on the new version">Version</button>' : '') +
+            (st === "running" ? '<button class="btn btn-sm enc-restart" data-id="' + esc(d.id) + '" title="Stop and relaunch the app in place - same version, endpoint and balance; app state is ephemeral. The fix for a wedged instance (e.g. a model that never loaded at boot)">Restart</button>' : '') +
             '<button class="btn btn-sm enc-verify" data-id="' + esc(d.id) + '" aria-expanded="false">Verify</button>' +
             (resumable ? '<button class="btn btn-sm enc-resume" data-id="' + esc(d.id) + '" title="Put it back on the queue - an enclave re-claims it and the app relaunches fresh from its published version, spending the remaining balance">Resume</button>' : '') +
             (live ? (onchain
@@ -361,6 +362,7 @@ class Deployments extends EnclaveElement {
     $$(".enc-verify", body).forEach(b => b.addEventListener("click", () => this._verify(b.dataset.id, b)));
     $$(".enc-kill", body).forEach(b => b.addEventListener("click", () => this._kill(b.dataset.id, b)));
     $$(".enc-resume", body).forEach(b => b.addEventListener("click", () => this._resume(b.dataset.id, b)));
+    $$(".enc-restart", body).forEach(b => b.addEventListener("click", () => this._restart(b.dataset.id, b)));
     this._fillWhy();               // cached decline reasons repaint instantly with the rows
     this._probeWhy(pageRows);      // then refresh them (throttled per row)
     this._probeTls(pageRows);      // TLS-gate the Open controls (throttled per row)
@@ -793,6 +795,26 @@ class Deployments extends EnclaveElement {
       setTimeout(() => this.refresh(), 900);
     }
     catch(e){ showToast(e.message); if (btn){ btn.disabled = false; btn.textContent = onchain ? "Suspend" : "Terminate"; } }
+  }
+
+  /* ---- restart a running deployment in place: stop the app instance and
+     relaunch it on the same version, lease and balance (no wallet tx - the
+     enclave API does it under the owner session). The remedy for a wedged
+     instance the crash detector can't see: the process answers, it just
+     can't do its job - e.g. a tenant that booted before its model volume
+     finished mounting and so can never load the model. App state is
+     ephemeral by design, so a restart never loses anything but the wedge. ---- */
+  async _restart(id, btn) {
+    if (btn){ btn.disabled = true; btn.textContent = "restarting…"; }
+    try {
+      // owner-private action: rides the session token, lazy-SIWE like logs
+      if (!Enclave.authed()) await authenticate();
+      await Enclave.restartDeployment(id);
+      showToast("restarted " + id.slice(0, 10) + "… - relaunching in place, back within a minute");
+      setTimeout(() => this.refresh(), 1200);
+    }
+    catch(e){ showToast(e.message || String(e)); }
+    finally { if (btn){ btn.disabled = false; btn.textContent = "Restart"; } }
   }
 
   /* ---- resume a suspended on-chain deployment: setActive(true) re-queues

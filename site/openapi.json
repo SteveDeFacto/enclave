@@ -507,6 +507,79 @@
         }
       }
     },
+    "/deployments/{id}/restart": {
+      "post": {
+        "tags": [
+          "Deployments"
+        ],
+        "operationId": "restartDeployment",
+        "summary": "Restart in place (owner only)",
+        "description": "Stop the app instance and relaunch it on the same version, lease and balance (app state is ephemeral by design). The remedy for a wedged instance that still answers but cannot do its job - e.g. one that booted before its model volume finished mounting. Running deployments on the wasm (vm) backend only.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Restarted in place.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not running, or a restart is already in progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Relaunch failed - the lease was handed back; the fleet retries.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/deployments/{id}/logs": {
       "get": {
         "tags": [

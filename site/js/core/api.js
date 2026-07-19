@@ -89,6 +89,7 @@ export const Enclave = {
     return this._req("GET", path, { query: this.address ? { owner: this.address } : {} });
   },
   terminateDeployment(id){ return this._req("DELETE", "/deployments/" + encodeURIComponent(id), { auth: true }); },
+  restartDeployment(id){ return this._req("POST", "/deployments/" + encodeURIComponent(id) + "/restart", { auth: true }); },
   logs(id, query){ return this._req("GET", "/deployments/" + encodeURIComponent(id) + "/logs", { auth: true, query }); },
   attestation(id){ return this._req("GET", "/deployments/" + encodeURIComponent(id) + "/attestation", { auth: true }); },
   /* System (public) */

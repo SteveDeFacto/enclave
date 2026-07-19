@@ -1015,7 +1015,7 @@ let _stateDirty = false, _statePersistable = true;
 function serializeState() {
   const recs = [...deployments.values()].map(r => {
     const o = { ...r };
-    for (const k of ["_payTimer", "_respawning", "_renewing"]) delete o[k];   // live handles only
+    for (const k of ["_payTimer", "_respawning", "_renewing", "_restarting"]) delete o[k];   // live handles only
     return o;
   });
   return JSON.stringify({
@@ -1069,7 +1069,7 @@ function loadState() {
   for (const [k, b] of s.seenLogs || []) _seenLogs.set(k, BigInt(b));
   let running = 0, waiting = 0;
   for (const r of s.deployments || []) {
-    r._payTimer = null; r._respawning = false;
+    r._payTimer = null; r._respawning = false; r._restarting = false;
     // legacy terminal status: "stopping" was set AFTER teardown completed and
     // nothing ever finalized it, so restored records sat "stopping" forever
     if (r.status === "stopping") r.status = "terminated";
@@ -3070,6 +3070,44 @@ app.get("/v1/deployments/:id/logs", authed, async (req, res) => {
   return fail(res, 501, "logs_unavailable", "Log retrieval is only available for wasm (vm) deployments.");
 });
 
+// Owner restart: stop the app instance and relaunch it in place — same
+// version, same lease, same balance (app state is ephemeral by design). The
+// remedy for a wedged instance the crash detector can't see: the process is
+// up and answering, it just can't do its job — e.g. a tenant that booted
+// before its model volume finished mounting and so can never load the model
+// (the wasi-nn graph registry seals at process start; seen live 2026-07-18,
+// qwen3.5-9b). Same core as the death-relaunch path; _restarting keeps the
+// audit tick's claimed-branch from double-provisioning mid-restart.
+app.post("/v1/deployments/:id/restart", authed, async (req, res) => {
+  const rec = deployments.get(req.params.id);
+  if (!rec || rec.owner !== req.address) return fail(res, 404, "not_found", "No such deployment.");
+  if (PROVISION_BACKEND !== "vm")
+    return fail(res, 501, "restart_unavailable", "Restart is only available for wasm (vm) deployments.");
+  if (rec._restarting) return fail(res, 409, "restart_in_progress", "A restart is already in progress.");
+  if (rec.status !== "running")
+    return fail(res, 409, "not_running", `Only a running deployment restarts in place (status: ${rec.status}). `
+      + "Queued/failed work relaunches on its own; suspended work resumes with setActive(true).");
+  rec._restarting = true;
+  try {
+    console.log(`[restart] ${rec.id} owner-requested restart`);
+    try { if (rec._vmId) await vmReq("DELETE", `/vms/${encodeURIComponent(rec._vmId)}`, null, 15000).catch(() => {}); } catch {}
+    rec._deaths = 0;                 // an owner restart earns a fresh crash budget (the version-switch rule)
+    rec.status = "claimed";          // the provision path's input state
+    if (!(await provisionTenant(rec))) {
+      // same contract as every failed provision: the record keeps the reason,
+      // the lease goes back refunded so the fleet (this node included) retries
+      noteProvisionFailure(rec.id, rec.image && rec.image.reference);
+      releaseLease(rec.id, "owner restart provision failed").catch(() => {});
+      saveStateSoon();
+      return fail(res, 502, "restart_failed",
+        rec.error || "Relaunch failed — the lease was handed back; the fleet retries.");
+    }
+    saveStateSoon();
+    res.json({ id: rec.id, status: rec.status,
+               note: "Restarted in place — same version and balance; app state is ephemeral." });
+  } finally { rec._restarting = false; }
+});
+
 app.use((_req, res) => fail(res, 404, "not_found", "No such route."));
 // Final error middleware (4-arg): a rejected async handler was forwarded here by
 // wrap() (installed at the top of the app). Never crash — log and return a clean
@@ -3936,6 +3974,10 @@ async function auditClaims(ledgerById) {
   const me = claimSigner().account.address.toLowerCase();
   for (const rec of [...deployments.values()]) {
     if (!rec._onchain || !["running", "claimed"].includes(rec.status)) continue;
+    // an owner restart is mid-flight (stop -> claimed -> provision): the
+    // claimed-branch below would double-provision it, and the death check
+    // would count the deliberate stop as a crash. The restart route owns it.
+    if (rec._restarting) continue;
     // the tick already paged the whole ledger once - one read serves the audit
     // AND the sweep (per-record re-reads were what blew the RPC rate budget)
     const d = ledgerById.get(rec.id.toLowerCase());
