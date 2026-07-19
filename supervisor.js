@@ -641,6 +641,28 @@ if (process.env.SWEEP_SELFTEST) {
   process.exit(0);
 }
 
+// ---- ledger move: the address book retired the contract a record came from --
+// Pure core of ledgerMoveSweep (the claim loop's teardown pass below): what to
+// do with ONE local record given the CURRENT deployments address. "stamp" = a
+// record persisted by an older release with no _ledger field — the current
+// ledger is the only one it can be from; "teardown" = the ledger it was
+// claimed on was retired by a book repoint, so its lease is void; "skip" =
+// nothing to do (not on-chain, terminal, or already on the current ledger).
+function ledgerMoveVerdict(rec, currentAddr) {
+  if (!currentAddr || !rec._onchain || !["running", "claimed"].includes(rec.status)) return "skip";
+  if (!rec._ledger) return "stamp";
+  return rec._ledger.toLowerCase() === currentAddr.toLowerCase() ? "skip" : "teardown";
+}
+
+// LEDGER_MOVE_SELFTEST='{"current":"0x…","records":[{id,_onchain,status,_ledger},…]}'
+// prints each record's verdict as one JSON line and exits — same contract as
+// the seams above (test/ledger-move.test.mjs drives it).
+if (process.env.LEDGER_MOVE_SELFTEST) {
+  const c = JSON.parse(process.env.LEDGER_MOVE_SELFTEST);
+  console.log(JSON.stringify((c.records || []).map((r) => ({ id: r.id, verdict: ledgerMoveVerdict(r, c.current) }))));
+  process.exit(0);
+}
+
 // ---- owner version change (setAppRef): does the serving record switch? ------
 // Pure core of the audit's in-place upgrade: a RUNNING record whose ledger row
 // carries a different appRef restarts onto the new record (the lease and the
@@ -4096,6 +4118,38 @@ async function switchTenantVersion(rec, d) {
 // is attested identically and app state is ephemeral by design); if the owner
 // deactivated, tear down AND release so the tail refunds; if we crashed between
 // claim and provision (status "claimed"), finish the job or hand it back.
+// The address book can repoint `deployments` at a NEW contract while records
+// claimed on the OLD one are still serving (an owner-side wipe/migration: the
+// abandoned ledger's leases are void and its deployments invisible to the
+// console). The audit below can't catch this — old ids are simply ABSENT from
+// the new ledger, and absence there is deliberately read as an RPC anomaly
+// (keep serving, the lease is prepaid). Records therefore carry the ledger
+// they were claimed on (rec._ledger, stamped at adopt) and this sweep — run
+// ahead of renewals on BOTH claim-loop clocks — tears down whatever a retired
+// ledger left behind. Local teardown only: renew/release would target the NEW
+// contract (unknown id -> revert), and the old one is dead by governance
+// decision (see the addressbook.js trust note). Teardown order matches the
+// audit's owner-stop branch: stop, release the slice, THEN the terminal flip
+// (TERMINAL_STATUSES' hold-no-resources invariant).
+let _ledgerMoveBusy = false;
+async function ledgerMoveSweep() {
+  if (_ledgerMoveBusy) return;
+  _ledgerMoveBusy = true;
+  try {
+    for (const rec of [...deployments.values()]) {
+      const verdict = ledgerMoveVerdict(rec, DEPLOYMENTS_ADDRESS);
+      if (verdict === "stamp") { rec._ledger = DEPLOYMENTS_ADDRESS; saveStateSoon(); continue; }
+      if (verdict !== "teardown") continue;
+      console.log(`[claim] ${rec.id}: its ledger ${rec._ledger} was retired (book says ${DEPLOYMENTS_ADDRESS}) -> teardown`);
+      try { await stopContainer(rec); } catch {}
+      if (rec._gpu) { releaseGpu(rec._gpu); rec._gpu = null; }
+      rec.status = "terminated";
+      rec.error = `deployments ledger moved to ${DEPLOYMENTS_ADDRESS}; the lease on ${rec._ledger} is void`;
+      saveStateSoon();
+    }
+  } finally { _ledgerMoveBusy = false; }
+}
+
 async function auditClaims(ledgerById) {
   const me = claimSigner().account.address.toLowerCase();
   for (const rec of [...deployments.values()]) {
@@ -4479,7 +4533,9 @@ async function adopt(d, g, firewall, slice) {
     // the quantum the claim just burned - the next audit pass (~CLAIM_POLL_SEC)
     // corrects it; the resume path is exact
     _balance6: Number(d.balance6),
-    _onchain: true, _leaseUntil: Number(d.leaseUntil), _renewing: false,
+    // which ledger this lease lives on: a book repoint retires the old
+    // contract and ledgerMoveSweep tears down what it left behind
+    _onchain: true, _ledger: DEPLOYMENTS_ADDRESS, _leaseUntil: Number(d.leaseUntil), _renewing: false,
     _gpu: gpu, _gpuSpec: gpu.cpu ? null : { cardId: gpu.cardId, cardUuid: gpuCards[gpu.cardId]?.uuid || null, vramCapGb: gpu.vramGb, computeShare: gpu.computeShare },
     _port: 0, _payTimer: null,
   };
@@ -4506,7 +4562,10 @@ async function adopt(d, g, firewall, slice) {
 let _shutdownReleased = false;
 async function releaseClaimsOnShutdown() {
   if (_shutdownReleased) return; _shutdownReleased = true;
-  const mine = [...deployments.values()].filter(r => r._onchain && ["running", "claimed"].includes(r.status));
+  const mine = [...deployments.values()].filter(r => r._onchain && ["running", "claimed"].includes(r.status)
+    // a record from a retired ledger has nothing to release: the tx would
+    // target the CURRENT contract, where its id does not exist
+    && (!r._ledger || r._ledger.toLowerCase() === DEPLOYMENTS_ADDRESS.toLowerCase()));
   if (!mine.length || !CLAIM_READY) return;
   console.log(`[claim] shutdown: releasing ${mine.length} lease(s)`);
   await Promise.race([
@@ -4544,12 +4603,17 @@ function startClaimLoop() {
   // treadmill, 3 renewals landing in 45 min). The in-pass stage below stays
   // for back-to-back coverage; both entries share the per-record _renewing /
   // _renewBackoffUntil guards, so a double-fire is safe and cheap.
-  const rt = setInterval(() => { if (_enclaveId) stage("renew", renewLeases); }, 60_000);
+  const rt = setInterval(async () => {
+    if (!_enclaveId) return;
+    await stage("ledger-move", ledgerMoveSweep);  // a repointed book voids leases: never renew on a retired ledger
+    await stage("renew", renewLeases);
+  }, 60_000);
   if (rt.unref) rt.unref();
   const t = setInterval(async () => {
     if (_claimBusy || !_enclaveId) return;   // not advertised yet, or a slow pass is still running
     _claimBusy = true;
     try {
+      await stage("ledger-move", ledgerMoveSweep);
       await stage("reach", reachTick);       // first: renew/sweep below consult the verdict
       await stage("renew", renewLeases);
       let ledger = null;
