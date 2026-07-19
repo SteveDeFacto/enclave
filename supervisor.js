@@ -3774,6 +3774,7 @@ server.on("upgrade", async (req, socket, head) => {
 const CLAIM_ENABLED    = /^(1|true|on)$/i.test(process.env.CLAIM_ENABLED || "");
 const CLAIM_POLL_SEC   = parseInt(process.env.CLAIM_POLL_SEC || "60", 10);    // sweep + audit + renew cadence
 const RENEW_MARGIN_SEC = parseInt(process.env.RENEW_MARGIN_SEC || "300", 10); // renew when less lease than this remains
+const CLAIM_MAX_PER_SWEEP = parseInt(process.env.CLAIM_MAX_PER_SWEEP || "3", 10); // new adoptions kicked off per pass (resumes uncapped)
 // CPU-only work prefers CPU-only enclaves: a GPU enclave waits this long after
 // a CPU-only deployment becomes claimable (created, or its last lease expired)
 // before bidding, so CPU enclaves get first claim and GPU leftovers stay a
@@ -4268,9 +4269,9 @@ const _sweepDeclines = new Map();             // id -> last logged reason
 let _resumeHoldLogged = "";                   // last logged hold reason (log on change)
 async function claimSweep(ledger) {
   if (!(await backendHealthy())) return;      // don't take work we'd immediately fail
-  const sweepOne = async (d) => {
+  const sweepOne = async (d, opts) => {
     let reason;
-    try { reason = await considerClaim(d); }
+    try { reason = await considerClaim(d, opts); }
     catch (e) { reason = "error: " + (e.shortMessage || e.message); }   // one bad item must not end the pass
     if (!reason) { _sweepDeclines.delete(d.id); return null; }          // a claim was attempted
     if (reason !== _sweepDeclines.get(d.id) && !reason.startsWith("already serving")) {
@@ -4295,7 +4296,26 @@ async function claimSweep(ledger) {
     return;
   }
   _resumeHoldLogged = "";
-  for (const d of rest) await sweepOne(d);
+  // Renewal liveness OUTRANKS new adoptions (2026-07-19: a 60-claim storm,
+  // each awaited through claim tx + provisioning, starved the renew stage for
+  // minutes at a time and funded leases lapsed fleet-wide in creation order).
+  // Three guards, none touching the resume-first path above:
+  //  - any running lease inside HALF the renew margin = the tx queue belongs
+  //    to renewals; take no new work this pass,
+  //  - new adoptions run BACKGROUND (the hint path's mode) so an IPFS fetch
+  //    never blocks the next renew stage,
+  //  - at most CLAIM_MAX_PER_SWEEP adoptions start per pass, so a large
+  //    claimable backlog drains gently instead of stampeding the queue.
+  const now = Date.now();
+  const pressed = [...deployments.values()].some((r) =>
+    r._onchain && r.status === "running" && r._leaseUntil * 1000 - now < RENEW_MARGIN_SEC * 500);
+  if (pressed) return;
+  let started = 0;
+  for (const d of rest) {
+    if (started >= CLAIM_MAX_PER_SWEEP) break;
+    const r = await sweepOne(d, { background: true });
+    if (!r) started++;
+  }
 }
 
 // One deployment through the full claim gauntlet. Returns a reason string
