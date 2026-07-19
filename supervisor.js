@@ -389,14 +389,33 @@ function need(n){ const v = process.env[n]; if(!v){ console.error("FATAL: missin
 // nothing, so `ACME_SELFTEST=csr node supervisor.js` IS the test seam
 // (test/acme.test.mjs validates the outputs with openssl and jose).
 // ----------------------------------------------------------------------------
-// Feature is OFF unless ALL of the required envs are set (everything below
-// no-ops gracefully when disabled):
-const ACME_DIRECTORY  = (process.env.ACME_DIRECTORY || "https://acme.zerossl.com/v2/DV90").replace(/\/+$/, "");
-const ACME_EAB_KID    = (process.env.ACME_EAB_KID  || "").trim();   // ZeroSSL EAB key id
-const ACME_EAB_HMAC   = (process.env.ACME_EAB_HMAC || "").trim();   // ZeroSSL EAB HMAC key (base64url)
+// Feature is OFF unless at least one CA slot is complete (everything below
+// no-ops gracefully when disabled). Issuance speaks to an ORDERED LIST of CAs
+// - redundancy added after the 2026-07-18 blackout, when ZeroSSL/Sectigo
+// replaced their entire ACME plane with a maintenance page (status pages
+// green) and every app cert on the platform stopped renewing. Slot 1 keeps
+// the classic env names (ACME_DIRECTORY, defaulting to ZeroSSL, plus its EAB
+// pair); slots 2/3 are ACME_DIRECTORY_2 / ACME_EAB_KID_2 / ACME_EAB_HMAC_2
+// (and _3). A fallback slot opts in by naming its directory; its EAB pair is
+// optional AS A PAIR (Let's Encrypt needs none), but half a pair is a config
+// error and skips the slot. acmeIssue walks the list in order, cooling off
+// slots that fail at the infrastructure level.
 const APP_CERT_DOMAIN = (process.env.APP_CERT_DOMAIN || "").trim().replace(/^\*?\./, "").replace(/\.$/, "").toLowerCase(); // e.g. "app.enclave.host"
 const DNS_API         = (process.env.DNS_API || "").trim().replace(/\/+$/, "");  // platform DNS daemon's TXT push API
-const ACME_ENABLED    = !!(ACME_EAB_KID && ACME_EAB_HMAC && APP_CERT_DOMAIN && DNS_API);
+const ACME_CAS = [];   // ordered CA slots: { directory, host, eabKid, eabHmac, dir, account, nonce, downUntil }
+for (const suf of ["", "_2", "_3"]) {
+  const directory = (process.env[`ACME_DIRECTORY${suf}`] || (suf ? "" : "https://acme.zerossl.com/v2/DV90")).trim().replace(/\/+$/, "");
+  const eabKid    = (process.env[`ACME_EAB_KID${suf}`]  || "").trim();
+  const eabHmac   = (process.env[`ACME_EAB_HMAC${suf}`] || "").trim();
+  if (!!eabKid !== !!eabHmac) { console.warn(`[acme] ACME_EAB_KID${suf}/ACME_EAB_HMAC${suf}: half an EAB pair - slot skipped`); continue; }
+  if (suf ? !directory : !eabKid) {                           // slot 1's default directory alone is not an opt-in
+    if (suf && eabKid) console.warn(`[acme] ACME_EAB_*${suf} set but ACME_DIRECTORY${suf} missing - slot skipped`);
+    continue;
+  }
+  let host; try { host = new URL(directory).host; } catch { console.warn(`[acme] ACME_DIRECTORY${suf}: bad URL - slot skipped`); continue; }
+  ACME_CAS.push({ directory, host, eabKid, eabHmac, dir: null, account: null, nonce: null, downUntil: 0 });
+}
+const ACME_ENABLED = !!(ACME_CAS.length && APP_CERT_DOMAIN && DNS_API);
 
 // base64url without padding - the encoding EVERYTHING in JOSE/ACME speaks.
 const b64u     = (b) => Buffer.from(b).toString("base64url");
@@ -487,15 +506,19 @@ function buildCsr(name) {
 }
 
 // ---- self-test seam ---------------------------------------------------------
-// ACME_SELFTEST=csr|vectors prints the helpers' outputs as one JSON line and
-// exits BEFORE any boot side effect (nothing above this point opens a socket
-// or touches state). Driven by test/acme.test.mjs; also handy in a CVM shell.
-// Never active in production - the var appears in no env file.
+// ACME_SELFTEST=csr|cas|vectors prints the helpers' outputs as one JSON line
+// and exits BEFORE any boot side effect (nothing above this point opens a
+// socket or touches state). Driven by test/acme.test.mjs; also handy in a CVM
+// shell. Never active in production - the var appears in no env file.
 if (process.env.ACME_SELFTEST) {
   if (process.env.ACME_SELFTEST === "csr") {
     const name = process.env.ACME_SELFTEST_NAME || "test.app.enclave.host";
     const { csrPem, keyPem } = buildCsr(name);
     console.log(JSON.stringify({ name, csrPem, keyPem }));
+  } else if (process.env.ACME_SELFTEST === "cas") {
+    // the parsed CA slot list, secrets reduced to presence bits
+    console.log(JSON.stringify({ enabled: ACME_ENABLED,
+      cas: ACME_CAS.map(({ directory, host, eabKid }) => ({ directory, host, eab: !!eabKid })) }));
   } else {
     // RFC 7515 Appendix A.3's P-256 key: the fixed vector the tests compare
     // against an independent RFC 7638 implementation (jose).
@@ -3220,7 +3243,7 @@ if (TLS_BRIDGE_CTX) console.log(`[tls-bridge] in-enclave TLS termination enabled
 
 // ============================================================================
 // in-enclave ACME - RUNTIME HALF (the pure helpers live up top, next to the
-// self-test seam). One ACME account per boot, one cert per public HTTP app at
+// self-test seam). One account per CA per boot, one cert per public HTTP app at
 // <label>.APP_CERT_DOMAIN, all held in memory: { keyPem, certPem, ctx }. The
 // SNI hook below slots these contexts into the SAME TLS bridge that serves the
 // self-signed pair, so a browser hitting /x/:id/https (or a validating client
@@ -3229,7 +3252,7 @@ if (TLS_BRIDGE_CTX) console.log(`[tls-bridge] in-enclave TLS termination enabled
 const acmeCerts = new Map();   // name -> { keyPem, certPem, ctx, expiresAt, renewAt }
 const acmeRetry = new Map();   // name -> { failures, nextAt } (per-name backoff)
 const acmeQueue = [];          // names awaiting issuance, FIFO, deduped
-let _acmeDir = null, _acmeAccount = null, _acmeNonce = null, _acmePumping = false;
+let _acmePumping = false;
 const sleepMs = (ms) => new Promise((r) => { const t = setTimeout(r, ms); if (t.unref) t.unref(); });
 
 // The relay's canonical app label (MUST mirror relay/api-relay.js depFromHost):
@@ -3254,60 +3277,79 @@ const desiredCertNames = (rec) => {
 };
 
 // --- ACME protocol plumbing (network; every entry point is ACME_ENABLED-gated
-//     via startAcme/acmeReconcileSoon, so none of this runs unconfigured) -----
-async function acmeDir() {
-  if (!_acmeDir) {
-    const r = await fetch(ACME_DIRECTORY);
-    if (!r.ok) { throw new Error(`directory fetch ${r.status}`); }
-    _acmeDir = await r.json();
+//     via startAcme/acmeReconcileSoon, so none of this runs unconfigured).
+//     Every helper takes ONE slot from ACME_CAS and keeps its state - cached
+//     directory, account, nonce - ON that slot; accounts and nonces never mix
+//     across CAs. Errors that indict the CA rather than the name carry
+//     .caLevel: acmeIssue reads it to cool the slot off and fail over. -------
+const caErr = (msg) => Object.assign(new Error(msg), { caLevel: true });
+async function acmeDir(ca) {
+  if (!ca.dir) {
+    let r; try { r = await fetch(ca.directory); } catch (e) { throw caErr(`directory: ${e.message}`); }
+    if (!r.ok) throw caErr(`directory fetch ${r.status}`);
+    ca.dir = await r.json().catch(() => { throw caErr("directory is not JSON (an outage page?)"); });
   }
-  return _acmeDir;
+  return ca.dir;
 }
-async function takeNonce() {
-  if (_acmeNonce) { const n = _acmeNonce; _acmeNonce = null; return n; }
-  const r = await fetch((await acmeDir()).newNonce, { method: "HEAD" });
+async function takeNonce(ca) {
+  if (ca.nonce) { const n = ca.nonce; ca.nonce = null; return n; }
+  let r; try { r = await fetch((await acmeDir(ca)).newNonce, { method: "HEAD" }); }
+  catch (e) { throw e.caLevel ? e : caErr(`newNonce: ${e.message}`); }
   const n = r.headers.get("replay-nonce");
-  if (!n) throw new Error("newNonce returned no replay-nonce");
+  if (!n) throw caErr("newNonce returned no replay-nonce");
   return n;
 }
 // Signed POST (the only verb ACME knows): ES256 JWS envelope, jwk before the
 // account exists / kid after, fresh-nonce retry ONCE on badNonce (RFC 8555
 // §6.5 - a stale cached nonce is routine, not an error). payload null =
 // POST-as-GET. Returns { status, headers, data } with data json-or-text.
-async function acmePost(url, payload, { useJwk = false } = {}) {
+// 5xx, network failures, and non-JSON error bodies (a real ACME error is
+// always problem+json; HTML means an outage page) are .caLevel.
+async function acmePost(ca, url, payload, { useJwk = false } = {}) {
   for (let attempt = 0; ; attempt++) {
-    const nonce = await takeNonce();
-    const prot  = { alg: "ES256", nonce, url, ...(useJwk ? { jwk: _acmeAccount.jwk } : { kid: _acmeAccount.kid }) };
-    const r = await fetch(url, { method: "POST", headers: { "content-type": "application/jose+json" },
-                                 body: JSON.stringify(jwsSignEs256(prot, payload, _acmeAccount.key)) });
-    _acmeNonce = r.headers.get("replay-nonce") || _acmeNonce;   // every reply carries the next nonce
+    const nonce = await takeNonce(ca);
+    const prot  = { alg: "ES256", nonce, url, ...(useJwk ? { jwk: ca.account.jwk } : { kid: ca.account.kid }) };
+    let r; try {
+      r = await fetch(url, { method: "POST", headers: { "content-type": "application/jose+json" },
+                             body: JSON.stringify(jwsSignEs256(prot, payload, ca.account.key)) });
+    } catch (e) { throw caErr(`POST ${url}: ${e.message}`); }
+    ca.nonce = r.headers.get("replay-nonce") || ca.nonce;       // every reply carries the next nonce
     const isJson = /json/.test(r.headers.get("content-type") || "");
     const data = isJson ? await r.json().catch(() => null) : await r.text();
     if (r.status >= 400) {
       if (attempt === 0 && data && /badNonce/.test(data.type || "")) continue;
-      throw new Error(`ACME ${r.status} at ${url}: ${isJson ? `${data?.type || "?"} ${data?.detail || ""}`.trim() : String(data).slice(0, 200)}`);
+      const e = new Error(`ACME ${r.status} at ${url}: ${isJson ? `${data?.type || "?"} ${data?.detail || ""}`.trim() : String(data).slice(0, 200)}`);
+      if (r.status >= 500 || !isJson) e.caLevel = true;
+      throw e;
     }
     return { status: r.status, headers: r.headers, data };
   }
 }
-// One account per boot (in-memory key; CVMs have no disk and ZeroSSL's EAB
-// makes re-registration free). The EAB inner JWS binds our fresh key to the
-// CA-issued credential; the Location header is the kid all later JWS use.
-async function acmeAccount() {
-  if (_acmeAccount?.kid) return _acmeAccount;
-  const dir = await acmeDir();
+// One account per CA per boot (in-memory key; CVMs have no disk and EAB makes
+// re-registration free). The EAB inner JWS binds our fresh key to the
+// CA-issued credential; CAs that need no EAB (an eab-less fallback slot) just
+// skip the binding. The Location header is the kid all later JWS use. Failing
+// to establish an account is always CA-level: nothing issues without one.
+async function acmeAccount(ca) {
+  if (ca.account?.kid) return ca.account;
+  const dir = await acmeDir(ca);
+  // a slot whose CA demands EAB but that carries none (secrets not set yet)
+  // can never register - say so precisely instead of POSTing a doomed request
+  if (dir.meta?.externalAccountRequired && !ca.eabKid)
+    throw caErr("CA requires External Account Binding but this slot has no EAB pair (secrets unset?)");
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const j = publicKey.export({ format: "jwk" });
-  _acmeAccount = { key: privateKey, jwk: { crv: j.crv, kty: j.kty, x: j.x, y: j.y }, thumbprint: jwkThumbprint(j), kid: null };
+  ca.account = { key: privateKey, jwk: { crv: j.crv, kty: j.kty, x: j.x, y: j.y }, thumbprint: jwkThumbprint(j), kid: null };
   try {
-    const r = await acmePost(dir.newAccount,
-      { termsOfServiceAgreed: true, externalAccountBinding: eabJws(ACME_EAB_KID, ACME_EAB_HMAC, _acmeAccount.jwk, dir.newAccount) },
+    const r = await acmePost(ca, dir.newAccount,
+      { termsOfServiceAgreed: true,
+        ...(ca.eabKid ? { externalAccountBinding: eabJws(ca.eabKid, ca.eabHmac, ca.account.jwk, dir.newAccount) } : {}) },
       { useJwk: true });
-    _acmeAccount.kid = r.headers.get("location");
-    if (!_acmeAccount.kid) throw new Error("newAccount returned no Location (account kid)");
-    console.log(`[acme] account registered at ${_acmeAccount.kid}`);
-  } catch (e) { _acmeAccount = null; throw e; }
-  return _acmeAccount;
+    ca.account.kid = r.headers.get("location");
+    if (!ca.account.kid) throw new Error("newAccount returned no Location (account kid)");
+    console.log(`[acme] account registered at ${ca.account.kid}`);
+  } catch (e) { ca.account = null; e.caLevel = true; throw e; }
+  return ca.account;
 }
 // TXT push/cleanup through the platform DNS daemon. The body HMAC uses a
 // DERIVED key, never the raw SECRET: SECRET mints session JWTs, and the DNS
@@ -3324,28 +3366,31 @@ async function dnsTxt(method, name, value) {
   if (!r.ok) throw new Error(`DNS_API ${method} ${name}: HTTP ${r.status}`);
 }
 // Poll an authz/order URL (POST-as-GET) until ok/bad/timeout, gentle backoff.
-async function acmePoll(url, what, isOk, isBad, timeoutMs = 90_000) {
+// A definitive "became invalid" indicts the name; a poll that TIMES OUT
+// indicts the CA (validation/finalization that never completes was exactly
+// the 2026-07-18 failure mode, hours before the endpoint died outright).
+async function acmePoll(ca, url, what, isOk, isBad, timeoutMs = 90_000) {
   const t0 = Date.now();
   for (let delay = 2000; ; delay = Math.min(Math.round(delay * 1.5), 10_000)) {
-    const { data } = await acmePost(url, null);
+    const { data } = await acmePost(ca, url, null);
     if (isOk(data)) return data;
     if (isBad(data)) {
       const errs = data.error || (data.challenges || []).map((c) => c.error).filter(Boolean);
       throw new Error(`${what} became ${data.status}: ${JSON.stringify(errs).slice(0, 300)}`);
     }
-    if (Date.now() - t0 > timeoutMs) throw new Error(`${what} still ${data.status} after ${Math.round(timeoutMs / 1000)}s`);
+    if (Date.now() - t0 > timeoutMs) throw caErr(`${what} still ${data.status} after ${Math.round(timeoutMs / 1000)}s`);
     await sleepMs(delay);
   }
 }
-// The full dns-01 dance for one name: order -> TXT -> challenge -> CSR ->
-// finalize -> download. The TXT record is deleted win or lose.
-async function acmeIssue(name) {
-  const acct = await acmeAccount();
-  const dir  = await acmeDir();
-  const order = await acmePost(dir.newOrder, { identifiers: [{ type: "dns", value: name }] });
+// The full dns-01 dance for one name against ONE CA: order -> TXT ->
+// challenge -> CSR -> finalize -> download. TXT is deleted win or lose.
+async function acmeIssueVia(ca, name) {
+  const acct = await acmeAccount(ca);
+  const dir  = await acmeDir(ca);
+  const order = await acmePost(ca, dir.newOrder, { identifiers: [{ type: "dns", value: name }] });
   const orderUrl = order.headers.get("location");
   const authzUrl = order.data.authorizations[0];
-  const authz = await acmePost(authzUrl, null);
+  const authz = await acmePost(ca, authzUrl, null);
   // CAs reuse fresh authorizations across orders (renewals often land inside
   // the reuse window): an already-valid authz means no TXT dance at all.
   let txtName = null, txtValue = null;
@@ -3360,15 +3405,15 @@ async function acmeIssue(name) {
     if (txtName) {
       const chal = authz.data.challenges.find((c) => c.type === "dns-01");
       await sleepMs(5000);                                    // let the DNS daemon start answering before the CA looks
-      await acmePost(chal.url, {});                           // {} = "I'm ready" (RFC 8555 §7.5.1)
-      await acmePoll(authzUrl, `authz for ${name}`, (a) => a.status === "valid",
+      await acmePost(ca, chal.url, {});                       // {} = "I'm ready" (RFC 8555 §7.5.1)
+      await acmePoll(ca, authzUrl, `authz for ${name}`, (a) => a.status === "valid",
                      (a) => ["invalid", "revoked", "deactivated", "expired"].includes(a.status));
     }
     const { csrDer, keyPem } = buildCsr(name);
-    await acmePost(order.data.finalize, { csr: b64u(csrDer) });
-    const done = await acmePoll(orderUrl, `order for ${name}`, (o) => o.status === "valid" && o.certificate,
+    await acmePost(ca, order.data.finalize, { csr: b64u(csrDer) });
+    const done = await acmePoll(ca, orderUrl, `order for ${name}`, (o) => o.status === "valid" && o.certificate,
                                 (o) => o.status === "invalid");
-    const cert = await acmePost(done.certificate, null);      // POST-as-GET; body = PEM chain
+    const cert = await acmePost(ca, done.certificate, null);  // POST-as-GET; body = PEM chain
     const certPem = String(cert.data);
     const leaf = new X509Certificate(certPem);                // parses the first (leaf) cert of the chain
     const nb = new Date(leaf.validFrom).getTime(), na = new Date(leaf.validTo).getTime();
@@ -3378,6 +3423,35 @@ async function acmeIssue(name) {
   } finally {                                                 // cleanup is best-effort: a leftover TXT is cosmetic
     if (txtName) dnsTxt("DELETE", txtName, txtValue).catch((e) => console.warn(`[acme] TXT cleanup failed for ${txtName}: ${e.message}`));
   }
+}
+// Issue via the first CA that can: walk ACME_CAS in order. A slot that fails
+// at the infrastructure level (.caLevel: directory/nonce/account trouble,
+// 5xx, network errors, HTML where problem+json belongs, validation that never
+// completes) cools off for ACME_CA_COOLDOWN_MS so the strictly-serial pump
+// doesn't burn its 90s timeouts on that CA for every queued name; any success
+// clears the latch. Name-level rejections (authz became invalid) also move on
+// to the next CA - a second CA may validate what the first refused - but
+// indict only the name. Every slot cooling off = try them all anyway: a stale
+// latch must never be the reason issuance stops entirely.
+const ACME_CA_COOLDOWN_MS = 600_000;
+async function acmeIssue(name) {
+  const now = Date.now();
+  const live = ACME_CAS.filter((ca) => !(ca.downUntil > now));
+  let lastErr = null;
+  for (const ca of (live.length ? live : ACME_CAS)) {
+    try {
+      const issued = await acmeIssueVia(ca, name);
+      ca.downUntil = 0;
+      return { ...issued, caHost: ca.host };
+    } catch (e) {
+      lastErr = e;
+      if (e.caLevel) {
+        ca.downUntil = Date.now() + ACME_CA_COOLDOWN_MS;
+        console.warn(`[acme] ${ca.host}: ${e.message} - cooling this CA off ${Math.round(ACME_CA_COOLDOWN_MS / 60_000)}m`);
+      }
+    }
+  }
+  throw lastErr;
 }
 
 // --- coverage + lifecycle ----------------------------------------------------
@@ -3417,7 +3491,7 @@ async function acmePump() {
         const issued = await acmeIssue(name);
         acmeCerts.set(name, issued);
         acmeRetry.delete(name);
-        console.log(`[acme] issued ${name} (expires ${new Date(issued.expiresAt).toISOString()})`);
+        console.log(`[acme] issued ${name} via ${issued.caHost} (expires ${new Date(issued.expiresAt).toISOString()})`);
       } catch (e) {
         const failures = (acmeRetry.get(name)?.failures || 0) + 1;
         const backoff  = Math.min(3600_000, 300_000 * 2 ** (failures - 1));
@@ -3430,14 +3504,14 @@ async function acmePump() {
 }
 function startAcme() {                                        // called at the bottom, with the other boot starters
   if (!ACME_ENABLED) {
-    if (ACME_EAB_KID || ACME_EAB_HMAC || APP_CERT_DOMAIN || DNS_API)
-      console.warn("[acme] partially configured - needs ALL of ACME_EAB_KID, ACME_EAB_HMAC, APP_CERT_DOMAIN, DNS_API; app-subdomain TLS stays off");
+    if (ACME_CAS.length || APP_CERT_DOMAIN || DNS_API || process.env.ACME_EAB_KID || process.env.ACME_EAB_HMAC)
+      console.warn("[acme] partially configured - needs a complete CA slot (ACME_EAB_KID+ACME_EAB_HMAC, and/or ACME_DIRECTORY_2 with an optional EAB_2 pair) plus APP_CERT_DOMAIN and DNS_API; app-subdomain TLS stays off");
     return;
   }
   acmeReconcile();                                            // boot coverage (loadState already ran)
   const t = setInterval(acmeReconcile, 600_000);              // renewals + anything the running-hook missed
   if (t.unref) t.unref();
-  console.log(`[acme] in-enclave issuance on: <label>.${APP_CERT_DOMAIN} via ${ACME_DIRECTORY} (dns-01 through ${DNS_API})`);
+  console.log(`[acme] in-enclave issuance on: <label>.${APP_CERT_DOMAIN} via ${ACME_CAS.map((c) => c.host).join(" -> ")} (dns-01 through ${DNS_API})`);
 }
 
 // --- SNI selection -----------------------------------------------------------

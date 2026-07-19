@@ -95,13 +95,21 @@ containers:
       # (fleet-aware) SNI relay routes stock-TLS clients to whichever enclave
       # owns the deployment. Empty disables the /tls/ bridge on this flavor.
       - TLS_BRIDGE_DOMAIN: "app.enclave.host"   # tcp.* SUNSET: the fallback pair + /tls/ gate live on the unified app zone now
-      # in-enclave browser TLS for public HTTP apps: ACME (ZeroSSL) certs for
+      # in-enclave browser TLS for public HTTP apps: ACME certs for
       # <label>.APP_CERT_DOMAIN minted INSIDE the CVM, served through the SNI
       # relay's /x/:id/https passthrough. DNS-01 TXT records publish to the
       # platform DNS daemon (nan-relay box), HMAC'd with SECRET. The feature
       # activates only when the ACME_EAB_* secrets below are ALSO set.
       - APP_CERT_DOMAIN: "app.enclave.host"
       - DNS_API: "http://46.62.128.36:8153"              # dns-relay TXT push API (nan-relay box)
+      # FALLBACK CA (slot 2): tried whenever the primary (ACME_DIRECTORY,
+      # default ZeroSSL) is failing - added after the 2026-07-18 blackout when
+      # ZeroSSL/Sectigo's whole ACME plane became a maintenance page. Google
+      # Trust Services; its EAB pair rides in the ACME_EAB_*_2 secrets below,
+      # from `gcloud publicca external-account-keys create`. Until BOTH
+      # secrets are set the slot cannot register (GTS demands EAB) and just
+      # cools off between tries; setting them activates it, no config change.
+      - ACME_DIRECTORY_2: "https://dv.acme-v02.api.pki.goog/directory"
     # STATE_FILE (/var/lib/enclave/state.json) MAY be pointed at host-backed
     # storage for billing persistence. The in-enclave TLS-bridge PRIVATE KEY must
     # never touch host-backed disk, so it is minted on its OWN tmpfs path
@@ -116,6 +124,8 @@ containers:
       - EGRESS_RELAY_TOKEN       # shared secret with the egress-relay box; same value fleet-wide (like SECRET). Unset = egress off.
       - ACME_EAB_KID             # ZeroSSL External Account Binding pair (ZeroSSL Developer page).
       - ACME_EAB_HMAC            # Fleet-wide like SECRET; unset = in-enclave app TLS stays off.
+      - ACME_EAB_KID_2           # Google Trust Services EAB pair for the fallback CA (ACME_DIRECTORY_2).
+      - ACME_EAB_HMAC_2          # NEW secret names: Tinfoil binds secrets at container CREATION - set values BEFORE the first relaunch that declares them.
     command: ["node", "supervisor.js"]
 
   # --- wasm manager: tenant apps via `wasmtime serve` --------------------------

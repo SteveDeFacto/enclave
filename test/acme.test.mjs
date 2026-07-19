@@ -110,6 +110,58 @@ test("dns-01: TXT value is b64u(sha256(token '.' thumbprint)), recomputed here",
   assert.equal(v.dns01, createHash("sha256").update(keyAuth).digest("base64url"));
 });
 
+// ---------- CA slot parsing (multi-CA failover config) -------------------------
+// ACME_SELFTEST=cas prints the parsed ACME_CAS list (secrets reduced to a
+// presence bit) plus the ACME_ENABLED verdict — the config half of the CA
+// failover added after the 2026-07-18 ZeroSSL/Sectigo blackout.
+
+const ZEROSSL = "https://acme.zerossl.com/v2/DV90";
+const GTS     = "https://dv.acme-v02.api.pki.goog/directory";
+// every ACME env cleared, then the case's overrides
+const casOf = (extraEnv) => selftest("cas", {
+  ACME_DIRECTORY: "", ACME_DIRECTORY_2: "", ACME_DIRECTORY_3: "",
+  ACME_EAB_KID_2: "", ACME_EAB_HMAC_2: "", ACME_EAB_KID_3: "", ACME_EAB_HMAC_3: "",
+  ...extraEnv });
+
+test("cas: primary alone - EAB pair rides the default ZeroSSL directory", async () => {
+  const v = await casOf({ ACME_EAB_KID: "k", ACME_EAB_HMAC: "h" });
+  assert.deepEqual(v.cas, [{ directory: ZEROSSL, host: "acme.zerossl.com", eab: true }]);
+});
+
+test("cas: fallback slot rides behind the primary, in order", async () => {
+  const v = await casOf({ ACME_EAB_KID: "k", ACME_EAB_HMAC: "h",
+                          ACME_DIRECTORY_2: GTS, ACME_EAB_KID_2: "k2", ACME_EAB_HMAC_2: "h2" });
+  assert.deepEqual(v.cas.map((c) => c.host), ["acme.zerossl.com", "dv.acme-v02.api.pki.goog"]);
+  assert.deepEqual(v.cas.map((c) => c.eab), [true, true]);
+});
+
+test("cas: an EAB-less fallback (Let's Encrypt style) is a valid slot", async () => {
+  const v = await casOf({ ACME_EAB_KID: "k", ACME_EAB_HMAC: "h",
+                          ACME_DIRECTORY_2: "https://acme-v02.api.letsencrypt.org/directory" });
+  assert.deepEqual(v.cas.map((c) => c.eab), [true, false]);
+});
+
+test("cas: half an EAB pair skips the slot, not the feature", async () => {
+  const v = await casOf({ ACME_EAB_KID: "k", ACME_EAB_HMAC: "h",
+                          ACME_DIRECTORY_2: GTS, ACME_EAB_KID_2: "k2" });   // HMAC_2 missing
+  assert.deepEqual(v.cas.map((c) => c.host), ["acme.zerossl.com"]);
+});
+
+test("cas: a fallback stands alone when the primary has no EAB pair", async () => {
+  const v = await casOf({ ACME_DIRECTORY_2: GTS, ACME_EAB_KID_2: "k2", ACME_EAB_HMAC_2: "h2" });
+  assert.deepEqual(v.cas.map((c) => c.host), ["dv.acme-v02.api.pki.goog"]);
+});
+
+test("cas: the bare default directory is not an opt-in; enabled needs a slot + domain + dns api", async () => {
+  assert.deepEqual((await casOf({})).cas, []);
+  assert.equal((await casOf({})).enabled, false);
+  const partial = await casOf({ ACME_EAB_KID: "k", ACME_EAB_HMAC: "h" });   // no APP_CERT_DOMAIN/DNS_API
+  assert.equal(partial.enabled, false);
+  const full = await casOf({ ACME_EAB_KID: "k", ACME_EAB_HMAC: "h",
+                             APP_CERT_DOMAIN: "app.enclave.host", DNS_API: "http://10.0.0.1:8153" });
+  assert.equal(full.enabled, true);
+});
+
 // ---------- EAB inner JWS ------------------------------------------------------
 
 test("EAB: HS256 inner JWS - header shape, JWK payload, recomputed signature", async () => {
