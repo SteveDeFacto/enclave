@@ -15,7 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createHash, createHmac, generateKeyPairSync, verify as cryptoVerify } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -116,26 +116,22 @@ test("dns-01: TXT value is b64u(sha256(token '.' thumbprint)), recomputed here",
 // failover added after the 2026-07-18 ZeroSSL/Sectigo blackout.
 
 const ZEROSSL = "https://acme.zerossl.com/v2/DV90";
-const GTS     = "https://dv.acme-v02.api.pki.goog/directory";
+const EAB_CA  = "https://acme.example-ca.test/directory";   // any EAB'd fallback (parse-level fixture)
 // every ACME env cleared, then the case's overrides
 const casOf = (extraEnv) => selftest("cas", {
   ACME_DIRECTORY: "", ACME_DIRECTORY_2: "", ACME_DIRECTORY_3: "",
   ACME_EAB_KID_2: "", ACME_EAB_HMAC_2: "", ACME_EAB_KID_3: "", ACME_EAB_HMAC_3: "",
-  ACME_EAB_PROVISION: "", ACME_EAB_PROVISION_2: "", ACME_EAB_PROVISION_3: "",
   ...extraEnv });
-// a shape-valid GCP service-account key (parse-level tests only - never used to sign)
-const SA_JSON = JSON.stringify({ client_email: "eab@proj.iam.gserviceaccount.com",
-                                 private_key: "-----BEGIN PRIVATE KEY-----", project_id: "proj" });
 
 test("cas: primary alone - EAB pair rides the default ZeroSSL directory", async () => {
   const v = await casOf({ ACME_EAB_KID: "k", ACME_EAB_HMAC: "h" });
-  assert.deepEqual(v.cas, [{ directory: ZEROSSL, host: "acme.zerossl.com", eab: true, prov: false }]);
+  assert.deepEqual(v.cas, [{ directory: ZEROSSL, host: "acme.zerossl.com", eab: true }]);
 });
 
 test("cas: fallback slot rides behind the primary, in order", async () => {
   const v = await casOf({ ACME_EAB_KID: "k", ACME_EAB_HMAC: "h",
-                          ACME_DIRECTORY_2: GTS, ACME_EAB_KID_2: "k2", ACME_EAB_HMAC_2: "h2" });
-  assert.deepEqual(v.cas.map((c) => c.host), ["acme.zerossl.com", "dv.acme-v02.api.pki.goog"]);
+                          ACME_DIRECTORY_2: EAB_CA, ACME_EAB_KID_2: "k2", ACME_EAB_HMAC_2: "h2" });
+  assert.deepEqual(v.cas.map((c) => c.host), ["acme.zerossl.com", "acme.example-ca.test"]);
   assert.deepEqual(v.cas.map((c) => c.eab), [true, true]);
 });
 
@@ -147,48 +143,13 @@ test("cas: an EAB-less fallback (Let's Encrypt style) is a valid slot", async ()
 
 test("cas: half an EAB pair skips the slot, not the feature", async () => {
   const v = await casOf({ ACME_EAB_KID: "k", ACME_EAB_HMAC: "h",
-                          ACME_DIRECTORY_2: GTS, ACME_EAB_KID_2: "k2" });   // HMAC_2 missing
+                          ACME_DIRECTORY_2: EAB_CA, ACME_EAB_KID_2: "k2" });   // HMAC_2 missing
   assert.deepEqual(v.cas.map((c) => c.host), ["acme.zerossl.com"]);
 });
 
 test("cas: a fallback stands alone when the primary has no EAB pair", async () => {
-  const v = await casOf({ ACME_DIRECTORY_2: GTS, ACME_EAB_KID_2: "k2", ACME_EAB_HMAC_2: "h2" });
-  assert.deepEqual(v.cas.map((c) => c.host), ["dv.acme-v02.api.pki.goog"]);
-});
-
-test("cas: a provisioner (GCP SA key) arms a slot without a static pair", async () => {
-  const v = await casOf({ ACME_DIRECTORY_2: GTS, ACME_EAB_PROVISION_2: SA_JSON });
-  assert.deepEqual(v.cas, [{ directory: GTS, host: "dv.acme-v02.api.pki.goog", eab: false, prov: true }]);
-});
-
-test("cas: a provisioner arms even slot 1 (no static pair needed)", async () => {
-  const v = await casOf({ ACME_DIRECTORY: GTS, ACME_EAB_PROVISION: SA_JSON });
-  assert.deepEqual(v.cas, [{ directory: GTS, host: "dv.acme-v02.api.pki.goog", eab: false, prov: true }]);
-});
-
-test("cas: base64-wrapped SA key parses; garbage is ignored without killing the slot", async () => {
-  const b64 = Buffer.from(SA_JSON).toString("base64");
-  const v = await casOf({ ACME_DIRECTORY_2: GTS, ACME_EAB_PROVISION_2: b64 });
-  assert.deepEqual(v.cas.map((c) => c.prov), [true]);
-  const g = await casOf({ ACME_DIRECTORY_2: GTS, ACME_EAB_KID_2: "k2", ACME_EAB_HMAC_2: "h2",
-                          ACME_EAB_PROVISION_2: "not json at all" });
-  assert.deepEqual(g.cas, [{ directory: GTS, host: "dv.acme-v02.api.pki.goog", eab: true, prov: false }]);
-});
-
-test("gcp sa jwt: RS256 assertion verifies and carries the RFC 7523 claims", async () => {
-  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  const sa = { client_email: "eab@proj.iam.gserviceaccount.com", project_id: "proj",
-               private_key_id: "kid123", private_key: privateKey.export({ type: "pkcs8", format: "pem" }) };
-  const v = await selftest("gcpjwt", { ACME_SELFTEST_SA: JSON.stringify(sa) });
-  const [h, c, s] = v.assertion.split(".");
-  assert.equal(cryptoVerify("sha256", Buffer.from(`${h}.${c}`), publicKey, Buffer.from(s, "base64url")), true,
-               "RS256 signature must verify against the SA public key");
-  assert.deepEqual(JSON.parse(Buffer.from(h, "base64url")), { alg: "RS256", typ: "JWT", kid: "kid123" });
-  const claims = JSON.parse(Buffer.from(c, "base64url"));
-  assert.equal(claims.iss, sa.client_email);
-  assert.equal(claims.aud, "https://oauth2.googleapis.com/token");
-  assert.equal(claims.scope, "https://www.googleapis.com/auth/cloud-platform");
-  assert.equal(claims.exp - claims.iat, 3600);
+  const v = await casOf({ ACME_DIRECTORY_2: EAB_CA, ACME_EAB_KID_2: "k2", ACME_EAB_HMAC_2: "h2" });
+  assert.deepEqual(v.cas.map((c) => c.host), ["acme.example-ca.test"]);
 });
 
 test("cas: the bare default directory is not an opt-in; enabled needs a slot + domain + dns api", async () => {

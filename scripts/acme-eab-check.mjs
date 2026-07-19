@@ -1,27 +1,22 @@
 #!/usr/bin/env node
 // Burn-test an ACME External Account Binding credential from a workstation,
 // using the SAME JOSE construction as supervisor.js (helpers mirrored from
-// there - keep them in sync). Two modes:
+// there - keep them in sync):
 //
-//   node scripts/acme-eab-check.mjs --kid <keyId> --hmac <b64MacKey>
-//   node scripts/acme-eab-check.mjs --sa eab-sa.json
+//   node scripts/acme-eab-check.mjs --directory <acme-url> --kid <keyId> --hmac <b64MacKey>
 //
-// The second is the provisioner path: it mints a fresh single-use EAB pair
-// via Google's Public CA API (exactly like the supervisor's gtsMintEab, incl.
-// the REST double-base64 unwrap heuristic - the output SAYS whether the
-// heuristic fired, which live-validates it), then registers with that pair.
-// Optional: --directory <url> (default Google Trust Services DV).
+// Optional: --contact <email>, --no-contact (some CAs reject contactless
+// registrations - the flag lets you prove whether a FAILED registration
+// consumes the pair).
 //
-// WARNING: SUCCESS REGISTERS AN ACCOUNT AND CONSUMES THE PAIR (Google EAB is
-// single-use). Never test the pair you mean to give the enclave - mint a
-// throwaway (`gcloud publicca external-account-keys create`) or use --sa,
-// which mints its own throwaway. The registered account is inert: no certs
-// are ordered, and abandoning it costs nothing.
+// WARNING: SUCCESS REGISTERS AN ACCOUNT, and on CAs with single-use EAB that
+// CONSUMES the pair. Never test the pair you mean to give the enclave - mint
+// a throwaway. The registered account is inert: no certs are ordered, and
+// abandoning it costs nothing.
 import { createHash, createHmac, generateKeyPairSync, sign as cryptoSign } from "node:crypto";
-import fs from "node:fs";
 
 const arg = (name) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? (process.argv[i + 1] || "") : ""; };
-const DIRECTORY = (arg("directory") || "https://dv.acme-v02.api.pki.goog/directory").replace(/\/+$/, "");
+const DIRECTORY = (arg("directory") || "https://acme.zerossl.com/v2/DV90").replace(/\/+$/, "");
 
 // ---- mirrored from supervisor.js (pure half) --------------------------------
 const b64u     = (b) => Buffer.from(b).toString("base64url");
@@ -38,17 +33,11 @@ function eabJws(kid, hmacB64u, accountJwk, newAccountUrl) {
   const sig     = createHmac("sha256", Buffer.from(hmacB64u, "base64url")).update(`${prot}.${payload}`).digest();
   return { protected: prot, payload, signature: b64u(sig) };
 }
-function gcpSaAssertion(sa, nowSec) {
-  const hdr    = b64uJson({ alg: "RS256", typ: "JWT", ...(sa.private_key_id ? { kid: sa.private_key_id } : {}) });
-  const claims = b64uJson({ iss: sa.client_email, scope: "https://www.googleapis.com/auth/cloud-platform",
-                            aud: "https://oauth2.googleapis.com/token", iat: nowSec, exp: nowSec + 3600 });
-  const sig    = cryptoSign("sha256", Buffer.from(`${hdr}.${claims}`), sa.private_key);
-  return `${hdr}.${claims}.${b64u(sig)}`;
-}
 // -----------------------------------------------------------------------------
 
 async function main() {
-  let kid = arg("kid").trim(), hmac = arg("hmac").trim();
+  const kid = arg("kid").trim(), hmac = arg("hmac").trim();
+  if (!kid || !hmac) { console.error("usage: --directory <acme-url> --kid <keyId> --hmac <b64MacKey> [--contact <email> | --no-contact]"); process.exit(2); }
   const dirR = await fetch(DIRECTORY);
   const dir  = await dirR.json().catch(() => null);
   if (!dirR.ok || !dir?.newAccount) {
@@ -56,27 +45,6 @@ async function main() {
     process.exit(1);
   }
   console.log(`directory ok: ${DIRECTORY} (externalAccountRequired=${!!dir.meta?.externalAccountRequired})`);
-
-  if (arg("sa")) {
-    const raw = fs.readFileSync(arg("sa"), "utf8").trim();
-    const sa  = JSON.parse(raw.startsWith("{") ? raw : Buffer.from(raw, "base64").toString("utf8"));
-    const tokR = await fetch("https://oauth2.googleapis.com/token", { method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${gcpSaAssertion(sa, Math.floor(Date.now() / 1000))}` });
-    const tok = await tokR.json().catch(() => null);
-    if (!tokR.ok || !tok?.access_token) { console.error(`gcp token: HTTP ${tokR.status} ${JSON.stringify(tok)?.slice(0, 300)}`); process.exit(1); }
-    console.log(`gcp token ok (${sa.client_email})`);
-    const kR = await fetch(`https://publicca.googleapis.com/v1/projects/${sa.project_id}/locations/global/externalAccountKeys`, {
-      method: "POST", headers: { authorization: `Bearer ${tok.access_token}`, "content-type": "application/json" }, body: "{}" });
-    const data = await kR.json().catch(() => null);
-    if (!kR.ok || !data?.keyId || !data?.b64MacKey) { console.error(`eab mint: HTTP ${kR.status} ${JSON.stringify(data)?.slice(0, 300)}`); process.exit(1); }
-    kid = data.keyId; hmac = data.b64MacKey;
-    const once = Buffer.from(hmac, "base64").toString("utf8");
-    const wrapped = once.length >= 40 && /^[A-Za-z0-9_-]+={0,2}$/.test(once);
-    if (wrapped) hmac = once;
-    console.log(`minted throwaway EAB ${kid} - b64MacKey ${wrapped ? "WAS double-base64-wrapped (supervisor heuristic fires)" : "was NOT wrapped (heuristic passes through)"}`);
-  }
-  if (!kid || !hmac) { console.error("usage: --kid <keyId> --hmac <b64MacKey>  |  --sa <service-account.json>"); process.exit(2); }
 
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const j = publicKey.export({ format: "jwk" });
@@ -96,7 +64,7 @@ async function main() {
   const body = await r.json().catch(() => ({}));
   if (r.status === 201) {
     console.log(`REGISTERED: ${r.headers.get("location")}`);
-    console.log("the pair is now CONSUMED (single-use) - do NOT hand it to the enclave");
+    console.log("on CAs with single-use EAB this pair is now CONSUMED - do not hand it to the enclave");
   } else {
     console.error(`FAILED HTTP ${r.status}: ${JSON.stringify(body).slice(0, 400)}`);
     process.exit(1);

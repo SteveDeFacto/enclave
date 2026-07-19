@@ -409,35 +409,18 @@ const DNS_API         = (process.env.DNS_API || "").trim().replace(/\/+$/, ""); 
 // safe. A bare address gets the mailto: prefix; no CA email-verifies it.
 const _contactRaw  = (process.env.ACME_CONTACT || "").trim();
 const ACME_CONTACT = _contactRaw && (_contactRaw.includes(":") ? _contactRaw : `mailto:${_contactRaw}`);
-// A slot may carry a PROVISIONER instead of (or beside) a static EAB pair:
-// ACME_EAB_PROVISION<suf> = a GCP service-account key (the JSON, or base64 of
-// it) holding roles/publicca.externalAccountKeyCreator. Google's EAB secrets
-// are SINGLE-USE and expire unused after 7 days, while this supervisor
-// registers a fresh ACME account every boot - so a static pair arms GTS for
-// exactly ONE boot of ONE enclave and then dies. With the SA key the slot
-// mints a fresh EAB seconds before each registration (gtsMintEab below),
-// which is the durable arrangement. A static pair, when present, wins.
-function parseSaKey(raw) {
-  const s = raw.trim();
-  const sa = JSON.parse(s.startsWith("{") ? s : Buffer.from(s, "base64").toString("utf8"));
-  if (!sa.client_email || !sa.private_key || !sa.project_id) throw new Error("needs client_email, private_key, project_id");
-  return sa;
-}
-const ACME_CAS = [];   // ordered CA slots: { directory, host, eabKid, eabHmac, eabProvision, dir, account, nonce, downUntil }
+const ACME_CAS = [];   // ordered CA slots: { directory, host, eabKid, eabHmac, dir, account, nonce, downUntil }
 for (const suf of ["", "_2", "_3"]) {
   const directory = (process.env[`ACME_DIRECTORY${suf}`] || (suf ? "" : "https://acme.zerossl.com/v2/DV90")).trim().replace(/\/+$/, "");
   const eabKid    = (process.env[`ACME_EAB_KID${suf}`]  || "").trim();
   const eabHmac   = (process.env[`ACME_EAB_HMAC${suf}`] || "").trim();
-  let eabProvision = null;
-  const provRaw   = (process.env[`ACME_EAB_PROVISION${suf}`] || "").trim();
-  if (provRaw) { try { eabProvision = parseSaKey(provRaw); } catch (e) { console.warn(`[acme] ACME_EAB_PROVISION${suf}: unusable service-account key (${e.message}) - ignoring it`); } }
   if (!!eabKid !== !!eabHmac) { console.warn(`[acme] ACME_EAB_KID${suf}/ACME_EAB_HMAC${suf}: half an EAB pair - slot skipped`); continue; }
-  if (suf ? !directory : !(eabKid || eabProvision)) {         // slot 1's default directory alone is not an opt-in
+  if (suf ? !directory : !eabKid) {                           // slot 1's default directory alone is not an opt-in
     if (suf && eabKid) console.warn(`[acme] ACME_EAB_*${suf} set but ACME_DIRECTORY${suf} missing - slot skipped`);
     continue;
   }
   let host; try { host = new URL(directory).host; } catch { console.warn(`[acme] ACME_DIRECTORY${suf}: bad URL - slot skipped`); continue; }
-  ACME_CAS.push({ directory, host, eabKid, eabHmac, eabProvision, dir: null, account: null, nonce: null, downUntil: 0 });
+  ACME_CAS.push({ directory, host, eabKid, eabHmac, dir: null, account: null, nonce: null, downUntil: 0 });
 }
 const ACME_ENABLED = !!(ACME_CAS.length && APP_CERT_DOMAIN && DNS_API);
 
@@ -477,17 +460,6 @@ function eabJws(kid, hmacB64u, accountJwk, newAccountUrl) {
   const payload = b64uJson(accountJwk);
   const sig     = createHmac("sha256", Buffer.from(hmacB64u, "base64url")).update(`${prot}.${payload}`).digest();
   return { protected: prot, payload, signature: b64u(sig) };
-}
-
-// GCP service-account OAuth assertion (RFC 7523): a one-hour RS256 JWT the
-// token endpoint swaps for an access token. Pure - the fetch lives with the
-// runtime half (gtsMintEab); nowSec is a parameter so the seam can pin it.
-function gcpSaAssertion(sa, nowSec) {
-  const hdr    = b64uJson({ alg: "RS256", typ: "JWT", ...(sa.private_key_id ? { kid: sa.private_key_id } : {}) });
-  const claims = b64uJson({ iss: sa.client_email, scope: "https://www.googleapis.com/auth/cloud-platform",
-                            aud: "https://oauth2.googleapis.com/token", iat: nowSec, exp: nowSec + 3600 });
-  const sig    = cryptoSign("sha256", Buffer.from(`${hdr}.${claims}`), sa.private_key);   // RSA PKCS#1 v1.5
-  return `${hdr}.${claims}.${b64u(sig)}`;
 }
 
 // ---- minimal DER writer + PKCS#10 CSR builder ------------------------------
@@ -541,10 +513,10 @@ function buildCsr(name) {
 }
 
 // ---- self-test seam ---------------------------------------------------------
-// ACME_SELFTEST=csr|cas|gcpjwt|vectors prints the helpers' outputs as one
-// JSON line and exits BEFORE any boot side effect (nothing above this point
-// opens a socket or touches state). Driven by test/acme.test.mjs; also handy
-// in a CVM shell. Never active in production - the var appears in no env file.
+// ACME_SELFTEST=csr|cas|vectors prints the helpers' outputs as one JSON line
+// and exits BEFORE any boot side effect (nothing above this point opens a
+// socket or touches state). Driven by test/acme.test.mjs; also handy in a CVM
+// shell. Never active in production - the var appears in no env file.
 if (process.env.ACME_SELFTEST) {
   if (process.env.ACME_SELFTEST === "csr") {
     const name = process.env.ACME_SELFTEST_NAME || "test.app.enclave.host";
@@ -553,10 +525,7 @@ if (process.env.ACME_SELFTEST) {
   } else if (process.env.ACME_SELFTEST === "cas") {
     // the parsed CA slot list, secrets reduced to presence bits
     console.log(JSON.stringify({ enabled: ACME_ENABLED,
-      cas: ACME_CAS.map(({ directory, host, eabKid, eabProvision }) => ({ directory, host, eab: !!eabKid, prov: !!eabProvision })) }));
-  } else if (process.env.ACME_SELFTEST === "gcpjwt") {
-    // the GCP SA assertion over a caller-supplied key, iat pinned for determinism
-    console.log(JSON.stringify({ assertion: gcpSaAssertion(parseSaKey(process.env.ACME_SELFTEST_SA), 1752000000) }));
+      cas: ACME_CAS.map(({ directory, host, eabKid }) => ({ directory, host, eab: !!eabKid })) }));
   } else {
     // RFC 7515 Appendix A.3's P-256 key: the fixed vector the tests compare
     // against an independent RFC 7638 implementation (jose).
@@ -3370,59 +3339,26 @@ async function acmePost(ca, url, payload, { useJwk = false } = {}) {
     return { status: r.status, headers: r.headers, data };
   }
 }
-// Mint a fresh single-use EAB pair from Google's Public CA API using the
-// slot's service-account key: SA-JWT -> access token -> externalAccountKeys
-// create. Runs seconds before each registration, so Google's 7-day-unused
-// expiry and one-account-per-key rules never bite. All failures are CA-level.
-async function gtsMintEab(ca) {
-  const sa = ca.eabProvision;
-  let r; try {
-    r = await fetch("https://oauth2.googleapis.com/token", { method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${gcpSaAssertion(sa, Math.floor(Date.now() / 1000))}` });
-  } catch (e) { throw caErr(`gcp token: ${e.message}`); }
-  const tok = await r.json().catch(() => null);
-  if (!r.ok || !tok?.access_token) throw caErr(`gcp token: HTTP ${r.status} ${JSON.stringify(tok)?.slice(0, 200)}`);
-  let k; try {
-    k = await fetch(`https://publicca.googleapis.com/v1/projects/${sa.project_id}/locations/global/externalAccountKeys`, {
-      method: "POST", headers: { authorization: `Bearer ${tok.access_token}`, "content-type": "application/json" }, body: "{}" });
-  } catch (e) { throw caErr(`eab mint: ${e.message}`); }
-  const data = await k.json().catch(() => null);
-  if (!k.ok || !data?.keyId || !data?.b64MacKey) throw caErr(`eab mint: HTTP ${k.status} ${JSON.stringify(data)?.slice(0, 200)}`);
-  // the REST proto's bytes field wraps the (already-base64url) MAC key in one
-  // more base64 layer; unwrap when the decode yields printable base64url text
-  let mac = data.b64MacKey;
-  const once = Buffer.from(mac, "base64").toString("utf8");
-  if (once.length >= 40 && /^[A-Za-z0-9_-]+={0,2}$/.test(once)) mac = once;
-  console.log(`[acme] ${ca.host}: minted fresh EAB ${data.keyId} via ${sa.client_email}`);
-  return { kid: data.keyId, hmac: mac };
-}
-// One account per CA per boot (in-memory key; CVMs have no disk). The EAB
-// inner JWS binds our fresh key to the CA-issued credential - a static pair
-// when the slot has one, a just-minted one from the slot's provisioner
-// otherwise; CAs that need no EAB (an eab-less fallback slot) skip the
-// binding. The Location header is the kid all later JWS use. Failing to
-// establish an account is always CA-level: nothing issues without one.
+// One account per CA per boot (in-memory key; CVMs have no disk and EAB makes
+// re-registration free). The EAB inner JWS binds our fresh key to the
+// CA-issued credential; CAs that need no EAB (an eab-less fallback slot) just
+// skip the binding. The Location header is the kid all later JWS use. Failing
+// to establish an account is always CA-level: nothing issues without one.
 async function acmeAccount(ca) {
   if (ca.account?.kid) return ca.account;
   const dir = await acmeDir(ca);
-  // a slot whose CA demands EAB but that has no way to produce one (secrets
-  // not set yet) can never register - say so instead of POSTing doomed requests
-  if (dir.meta?.externalAccountRequired && !ca.eabKid && !ca.eabProvision)
-    throw caErr("CA requires External Account Binding but this slot has neither an EAB pair nor a provisioner (secrets unset?)");
+  // a slot whose CA demands EAB but that carries none (secrets not set yet)
+  // can never register - say so precisely instead of POSTing a doomed request
+  if (dir.meta?.externalAccountRequired && !ca.eabKid)
+    throw caErr("CA requires External Account Binding but this slot has no EAB pair (secrets unset?)");
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const j = publicKey.export({ format: "jwk" });
   ca.account = { key: privateKey, jwk: { crv: j.crv, kty: j.kty, x: j.x, y: j.y }, thumbprint: jwkThumbprint(j), kid: null };
   try {
-    // the provisioner outranks a static pair: minted pairs are always fresh,
-    // while a static one may be stale or already consumed (Google single-use)
-    // - a leftover KID/HMAC secret must never wedge a provisioned slot
-    const eab = ca.eabProvision ? await gtsMintEab(ca)
-              : ca.eabKid ? { kid: ca.eabKid, hmac: ca.eabHmac } : null;
     const r = await acmePost(ca, dir.newAccount,
       { termsOfServiceAgreed: true,
         ...(ACME_CONTACT ? { contact: [ACME_CONTACT] } : {}),
-        ...(eab ? { externalAccountBinding: eabJws(eab.kid, eab.hmac, ca.account.jwk, dir.newAccount) } : {}) },
+        ...(ca.eabKid ? { externalAccountBinding: eabJws(ca.eabKid, ca.eabHmac, ca.account.jwk, dir.newAccount) } : {}) },
       { useJwk: true });
     ca.account.kid = r.headers.get("location");
     if (!ca.account.kid) throw new Error("newAccount returned no Location (account kid)");
