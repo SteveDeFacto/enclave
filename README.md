@@ -27,7 +27,7 @@ Beyond plain web apps: GPU inference via `wasi-nn` (ONNX, GGUF through a bundled
 | `worker/` | GPU worker: per-tenant MPS-capped GPU processes for raw PTX submission |
 | `mps-daemon/` | NVIDIA MPS control daemon (fractional GPU shares) |
 | `contracts/` | Solidity on Base: `EnclaveRegistry`, `EnclaveAppCatalog`, `EnclaveDeployments` |
-| `relay/` | SNI relay + dedicated-IP relay (TLS passthrough to enclaves, IPv6 ingress/egress) |
+| `relay/` | SNI relay + dedicated-IP relay (TLS passthrough to enclaves, IPv6 ingress/egress) + the API gateway with the MCP server for coding agents (`mcp.enclave.host`) |
 | `egress.js` / `net-guard.mjs` | outbound egress shim and network guard |
 | `site/` | the enclave.host static site, published to IPFS (LWC-style web components, soft-nav router; `npm run build:site`) |
 | `cli/` | the `enclave` CLI (deploy, fund, attest-verify from a terminal) |
@@ -132,6 +132,7 @@ twice.
 ## Documentation & support
 
 - App developers: the guide and API reference live on the site at https://enclave.host/develop
+- Coding agents: MCP server at `https://mcp.enclave.host/mcp` (Streamable HTTP) exposing the full platform surface as tools; state changes come back as unsigned Base transactions, keys stay with the agent (`claude mcp add --transport http enclave https://mcp.enclave.host/mcp`)
 - The underlying confidential-container platform is [Tinfoil](https://docs.tinfoil.sh) ([contact@tinfoil.sh](mailto:contact@tinfoil.sh))
 
 ## License

@@ -56,6 +56,9 @@
 //   AVAIL_POLL_SEC     optional    availability poll cadence (default 10)
 //   REGISTRY_POLL_SEC  optional    registry re-read cadence (default 300)
 //   STALE_AFTER_SEC    optional    drop enclaves silent on-chain > this (3600)
+//   MCP_DOMAIN         optional    Host(s) served as the MCP endpoint (default
+//                                  mcp.enclave.host); /mcp on the API host
+//                                  serves it too. See mcp.js.
 
 import http from "node:http";
 import https from "node:https";
@@ -64,6 +67,7 @@ import tls from "node:tls";
 import { createHash, createHmac } from "node:crypto";
 import { readCappedText, installProcessGuards } from "./fleet.mjs";
 import { isBlockedHost } from "./net-guard.mjs";
+import { isMcpHost, handleMcp } from "./mcp.js";
 installProcessGuards("api-relay");
 
 let   REGISTRY_ADDRESS  = (process.env.REGISTRY_ADDRESS || "").trim();   // env fallback; the address book (below) overrides
@@ -1010,6 +1014,14 @@ const server = http.createServer((req, res) => {
       proxyTo(owner, req, res, { path: "/x/" + depHost + rest, setCors: false, idleMs: 180000 });
     });
   }
+
+  // MCP endpoint (mcp.enclave.host, or /mcp on the API host): the coding-agent
+  // front door. Checked AFTER the app-subdomain branch so a tenant app's own
+  // /mcp path is never shadowed; handles its own CORS/OPTIONS (any origin, no
+  // credentials — tokens ride per-call params, not cookies). See mcp.js.
+  if (isMcpHost(routingHost(req)) || u.pathname === "/mcp" || u.pathname === "/mcp/")
+    return handleMcp(req, res, u).catch((e) =>
+      json(res, 500, { error: "mcp_error", message: e.message }, req));
 
   if (req.method === "OPTIONS") { res.writeHead(204, cors(req)); return res.end(); }   // preflight for any path
 

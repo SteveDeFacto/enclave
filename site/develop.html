@@ -65,7 +65,7 @@
   <a id="develop"></a>
   <div class="wrap">
     <c-section-head eyebrow="Develop" heading="From idea to enclave.">
-      <p>Everything needed to ship a confidential app: the guide takes you from an empty directory to an attested endpoint, the CLI drives every operation from a terminal, and the API reference documents every call the platform answers.</p>
+      <p>Everything needed to ship a confidential app: the guide takes you from an empty directory to an attested endpoint, the CLI drives every operation from a terminal, and the API reference documents every call the platform answers. Coding agents plug in over MCP: see the <a href="#docs-mcp">MCP server</a> under the API reference.</p>
     </c-section-head>
     <nav class="dev-tabs" id="devTabs" aria-label="Developer documentation tabs">
       <a href="#docs" data-devtab="guide" class="on" aria-current="true">Guide</a>
@@ -846,6 +846,18 @@ enclave logs 0x3f2a9c1b -f               # watch it serve</code></pre></c-code>
     </div>
 
     <c-api-reference></c-api-reference>
+
+    <article class="doc" id="docs-mcp" style="margin-top:56px; max-width:920px;">
+      <h3>MCP server</h3>
+      <p>Coding agents connect over the Model Context Protocol at <code>https://mcp.enclave.host/mcp</code> (Streamable HTTP). It exposes the full platform surface as typed tools: catalog, pricing, live capacity, deployments, logs, attestation, sign-in, and uploads. It never touches keys: every state change comes back as an unsigned Base transaction for your own wallet to sign, so an agent holding a funded key can browse the catalog, deploy, fund, watch logs, publish, and verify attestation end to end.</p>
+      <c-code fn="connect an agent"><pre><code># Claude Code
+claude mcp add --transport http enclave https://mcp.enclave.host/mcp
+
+# any MCP client: POST JSON-RPC (initialize, tools/list, tools/call)
+curl -s https://mcp.enclave.host/mcp -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</code></pre></c-code>
+      <p>Start with the <code>guide</code> tool (topic <code>getting-started</code>). Session tokens for owner-scoped reads ride per-call parameters or the Authorization header; transactions never need a session. The <a href="#docs-cli">CLI</a> and MCP are equivalent surfaces, so anything an agent plans over MCP can also be run with <code>enclave</code> one-liners.</p>
+    </article>
   </div>
 </section>
 </main>

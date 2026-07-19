@@ -66,6 +66,7 @@ ENCLAVES=https://enclave1...,https://enclave2... node api-relay.js
 | `GET /availability` | **fleet aggregate**: best single-card slice + best node pool across enclaves, plus `gpuEnclaveCpuShareFree` (a GPU deployment's CPU share must fit the GPU enclave's own node) |
 | `/v1/auth/*`, other `/v1/*` | one sticky enclave (SIWE nonces are per-enclave state; GPU enclave preferred, it serves the full surface) |
 | `GET /health` | poller freshness |
+| `POST /mcp` (also any path on the `MCP_DOMAIN` Host, default `mcp.enclave.host`) | **MCP server** (`mcp.js`): the full platform surface as Model Context Protocol tools for coding agents — see below |
 
 Trust model: as a **router** it can only misroute, never impersonate —
 clients verify attestation on the enclave's own origin (Tinfoil SecureClient
@@ -105,6 +106,34 @@ Notes:
   - **`FANOUT_MAX_INFLIGHT`** (256) — global cap on concurrent upstream fan-out;
     with per-source rate limits it bounds `/v1/claim-hint` and `/x`-miss
     amplification. `/x` owner misses are also negatively cached briefly.
+
+### MCP server (`mcp.js`)
+
+The coding-agent front door, served from the same process: MCP over Streamable
+HTTP (stateless JSON-RPC over POST), dispatched by Host (`MCP_DOMAIN`, default
+`mcp.enclave.host`) and by path (`/mcp` on the API host). The app-subdomain
+branch runs first, so a tenant app's own `/mcp` path is never shadowed.
+
+- **~25 tools covering the full platform surface**: guides, pricing /
+  availability / GPU capacity, the on-chain app catalog (`list_apps`,
+  `get_app`), deployments (list/get/logs/restart/attestation), SIWE sign-in
+  (`auth_nonce`/`auth_login`), signed uploads (`upload_token`), claim hints,
+  and transaction builders (`plan_deploy`, `build_fund`, `build_stop`,
+  `build_resume`, `build_upgrade`, `build_publish`).
+- **No keys, ever** — the relay's standing invariant extends to MCP. Builders
+  validate against live chain state (approval gates, share minimums, the GPU
+  cap, publisher-fee snapshots — the CLI's own checks) and return **unsigned**
+  Base transactions `{chainId, to, data, value}`; the agent signs with the
+  user's wallet. Signature flows (SIWE, upload tokens) take locally produced
+  signatures. Session tokens ride per-call `token` params or the Authorization
+  header and stay enclave-verified upstream.
+- Read tools self-loop through this relay's own gateway (loopback), so they
+  return exactly what external clients see; catalog/ledger reads use
+  `BASE_RPC` behind the same address-book repointing as everything else.
+- Serving `mcp.enclave.host` needs a Caddy site block on the fronting box
+  (`reverse_proxy 127.0.0.1:8100`, same as the API host) and a DNS record
+  pointing at it; `/mcp` on the API host works with no extra config.
+- Connect: `claude mcp add --transport http enclave https://mcp.enclave.host/mcp`
 
 ## UDP relay
 
