@@ -16,7 +16,7 @@ import { lsGet, lsSet, emit, on, esc } from "./util.js";
 import { minPctsOf } from "./pricing.js";
 import { Enclave } from "./api.js";
 
-export const STORE = { apps:[], byId:{}, sel:{}, owner:null, filter:"approved", loaded:false, loading:false };
+export const STORE = { apps:[], byId:{}, sel:{}, owner:null, filter:"approved", loaded:false, loading:false, at:0 };
 
 // firewall entry: http (default web app) | http:N | tcp:N | udp:N, N in 1-19999 (labels; <1024 always remapped)
 // (8080/8091 are infra-reserved; the enclave enforces the same rules server-side)
@@ -40,9 +40,15 @@ export function catCacheGet(){
 }
 export function catCacheSet(apps){ lsSet("enclave_catalog_" + APP_CATALOG_ADDRESS, JSON.stringify({ at: Date.now(), apps })); }
 
+// A loaded store older than this re-reads (in the background, behind the
+// current paint) on the next loadCatalog() - i.e. the next page boot. The
+// session can't get stuck on one bad read: a store that loaded empty or
+// stale heals on the next visit to the Apps/Deploy page instead of holding
+// until a hard refresh.
+const FRESH_MS = 120000;
 export async function loadCatalog(force){
   if (!catConfigured()){ STORE.loaded = true; emit("enclave:catalog", { type: "loaded" }); return; }
-  if (STORE.loading || (STORE.loaded && !force)) return;
+  if (STORE.loading || (STORE.loaded && !force && Date.now() - STORE.at < FRESH_MS)) return;
   STORE.loading = true;
   if (STORE.owner === null)   // fetch alongside the catalog read, not after it: badges need it
     catOwner().then(o => { STORE.owner = o.toLowerCase(); emit("enclave:catalog", { type: "loaded" }); }).catch(() => {});
@@ -50,7 +56,8 @@ export async function loadCatalog(force){
     const cached = catCacheGet();
     if (cached){
       STORE.apps = cached.apps; STORE.byId = {}; cached.apps.forEach(a => STORE.byId[a.appId] = a);
-      STORE.loaded = true; emit("enclave:catalog", { type: "loaded", stale: true });
+      STORE.loaded = true; STORE.at = cached.at || 0;
+      emit("enclave:catalog", { type: "loaded", stale: true });
     } else emit("enclave:catalog", { type: "loading" });
   }
   try {
@@ -59,7 +66,7 @@ export async function loadCatalog(force){
     for (let s = 0; s < n; s += PAGE) apps.push(...await catGetAppsPage(s, PAGE));
     await Promise.all(apps.map(async a => { a.versions = await catGetVersions(a.appId, a.versionCount); }));
     STORE.apps = apps; STORE.byId = {}; apps.forEach(a => STORE.byId[a.appId] = a);
-    STORE.loaded = true;
+    STORE.loaded = true; STORE.at = Date.now();
     catCacheSet(apps);
   } catch(e){
     emit("enclave:catalog", { type: "error", message: e.message || String(e) });

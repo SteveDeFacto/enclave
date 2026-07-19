@@ -89,9 +89,16 @@ export function catExplorer(){ return APP_CATALOG_CHAIN === 84532 ? "https://sep
 /* ---- read side: JSON-RPC against a POOL of public Base RPCs ----
    Rotates to the next endpoint on transport errors and rate limits; a
    contract REVERT is deterministic and thrown immediately (retrying it 8x
-   would just burn the pool). One short breather between rounds. */
+   would just burn the pool). One short breather between rounds.
+   opts.emptyRetry: rate-limited public RPCs sometimes answer eth_call with
+   200 + result:"0x" instead of an error (seen live - it once poisoned the
+   relay's schema sniff, and the addressbook guards against it too). Our
+   contract getters never legitimately return "0x" (a missing getter is a
+   REVERT), so under the flag an empty result rotates like any transport
+   error; if every endpoint agrees it throws, and callers keep their
+   error paths instead of caching a zero. */
 let _rpcIdx = 0;
-export async function baseRpc(method, params){
+export async function baseRpc(method, params, opts){
   let lastErr = null;
   for (let attempt = 0; attempt < APP_CATALOG_RPCS.length * 2; attempt++){
     const url = APP_CATALOG_RPCS[_rpcIdx % APP_CATALOG_RPCS.length];
@@ -105,6 +112,8 @@ export async function baseRpc(method, params){
         if (/revert/i.test(j.error.message || "")) throw { fatal: true, err: new EnclaveError(j.error.message, 0) };
         throw new EnclaveError(j.error.message || "rpc error", 0);
       }
+      if (opts && opts.emptyRetry && (j.result == null || j.result === "0x" || j.result === ""))
+        throw new EnclaveError("empty eth_call result", 0);
       return j.result;                       // null is a valid result (e.g. pending receipt)
     } catch(e){
       if (e && e.fatal) throw e.err;
@@ -116,10 +125,10 @@ export async function baseRpc(method, params){
   throw lastErr || new EnclaveError("all Base RPC endpoints failed", 0);
 }
 export async function ethCall(data){
-  return (await baseRpc("eth_call", [{ to: APP_CATALOG_ADDRESS, data }, "latest"])) || "0x";
+  return (await baseRpc("eth_call", [{ to: APP_CATALOG_ADDRESS, data }, "latest"], { emptyRetry: true })) || "0x";
 }
 export async function depCall(data){
-  return (await baseRpc("eth_call", [{ to: DEPLOYMENTS_ADDRESS, data }, "latest"])) || "0x";
+  return (await baseRpc("eth_call", [{ to: DEPLOYMENTS_ADDRESS, data }, "latest"], { emptyRetry: true })) || "0x";
 }
 // EnclaveDeployments.get(id) -> one Deployment struct (see DEP_SCHEMA). The tuple
 // contains dynamic strings, so the return is offset-prefixed like a dynamic type.
