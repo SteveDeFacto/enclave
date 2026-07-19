@@ -3709,7 +3709,7 @@ server.on("upgrade", async (req, socket, head) => {
 // (DEPLOYMENTS_ADDRESS is a live binding from ./addressbook.js)
 const CLAIM_ENABLED    = /^(1|true|on)$/i.test(process.env.CLAIM_ENABLED || "");
 const CLAIM_POLL_SEC   = parseInt(process.env.CLAIM_POLL_SEC || "60", 10);    // sweep + audit + renew cadence
-const RENEW_MARGIN_SEC = parseInt(process.env.RENEW_MARGIN_SEC || "300", 10); // renew when less lease than this remains
+const RENEW_MARGIN_SEC = parseInt(process.env.RENEW_MARGIN_SEC || "600", 10); // renew when less lease than this remains (early renewal is FREE: the contract extends FROM leaseUntil, so a wide margin only buys more attempts)
 const CLAIM_MAX_PER_SWEEP = parseInt(process.env.CLAIM_MAX_PER_SWEEP || "3", 10); // new adoptions kicked off per pass (resumes uncapped)
 // CPU-only work prefers CPU-only enclaves: a GPU enclave waits this long after
 // a CPU-only deployment becomes claimable (created, or its last lease expired)
@@ -4003,9 +4003,12 @@ async function renewLeases() {
       console.log(`[claim] ${rec.id} lease ${lapsed ? "RE-CLAIMED (had lapsed)" : "renewed"} until ${new Date(rec._leaseUntil * 1000).toISOString()}`);
       saveStateSoon();
     } catch (e) {
-      rec._renewBackoffUntil = Date.now() + 300_000;
+      // 60s, NOT minutes: the renewal window is finite and a transient RPC
+      // failure must not eat the rest of it (a 5-min backoff once equalled
+      // the entire pre-2026-07-19 window - one hiccup guaranteed the lapse)
+      rec._renewBackoffUntil = Date.now() + 60_000;
       console.warn(`[claim] ${lapsed ? "re-claim" : "renew"} ${rec.id} failed (${e.shortMessage || e.message}); `
-                 + `lease ${lapsed ? "lapsed" : "expires"} ${new Date(rec._leaseUntil * 1000).toISOString()}; backing off 5m`);
+                 + `lease ${lapsed ? "lapsed" : "expires"} ${new Date(rec._leaseUntil * 1000).toISOString()}; backing off 60s`);
     } finally { rec._renewing = false; }
   }
 }
@@ -4516,6 +4519,16 @@ function startClaimLoop() {
     try { await fn(); }
     catch (e) { console.warn(`[claim] ${name} failed: ${e.shortMessage || e.message}`); }
   };
+  // Renewals ride their OWN clock, decoupled from pass duration: a pass can
+  // stall for many minutes inside audit/sweep (dozens of queued ids × catalog
+  // + ledger reads over a rate-limited public RPC), and a renewal window that
+  // opens mid-pass would otherwise wait the pass out (2026-07-19: ~10-15 min
+  // passes vs a 5-min window — freshly-claimed leases lapsed on a 30-min
+  // treadmill, 3 renewals landing in 45 min). The in-pass stage below stays
+  // for back-to-back coverage; both entries share the per-record _renewing /
+  // _renewBackoffUntil guards, so a double-fire is safe and cheap.
+  const rt = setInterval(() => { if (_enclaveId) stage("renew", renewLeases); }, 60_000);
+  if (rt.unref) rt.unref();
   const t = setInterval(async () => {
     if (_claimBusy || !_enclaveId) return;   // not advertised yet, or a slow pass is still running
     _claimBusy = true;
