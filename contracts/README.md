@@ -204,6 +204,17 @@ Manager env: `IPFS_GATEWAY` (default `https://ipfs.enclave.host`), `WASM_MAX_BYT
   tenants can run the same app simultaneously with no port conflicts. Declared
   TCP ports are reached through the attested origin as a WebSocket bridge at
   `/x/{id}/tcp/{logical-port}`.
+- **Per-version publisher fee** (`versionFee(appId, index)`, catalog schema rev 5;
+  a side mapping, so App/Version tuples decode unchanged on every rev): a version
+  may declare a per-second fee (USDC 6dp), capped at publish by the owner-set
+  `maxFeePerSec6` (`setMaxFee`). Like config and ports it is immutable once
+  published and covered by the owner's approval — re-pricing is a new version,
+  re-reviewed like any release, so an approved app can never silently change its
+  price. The catalog only records the number (discovery, not custody):
+  EnclaveDeployments snapshots it at create and forwards the publisher's
+  pro-rata cut of every funding straight to `App.publisher`'s wallet, and
+  runners refuse to claim a deployment that under-declares the fee of the
+  version it references (fail closed, the same off-chain gate as approval).
 - `verified` is an OPTIONAL owner-curated signal, set **per version** (you verify a
   specific CID; a new release starts unverified and must be re-checked). It does
   **not** gate execution — the CID does. The site can filter to verified.

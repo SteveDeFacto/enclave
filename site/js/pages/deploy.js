@@ -21,13 +21,13 @@ import { $, $$, esc, short, wait, fmtNum, fmtDur, hlJson, hlCode, copyText, show
 import { APP_DOMAIN, DEPLOYMENTS_ADDRESS, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
 import { minPctsOf, serverSpec, shareRates } from "../core/pricing.js";
-import { encCall, DEP_SEL, DEP_CREATED_TOPIC, APPROVAL, depGet, depRate6, depPrices6, depSchemaRev, depMaxGpuMilli, rate6Of, waitReceipt } from "../core/chain.js";
+import { encCall, DEP_SEL, DEP_CREATED_TOPIC, APPROVAL, depGet, depRate6, depPrices6, depSchemaRev, depMaxGpuMilli, rate6Of, waitReceipt, catVersionFee } from "../core/chain.js";
 
 // create()'s shape on the live contract (rev 1 carried a removed sshPubKey
 // string): sniffed once at init; the samples and the real encode both use it.
 let depRev = 2;
 import { connectWallet, refreshWallet, ensureBaseChain, sendTx, usdcBalanceOf, ethBalanceOf, openBuyModal } from "../core/wallet.js";
-import { STORE, loadCatalog, REF_CACHE, PORTS_CACHE, SPECS_CACHE, CONFIG_CACHE, looksFriendly, resolveAppRef, catalogRef } from "../core/catalog.js";
+import { STORE, loadCatalog, REF_CACHE, PORTS_CACHE, SPECS_CACHE, CONFIG_CACHE, looksFriendly, resolveAppRef, catalogRef, parseCatalogRef, publisherOfRef } from "../core/catalog.js";
 
 /* component handles (assigned in initDeploy) */
 let fleetList = null, volPicker = null;
@@ -151,6 +151,25 @@ function deployCurl(b){
     + '  -H "Content-Type: application/json" \\\n'
     + "  -d '{\"id\": \"0x<deployment id>\"}'";
 }
+/* A paid app's per-second publisher fee (USDC 6dp), keyed by the resolved
+   catalog:// reference. create() adds the fee ON TOP of the platform rate, so
+   every $/hr readout here must add it too. Filled asynchronously (fees live
+   outside the Version tuple); renderDeploy repaints when a fee lands. Numbers
+   for display math only - deployOnChain re-reads the exact BigInt right
+   before the signature. */
+const FEE6_CACHE = {};
+function currentFee6(){
+  const raw = ($("#cfgImage") && $("#cfgImage").value || "").trim();
+  const ref = REF_CACHE[raw], cr = ref && parseCatalogRef(ref);
+  if (!cr) return 0;
+  if (FEE6_CACHE[ref] != null) return FEE6_CACHE[ref];
+  FEE6_CACHE[ref] = 0;   // placeholder: one fetch per record, repaint on arrival
+  catVersionFee(cr.appId, cr.index)
+    .then(f => { if (f > 0n){ FEE6_CACHE[ref] = Number(f); renderDeploy(); } })
+    .catch(() => { delete FEE6_CACHE[ref]; });
+  return 0;
+}
+
 function renderDeploy(){
   const body = deployBody();
   $("#outReq").innerHTML = hlJson(body);
@@ -181,14 +200,17 @@ function renderDeploy(){
   }
   else {
     const g = shareRates(gpuPct, cpuPct);
-    // money comes from the CONTRACT's prices + ceil math (cached read) - 
-    // client constants drift; the hardware figures below stay client-side
-    rate = prices6 ? Number(rate6Of(prices6, g.gpuPct * 10, g.cpuPct * 10)) / 1e6 : g.rate;
+    // money comes from the CONTRACT's prices + ceil math (cached read) -
+    // client constants drift; the hardware figures below stay client-side.
+    // A paid app's publisher fee rides on top, exactly as create() adds it.
+    const fee = currentFee6() / 1e6;
+    rate = (prices6 ? Number(rate6Of(prices6, g.gpuPct * 10, g.cpuPct * 10)) / 1e6 : g.rate) + fee;
     readout = (g.gpuPct > 0
       ? "→ " + g.gpuPct + "% of card ≈ " + g.vramGb.toFixed(0) + " GB VRAM / " + Math.round(g.tflops) + " TFLOPS · "
       : "→ CPU-only · ")
       + g.cpuPct + "% of node ≈ " + fmtNum(g.ramGb) + " GB RAM / " + fmtNum(g.vcpus) + " vCPU / " + Math.round(g.gflops) + " GFLOPS · $"
-      + (rate * 3600).toFixed(2) + "/hr";
+      + (rate * 3600).toFixed(2) + "/hr"
+      + (fee > 0 ? " (incl. $" + (fee * 3600).toFixed(2) + "/hr to the app's publisher)" : "");
   }
   const t = $("#tierOut"); if (t) t.textContent = readout;
   // capacity is a WAIT, not an error: a pick above what's free right now is
@@ -279,6 +301,8 @@ async function runDeploy(){
     const plan = [["warn", "// dry run: nothing is sent"]];
     plan.push(["info", "0) config + volumes + ports ride the version's on-chain record (approved with it) - nothing is pinned or passed at deploy"]);
     if (wafDry) plan.push(["info", "0b) protection rides the create() options envelope - the enclave's proxy enforces it per requester IP, the app never sees blocked traffic"]);
+    const dryFee = currentFee6();
+    if (dryFee > 0) plan.push(["info", "0c) this app charges a publisher fee of $" + (dryFee * 3600 / 1e6).toFixed(2) + "/hr - create() snapshots it and every funding pays the publisher's cut straight to their wallet"]);
     plan.push(["p", "1) EnclaveDeployments.create(app, shares) - one wallet tx; you own the record"],
       ["dimln", "   create(\"" + rref.reference + "\", " + gpuMilli + ", " + cpuMilli + ", " + appPort + ", \"" + portsCsv + "\", " + dep.public + (depRev >= 2 ? ", " + envDry + ")" : ", \"\", " + envDry + ")")],
       ["p", dep.asset === "ETH"
@@ -338,6 +362,22 @@ export async function deployOnChain(spec){
   // UI; this is the shared backstop for the races they can't see.
   const capMsg = await gpuCapRefusal(spec.gpuMilli);
   if (capMsg) return showToast("Deploy refused: " + capMsg);
+  // The version's publisher fee is snapshotted INTO the record by create():
+  // resolve it fresh from the catalog right before the signature (fail
+  // closed - an under-declared fee makes a record no runner will ever
+  // claim, its funding unrecoverable, same as under-provisioned shares).
+  let fee6 = 0n, feeTo = null;
+  const cref = parseCatalogRef(spec.reference);
+  if (cref){
+    try { fee6 = await catVersionFee(cref.appId, cref.index); }
+    catch(e){ return showToast("Deploy refused: couldn't read the app's publisher fee from the catalog - try again shortly."); }
+    if (fee6 > 0n){
+      feeTo = publisherOfRef(spec.reference);
+      if (!feeTo) return showToast("Deploy refused: the app's publisher wallet isn't loaded yet - open the Apps page and retry.");
+      if ((await depSchemaRev()) < 4)
+        return showToast("Deploy refused: this app charges a publisher fee, which the live deployments ledger predates.");
+    }
+  }
   const fund = spec.fundUsd;
   const { portsCsv, appPort } = portsSpec(spec.ports);
   const asset = spec.asset || "USDC";
@@ -373,8 +413,10 @@ export async function deployOnChain(spec){
     let rate6 = 0n;
     try { rate6 = await Promise.race([depRate6(spec.gpuMilli, spec.cpuMilli), wait(6000).then(() => 0n)]); } catch(e){}
     if (rate6 > 0n){
-      const rate = Number(rate6) / 1e6;
+      const rate = Number(rate6 + fee6) / 1e6;   // the publisher's cut rides on top, exactly as create() adds it
       w.line("info", "    " + fund + " USDC ≈ " + fmtDur(fund / rate) + " of runtime at $" + (rate * 3600).toFixed(2) + "/hr");
+      if (fee6 > 0n)
+        w.line("info", "    includes the app's publisher fee: $" + (Number(fee6) * 3600 / 1e6).toFixed(2) + "/hr, paid to " + short(feeTo) + " out of each funding");
     }
 
     // 1) create: one tx from YOUR wallet - msg.sender owns the on-chain record.
@@ -387,13 +429,15 @@ export async function deployOnChain(spec){
     if (envelope) w.line("info", "    protection on: " + envelope + " (enforced per requester IP by the enclave's proxy)");
     w.line("p", "$ EnclaveDeployments.create(…)  (wallet · one tx · you own the record)");
     w.line("info", "[*] confirm the create transaction in your wallet…");
-    // rev-1 contracts take a now-removed sshPubKey string before configCid;
-    // encode whichever shape the live contract speaks (depSchemaRev sniffs once)
-    const rev2 = (depRev = await depSchemaRev()) >= 2;
-    const cdata = encCall(rev2 ? DEP_SEL.create : DEP_SEL.createV1, [
+    // encode whichever create() shape the live contract speaks (depSchemaRev
+    // sniffs once): rev 1 took a now-removed sshPubKey string before
+    // configCid; rev 4 grew the publisher-fee snapshot (recipient, fee/sec)
+    const rev = (depRev = await depSchemaRev());
+    const cdata = encCall(rev >= 4 ? DEP_SEL.create : rev >= 2 ? DEP_SEL.createV3 : DEP_SEL.createV1, [
       { t: "str", v: spec.reference }, { t: "uint", v: spec.gpuMilli }, { t: "uint", v: spec.cpuMilli },
       { t: "uint", v: appPort }, { t: "str", v: portsCsv }, { t: "bool", v: !!spec.isPublic },
-      ...(rev2 ? [] : [{ t: "str", v: "" }]), { t: "str", v: envelope },
+      ...(rev >= 2 ? [] : [{ t: "str", v: "" }]), { t: "str", v: envelope },
+      ...(rev >= 4 ? [{ t: "addr", v: feeTo || "0x" + "0".repeat(40) }, { t: "uint", v: fee6 }] : []),
     ]);
     const chash = await sendTx(DEPLOYMENTS_ADDRESS, cdata);
     w.line("dimln", "  ↳ sent " + chash + " · waiting for confirmation…");

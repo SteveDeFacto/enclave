@@ -51,6 +51,19 @@ pragma solidity ^0.8.20;
 ///     flags (approval / yanked / app active) are live, and runners re-check
 ///     them on every claim. `cidStatus` remains as the publish-time
 ///     CID-ownership pre-flight, not a deploy gate.
+///
+/// Publisher fee (monetization):
+///   - A version MAY declare a per-second publisher fee (USDC 6dp), capped at
+///     publish time by `maxFeePerSec6` (~$5.00/hour by default). Like config
+///     and ports it is IMMUTABLE once published and covered by the owner's
+///     approval — changing the price is a new version, re-reviewed like any
+///     release, so an approved app can never silently re-price. The catalog
+///     only RECORDS the number (still discovery, not custody): deployments
+///     snapshot it at create and EnclaveDeployments forwards the publisher's
+///     pro-rata cut of every funding straight to the app's `publisher` wallet,
+///     and runners refuse to claim a deployment that under-declares the fee
+///     of the version it references (fail closed, the same off-chain gate as
+///     approval).
 contract EnclaveAppCatalog {
     struct App {
         bytes32 appId;        // keccak256(publisher, slug); stable identity across versions
@@ -104,7 +117,12 @@ contract EnclaveAppCatalog {
     ///         layout (deployed 2026-07-08 at 0xa036d5e8…, same marker
     ///         selector): its Version tuples have NO config — readers must
     ///         treat rev 3 versions as config-less or they mis-decode.
-    uint256 public constant catalogSchema = 4;
+    ///         Revision 5 keeps the rev-4 App/Version tuples byte-for-byte
+    ///         (fees live in a side mapping, so every existing decoder still
+    ///         decodes) and marks the publisher-fee surface: struct reads
+    ///         keep gating on >= 4, the fee feature (publishVersion's fee
+    ///         param, versionFee, maxFeePerSec6) gates on >= 5.
+    uint256 public constant catalogSchema = 5;
 
     uint256 private constant MAX_SLUG = 40;
     uint256 private constant MAX_NAME = 80;
@@ -122,6 +140,13 @@ contract EnclaveAppCatalog {
 
     address public owner;                             // sets `verified` + `approval`; can hand off
     address public pendingOwner;                      // two-step handoff: must acceptOwnership()
+
+    /// @notice Cap on the per-second publisher fee (USDC 6dp) a NEW version may
+    ///         declare: 1389/sec ≈ $5.00/hour. Publish-time only — released
+    ///         versions keep their fee (immutable, approval-covered) even if
+    ///         the cap later drops below it, exactly like maxGpuMilli
+    ///         grandfathers existing deployments.
+    uint256 public maxFeePerSec6 = 1389;
     bytes32[] private _appIds;                        // every app ever created
     mapping(bytes32 => App) private _apps;
     mapping(bytes32 => bool) private _exists;
@@ -129,10 +154,15 @@ contract EnclaveAppCatalog {
     mapping(bytes32 => CidRef) private _cidRefs;      // keccak256(cid) -> owning version (index1=0 -> unlisted)
     mapping(bytes32 => bool) private _verUsed;        // keccak256(appId, version) -> label taken (per-app uniqueness)
     mapping(bytes32 => bytes32) private _cidGrant;    // keccak256(cid) -> appId the owner authorized to override a squatted reservation (0 = none)
+    mapping(bytes32 => mapping(uint256 => uint256)) private _versionFee6; // appId -> version index -> publisher fee
+                                                      // (USDC 6dp per second; SIDE MAPPING so rev-4 Version
+                                                      // tuples stay byte-for-byte — see catalogSchema)
 
     event AppCreated(bytes32 indexed appId, address indexed publisher, string slug, string name);
     event AppEdited(bytes32 indexed appId, string name, string description);
     event VersionPublished(bytes32 indexed appId, uint256 indexed index, string version, string cid);
+    event VersionFeeSet(bytes32 indexed appId, uint256 indexed index, uint256 feePerSec6);
+    event MaxFeeSet(uint256 maxFeePerSec6);
     event VersionVerified(bytes32 indexed appId, uint256 indexed index, bool verified);
     event VersionApprovalSet(bytes32 indexed appId, uint256 indexed index, uint8 status);
     event VersionYanked(bytes32 indexed appId, uint256 indexed index);
@@ -141,7 +171,11 @@ contract EnclaveAppCatalog {
     event OwnerChanged(address indexed owner);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
 
-    constructor() { owner = msg.sender; emit OwnerChanged(msg.sender); }
+    constructor() {
+        owner = msg.sender;
+        emit OwnerChanged(msg.sender);
+        emit MaxFeeSet(maxFeePerSec6);   // cap is live from deploy (hardcoded default)
+    }
 
     /// @dev appId embeds the publisher, so a slug is owned per-address and cannot be squatted.
     function appIdOf(address publisher, string memory slug) public pure returns (bytes32) {
@@ -155,6 +189,9 @@ contract EnclaveAppCatalog {
     /// @dev `res` = [vramMb, gpuGflops, memMb, cpuGflops] — the four exact
     ///      resource axes, packed as an array (keeps the calldata layout stable
     ///      and the stack workable as axes grow).
+    /// @dev `feePerSec6` = the publisher's per-second fee (USDC 6dp, 0 = free),
+    ///      capped by maxFeePerSec6 and immutable once published — approval
+    ///      covers it like config and ports (re-pricing = a new version).
     function publishVersion(
         string calldata slug,
         string calldata name,
@@ -163,7 +200,8 @@ contract EnclaveAppCatalog {
         string calldata cid,
         uint32[4] calldata res,
         string calldata ports,
-        string calldata config
+        string calldata config,
+        uint256 feePerSec6
     ) external returns (bytes32 appId, uint256 index) {
         require(bytes(version).length > 0 && bytes(version).length <= MAX_VER, "version length");
         require(bytes(cid).length > 0 && bytes(cid).length <= MAX_CID, "cid length");
@@ -173,6 +211,7 @@ contract EnclaveAppCatalog {
         require(res[3] <= MAX_GFLOPS, "cpuGflops range");
         require(bytes(ports).length <= MAX_PORTS, "ports length");
         require(bytes(config).length <= MAX_CONFIG, "config length");
+        require(feePerSec6 <= maxFeePerSec6, "fee > max");
 
         appId = _touchApp(slug, name, description);
         bytes32 cidKey = _reserveCid(cid, appId);
@@ -201,6 +240,10 @@ contract EnclaveAppCatalog {
         v.config = config;
         index = vs.length - 1;
         _cidRefs[cidKey] = CidRef({ appId: appId, index1: uint32(index + 1) });
+        if (feePerSec6 > 0) {
+            _versionFee6[appId][index] = feePerSec6;
+            emit VersionFeeSet(appId, index, feePerSec6);
+        }
 
         App storage a = _apps[appId];
         a.versionCount = uint32(vs.length);
@@ -326,6 +369,16 @@ contract EnclaveAppCatalog {
         emit CidGranted(cidKey, appId);
     }
 
+    /// @notice Cap the per-second publisher fee (USDC 6dp) a NEW version may
+    ///         declare. Publish-time only: released versions keep their fee
+    ///         (immutable, approval-covered) even if the cap later drops below
+    ///         it — same grandfathering as maxGpuMilli on deployments.
+    function setMaxFee(uint256 _maxFeePerSec6) external {
+        require(msg.sender == owner, "!owner");
+        maxFeePerSec6 = _maxFeePerSec6;
+        emit MaxFeeSet(_maxFeePerSec6);
+    }
+
     /// @notice Begin a TWO-STEP ownership handoff. `o` must call acceptOwnership()
     ///         to take control; until then `owner` is unchanged. Critical here:
     ///         the owner is the SOLE caller of setApproval(Approved), so a mistyped
@@ -409,6 +462,25 @@ contract EnclaveAppCatalog {
         _apps[appId].versionCount = uint32(vs.length);   // keep the counter honest across chunks
     }
 
+    /// @notice Migrate one app's per-version publisher fees (rev-5 sources
+    ///         only — pre-rev-5 versions have no fees to carry). Aligned by
+    ///         version index; call after the app's importVersions chunks.
+    ///         Verbatim carry, no cap check: the source enforced its own
+    ///         publish-time cap, and released fees are grandfathered exactly
+    ///         like imported deployments bypass maxGpuMilli.
+    function importVersionFees(bytes32 appId, uint256[] calldata indices, uint256[] calldata fees) external {
+        require(msg.sender == owner, "!owner");
+        require(!importsSealed, "sealed");
+        require(_exists[appId], "unknown app");
+        require(indices.length == fees.length, "length mismatch");
+        uint256 len = _versions[appId].length;
+        for (uint256 i = 0; i < indices.length; i++) {
+            require(indices[i] < len, "bad index");
+            _versionFee6[appId][indices[i]] = fees[i];
+            if (fees[i] > 0) emit VersionFeeSet(appId, indices[i], fees[i]);
+        }
+    }
+
     /// @notice Permanently close the import window (there is no re-open).
     function sealImports() external {
         require(msg.sender == owner, "!owner");
@@ -441,6 +513,15 @@ contract EnclaveAppCatalog {
     function getApp(bytes32 appId) external view returns (App memory) { return _apps[appId]; }
     function numVersions(bytes32 appId) external view returns (uint256) { return _versions[appId].length; }
     function getVersion(bytes32 appId, uint256 index) external view returns (Version memory) { return _versions[appId][index]; }
+
+    /// @notice Publisher fee (USDC 6dp per second) a version declared at
+    ///         publish; 0 = free (and for every pre-rev-5 version). Immutable
+    ///         like the rest of the version and covered by its approval.
+    ///         Deployments snapshot it (plus the publisher wallet) at create;
+    ///         runners refuse to claim a deployment that under-declares it.
+    function versionFee(bytes32 appId, uint256 index) external view returns (uint256) {
+        return _versionFee6[appId][index];
+    }
 
     /// @notice Publish-time CID resolver: which lineage owns these bytes, and the
     ///         newest listing's flags. Publishers pre-flight "is this CID already

@@ -2438,7 +2438,37 @@ const CATALOG_ABI = [
       { name: "approval", type: "uint8" },  // 0 pending | 1 approved | 2 rejected
       { name: "config", type: "string" },
     ] }] },
+  // rev-5 surface (side mapping, so the tuples above decode on every rev):
+  // only CALLED when the catalog sniffs >= 5
+  { type: "function", name: "versionFee", stateMutability: "view",
+    inputs: [{ name: "appId", type: "bytes32" }, { name: "index", type: "uint256" }],
+    outputs: [{ type: "uint256" }] },
+  { type: "function", name: "catalogSchema", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
 ];
+// Which feature surface the catalog at APP_CATALOG_ADDRESS speaks. Same live
+// re-sniff-per-address + poisoning care as the deployments-ledger sniff below
+// (depsAbi): a transient RPC failure must never cache an old rev — only a
+// definitive revert proves a pre-catalogSchema contract. null = unknown this
+// round; callers that need the answer fail closed and retry next pass.
+let _catRev = { addr: null, rev: null };
+async function catSchemaRev() {
+  if (!APP_CATALOG_ADDRESS) return null;
+  if (_catRev.addr === APP_CATALOG_ADDRESS && _catRev.rev != null) return _catRev.rev;
+  try {
+    const rev = Number(await chainClient.readContract({ address: getAddress(APP_CATALOG_ADDRESS),
+      abi: CATALOG_ABI, functionName: "catalogSchema" }));
+    _catRev = { addr: APP_CATALOG_ADDRESS, rev };
+    console.log(`[approval] catalog ${APP_CATALOG_ADDRESS} schema rev ${rev}`);
+  } catch (e) {
+    if (sniffCachePolicy(e.shortMessage || e.message || "") === "cache-rev1") {
+      _catRev = { addr: APP_CATALOG_ADDRESS, rev: 2 };   // pre-catalogSchema catalog
+      console.log(`[approval] catalog ${APP_CATALOG_ADDRESS} schema rev 2 (pre-catalogSchema contract)`);
+    } else {
+      return null;
+    }
+  }
+  return _catRev.rev;
+}
 const CATALOG_REF_RE = /^catalog:\/\/(0x[0-9a-fA-F]{64})\/(\d{1,9})$/;
 const ZERO32 = "0x" + "0".repeat(64);
 // Gate a vm-backend app reference on catalog approval. Returns
@@ -2485,10 +2515,59 @@ async function gateAppReference(reference) {
   if (v.yanked)                  return deny(403, "not_approved", `${a.slug}:${v.version} was yanked by its publisher.`);
   if (Number(v.approval) === 2)  return deny(403, "not_approved", `${a.slug}:${v.version} was rejected by the catalog owner.`);
   if (Number(v.approval) !== 1)  return deny(403, "not_approved", `${a.slug}:${v.version} is awaiting catalog-owner approval; it cannot be deployed yet.`);
-  return { ref, wasmRef: "ipfs://" + v.cid, config: v.config || "", ports: v.ports || "",
+  // The version's publisher fee is part of what approval covered (like config
+  // and ports). Resolved here so every consumer of the gate carries it; the
+  // fee-vs-ledger comparison lives in feeGate (claim/resume/upgrade paths).
+  // Same fail-closed posture as the rest of the gate: not knowing the fee is
+  // not the same as the fee being zero.
+  let feePerSec6 = 0n;
+  const catRev = await catSchemaRev();
+  if (catRev == null)
+    return deny(503, "catalog_unreachable", "Could not determine the catalog's schema revision; try again shortly.");
+  if (catRev >= 5) {
+    try {
+      feePerSec6 = await chainClient.readContract({ address: getAddress(APP_CATALOG_ADDRESS),
+        abi: CATALOG_ABI, functionName: "versionFee", args: [appId, BigInt(index)] });
+    } catch (e) {
+      console.warn(`[approval] versionFee(${appId}, ${index}) failed: ${e.shortMessage || e.message}`);
+      return deny(503, "catalog_unreachable", "Could not verify this app's publisher fee against the on-chain catalog; try again shortly.");
+    }
+  }
+  return { ref, wasmRef: "ipfs://" + v.cid, config: v.config || "", ports: v.ports || "", feePerSec6,
            app: { appId, index, slug: a.slug, version: v.version, publisher: a.publisher },
            min: { vramMb: Number(v.vramMb) || 0, gpuGflops: Number(v.gpuGflops) || 0,
                   memMb: Number(v.memMb) || 0, cpuGflops: Number(v.cpuGflops) || 0 } };
+}
+
+// A paid app is servable only if the DEPLOYMENT snapshotted the version's
+// publisher fee (and the right payee) at create — the funding splits pay the
+// publisher out of that snapshot, so serving an under-declared record would
+// mean the publisher never sees a cent of it. Fail closed, exactly like the
+// approval gate: the ledger not answering is not a waiver. Free apps
+// (feePerSec6 == 0) never reach the chain here. A deployment that overpays
+// (snapshot above the version's ask, e.g. repointed at a cheaper release)
+// stays servable — the publisher just keeps the larger cut it signed up for.
+// Returns null (servable) or { why, transient }.
+const FEE_OF_ABI = [{ type: "function", name: "feeOf", stateMutability: "view",
+  inputs: [{ name: "id", type: "bytes32" }],
+  outputs: [{ name: "recipient", type: "address" }, { name: "feePerSec6", type: "uint256" }] }];
+async function feeGate(id, g) {
+  if (!(g.feePerSec6 > 0n)) return null;
+  const { rev } = await depsAbi();
+  if (rev < 4)
+    return { why: "this app charges a publisher fee, which this ledger predates (deploymentsSchema < 4)", transient: false };
+  let recipient, fee6;
+  try {
+    [recipient, fee6] = await chainClient.readContract({ address: getAddress(DEPLOYMENTS_ADDRESS),
+      abi: FEE_OF_ABI, functionName: "feeOf", args: [id] });
+  } catch (e) {
+    return { why: "could not verify the deployment's publisher-fee snapshot against the ledger; try again shortly", transient: true };
+  }
+  if (fee6 < g.feePerSec6 || String(recipient).toLowerCase() !== String(g.app.publisher).toLowerCase())
+    return { why: `the deployment under-declares the app's publisher fee (snapshot ${fee6}/sec to ${recipient}; `
+                + `${g.app.slug}:${g.app.version} asks ${g.feePerSec6}/sec to its publisher ${g.app.publisher}); redeploy from the console or CLI`,
+             transient: false };
+  return null;
 }
 
 app.post("/v1/deployments", authed, async (req, res) => {
@@ -2543,6 +2622,11 @@ app.post("/v1/deployments", authed, async (req, res) => {
   if (PROVISION_BACKEND === "vm") {
     const g = await gateAppReference(image.reference);
     if (g.error) return fail(res, g.error.status, g.error.code, g.error.msg);
+    // A paid app can only run as an on-chain deployment: the publisher's cut
+    // is carved out of ledger fundings, and this direct path has none.
+    if (g.feePerSec6 > 0n)
+      return fail(res, 403, "publisher_fee_unpayable",
+        "This app charges a publisher fee, so it must be deployed on-chain (create + fund on the deployments ledger); this direct deploy path cannot pay the publisher.");
     image = { ...image, reference: g.ref };
     appMin = g.min;
   }
@@ -4082,6 +4166,11 @@ async function switchTenantVersion(rec, d) {
   let firewall;
   try { firewall = parseFirewall({ ports: g.ports ? String(g.ports).split(",") : [] }); }
   catch (e) { return refuse("the new version's port spec is not servable here: " + e.message); }
+  // the fee snapshot is as immutable as the shares: a repoint at a version
+  // asking MORE than the deployment snapshotted can never pay the publisher,
+  // so it is refused the same way (the old version keeps serving)
+  const feeWhy = await feeGate(rec.id, g);
+  if (feeWhy) return refuse(feeWhy.why, feeWhy.transient);
   // fetch + verify + cache the new bytes while the old version keeps serving
   if (PROVISION_BACKEND === "vm" && /^ipfs:\/\//.test(g.wasmRef)) {
     try {
@@ -4424,6 +4513,9 @@ async function considerClaim(d, { hinted = false, background = false } = {}) {
   let firewall;
   try { firewall = parseFirewall({ ports: g.ports ? String(g.ports).split(",") : [] }); }
   catch (e) { return "the version's port spec is not servable here: " + e.message; }
+  // a paid app's fee snapshot must cover the version's ask (fail closed)
+  const feeWhy = await feeGate(d.id, g);
+  if (feeWhy) return feeWhy.why;
   if (background) {
     tryClaim(d, g, firewall, slice, { hinted, resume })
       .catch(e => console.warn(`[claim] hinted claim ${d.id} failed: ${e.shortMessage || e.message}`));

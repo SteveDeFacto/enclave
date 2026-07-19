@@ -99,7 +99,7 @@ const BOOK_ABI = [{ type: "function", name: "addr", stateMutability: "view",
   inputs: [{ type: "bytes32" }], outputs: [{ type: "address" }] }];
 
 // claim-hint reasons that mean a record can NEVER be served by adding capacity
-const STRUCTURAL_RE = /below the app's minimum|deactivated|configCid is retired|deployment options refused|not deployable|port spec is not servable|out of funded time/i;
+const STRUCTURAL_RE = /below the app's minimum|deactivated|configCid is retired|deployment options refused|not deployable|port spec is not servable|out of funded time|under-declares the app's publisher fee|charges a publisher fee/i;
 
 // ---------------------------------------------------------------------------
 // pure planner — all scaling policy lives here (unit-tested in test/)

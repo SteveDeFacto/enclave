@@ -108,6 +108,19 @@
     "anonymous": false,
     "inputs": [
       {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "maxFeePerSec6",
+        "type": "uint256"
+      }
+    ],
+    "name": "MaxFeeSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
         "indexed": true,
         "internalType": "address",
         "name": "owner",
@@ -159,6 +172,31 @@
       }
     ],
     "name": "VersionApprovalSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "appId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "index",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "feePerSec6",
+        "type": "uint256"
+      }
+    ],
+    "name": "VersionFeeSet",
     "type": "event"
   },
   {
@@ -823,6 +861,29 @@
         "type": "bytes32"
       },
       {
+        "internalType": "uint256[]",
+        "name": "indices",
+        "type": "uint256[]"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "fees",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "importVersionFees",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "appId",
+        "type": "bytes32"
+      },
+      {
         "components": [
           {
             "internalType": "string",
@@ -903,6 +964,19 @@
         "internalType": "bool",
         "name": "",
         "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "maxFeePerSec6",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -1013,6 +1087,11 @@
         "internalType": "string",
         "name": "config",
         "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "feePerSec6",
+        "type": "uint256"
       }
     ],
     "name": "publishVersion",
@@ -1082,6 +1161,19 @@
   {
     "inputs": [
       {
+        "internalType": "uint256",
+        "name": "_maxFeePerSec6",
+        "type": "uint256"
+      }
+    ],
+    "name": "setMaxFee",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "bytes32",
         "name": "appId",
         "type": "bytes32"
@@ -1113,6 +1205,30 @@
     "name": "transferOwnership",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "appId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "index",
+        "type": "uint256"
+      }
+    ],
+    "name": "versionFee",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {

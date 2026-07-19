@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { encodeFunctionData, encodeDeployData, encodeAbiParameters, stringToHex, toFunctionSelector } from "viem";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { encCall, encAddr, decodeStructArray, DEP_SCHEMA, DEP_SCHEMA_V1, APP_SCHEMA, VER_SCHEMA, DEP_SEL } = await import(path.join(REPO, "site/js/core/chain.js"));
+const { encCall, encAddr, decodeStructArray, DEP_SCHEMA, DEP_SCHEMA_V1, APP_SCHEMA, VER_SCHEMA, DEP_SEL, CAT_SEL } = await import(path.join(REPO, "site/js/core/chain.js"));
 const { CONTRACTS } = await import(path.join(REPO, "site/js/gen/contract-artifacts.js"));
 const { encCallX } = await import(path.join(REPO, "site/components/admin-console/migrate.js"));
 const ABI = (name) => JSON.parse(fs.readFileSync(path.join(REPO, "contracts", name + ".abi.json"), "utf8"));
@@ -63,6 +63,8 @@ test("owner calls encode like viem", () => {
     ["EnclaveDeployments", "setCpuPrice", [{ t: "uint", v: "278" }], [278n]],
     ["EnclaveDeployments", "setLeaseSec", [{ t: "uint", v: "300" }], [300n]],
     ["EnclaveDeployments", "setMaxGpuMilli", [{ t: "uint", v: "500" }], [500]],
+    ["EnclaveDeployments", "setMaxFee", [{ t: "uint", v: "1389" }], [1389n]],
+    ["EnclaveAppCatalog", "setMaxFee", [{ t: "uint", v: "1389" }], [1389n]],
     ["EnclaveDeployments", "setEthUsdFeed", [{ t: "addr", v: ZERO }], [ZERO]],
     ["EnclaveDeployments", "setPayout", [{ t: "addr", v: A1 }], [A1]],
     ["EnclaveDeployments", "setOwner", [{ t: "addr", v: A1 }], [A1]],
@@ -78,6 +80,32 @@ test("chain.js DEP_SEL hand-pins match the ABI (the cap getter every deploy path
   eq("0x" + DEP_SEL.maxGpuMilli, toFunctionSelector("function maxGpuMilli() view returns (uint16)"));
   eq("0x" + CONTRACTS.EnclaveDeployments.sel.maxGpuMilli, "0x" + DEP_SEL.maxGpuMilli);
   eq("0x" + CONTRACTS.EnclaveDeployments.sel.setMaxGpuMilli, toFunctionSelector("function setMaxGpuMilli(uint16)"));
+});
+
+test("publisher-fee surface pins + encodes like viem", () => {
+  // the getters every fee-aware path gates on (site, CLI, supervisor)
+  eq("0x" + DEP_SEL.feeOf, toFunctionSelector("function feeOf(bytes32) view returns (address, uint256)"));
+  eq("0x" + DEP_SEL.maxFeePerSec6, toFunctionSelector("function maxFeePerSec6() view returns (uint256)"));
+  eq("0x" + CAT_SEL.versionFee, toFunctionSelector("function versionFee(bytes32, uint256) view returns (uint256)"));
+  eq("0x" + CAT_SEL.maxFeePerSec6, "0x" + DEP_SEL.maxFeePerSec6);   // same signature on both contracts
+  // the rev-4 create the deploy console sends (fee snapshot appended)
+  const ref = "catalog://0x" + "cd".repeat(32) + "/3";
+  eq(encCall(DEP_SEL.create, [
+      { t: "str", v: ref }, { t: "uint", v: 0 }, { t: "uint", v: 50 },
+      { t: "uint", v: 8080 }, { t: "str", v: "" }, { t: "bool", v: true },
+      { t: "str", v: "" }, { t: "addr", v: A1 }, { t: "uint", v: 278n },
+    ]),
+    encodeFunctionData({ abi: ABI("EnclaveDeployments"), functionName: "create",
+      args: [ref, 0, 50, 8080, "", true, "", A1, 278n] }));
+  // the rev-5 publishVersion the Apps page sends: uint32[4] is a STATIC array
+  // (4 inline words), so the hand encoder takes the axes as 4 uint args
+  eq(encCall(CAT_SEL.publishVersion, [
+      { t: "str", v: "hello" }, { t: "str", v: "Hello" }, { t: "str", v: "" }, { t: "str", v: "1" },
+      { t: "str", v: "bafy123" }, { t: "uint", v: 0 }, { t: "uint", v: 0 }, { t: "uint", v: 256 }, { t: "uint", v: 10 },
+      { t: "str", v: "" }, { t: "str", v: "{}" }, { t: "uint", v: 278n },
+    ]),
+    encodeFunctionData({ abi: ABI("EnclaveAppCatalog"), functionName: "publishVersion",
+      args: ["hello", "Hello", "", "1", "bafy123", [0, 0, 256, 10], "", "{}", 278n] }));
 });
 
 test("setAppRef (the dashboard's Version control) pins + encodes like viem", () => {

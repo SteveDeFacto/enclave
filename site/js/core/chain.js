@@ -27,10 +27,15 @@ export const hexBig = (h) => (!h || h === "0x") ? 0n : BigInt(h);
    (EIP-3009 USDC or ETH), and enclaves claim + serve it under expiring
    leases - so a deployment outlives any single enclave, its update, or
    its crash. */
-export const DEP_SEL = { create:"11835efe", createV1:"1a8e502a", fund:"e46bbc9e", fundAuth:"209c0069", fundEth:"9f33dca0", get:"8eaa6ac0",
+export const DEP_SEL = { create:"e99c6ae0",   // rev >= 4: (..., configCid, feeRecipient, feePerSec6) - the publisher-fee snapshot
+                         createV3:"11835efe", // rev 2-3: no fee args
+                         createV1:"1a8e502a", // rev 1: extra sshPubKey string before configCid
+                         fund:"e46bbc9e", fundAuth:"209c0069", fundEth:"9f33dca0", get:"8eaa6ac0",
                          price:"1e897c58", cpuPrice:"3f6195cc", setActive:"6485d678", setAppRef:"4d506615", maxGpuMilli:"4c8c5963",
+                         feeOf:"430062bd", maxFeePerSec6:"95b957d7",
                          deploymentsSchema:"5d1b72b6" };  // shape-revision marker (reverts on rev-1 contracts;
-                                                         // rev 3 = rev-2 struct + setAppRef version changes)
+                                                         // rev 3 = rev-2 struct + setAppRef version changes;
+                                                         // rev 4 = same struct + the publisher-fee surface)
 export const DEP_CREATED_TOPIC = "0x3b201eb11e77934b296f908775fc0a82679683fd83a1232579f1014bcf7d3239"; // Created(bytes32,address,string,uint16,uint16,uint256)
 export const DEP_SCHEMA = [   // mirrors EnclaveDeployments.Deployment field order exactly (schema rev 2)
   {k:"id",t:"bytes32"},{k:"owner",t:"addr"},{k:"appRef",t:"str"},{k:"ports",t:"str"},
@@ -55,10 +60,14 @@ export async function depSchemaRev(){
 /* ---- EnclaveAppCatalog ---- */
 export const CAT_SEL = {
   appCount:"b55ca2c3", getAppsPage:"a0483de1", getVersionsPage:"2eb7c1f0", owner:"8da5cb5b",
-  publishVersion:"ffd9de8f",   // publishVersion(...,uint32[4] res,string ports,string config) - res = [vramMb, gpuGflops, memMb, cpuGflops]
+  publishVersion:"47910c23",   // rev >= 5: publishVersion(...,uint32[4] res,string ports,string config,uint256 feePerSec6)
+  publishVersionV4:"ffd9de8f", // rev-4 catalogs: same without the fee arg (kept until the cutover)
   publishVersionV2:"adbf439a", // rev-2 catalogs: same without the config arg (kept until the cutover)
-  catalogSchema:"18cccf57",    // struct-schema revision marker: 4 = Version carries config; 3 = the
-                               // short-lived app-level-config layout (versions config-LESS); missing = 2
+  versionFee:"82869209",       // rev >= 5: the per-version publisher fee (side mapping - tuples decode on every rev)
+  maxFeePerSec6:"95b957d7",    // rev >= 5: publish-time cap on that fee
+  catalogSchema:"18cccf57",    // struct-schema revision marker: 5 = rev-4 tuples + the publisher-fee
+                               // surface; 4 = Version carries config; 3 = the short-lived
+                               // app-level-config layout (versions config-LESS); missing = 2
   setActive:"9e4b5d56", yankVersion:"345c52dc", setVerified:"4ca171e5",
   setApproval:"a67613fa",
 };
@@ -158,10 +167,21 @@ export async function depMaxGpuMilli(){
 }
 // The contract's exact per-second rate (6dp USDC) for two share dials in
 // 1/1000ths - mirrors create()'s ceil math so estimates match on-chain.
+// NOTE: platform shares only - a paid app's publisher fee (catVersionFee)
+// is added ON TOP by create(), so money displays must add it themselves.
 export const rate6Of = (pr, gpuMilli, cpuMilli) =>
   (pr.gpu * BigInt(gpuMilli) + pr.cpu * BigInt(cpuMilli) + 999n) / 1000n;
 export async function depRate6(gpuMilli, cpuMilli){
   return rate6Of(await depPrices6(), gpuMilli, cpuMilli);
+}
+// The deployment's publisher-fee snapshot (rev >= 4 ledgers; earlier ones
+// structurally have none). Returns { recipient, feePerSec6 } - feePerSec6 is
+// INSIDE the record's rate, not on top of it.
+export async function depFeeOf(id){
+  if ((await depSchemaRev()) < 4) return { recipient: null, feePerSec6: 0n };
+  const hex = (await depCall("0x" + DEP_SEL.feeOf + pad32(id.replace(/^0x/, "")))).replace(/^0x/, "");
+  if (hex.length < 128) return { recipient: null, feePerSec6: 0n };
+  return { recipient: "0x" + hex.slice(24, 64), feePerSec6: BigInt("0x" + hex.slice(64, 128)) };
 }
 
 /* ---- minimal ABI codec (generic encode + struct-array decode), verified vs viem ---- */
@@ -220,6 +240,25 @@ export async function catSchemaRev(){
   try { _catRev = Number(hexBig(await ethCall("0x" + CAT_SEL.catalogSchema))) || 2; }
   catch(e){ _catRev = 2; }
   return _catRev;
+}
+// Per-version publisher fee (USDC 6dp per SECOND), rev-5 catalogs only. The
+// fee lives in a side mapping (so Version tuples decode unchanged on every
+// rev); pre-rev-5 catalogs structurally have no fees -> 0n without a call.
+// Cached per record: fees are immutable once published. Throws on RPC
+// trouble - deploy flows treat "can't know the fee" as a refusal, not a 0.
+const _verFee = {};
+export async function catVersionFee(appId, index){
+  const key = appId + "/" + index;
+  if (_verFee[key] != null) return _verFee[key];
+  if ((await catSchemaRev()) < 5) return (_verFee[key] = 0n);
+  const r = await ethCall(encCall(CAT_SEL.versionFee, [{ t:"bytes32", v:appId }, { t:"uint", v:index }]));
+  return (_verFee[key] = hexBig(r));
+}
+// The catalog's publish-time cap on that fee (rev >= 5; earlier catalogs
+// take no fee at all, surfaced as 0).
+export async function catMaxFeePerSec6(){
+  if ((await catSchemaRev()) < 5) return 0n;
+  return hexBig(await ethCall("0x" + CAT_SEL.maxFeePerSec6));
 }
 export async function catGetAppsPage(start, n){
   return decodeStructArray(await ethCall(encCall(CAT_SEL.getAppsPage, [{t:"uint",v:start},{t:"uint",v:n}])), APP_SCHEMA);

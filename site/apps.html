@@ -123,6 +123,10 @@
           <label for="pubCpuG">CPU compute <span class="dim">(min GFLOPS · at least 1 - everything computes · a whole node ≈ 1000)</span></label>
           <input type="number" id="pubCpuG" value="1" min="1" step="1" />
         </div>
+        <div>
+          <label for="pubFee">Hourly fee <span class="dim">(optional · USD per hour, paid straight to your wallet while the app runs · 0 = free · capped on-chain · immutable per version, like ports)</span></label>
+          <input type="number" id="pubFee" value="0" min="0" step="0.01" />
+        </div>
         <div class="full">
           <label for="pubPorts">Open ports <span class="dim">(optional · e.g. <b>http:8088, tcp:5432, udp:9053</b> · empty = standard web app · can change per version)</span></label>
           <input type="text" id="pubPorts" maxlength="96" placeholder="empty = wasi:http web app on the standard endpoint" spellcheck="false" autocapitalize="off" autocomplete="off" />

@@ -137,10 +137,10 @@ class AdminConsole extends EnclaveElement {
       const dep = E.deployments, cat = E.appCatalog, pay = E.enclavePay;
       const dSel = CONTRACTS.EnclaveDeployments.sel, pSel = CONTRACTS.EnclavePay.sel;
       [S.dep, S.cat, S.pay] = await Promise.all([
-        dep ? Promise.all([rdAddr(dep, dSel.owner), rdAddr(dep, dSel.payout), rdUint(dep, dSel.pricePerSec6), rdUint(dep, dSel.cpuPricePerSec6), rdUint(dep, dSel.leaseSec), rdAddr(dep, dSel.ethUsdFeed), rdAddrSoft(dep, dSel.pendingOwner), rdUintSoft(dep, dSel.maxGpuMilli)])
-              .then(([owner, payout, gpu, cpu, lease, feed, pending, maxGpu]) => ({ addr: dep, owner, payout, gpu, cpu, lease, feed, pending, maxGpu })) : null,
-        cat ? Promise.all([rdAddr(cat, CONTRACTS.EnclaveAppCatalog.sel.owner), rdAddrSoft(cat, CONTRACTS.EnclaveAppCatalog.sel.pendingOwner)])
-              .then(([owner, pending]) => ({ addr: cat, owner, pending })) : null,
+        dep ? Promise.all([rdAddr(dep, dSel.owner), rdAddr(dep, dSel.payout), rdUint(dep, dSel.pricePerSec6), rdUint(dep, dSel.cpuPricePerSec6), rdUint(dep, dSel.leaseSec), rdAddr(dep, dSel.ethUsdFeed), rdAddrSoft(dep, dSel.pendingOwner), rdUintSoft(dep, dSel.maxGpuMilli), rdUintSoft(dep, dSel.maxFeePerSec6)])
+              .then(([owner, payout, gpu, cpu, lease, feed, pending, maxGpu, maxFee]) => ({ addr: dep, owner, payout, gpu, cpu, lease, feed, pending, maxGpu, maxFee })) : null,
+        cat ? Promise.all([rdAddr(cat, CONTRACTS.EnclaveAppCatalog.sel.owner), rdAddrSoft(cat, CONTRACTS.EnclaveAppCatalog.sel.pendingOwner), rdUintSoft(cat, CONTRACTS.EnclaveAppCatalog.sel.maxFeePerSec6)])
+              .then(([owner, pending, maxFee]) => ({ addr: cat, owner, pending, maxFee })) : null,
         pay ? Promise.all([rdAddr(pay, pSel.owner), rdAddr(pay, pSel.payout), rdAddr(pay, pSel.usdc), rdAddrSoft(pay, pSel.pendingOwner)])
               .then(([owner, payout, usdc, pending]) => ({ addr: pay, owner, payout, usdc, pending })) : null,
       ]);
@@ -228,6 +228,9 @@ class AdminConsole extends EnclaveElement {
         (d.maxGpu == null
           ? `<div class="ac-row"><div class="ac-lbl">GPU share cap <code>setMaxGpuMilli</code></div><div class="ac-cur"><span class="dim">not in this contract rev — redeploy EnclaveDeployments to enable the cap</span></div><span></span><span></span><span></span></div>`
           : this._row("GPU share cap <code>setMaxGpuMilli</code>", `${d.maxGpu} <span class="dim">(${Number(d.maxGpu) / 10}% of a card max per NEW deployment; existing records untouched)</span>`, "dep-maxgpu", { owner: d.owner, placeholder: String(d.maxGpu), hint: "0…1000 milli" })) +
+        (d.maxFee == null
+          ? `<div class="ac-row"><div class="ac-lbl">Publisher fee cap <code>setMaxFee</code></div><div class="ac-cur"><span class="dim">not in this contract rev — redeploy EnclaveDeployments to enable publisher fees</span></div><span></span><span></span><span></span></div>`
+          : this._row("Publisher fee cap <code>setMaxFee</code>", `${d.maxFee} <span class="dim">(≈ ${perHr(d.maxFee)} max per NEW deployment's fee snapshot; keep in lockstep with the catalog's cap)</span>`, "dep-maxfee", { owner: d.owner, placeholder: String(d.maxFee), hint: "µUSDC/s" })) +
         this._row("Lease <code>setLeaseSec</code>", `${d.lease}s`, "dep-lease", { owner: d.owner, placeholder: String(d.lease), hint: "60…86400 s" }) +
         this._row("ETH/USD feed <code>setEthUsdFeed</code>", isZero(d.feed) ? `<span class="dim">disabled (0x0)</span>` : mono(d.feed), "dep-feed", { owner: d.owner, hint: "0x0 disables ETH funding" }) +
         this._row("Payout <code>setPayout</code>", mono(d.payout), "dep-payout", { owner: d.owner })));
@@ -244,7 +247,10 @@ class AdminConsole extends EnclaveElement {
     /* -- catalog pointer -- */
     if (S.cat) {
       parts.push(sec(`EnclaveAppCatalog · ${link(S.cat.addr)}`,
-        `Owner ${mono(S.cat.owner)}. Moderation (approve / reject / verify / delist) already lives on the <a href="apps">Apps page</a> when you browse it with the owner wallet - it isn't duplicated here.`, ""));
+        `Owner ${mono(S.cat.owner)}. Moderation (approve / reject / verify / delist) already lives on the <a href="apps">Apps page</a> when you browse it with the owner wallet - it isn't duplicated here.`,
+        S.cat.maxFee == null
+          ? `<div class="ac-row"><div class="ac-lbl">Publisher fee cap <code>setMaxFee</code></div><div class="ac-cur"><span class="dim">not in this contract rev — redeploy EnclaveAppCatalog to enable publisher fees</span></div><span></span><span></span><span></span></div>`
+          : this._row("Publisher fee cap <code>setMaxFee</code>", `${S.cat.maxFee} <span class="dim">(≈ ${perHr(S.cat.maxFee)} max per NEW version at publish; released versions keep their fee)</span>`, "cat-maxfee", { owner: S.cat.owner, placeholder: String(S.cat.maxFee), hint: "µUSDC/s" })));
     }
 
     /* -- deploy cards -- */
@@ -382,7 +388,7 @@ class AdminConsole extends EnclaveElement {
     const live = this._body.querySelector("#live-" + inp.dataset.for.replace(/[^a-z0-9]/gi, ""));
     if (!live) return;
     const act = inp.dataset.for, v = inp.value.trim();
-    live.textContent = (act === "dep-gpu" || act === "dep-cpu") && /^\d+$/.test(v) ? "≈ " + perHr(BigInt(v)) : "";
+    live.textContent = (act === "dep-gpu" || act === "dep-cpu" || act === "dep-maxfee" || act === "cat-maxfee") && /^\d+$/.test(v) ? "≈ " + perHr(BigInt(v)) : "";
   }
 
   async _onClick(e) {
@@ -426,6 +432,15 @@ class AdminConsole extends EnclaveElement {
         if (!need(/^\d+$/.test(v) && +v <= 1000, "cap is 0…1000 milli of one card (1000 = whole card / uncapped, 0 pauses GPU creates)")) return;
         return void this._tx(S.dep.addr, encCall(dSel.setMaxGpuMilli, [{ t: "uint", v }]),
           `setMaxGpuMilli(${v}) — ${+v / 10}% of a card max per deployment`, panelStatus, true);
+      }
+      if (act === "dep-maxfee" || act === "cat-maxfee") {
+        const v = inputFor(act);
+        if (!need(/^\d+$/.test(v), "cap is a non-negative integer in µUSDC per second (1389 ≈ $5.00/hr; 0 disables fees on new " + (act === "dep-maxfee" ? "deployments" : "publishes") + ")")) return;
+        const [to, sel] = act === "dep-maxfee"
+          ? [S.dep.addr, dSel.setMaxFee]
+          : [S.cat.addr, CONTRACTS.EnclaveAppCatalog.sel.setMaxFee];
+        return void this._tx(to, encCall(sel, [{ t: "uint", v }]),
+          `setMaxFee(${v}) ≈ ${perHr(BigInt(v))} publisher-fee cap`, panelStatus, true);
       }
       if (act === "dep-lease") {
         const v = inputFor(act);

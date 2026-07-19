@@ -17,8 +17,25 @@ import { privateKeyToAccount } from "viem/accounts";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = path.join(REPO, "cli", "enclave.mjs");
-const DEP_ABI = JSON.parse(fs.readFileSync(path.join(REPO, "contracts", "EnclaveDeployments.abi.json"), "utf8"));
-const CAT_ABI = JSON.parse(fs.readFileSync(path.join(REPO, "contracts", "EnclaveAppCatalog.abi.json"), "utf8"));
+// The checked-in ABIs describe the IN-REPO (next) contract revisions. The
+// LIVE rev-3 ledger and rev-4 catalog still speak the pre-fee create /
+// publishVersion shapes, so those legacy overloads ride along here - the
+// stub decodes whatever the CLI sends for whichever revision it plays
+// (S.depRev / S.catRev), exactly like the real chain would.
+const CREATE_LEGACY = { type: "function", name: "create", stateMutability: "nonpayable",
+  inputs: [{ name: "appRef", type: "string" }, { name: "gpuMilli", type: "uint16" },
+           { name: "cpuMilli", type: "uint16" }, { name: "appPort", type: "uint32" },
+           { name: "ports", type: "string" }, { name: "isPublic", type: "bool" },
+           { name: "configCid", type: "string" }],
+  outputs: [{ type: "bytes32" }] };
+const PUBLISH_LEGACY = { type: "function", name: "publishVersion", stateMutability: "nonpayable",
+  inputs: [{ name: "slug", type: "string" }, { name: "name", type: "string" },
+           { name: "description", type: "string" }, { name: "version", type: "string" },
+           { name: "cid", type: "string" }, { name: "res", type: "uint32[4]" },
+           { name: "ports", type: "string" }, { name: "config", type: "string" }],
+  outputs: [{ type: "bytes32" }, { type: "uint256" }] };
+const DEP_ABI = [...JSON.parse(fs.readFileSync(path.join(REPO, "contracts", "EnclaveDeployments.abi.json"), "utf8")), CREATE_LEGACY];
+const CAT_ABI = [...JSON.parse(fs.readFileSync(path.join(REPO, "contracts", "EnclaveAppCatalog.abi.json"), "utf8")), PUBLISH_LEGACY];
 
 const PK = "0x" + "11".repeat(32);
 const OWNER = privateKeyToAccount(PK).address;
@@ -53,6 +70,9 @@ const S = {
   numVersions: 0n,
   versionCount: 1,                             // catalog versions the stub app lists
   v2: null,                                    // overrides for the second version (upgrade tests)
+  depRev: 3n,                                  // deploymentsSchema the stub plays (3 = the live pre-fee ledger)
+  catRev: 4n,                                  // catalogSchema the stub plays (4 = the live pre-fee catalog)
+  verFee: 0n,                                  // versionFee(appId, *) on the rev-5 catalog (µUSDC/s)
 };
 
 function apiServer() {
@@ -146,8 +166,11 @@ function rpcServer() {
       count: () => [1n],
       secondsFundable: () => [333333n],
       appCount: () => [1n],
-      catalogSchema: () => [4n],   // the stub chain plays the current (rev-4) catalog
-      deploymentsSchema: () => [3n],   // ...and the rev-3 (setAppRef version-change) ledger
+      catalogSchema: () => [S.catRev],       // default: the live (rev-4) catalog; fee tests flip to 5
+      deploymentsSchema: () => [S.depRev],   // default: the live rev-3 ledger; fee tests flip to 4
+      versionFee: () => [S.verFee],          // rev-5 surface (the CLI never calls it below rev 5)
+      maxFeePerSec6: () => [1389n],          // the publish-time cap (~$5.00/hour)
+      feeOf: () => [OWNER, S.verFee],        // rev-4 surface: the deployment's fee snapshot
       getAppsPage: () => [Number(args[0]) === 0 ? [{ appId: APP_ID, publisher: OWNER, slug: "hello-world",
         name: "Hello World", description: "first app", versionCount: S.versionCount, createdAt: 1n, updatedAt: 1n, active: true }] : []],
       getVersionsPage: () => [Number(args[1]) === 0 ? [version, version2()].slice(0, S.versionCount) : []],
@@ -425,6 +448,56 @@ test("publish: validates the component, pins, cuts a catalog version", async () 
   assert.deepEqual([...res], [0, 0, 256, 10]);              // default resource spec
   assert.equal(ports, "");
   assert.match(r.out, /approval is pending/);
+});
+
+/* ---- the publisher-fee surface (rev-4 ledger + rev-5 catalog) ------------ */
+test("deploy snapshots a paid app's publisher fee into create (rev-4 ledger)", async () => {
+  S.claimed = false; S.txs.length = 0; S.depRev = 4n; S.catRev = 5n; S.verFee = 278n;   // ~$1.00/hr
+  S.apiDeployment = { id: ID, status: "running", image: { reference: `catalog://${APP_ID}/0` },
+                      resources: { gpuShare: 0, cpuShare: 0.01 }, timeRemainingSec: 3600, public: true };
+  const r = await run(["deploy", "hello-world:1", "--fund", "2"]);
+  assert.equal(r.code, 0, r.err);
+  const create = S.txs.find((t) => t.functionName === "create");
+  assert.ok(create, "create tx sent");
+  assert.equal(create.args.length, 9);                      // rev-4 shape: fee snapshot appended
+  const [, , , , , , , feeRecipient, feePerSec6] = create.args;
+  assert.equal(feeRecipient, OWNER);                        // the app's publisher wallet
+  assert.equal(feePerSec6, 278n);                           // the version's fee, copied verbatim
+  assert.match(r.out, /publisher fee/);                     // said out loud before the confirm
+  S.depRev = 3n; S.catRev = 4n; S.verFee = 0n;
+});
+
+test("deploy refuses a paid app on a pre-fee ledger (fail closed, before any tx)", async () => {
+  S.txs.length = 0; S.depRev = 3n; S.catRev = 5n; S.verFee = 278n;
+  const r = await run(["deploy", "hello-world:1", "--fund", "2"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /publisher fee.*predates/i);
+  assert.ok(!S.txs.length, "no tx sent");
+  S.catRev = 4n; S.verFee = 0n;
+});
+
+test("publish --fee cuts a rev-5 version carrying the fee", async () => {
+  S.txs.length = 0; S.numVersions = 0n; S.catRev = 5n;
+  const wasm = path.join(confDir, "app-fee.wasm");
+  fs.writeFileSync(wasm, Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00]));
+  const r = await run(["publish", wasm, "--slug", "hello-world", "--fee", "1"]);
+  assert.equal(r.code, 0, r.err);
+  const pv = S.txs.find((t) => t.functionName === "publishVersion");
+  assert.ok(pv, "publishVersion tx sent");
+  assert.equal(pv.args.length, 9);                          // rev-5 shape: fee appended
+  assert.equal(pv.args[8], 278n);                           // $1/hr -> µUSDC per second
+  S.catRev = 4n;
+});
+
+test("publish --fee above the on-chain cap refuses with the ceiling", async () => {
+  S.txs.length = 0; S.catRev = 5n;
+  const wasm = path.join(confDir, "app-fee.wasm");
+  fs.writeFileSync(wasm, Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00]));
+  const r = await run(["publish", wasm, "--slug", "hello-world", "--fee", "6"]);   // 6 $/hr -> 1667 > 1389
+  assert.equal(r.code, 1);
+  assert.match(r.err, /over the platform's cap/);
+  assert.ok(!S.txs.length, "no tx sent");
+  S.catRev = 4n;
 });
 
 test("publish rejects a core wasm module (layer 0)", async () => {

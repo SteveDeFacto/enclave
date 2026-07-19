@@ -83,8 +83,15 @@ const depsAbiFor = (tuple, rev) => [
              { name: "cpuMilli", type: "uint16" }, { name: "appPort", type: "uint32" },
              { name: "ports", type: "string" }, { name: "isPublic", type: "bool" },
              ...(rev >= 2 ? [] : [{ name: "sshPubKey", type: "string" }]),
-             { name: "configCid", type: "string" }],
+             { name: "configCid", type: "string" },
+             // rev-4 ledgers: the publisher-fee snapshot (recipient wallet +
+             // the version's per-second fee, folded into the record's rate)
+             ...(rev >= 4 ? [{ name: "feeRecipient", type: "address" }, { name: "feePerSec6", type: "uint256" }] : [])],
     outputs: [{ type: "bytes32" }] },
+  // rev-4 ledgers only: the fee snapshot back out (0x0/0 = no fee)
+  { type: "function", name: "feeOf", stateMutability: "view",
+    inputs: [{ name: "id", type: "bytes32" }],
+    outputs: [{ name: "recipient", type: "address" }, { name: "feePerSec6", type: "uint256" }] },
   { type: "function", name: "fundWithAuthorization", stateMutability: "nonpayable",
     inputs: [{ name: "id", type: "bytes32" }, { name: "from", type: "address" },
              { name: "value", type: "uint256" }, { name: "validAfter", type: "uint256" },
@@ -171,15 +178,34 @@ const CATALOG_ABI = [
              { name: "cid", type: "string" }, { name: "res", type: "uint32[4]" },
              { name: "ports", type: "string" }],
     outputs: [{ type: "bytes32" }, { type: "uint256" }] },
-  // rev-3 overload (viem resolves by arg count) + the schema marker
+  // rev-3/4 overload (viem resolves by arg count) + the schema marker
   { type: "function", name: "publishVersion", stateMutability: "nonpayable",
     inputs: [{ name: "slug", type: "string" }, { name: "name", type: "string" },
              { name: "description", type: "string" }, { name: "version", type: "string" },
              { name: "cid", type: "string" }, { name: "res", type: "uint32[4]" },
              { name: "ports", type: "string" }, { name: "config", type: "string" }],
     outputs: [{ type: "bytes32" }, { type: "uint256" }] },
+  // rev-5 overload: the version's publisher fee (USDC 6dp per second,
+  // immutable + approval-covered like config and ports; 0 = free)
+  { type: "function", name: "publishVersion", stateMutability: "nonpayable",
+    inputs: [{ name: "slug", type: "string" }, { name: "name", type: "string" },
+             { name: "description", type: "string" }, { name: "version", type: "string" },
+             { name: "cid", type: "string" }, { name: "res", type: "uint32[4]" },
+             { name: "ports", type: "string" }, { name: "config", type: "string" },
+             { name: "feePerSec6", type: "uint256" }],
+    outputs: [{ type: "bytes32" }, { type: "uint256" }] },
+  // rev-5 surface (side mapping, so version tuples decode on every rev)
+  { type: "function", name: "versionFee", stateMutability: "view",
+    inputs: [{ name: "appId", type: "bytes32" }, { name: "index", type: "uint256" }],
+    outputs: [{ type: "uint256" }] },
+  { type: "function", name: "maxFeePerSec6", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "catalogSchema", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
 ];
+// per-version publisher fee: 0 for every pre-rev-5 catalog (no getter there)
+async function versionFee6(appId, index) {
+  if ((await catRev()) < 5) return 0n;
+  return await read(DEFAULTS.APP_CATALOG_ADDRESS, CATALOG_ABI, "versionFee", [appId, BigInt(index)]);
+}
 // getVersionsPage can't overload by outputs, so rev-3 reads swap the tuple shape
 const CATALOG_ABI_V3 = CATALOG_ABI.map((f) =>
   f.name === "getVersionsPage" ? { ...f, outputs: [{ type: "tuple[]", components: VERSION_TUPLE_V3 }] } : f);
@@ -865,6 +891,19 @@ async function cmdUpgrade(rest) {
     throw new Error(`${app.slug}:${ver.version} needs at least gpu ${mins.gpuMilli / 10}% / cpu ${mins.cpuMilli / 10}% on the fleet's hardware, `
                   + `but ${short(id)} bought gpu ${Number(d.gpuMilli) / 10}% / cpu ${Number(d.cpuMilli) / 10}% and shares are immutable - `
                   + `deploy it fresh instead: enclave deploy ${app.slug}:${ver.version} --fund 5`);
+  // the publisher-fee snapshot is as immutable as the shares: a version asking
+  // MORE than the deployment snapshotted at create could never pay its
+  // publisher, so every runner refuses the switch - fail here with words
+  const newFee = await versionFee6(app.appId, vi);
+  if (newFee > 0n) {
+    const [snapTo, snapFee] = rev >= 4
+      ? await read(DEFAULTS.DEPLOYMENTS_ADDRESS, abi, "feeOf", [id])
+      : ["0x0000000000000000000000000000000000000000", 0n];
+    if (snapFee < newFee || snapTo.toLowerCase() !== app.publisher.toLowerCase())
+      throw new Error(`${app.slug}:${ver.version} charges a ${usd6(newFee * 3600n)}/h publisher fee, above the ${usd6(snapFee * 3600n)}/h `
+                    + `this deployment snapshotted at create - the fee snapshot is immutable, like the shares; `
+                    + `deploy it fresh instead: enclave deploy ${app.slug}:${ver.version} --fund 5`);
+  }
   const from = versions[curIdx] ? `${app.slug}:${versions[curIdx].version}` : d.appRef;
   const leased = Number(d.leaseUntil) * 1000 > Date.now();
   if (!(await confirm(`switch ${short(id)} from ${from} to ${app.slug}:${ver.version}? (paid time carries over`
@@ -887,7 +926,7 @@ async function cmdDeploy(rest) {
     bool: ["--private", "--public", "--no-wait"],
   });
   if (!f._[0]) throw new Error("usage: enclave deploy <app> [--gpu 0..1] [--cpu 0..1] --fund <usd> [flags]");
-  const { ref, ver } = await resolveAppRef(f._[0]);
+  const { ref, ver, app } = await resolveAppRef(f._[0]);
 
   // shares: fractions of one GPU card / one node (1 = the whole thing). When
   // omitted, use the app's minimum on the fleet's hardware (same formula the
@@ -950,7 +989,18 @@ async function cmdDeploy(rest) {
     throw new Error(mins.gpuMilli > maxGpuMilli
       ? `${f._[0]} needs at least a ${mins.gpuMilli / 10}% GPU share, but the platform currently caps deployments at ${maxGpuMilli / 10}% of a card - it can't be deployed right now`
       : `--gpu ${gpuMilli / 10}% is over the platform's per-deployment GPU cap of ${maxGpuMilli / 10}% of a card - lower --gpu`);
-  const rate = (pricePerSec6 * BigInt(gpuMilli) + cpuPricePerSec6 * BigInt(cpuMilli) + 999n) / 1000n;
+  // The version's publisher fee is snapshotted INTO the record by create():
+  // read it fresh from the catalog (fail closed - a deployment that
+  // under-declares it is a record no runner will ever claim, its funding
+  // unrecoverable, exactly like under-provisioned shares) and refuse
+  // ledgers that predate the fee surface.
+  const fee6 = ver ? await versionFee6(app.appId, Number(ref.split("/").pop())) : 0n;
+  const { rev: depRev, abi: depsAbi } = await depAbi();
+  if (fee6 > 0n && depRev < 4)
+    throw new Error(`${f._[0]} charges a publisher fee, which the live EnclaveDeployments contract predates (deploymentsSchema < 4) - it can't be deployed until the ledger upgrade`);
+  const rate = (pricePerSec6 * BigInt(gpuMilli) + cpuPricePerSec6 * BigInt(cpuMilli) + 999n) / 1000n + fee6;
+  if (fee6 > 0n)
+    say(`publisher fee: ${usd6(fee6 * 3600n)}/h, paid straight to ${app.publisher} out of each funding (included in the rate below)`);
   const fundUsd = f.fund !== undefined ? numFlag(f.fund, "--fund") : 0;
   const fundEth = f["fund-eth"] !== undefined ? numFlag(f["fund-eth"], "--fund-eth") : 0;
   if (!fundUsd && !fundEth)
@@ -962,11 +1012,12 @@ async function cmdDeploy(rest) {
                     + `fund ${fundUsd ? "$" + fundUsd.toFixed(2) : fundEth + " ETH"} ≈ ${buys}?`))) return say("aborted");
 
   // 1. create — the id is minted on-chain, read back from the Created event
-  // (rev-1 contracts take a now-removed sshPubKey string before configCid)
-  const { rev: depRev, abi: depsAbi } = await depAbi();
+  // (rev-1 contracts take a now-removed sshPubKey string before configCid;
+  // rev-4 ones take the publisher-fee snapshot after it)
   const rcpt = await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi: depsAbi,
     functionName: "create",
-    args: [ref, gpuMilli, cpuMilli, appPort, portsCsv, isPublic, ...(depRev >= 2 ? [] : [""]), envelope] });
+    args: [ref, gpuMilli, cpuMilli, appPort, portsCsv, isPublic, ...(depRev >= 2 ? [] : [""]), envelope,
+           ...(depRev >= 4 ? [fee6 > 0n ? app.publisher : "0x0000000000000000000000000000000000000000", fee6] : [])] });
   const log = (rcpt.logs || []).find((l) => l.topics?.[0] === DEP_CREATED_TOPIC
     && l.address.toLowerCase() === DEFAULTS.DEPLOYMENTS_ADDRESS.toLowerCase());
   if (!log) throw new Error("create succeeded but no Created event in the receipt; inspect tx " + rcpt.transactionHash);
@@ -1020,9 +1071,9 @@ async function cmdDeploy(rest) {
 async function cmdPublish(rest) {
   const account = loadKey();
   const f = flags(rest, { val: ["--slug", "--name", "--desc", "--version", "--mem", "--cpu-gflops",
-                                "--vram", "--gpu-gflops", "--ports", "--config"] });
+                                "--vram", "--gpu-gflops", "--ports", "--config", "--fee"] });
   const file = f._[0];
-  if (!file || !f.slug) throw new Error("usage: enclave publish <app.wasm> --slug <slug> [--name --desc --version --mem MB --cpu-gflops N --vram MB --gpu-gflops N --ports CSV --config JSON]");
+  if (!file || !f.slug) throw new Error("usage: enclave publish <app.wasm> --slug <slug> [--name --desc --version --mem MB --cpu-gflops N --vram MB --gpu-gflops N --ports CSV --config JSON --fee $/hr]");
   if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(f.slug)) throw new Error("slug: lowercase letters, digits, hyphens (max 40)");
   // --config = the app's default/template ENCLAVE_CONFIG (deploy consoles pre-fill from it)
   if (f.config){
@@ -1046,8 +1097,23 @@ async function cmdPublish(rest) {
 
   const res = [Math.round(numFlag(f.vram, "--vram") ?? 0), Math.round(numFlag(f["gpu-gflops"], "--gpu-gflops") ?? 0),
                Math.round(numFlag(f.mem, "--mem") ?? 256), Math.round(numFlag(f["cpu-gflops"], "--cpu-gflops") ?? 10)];
+
+  // --fee = YOUR hourly fee in USD, stored on-chain as USDC 6dp per SECOND.
+  // Deployers' fundings pay it straight to your publisher wallet, pro-rata;
+  // immutable per version and covered by the owner's approval, like ports.
+  const feeUsdHr = numFlag(f.fee, "--fee") ?? 0;
+  if (feeUsdHr < 0) throw new Error("--fee can't be negative");
+  const feePerSec6 = BigInt(Math.round(feeUsdHr * 1e6 / 3600));
+  if (feePerSec6 > 0n) {
+    if ((await catRev()) < 5)
+      throw new Error("--fee needs the rev-5 catalog (this one predates publisher fees) - publish free, or wait for the catalog upgrade");
+    const max = await read(DEFAULTS.APP_CATALOG_ADDRESS, CATALOG_ABI, "maxFeePerSec6", []);
+    if (feePerSec6 > max)
+      throw new Error(`--fee ${feeUsdHr} is over the platform's cap of ${usd6(max * 3600n)}/h - lower it`);
+  }
   if (!(await confirm(`publish ${file} (${(bytes.length / 1048576).toFixed(1)} MB) as ${f.slug}:${version} `
-                    + `res=[vram ${res[0]}MB, gpu ${res[1]}Gf, mem ${res[2]}MB, cpu ${res[3]}Gf]?`))) return say("aborted");
+                    + `res=[vram ${res[0]}MB, gpu ${res[1]}Gf, mem ${res[2]}MB, cpu ${res[3]}Gf]`
+                    + (feePerSec6 > 0n ? ` fee=${usd6(feePerSec6 * 3600n)}/h to ${account.address}` : "") + `?`))) return say("aborted");
 
   // 1. pin to IPFS. The gateway requires a WALLET-AUTHORIZED token (closes the
   //    open-pin storage DoS): sign enclave-upload:<sha256>:<expiry>, trade it at
@@ -1072,6 +1138,7 @@ async function cmdPublish(rest) {
   if (f.config && rev < 4) throw new Error("--config needs the rev-4 catalog (this one doesn't store per-version configs)");
   const args = [f.slug, f.name || f.slug, f.desc || "", version, cid, res, f.ports || ""];
   if (rev >= 3) args.push(f.config || "");   // rev 3+ take the 8-arg form (rev 3 stores it app-level; we always pass "")
+  if (rev >= 5) args.push(feePerSec6);       // rev 5+ take the 9-arg form (the version's publisher fee; 0 = free)
   const rcpt = await sendTx(account, { address: DEFAULTS.APP_CATALOG_ADDRESS, abi: CATALOG_ABI,
     functionName: "publishVersion", args });
   if (opt.json) return jout({ slug: f.slug, version, cid, appId, tx: rcpt.transactionHash, approval: "pending" });
@@ -1276,6 +1343,9 @@ deployments
 catalog
   publish <app.wasm> --slug S [--version V --name N --desc D --config JSON]
           [--mem MB --cpu-gflops N --vram MB --gpu-gflops N --ports CSV]
+          [--fee $/hr]        your hourly fee, paid straight to your wallet out
+                             of deployers' fundings (capped on-chain; immutable
+                             per version and covered by approval, like ports)
   apps [query]               browse/search the on-chain catalog
 
 encrypted volumes (rclone-crypt over S3; push data with scripts/enclave-encvol.sh)

@@ -13,7 +13,7 @@ import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { $$, esc, hlJson, fmtDur, statusCls, copyText, showToast, lsGet, lsSet } from "../../js/core/util.js";
 import { APP_DOMAIN, DEPLOYMENTS_ADDRESS } from "../../js/core/config.js";
 import { Enclave } from "../../js/core/api.js";
-import { pad32, encUint, encCall, DEP_SEL, APPROVAL, depPrices6, rate6Of, depGet, depSchemaRev, waitReceipt } from "../../js/core/chain.js";
+import { pad32, encUint, encCall, DEP_SEL, APPROVAL, depPrices6, rate6Of, depGet, depSchemaRev, depFeeOf, catVersionFee, waitReceipt } from "../../js/core/chain.js";
 import { authenticate, connectWallet, refreshWallet, saveSession, ensureBaseChain, sendTx } from "../../js/core/wallet.js";
 import { slugOfRef, artOfRef, loadCatalog, parseCatalogRef, catalogRef, specOf, STORE } from "../../js/core/catalog.js";
 import { vspecOf, verifyEnclaveInBrowser } from "../../js/core/verify.js";
@@ -576,13 +576,30 @@ class Deployments extends EnclaveElement {
     if (!app || !app.versions) return fail("[x] the catalog doesn’t list this deployment’s app (delisted?) - nothing to switch to");
     if (rev < 3)
       return fail("[!] the live ledger contract predates version changes - the Version control activates with the next contract upgrade. Until then: deploy the new version fresh, then suspend this one (its balance stays on the record).");
+    // The deployment's publisher-fee snapshot is as immutable as its shares:
+    // a candidate version asking MORE than the snapshot could never pay its
+    // publisher, so every runner would refuse the switch - list it disabled,
+    // exactly like a share misfit. Fail closed on unreadable fees: offering a
+    // switch runners refuse would leave the app dark. (Pre-fee ledger/catalog
+    // revs read as all-zero without extra RPC - nothing disables today.)
+    let snapFee = 0n; const verFees = {};
+    try {
+      snapFee = (await depFeeOf(id)).feePerSec6;
+      await Promise.all(app.versions.map(async (v, i) => {
+        verFees[i] = (!v.yanked && v.approval === APPROVAL.approved) ? await catVersionFee(cr.appId, i) : 0n;
+      }));
+    } catch(e){ return fail("[x] couldn’t read the publisher fees involved - try again shortly"); }
     // every approved, un-yanked version, newest first; the current one and the
-    // ones this deployment's immutable shares can't cover render disabled
+    // ones this deployment's immutable shares (or fee snapshot) can't cover
+    // render disabled
     const bought = { gpuMilli: Number(d.gpuMilli) || 0, cpuMilli: Number(d.cpuMilli) || 0 };
     const rows = app.versions
       .map((v, i) => ({ v, i, mins: minPctsOf(specOf(v)) }))
       .filter(r => !r.v.yanked && r.v.approval === APPROVAL.approved)
-      .map(r => ({ ...r, fits: r.mins.gpuPct * 10 <= bought.gpuMilli && r.mins.cpuPct * 10 <= bought.cpuMilli }))
+      .map(r => ({ ...r,
+        shareFit: r.mins.gpuPct * 10 <= bought.gpuMilli && r.mins.cpuPct * 10 <= bought.cpuMilli,
+        feeFit: (verFees[r.i] || 0n) <= snapFee }))
+      .map(r => ({ ...r, fits: r.shareFit && r.feeFit }))
       .reverse();
     const others = rows.filter(r => r.i !== cr.index);
     const pick = others.find(r => r.fits);                  // newest fitting release = the natural upgrade
@@ -596,7 +613,8 @@ class Deployments extends EnclaveElement {
       +     rows.map(r => '<option value="' + r.i + '"' + ((r.i === cr.index || !r.fits) ? " disabled" : "") + (pick && r.i === pick.i ? " selected" : "") + '>'
       +       esc(app.slug + ":" + r.v.version)
       +       (r.i === cr.index ? " · current" : "")
-      +       (!r.fits && r.i !== cr.index ? " · needs ≥ " + (r.mins.gpuPct ? r.mins.gpuPct + "% GPU / " : "") + r.mins.cpuPct + "% CPU" : "")
+      +       (!r.shareFit && r.i !== cr.index ? " · needs ≥ " + (r.mins.gpuPct ? r.mins.gpuPct + "% GPU / " : "") + r.mins.cpuPct + "% CPU" : "")
+      +       (r.shareFit && !r.feeFit && r.i !== cr.index ? " · charges $" + (Number(verFees[r.i]) * 3600 / 1e6).toFixed(2) + "/hr publisher fee (above this deployment’s snapshot)" : "")
       +     '</option>').join("")
       +   '</select>'
       +   '<button class="btn btn-sm btn-primary eu-go" type="button">Change version</button>'
@@ -605,8 +623,10 @@ class Deployments extends EnclaveElement {
     const sel = box.querySelector(".eu-sel"), go = box.querySelector(".eu-go"), st = box.querySelector(".enc-upg-status");
     const paint = (cls, txt) => paintLine(st, cls, txt);
     paint("info", "// paid time carries over: the runner restarts the app in place on the chosen version (~a minute); the endpoint and balance don’t change, app state is ephemeral");
-    if (others.some(r => !r.fits))
+    if (others.some(r => !r.shareFit))
       paint("dimln", "// disabled entries need more than this deployment’s " + (bought.gpuMilli ? (bought.gpuMilli / 10) + "% GPU / " : "") + (bought.cpuMilli / 10) + "% CPU - shares are immutable, those need a fresh deploy");
+    if (others.some(r => r.shareFit && !r.feeFit))
+      paint("dimln", "// entries charging a higher publisher fee than this deployment snapshotted at create need a fresh deploy - the fee snapshot is immutable, like the shares");
     const upd = () => { const r = rows.find(x => String(x.i) === sel.value); go.disabled = !r || r.i === cr.index || !r.fits; };
     sel.addEventListener("change", upd); upd();
     go.addEventListener("click", async () => {

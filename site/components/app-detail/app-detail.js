@@ -13,7 +13,7 @@ import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc, short, copyText } from "../../js/core/util.js";
 import { IPFS_GATEWAY, IPFS_IMG_GATEWAY } from "../../js/core/config.js";
 import { Enclave } from "../../js/core/api.js";
-import { APPROVAL } from "../../js/core/chain.js";
+import { APPROVAL, catVersionFee } from "../../js/core/chain.js";
 import { STORE, selIdx, appOfficial, mediaOf, verVisible, visibleVerIdxs } from "../../js/core/catalog.js";
 import { minPctsOf } from "../../js/core/pricing.js";
 
@@ -88,7 +88,18 @@ class AppDetail extends EnclaveElement {
         + ') set the minimum deploy shares">min '
         + (m.gpuPct > 0 ? m.gpuPct + '% GPU · ' : 'CPU-only · ') + m.cpuPct + '% CPU</span>'
       + (v.ports ? '<span class="vlbl" title="open ports: ports this version may bind">⛨ ' + esc(v.ports) + '</span>' : '')
+      + '<span class="vlbl appd-fee" hidden></span>'
       + (v.yanked ? '<span class="vyank">yanked</span>' : '');
+    // the version's publisher fee (rev-5 catalogs; 0 = free, chip stays
+    // hidden). Async on purpose - fees live outside the Version tuple; the
+    // chip patches in when the read lands, guarded against a version switch.
+    catVersionFee(app.appId, i).then(f => {
+      const el = this.querySelector(".appd-fee");
+      if (!el || !this.app || this.app.appId !== app.appId || selIdx(this.app) !== i || !(f > 0n)) return;
+      el.hidden = false;
+      el.title = "publisher fee: paid to " + app.publisher + " out of each funding, on top of the platform rate";
+      el.textContent = "+$" + (Number(f) * 3600 / 1e6).toFixed(2) + "/hr to the publisher";
+    }).catch(() => {});
 
     this.querySelector(".app-cid code").textContent = v.cid;
 

@@ -63,11 +63,13 @@ via transaction instead of via one enclave's API).
 
 ## Contract summary (`EnclaveDeployments.sol`)
 
-- **`create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, configCid)`**
-  (schema rev 2 — rev-1 contracts carried an extra `sshPubKey` string here and in
+- **`create(appRef, gpuMilli, cpuMilli, appPort, ports, isPublic, configCid, feeRecipient, feePerSec6)`**
+  (schema rev 4 — rev-1 contracts carried an extra `sshPubKey` string here and in
   the `Deployment` struct; consumers sniff `deploymentsSchema()` to pick the shape.
   Rev 3 keeps the rev-2 shapes byte-for-byte and only marks the `setAppRef`
-  surface, so struct decodes gate on `>= 2` and version changes on `>= 3`)
+  surface; rev 4 again keeps the struct byte-for-byte (the fee snapshot lives in
+  a side mapping behind `feeOf(id)`) and adds the two fee args — so struct
+  decodes gate on `>= 2`, version changes on `>= 3`, publisher fees on `>= 4`)
   — permissionless; inert until funded. `appRef` is `catalog://<appId>/<versionIndex>`,
   the on-chain record of the catalog VERSION to run (2026-07-09; CID refs are refused
   by runners — a CID names bytes, not a version). The record supplies the wasm,
@@ -94,19 +96,36 @@ via transaction instead of via one enclave's API).
   before the wallet signature so nobody signs a doomed create. Both
   shares are paid for:
   `rate = (pricePerSec6 × gpuMilli + cpuPricePerSec6 × cpuMilli) / 1000`,
-  rounded up, snapshotted at create (price changes never re-price existing
-  deployments). `id = keccak256(creator, nonce)`.
+  rounded up, **plus the publisher fee** (below), snapshotted at create (price
+  changes never re-price existing deployments). `id = keccak256(creator, nonce)`.
+  **Publisher fee (rev 4)**: a catalog version may declare a per-second
+  publisher fee (`EnclaveAppCatalog.versionFee`, capped at publish). Clients
+  copy it into `create` as `(feeRecipient = the app's publisher wallet,
+  feePerSec6)`; the pair is snapshotted (immutable, like the shares — read it
+  back with `feeOf(id)`), folded into `rate`, and capped by the owner-set
+  `maxFeePerSec6` (`setMaxFee`, create-only like the GPU cap). The ledger
+  still never parses appRefs: RUNNERS refuse to claim a deployment whose
+  snapshot under-declares the referenced version's fee or names the wrong
+  payee (fail closed, exactly like catalog approval), so an under-declared
+  record is simply nobody's work item — clients pre-check before the
+  signature, like the share floors.
   **Routing (enforced by runners at claim time): GPU work (`gpuMilli > 0`) is
   claimed ONLY by GPU-enabled enclaves; CPU-only work is claimed by CPU-only
   enclaves immediately and by GPU enclaves only after `CPU_CLAIM_GRACE_SEC`
   (default 120s), out of their leftover CPU/RAM pool — e.g. a tenant taking a
   whole card + 10% of the node leaves 90% of that node's CPU for CPU-only work.**
-- **`fundWithAuthorization(id, ...)` / `fundEth(id)`** — non-custodial, exactly
+- **`fundWithAuthorization(id, ...)` / `fund(id, value)` / `fundEth(id)`** —
+  non-custodial, exactly
   EnclavePay's pattern (EIP-3009 nonce bound to the first 16 bytes of `id`; funds
   forward to `payout` in the same tx). The difference: the credit lands in
   on-chain `balance6` instead of an off-chain clock. ETH is priced by the
   Chainlink ETH/USD feed *in the contract* (staleness-checked), because the
-  balance is chain state so the conversion must be too.
+  balance is chain state so the conversion must be too. On a fee-bearing
+  deployment every funding is SPLIT in that same transaction: the publisher's
+  pro-rata cut (`value × feePerSec6 / rate`, floor — the platform absorbs the
+  dust) goes straight to the snapshot's `feeRecipient`, the rest to `payout`.
+  Still nothing custodied, and `balance6` credits the full amount — the split
+  is who receives the money, not what the deployer bought.
 - **`claim(id, enclaveId)`** — gated to the operator of an **active EnclaveRegistry
   entry** (structural, like catalog lineage ownership). Requires no live lease
   and a balance that buys ≥ 1 second. Burns `min(leaseSec, balance/rate)`.

@@ -13,7 +13,7 @@ import "../../components/app-detail/app-detail.js";
 import { $, $$, esc, short, blen, fmtDur, showToast, on, tosAccepted, setTosAccepted } from "../core/util.js";
 import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, IPFS_UPLOAD_URL, IPFS_IMAGE_UPLOAD_URL, IPFS_IMG_GATEWAY, MAX_WASM_MB, MAX_WASM_BYTES, MAX_IMAGE_MB, MAX_IMAGE_BYTES, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
-import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, depMaxGpuMilli, rate6Of, waitReceipt, catSchemaRev } from "../core/chain.js";
+import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, depMaxGpuMilli, rate6Of, waitReceipt, catSchemaRev, catMaxFeePerSec6, catVersionFee } from "../core/chain.js";
 import { connectWallet, authenticate, ensureBaseChain, sendTx, usdcBalanceOf, openBuyModal } from "../core/wallet.js";
 import { STORE, loadCatalog, selIdx, defaultIdx, appVerified, appPrivileged, visibleVerIdxs, validPortsCsv, REF_CACHE, PORTS_CACHE, SPECS_CACHE, specOf, CONFIG_CACHE, catalogRef, mediaOf, appMedia, stripMedia, withMedia } from "../core/catalog.js";
 import { minPctsOf, shareRates } from "../core/pricing.js";
@@ -148,8 +148,10 @@ function quickDeploy(app, v, idx){
   const mins = minPctsOf(v);
   // constants first paint; the CONTRACT's live prices (incl. its ceil-to-a-
   // micro-USDC floor) replace them the moment the cached read lands - the
-  // rate shown here must match what the deployment actually burns
-  let rate = shareRates(mins.gpuPct, mins.cpuPct).rate;
+  // rate shown here must match what the deployment actually burns. A paid
+  // app's publisher fee rides on top, exactly as create() adds it.
+  let baseRate = shareRates(mins.gpuPct, mins.cpuPct).rate, fee = 0;
+  let rate = baseRate;
   const perHr = (rate * 3600).toFixed(2);
   const host = document.createElement("div");
   host.id = "quickDeploy"; host.className = "qd-overlay";
@@ -157,6 +159,7 @@ function quickDeploy(app, v, idx){
     '<div class="qd-card" role="dialog" aria-modal="true" aria-label="Deploy ' + esc(app.name || app.slug) + '">' +
       '<div class="qd-h">Deploy <b>' + esc(app.name || app.slug) + '</b> <span class="qd-ver">' + esc(v.version) + '</span></div>' +
       '<p class="qd-sub">Runs in its own confidential enclave at <b class="qd-rate">$' + perHr + '/hr</b>. Fund it from your wallet - it runs until the time you bought is used up, and you can top up or stop it whenever you like.</p>' +
+      '<p class="qd-sub qd-fee" hidden></p>' +
       '<div class="qd-bal"><span>Your wallet</span><b class="qd-balv">…</b><button class="qd-buy" type="button" hidden>Buy USDC →</button><button class="qd-connect btn btn-sm" type="button" hidden>Connect wallet</button></div>' +
       '<label class="qd-lbl" for="qdAmt">Amount to fund (USDC)</label>' +
       '<input class="qd-amt" id="qdAmt" type="number" value="5" min="0.01" step="any" inputmode="decimal" />' +
@@ -207,10 +210,23 @@ function quickDeploy(app, v, idx){
   }).catch(() => {});
   amt.addEventListener("input", est);
   tos.addEventListener("change", () => { setTosAccepted(tos.checked); est(); });
-  depPrices6().then(pr => {
-    rate = Number(rate6Of(pr, mins.gpuPct * 10, mins.cpuPct * 10)) / 1e6;
+  const paintRate = () => {
+    rate = baseRate + fee;
     const rEl = host.querySelector(".qd-rate"); if (rEl) rEl.textContent = "$" + (rate * 3600).toFixed(2) + "/hr";
     est();
+  };
+  depPrices6().then(pr => {
+    baseRate = Number(rate6Of(pr, mins.gpuPct * 10, mins.cpuPct * 10)) / 1e6;
+    paintRate();
+  }).catch(() => {});
+  // the version's publisher fee (rev-5 catalogs; 0 = free) - shown up front
+  // and folded into the burn rate, since create() snapshots it into the record
+  catVersionFee(app.appId, idx).then(f => {
+    if (!(f > 0n)) return;
+    fee = Number(f) / 1e6;
+    const fEl = host.querySelector(".qd-fee");
+    if (fEl){ fEl.hidden = false; fEl.textContent = "The rate includes a $" + (fee * 3600).toFixed(2) + "/hr publisher fee, paid straight to this app's publisher."; }
+    paintRate();
   }).catch(() => {});
   const loadBal = async () => {
     if (!Enclave.address || !Enclave.provider){ balv.textContent = "not connected"; conn.hidden = false; return; }
@@ -411,6 +427,11 @@ async function publishApp(){
   const memMb = Math.round(parseFloat($("#pubMem").value) || 0);
   const cpuGflops = Math.round(parseFloat($("#pubCpuG").value) || 0);
   const ports = $("#pubPorts").value.split(",").map(x => x.trim().toLowerCase()).filter(Boolean).join(",");
+  // your hourly fee, published on-chain in USDC 6dp per SECOND (deployers'
+  // fundings pay it straight to your wallet, pro-rata; immutable per version)
+  const feeUsdHr = parseFloat($("#pubFee") && $("#pubFee").value) || 0;
+  const feePerSec6 = Math.round(feeUsdHr * 1e6 / 3600);
+  if (feePerSec6 < 0) return pubStatus("the hourly fee can't be negative", true);
   if (!catConfigured()) return pubStatus("catalog contract address isn’t set on this site yet", true);
   if (!slug || blen(slug) > CAT_MAX.slug) return pubStatus("app slug is required (≤ 40 bytes)", true);
   if (!version || blen(version) > CAT_MAX.version) return pubStatus("version label is required (≤ 32 bytes)", true);
@@ -469,6 +490,19 @@ async function publishApp(){
       pubStatus("this catalog revision doesn't store per-version configs - clear the App config box and images (or publish after the rev-4 catalog cutover)", true);
       btn.disabled = false; btn.textContent = lbl; return;
     }
+    if (rev < 5 && feePerSec6 > 0){
+      pubStatus("this catalog revision predates publisher fees - set the hourly fee to 0 (or publish after the rev-5 catalog cutover)", true);
+      btn.disabled = false; btn.textContent = lbl; return;
+    }
+    if (feePerSec6 > 0){
+      // publishVersion reverts above the on-chain cap; refuse here with the
+      // actual ceiling instead of a wallet gas-estimation hang
+      const max = Number(await catMaxFeePerSec6());
+      if (feePerSec6 > max){
+        pubStatus("the hourly fee is capped at $" + (max * 3600 / 1e6).toFixed(2) + "/hr right now - lower it", true);
+        btn.disabled = false; btn.textContent = lbl; return;
+      }
+    }
     pubStatus("confirm the transaction in your wallet…");
     // uint32[4] is a STATIC array: it ABI-encodes as four inline words, exactly
     // like four consecutive uint params, so the hand-rolled encoder just takes them in order
@@ -476,8 +510,10 @@ async function publishApp(){
       {t:"str",v:slug},{t:"str",v:name},{t:"str",v:desc},{t:"str",v:version},{t:"str",v:cid},
       {t:"uint",v:vramMb},{t:"uint",v:gpuGflops},{t:"uint",v:memMb},{t:"uint",v:cpuGflops},{t:"str",v:ports},
     ];
-    const data = rev >= 3
-      ? encCall(CAT_SEL.publishVersion, [...args, {t:"str",v:finalConfig}])
+    const data = rev >= 5
+      ? encCall(CAT_SEL.publishVersion, [...args, {t:"str",v:finalConfig}, {t:"uint",v:feePerSec6}])
+      : rev >= 3
+      ? encCall(CAT_SEL.publishVersionV4, [...args, {t:"str",v:finalConfig}])
       : encCall(CAT_SEL.publishVersionV2, args);
     const hash = await sendTx(APP_CATALOG_ADDRESS, data);
     pubStatus("sent · " + hash + " · waiting for confirmation…");

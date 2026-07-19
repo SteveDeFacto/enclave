@@ -180,6 +180,31 @@
     "inputs": [
       {
         "indexed": true,
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "feePerSec6",
+        "type": "uint256"
+      }
+    ],
+    "name": "FeeSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
         "internalType": "address",
         "name": "feed",
         "type": "address"
@@ -261,6 +286,19 @@
       }
     ],
     "name": "LeaseSecSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "maxFeePerSec6",
+        "type": "uint256"
+      }
+    ],
+    "name": "MaxFeeSet",
     "type": "event"
   },
   {
@@ -496,6 +534,16 @@
         "internalType": "string",
         "name": "configCid",
         "type": "string"
+      },
+      {
+        "internalType": "address",
+        "name": "feeRecipient",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "feePerSec6",
+        "type": "uint256"
       }
     ],
     "name": "create",
@@ -530,6 +578,30 @@
         "internalType": "contract IAggregatorV3",
         "name": "",
         "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      }
+    ],
+    "name": "feeOf",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "feePerSec6",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -946,6 +1018,29 @@
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "bytes32[]",
+        "name": "ids",
+        "type": "bytes32[]"
+      },
+      {
+        "internalType": "address[]",
+        "name": "recipients",
+        "type": "address[]"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "rates6",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "importFees",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "importsSealed",
     "outputs": [
@@ -966,6 +1061,19 @@
         "internalType": "uint64",
         "name": "",
         "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "maxFeePerSec6",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -1209,6 +1317,19 @@
       }
     ],
     "name": "setLeaseSec",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_maxFeePerSec6",
+        "type": "uint256"
+      }
+    ],
+    "name": "setMaxFee",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

@@ -229,6 +229,13 @@ export function slugOfRef(ref){
   if (!hit) return null;
   return hit.app.slug + (hit.v && hit.v.version != null ? ":" + hit.v.version : "#" + cr.index);
 }
+// the publisher wallet behind a catalog:// reference - the payee a paid app's
+// fee snapshot must name (create() copies it; runners verify it at claim)
+export function publisherOfRef(ref){
+  const cr = parseCatalogRef(ref);
+  const hit = cr && appOfRef(cr);
+  return hit ? hit.app.publisher : null;
+}
 
 /* ---- generated stand-in art ----
    For apps that ship no thumbnail (store tiles AND dashboard rows): an accent

@@ -17,7 +17,8 @@ pragma solidity ^0.8.20;
 ///         by an operator.
 ///
 /// Non-custodial, like EnclavePay: funding forwards USDC/ETH payer -> payout in the SAME
-///         transaction; nothing is ever held here. `balance6` is an ACCOUNTING number
+///         transaction (less the publisher's fee cut, forwarded to their wallet in that
+///         same transaction); nothing is ever held here. `balance6` is an ACCOUNTING number
 ///         (prepaid runtime, USDC 6dp), not escrowed money — so leases can "burn" and
 ///         "refund" it freely, but stopping a deployment cannot push funds back to the
 ///         payer on-chain (that stays a payout-wallet action, as today).
@@ -45,6 +46,15 @@ pragma solidity ^0.8.20;
 ///     TFLOPS, RAM) in EnclaveAppCatalog; runners convert those specs into each
 ///     app's MINIMUM shares (spec / their hardware, the larger of the memory
 ///     and compute axes) and refuse deployments that bought less.
+///   - Publisher fee: a catalog version may declare a per-second publisher fee
+///     (EnclaveAppCatalog.versionFee, capped at publish). A deployment SNAPSHOTS
+///     that fee and its payee at create — rate = platform shares + fee — and
+///     every funding is split in the same transaction: the fee's pro-rata cut
+///     straight to the publisher's wallet, the rest to payout. The ledger still
+///     never parses appRefs: clients copy the fee from the catalog before the
+///     signature, and RUNNERS refuse to claim a deployment that under-declares
+///     the fee of the version it references (fail closed, exactly like catalog
+///     approval — the enclave that would run the code checks the price too).
 ///
 /// Fairness bounds (the cost of decentralized failover, all bounded by leaseSec):
 ///   - a runner that dies mid-lease has already burned that lease: the user loses at
@@ -141,21 +151,36 @@ contract EnclaveDeployments {
     uint16  public maxGpuMilli = 1000;     // per-deployment GPU-share cap, enforced at create() only — the
                                            // catalog still lists apps whose specs exceed it (publishable,
                                            // just not deployable until the cap is raised)
+    uint256 public maxFeePerSec6 = 1389;   // cap on the per-second publisher fee (USDC 6dp) a NEW deployment
+                                           // may declare: ~$5.00/hour. Mirrors the catalog's publish-time cap
+                                           // and bounds what a buggy or hostile client could sign away to a
+                                           // fee recipient. Create-only, like maxGpuMilli (imports bypass).
 
     // Struct-shape revision, sniffed by consumers (site/CLI/relay/runners) the
     // way catalogSchema is: rev 1 (no getter — the call reverts there) carried
     // an sshPubKey string in Deployment/create/setConfig; rev 2 dropped it.
     // Rev 3 keeps the rev-2 struct byte-for-byte and marks the setAppRef
     // surface (owner version changes): struct decodes keep gating on >= 2,
-    // the version-change feature gates on >= 3.
-    uint256 public constant deploymentsSchema = 3;
+    // the version-change feature gates on >= 3. Rev 4 again keeps the struct
+    // byte-for-byte (the publisher-fee snapshot lives in a side mapping) and
+    // marks the fee surface: create() grew (feeRecipient, feePerSec6) and
+    // feeOf/maxFeePerSec6 exist; the fee feature gates on >= 4.
+    uint256 public constant deploymentsSchema = 4;
+
+    /// @dev Publisher-fee snapshot, taken at create from the catalog version
+    ///      the deployment references (recipient = the app's publisher wallet).
+    ///      A SIDE MAPPING so the Deployment tuple stays byte-for-byte across
+    ///      revs (see deploymentsSchema). Packs into one slot.
+    struct Fee { address recipient; uint96 rate6; }
 
     bytes32[] private _ids;                                // every deployment ever created
     mapping(bytes32 => Deployment) private _deployments;
     mapping(bytes32 => bool) private _exists;
+    mapping(bytes32 => Fee) private _fees;                 // id -> publisher-fee snapshot (rate6 0 = none)
     mapping(address => uint64) private _nonces;            // per-creator id salt
 
     event Created(bytes32 indexed id, address indexed owner, string appRef, uint16 gpuMilli, uint16 cpuMilli, uint256 rate);
+    event FeeSet(bytes32 indexed id, address indexed recipient, uint256 feePerSec6);
     event AppRefSet(bytes32 indexed id, string appRef);
     event ConfigSet(bytes32 indexed id, string configCid);
     event ActiveSet(bytes32 indexed id, bool active);
@@ -168,6 +193,7 @@ contract EnclaveDeployments {
     event CpuPriceSet(uint256 cpuPricePerSec6);
     event LeaseSecSet(uint64 leaseSec);
     event MaxGpuMilliSet(uint16 maxGpuMilli);
+    event MaxFeeSet(uint256 maxFeePerSec6);
     event PayoutChanged(address indexed payout);
     event OwnerChanged(address indexed owner);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
@@ -185,6 +211,7 @@ contract EnclaveDeployments {
         emit PriceSet(pricePerSec6);               // prices are live from deploy (hardcoded defaults)
         emit CpuPriceSet(cpuPricePerSec6);
         emit MaxGpuMilliSet(maxGpuMilli);
+        emit MaxFeeSet(maxFeePerSec6);
     }
 
     // ========================================================================
@@ -202,6 +229,12 @@ contract EnclaveDeployments {
     ///      shares must also cover the app's minimum (derived by runners from
     ///      its EnclaveAppCatalog specs) or no enclave will claim the deployment,
     ///      and gpuMilli may not exceed the operator-set maxGpuMilli cap.
+    ///      feeRecipient/feePerSec6 copy the referenced catalog version's
+    ///      publisher fee (the app's publisher wallet; 0x0/0 for a free app):
+    ///      the fee is snapshotted like the rate, folded into it, and paid out
+    ///      pro-rata from every funding. Under-declaring it just makes the
+    ///      deployment unclaimable (runners re-check against the catalog),
+    ///      same as under-provisioned shares.
     function create(
         string calldata appRef,
         uint16 gpuMilli,
@@ -209,7 +242,9 @@ contract EnclaveDeployments {
         uint32 appPort,
         string calldata ports,
         bool isPublic,
-        string calldata configCid
+        string calldata configCid,
+        address feeRecipient,
+        uint256 feePerSec6
     ) external returns (bytes32 id) {
         require(bytes(appRef).length > 0 && bytes(appRef).length <= MAX_APPREF, "appRef length");
         require(cpuMilli > 0 && cpuMilli <= 1000, "cpuMilli range");
@@ -232,7 +267,21 @@ contract EnclaveDeployments {
         d.appRef = appRef;
         d.ports = ports;
         d.configCid = configCid;
+        _initFee(d, feeRecipient, feePerSec6);   // before _initScalars: the rate fold reads the snapshot
         _initScalars(d, appRef, gpuMilli, cpuMilli, appPort, isPublic);
+    }
+
+    /// @dev Record the publisher-fee snapshot (own stack frame, same reason as
+    ///      _initScalars). Runs BEFORE _initScalars so the rate fold there can
+    ///      read it back — keeping Created's rate the FULL stored rate (what
+    ///      leases burn), consistent with import re-emits; FeeSet tells
+    ///      indexers how much of it is the publisher's cut.
+    function _initFee(Deployment storage d, address feeRecipient, uint256 feePerSec6) private {
+        if (feePerSec6 == 0) return;
+        require(feePerSec6 <= maxFeePerSec6, "fee > max");    // create-only cap; imports bypass (grandfathered)
+        require(feeRecipient != address(0), "fee recipient");
+        _fees[d.id] = Fee(feeRecipient, uint96(feePerSec6));  // cast safe: maxFeePerSec6 <= uint96.max (setter-enforced)
+        emit FeeSet(d.id, feeRecipient, feePerSec6);
     }
 
     /// @dev Split out (emit included) so create() keeps a workable stack frame
@@ -247,8 +296,9 @@ contract EnclaveDeployments {
         d.isPublic = isPublic;
         d.active = true;
         d.createdAt = uint64(block.timestamp);
-        // both shares are paid for; ceil so a 1-milli deployment still pays >= 1 unit/sec
-        d.rate = (pricePerSec6 * gpuMilli + cpuPricePerSec6 * cpuMilli + 999) / 1000;
+        // both shares are paid for; ceil so a 1-milli deployment still pays >= 1
+        // unit/sec, plus the publisher's per-second cut recorded by _initFee
+        d.rate = (pricePerSec6 * gpuMilli + cpuPricePerSec6 * cpuMilli + 999) / 1000 + _fees[d.id].rate6;
         emit Created(d.id, msg.sender, appRef, gpuMilli, cpuMilli, d.rate);
     }
 
@@ -306,7 +356,9 @@ contract EnclaveDeployments {
         require(value > 0, "amount=0");
         require(bytes16(nonce) == bytes16(id), "nonce !~ id");
         usdc.receiveWithAuthorization(from, address(this), value, validAfter, validBefore, nonce, signature);
-        require(usdc.transfer(payout, value), "USDC transfer failed");
+        (address feeTo, uint256 cut) = _feeShare(id, d.rate, value);
+        if (cut > 0) require(usdc.transfer(feeTo, cut), "USDC transfer failed");
+        require(usdc.transfer(payout, value - cut), "USDC transfer failed");
         d.balance6 += value;
         emit Funded(id, from, value);
     }
@@ -319,11 +371,14 @@ contract EnclaveDeployments {
     ///         USDC validates EIP-3009 signatures from code-bearing addresses via
     ///         ERC-1271 instead of ecrecover, which typical account implementations
     ///         reject for raw digests, so fundWithAuthorization can never serve
-    ///         them. Same non-custodial forward, payer -> payout in one transfer.
+    ///         them. Same non-custodial forward, payer -> payout (and payer ->
+    ///         publisher for the fee cut) straight from the allowance.
     function fund(bytes32 id, uint256 value) external {
         Deployment storage d = _requireActive(id);
         require(value > 0, "amount=0");
-        require(usdc.transferFrom(msg.sender, payout, value), "USDC transferFrom failed");
+        (address feeTo, uint256 cut) = _feeShare(id, d.rate, value);
+        if (cut > 0) require(usdc.transferFrom(msg.sender, feeTo, cut), "USDC transferFrom failed");
+        require(usdc.transferFrom(msg.sender, payout, value - cut), "USDC transferFrom failed");
         d.balance6 += value;
         emit Funded(id, msg.sender, value);
     }
@@ -343,9 +398,27 @@ contract EnclaveDeployments {
         uint256 credited = (msg.value * uint256(answer)) / 1e20;
         require(credited > 0, "dust");
         d.balance6 += credited;                                    // effects before interaction (CEI): a contract payout can't reenter mid-credit
-        (bool ok, ) = payout.call{value: msg.value}("");
+        // the publisher's cut splits the WEI (their wallet gets ETH, not USDC).
+        // A fee recipient that reverts on plain sends blocks only ETH funding
+        // of their own app's deployments — USDC paths never call out to them.
+        (address feeTo, uint256 cutWei) = _feeShare(id, d.rate, msg.value);
+        if (cutWei > 0) {
+            (bool okFee, ) = feeTo.call{value: cutWei}("");
+            require(okFee, "ETH transfer failed");
+        }
+        (bool ok, ) = payout.call{value: msg.value - cutWei}("");
         require(ok, "ETH transfer failed");
         emit FundedEth(id, msg.sender, msg.value, credited);
+    }
+
+    /// @dev The publisher's cut of a funding amount: pro-rata by the fee's
+    ///      share of the snapshotted rate (floor — the platform absorbs the
+    ///      dust). rate >= 1 always (create ceils to at least one unit/sec
+    ///      and imports refuse rate 0), so the division is safe.
+    function _feeShare(bytes32 id, uint256 rate, uint256 value) private view returns (address to, uint256 cut) {
+        Fee storage f = _fees[id];
+        if (f.rate6 == 0) return (address(0), 0);
+        return (f.recipient, (value * f.rate6) / rate);
     }
 
     // ========================================================================
@@ -471,6 +544,25 @@ contract EnclaveDeployments {
         }
     }
 
+    /// @notice Migrate publisher-fee snapshots (rev-4 sources only — earlier
+    ///         records have none to carry). Verbatim, no cap check
+    ///         (grandfathered like imported gpuMilli): the imported `rate`
+    ///         already contains each record's fee, so this only restores WHO
+    ///         gets the cut — skipping it for a fee-bearing record would
+    ///         silently redirect the publisher's share to payout.
+    function importFees(bytes32[] calldata ids, address[] calldata recipients, uint256[] calldata rates6) external {
+        require(msg.sender == owner, "!owner");
+        require(!importsSealed, "sealed");
+        require(ids.length == recipients.length && ids.length == rates6.length, "length mismatch");
+        for (uint256 i = 0; i < ids.length; i++) {
+            require(_exists[ids[i]], "unknown");
+            require(rates6[i] <= type(uint96).max, "fee range");
+            require(rates6[i] == 0 || recipients[i] != address(0), "fee recipient");
+            _fees[ids[i]] = Fee(recipients[i], uint96(rates6[i]));
+            if (rates6[i] > 0) emit FeeSet(ids[i], recipients[i], rates6[i]);
+        }
+    }
+
     /// @notice Permanently close the import window (there is no re-open).
     function sealImports() external {
         require(msg.sender == owner, "!owner");
@@ -529,6 +621,21 @@ contract EnclaveDeployments {
         emit MaxGpuMilliSet(_maxGpuMilli);
     }
 
+    /// @notice Cap the per-second publisher fee (USDC 6dp) any single NEW
+    ///         deployment may declare. Enforced at create() only: existing
+    ///         records keep their snapshots and owner imports bypass it, like
+    ///         maxGpuMilli. Keep it in lockstep with the catalog's publish-time
+    ///         cap — a fee-bearing version above the LOWER of the two becomes
+    ///         undeployable (creates revert here, or runners refuse the
+    ///         under-declared fee there). Bounded to uint96 so the packed
+    ///         snapshot cast in _initFee can never truncate.
+    function setMaxFee(uint256 _maxFeePerSec6) external {
+        require(msg.sender == owner, "!owner");
+        require(_maxFeePerSec6 <= type(uint96).max, "max range");
+        maxFeePerSec6 = _maxFeePerSec6;                // affects FUTURE creates only
+        emit MaxFeeSet(_maxFeePerSec6);
+    }
+
     function setLeaseSec(uint64 _leaseSec) external {
         require(msg.sender == owner, "!owner");
         require(_leaseSec >= 60 && _leaseSec <= 1 days, "lease range");
@@ -585,6 +692,17 @@ contract EnclaveDeployments {
     function secondsFundable(bytes32 id) external view returns (uint256) {
         Deployment storage d = _deployments[id];
         return d.rate == 0 ? 0 : d.balance6 / d.rate;
+    }
+
+    /// @notice The publisher-fee snapshot taken at create: payee wallet and
+    ///         per-second cut (USDC 6dp), both immutable for the deployment's
+    ///         life. (0x0, 0) = no fee — every pre-rev-4 record reads that way.
+    ///         The cut is INSIDE `rate`, not on top of it: displays subtract it
+    ///         to show the platform/publisher split, and runners compare it to
+    ///         the referenced catalog version's fee before claiming.
+    function feeOf(bytes32 id) external view returns (address recipient, uint256 feePerSec6) {
+        Fee storage f = _fees[id];
+        return (f.recipient, f.rate6);
     }
 
     /// @notice Paginated dump (enclaves filter client-side, like registry discovery).
