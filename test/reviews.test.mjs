@@ -31,7 +31,8 @@ test("REV_SEL selectors match the compiled ABI (viem-derived)", () => {
     post: "post", setHidden: "setHidden", canReview: "canReview",
     reviewCount: "reviewCount", getReviewsPage: "getReviewsPage", getReview: "getReview",
     tallyOf: "tallyOf", talliesOf: "talliesOf", reviewsSchema: "reviewsSchema",
-    owner: "owner", deployments: "deployments", setDeployments: "setDeployments", MAX_BODY: "MAX_BODY",
+    owner: "owner", MAX_BODY: "MAX_BODY",
+    ledger: "ledger", ledgerFallback: "ledgerFallback", setLedgerFallback: "setLedgerFallback", book: "book",
   };
   for (const [key, fn] of Object.entries(expect))
     assert.equal(REV_SEL[key], byName[fn], `REV_SEL.${key} vs ABI ${fn}`);

@@ -122,7 +122,9 @@ export const REV_SEL = {
   post:"131c2e70", setHidden:"4431f07c", canReview:"efc9ce6a",
   reviewCount:"2891e4ce", getReviewsPage:"0f9f0a97", getReview:"df46153a",
   tallyOf:"b4a6def1", talliesOf:"e6f706f7", reviewsSchema:"7e9ca439",
-  owner:"8da5cb5b", deployments:"08483906", setDeployments:"a1e7a7c7", MAX_BODY:"f77b4942",
+  owner:"8da5cb5b", MAX_BODY:"f77b4942",
+  ledger:"56397c35",             // the ledger it checks receipts against NOW (resolved through the address book)
+  ledgerFallback:"7e1ffc65", setLedgerFallback:"7da3ffcb", book:"05a8da72",
 };
 export const REVIEW_SCHEMA = [   // mirrors EnclaveReviews.Review field order exactly (reviewsSchema 1)
   {k:"reviewer",t:"addr"},{k:"stars",t:"uint"},{k:"hidden",t:"bool"},

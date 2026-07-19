@@ -38,6 +38,10 @@ pragma solidity ^0.8.20;
 ///         baked in). `getReviewsPage` pages one app's reviews in storage
 ///         order, hidden ones included and flagged, so the owner's moderation
 ///         view and the public view come from the same call.
+interface IEnclaveAddressBook {
+    function addr(bytes32 key) external view returns (address);
+}
+
 interface IEnclaveDeployments {
     /// EnclaveDeployments.Deployment, schema rev >= 2 (rev 3 and 4 share this
     /// layout; rev 1's extra sshPubKey string is NOT readable here — a rev-1
@@ -83,15 +87,27 @@ contract EnclaveReviews {
     ///         a review is never a data-availability dump.
     uint256 public constant MAX_BODY = 2000;
 
-    address public owner;         // moderation (hide/unhide) + points at the ledger
+    address public owner;         // moderation (hide/unhide) only
     address public pendingOwner;  // two-step handoff: must acceptOwnership()
 
-    /// @notice The EnclaveDeployments ledger whose records prove a reviewer ran
-    ///         the app. Owner-settable: the ledger is redeployed from time to
-    ///         time (the address book is the root of truth), and reviews must
-    ///         follow it without a migration. Past reviews are unaffected —
-    ///         the receipt is checked once, when the review is posted.
-    IEnclaveDeployments public deployments;
+    /// @notice The platform root (EnclaveAddressBook). The ledger whose records
+    ///         prove a reviewer ran an app is resolved THROUGH it on every
+    ///         call, so a ledger redeploy reaches this contract the same way it
+    ///         reaches the site, the CLI and the enclaves: one `set` on the
+    ///         book, no transaction here, no drift to notice.
+    ///
+    ///         The trust statement is the book's own (see its header): the key
+    ///         that governs the book governs which ledger counts as a receipt.
+    ///         That key already approves catalog apps and deploys every
+    ///         contract, so pinning a ledger here would add a lever without
+    ///         adding a guarantee.
+    IEnclaveAddressBook public immutable book;
+    bytes32 public constant LEDGER_KEY = "deployments";   // ascii, right-padded — the book's derivation
+
+    /// @notice Fallback ledger, used only when the book can't answer (no book
+    ///         at all — a local or testnet deploy — or the key retired to
+    ///         zero). Owner-settable so that case stays recoverable.
+    address public ledgerFallback;
 
     struct Tally { uint32 count; uint32 sum; }   // visible reviews only; sum <= 5 * count
 
@@ -102,16 +118,31 @@ contract EnclaveReviews {
     event ReviewPosted(bytes32 indexed appId, address indexed reviewer, uint8 stars, bytes32 deployment);
     event ReviewUpdated(bytes32 indexed appId, address indexed reviewer, uint8 stars);
     event ReviewHidden(bytes32 indexed appId, address indexed reviewer, bool hidden);
-    event DeploymentsSet(address indexed deployments);
+    event LedgerFallbackSet(address indexed ledger);
     event OwnerChanged(address indexed owner);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
 
-    constructor(address _deployments) {
-        require(_deployments != address(0), "zero addr");
+    /// @param _book        EnclaveAddressBook, the platform root (0 = none; then
+    ///                     the fallback is the only ledger, and must be set).
+    /// @param _ledgerFallback EnclaveDeployments to use when the book can't answer.
+    constructor(address _book, address _ledgerFallback) {
+        require(_book != address(0) || _ledgerFallback != address(0), "no ledger source");
         owner = msg.sender;
-        deployments = IEnclaveDeployments(_deployments);
-        emit DeploymentsSet(_deployments);
+        book = IEnclaveAddressBook(_book);
+        ledgerFallback = _ledgerFallback;
+        emit LedgerFallbackSet(_ledgerFallback);
         emit OwnerChanged(msg.sender);
+    }
+
+    /// @notice The EnclaveDeployments ledger this contract checks receipts
+    ///         against right now: the book's answer, or the fallback when the
+    ///         book has none. Reads never revert — an unresolvable ledger is
+    ///         address(0), which _proved treats as "proves nothing".
+    function ledger() public view returns (address) {
+        if (address(book) != address(0)) {
+            try book.addr(LEDGER_KEY) returns (address a) { if (a != address(0)) return a; } catch {}
+        }
+        return ledgerFallback;
     }
 
     /* ---- write ---- */
@@ -182,7 +213,9 @@ contract EnclaveReviews {
     ///      neither path can mint a review, which is the property that matters.
     function _proved(bytes32 appId, bytes32 deploymentId, address who) private view returns (bool) {
         if (deploymentId == bytes32(0) || who == address(0)) return false;
-        try deployments.get(deploymentId) returns (IEnclaveDeployments.Deployment memory d) {
+        address l = ledger();
+        if (l == address(0)) return false;
+        try IEnclaveDeployments(l).get(deploymentId) returns (IEnclaveDeployments.Deployment memory d) {
             if (d.owner != who) return false;
             if (d.balance6 + d.spent6 == 0) return false;
             (bytes32 id, bool ok) = _refAppId(d.appRef);
@@ -260,13 +293,12 @@ contract EnclaveReviews {
 
     /* ---- admin ---- */
 
-    /// @notice Repoint at a redeployed EnclaveDeployments ledger (the address
-    ///         book is the root of truth; this keeps the receipt check live).
-    function setDeployments(address _deployments) external {
+    /// @notice Set the fallback ledger. Normally dead weight — with a book
+    ///         configured, `ledger()` follows it and this is never consulted.
+    function setLedgerFallback(address _ledger) external {
         require(msg.sender == owner, "!owner");
-        require(_deployments != address(0), "zero addr");
-        deployments = IEnclaveDeployments(_deployments);
-        emit DeploymentsSet(_deployments);
+        ledgerFallback = _ledger;
+        emit LedgerFallbackSet(_ledger);
     }
     function transferOwnership(address newOwner) external {
         require(msg.sender == owner, "!owner");

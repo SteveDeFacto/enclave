@@ -3,7 +3,12 @@
     "inputs": [
       {
         "internalType": "address",
-        "name": "_deployments",
+        "name": "_book",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_ledgerFallback",
         "type": "address"
       }
     ],
@@ -16,11 +21,11 @@
       {
         "indexed": true,
         "internalType": "address",
-        "name": "deployments",
+        "name": "ledger",
         "type": "address"
       }
     ],
-    "name": "DeploymentsSet",
+    "name": "LedgerFallbackSet",
     "type": "event"
   },
   {
@@ -138,6 +143,19 @@
   },
   {
     "inputs": [],
+    "name": "LEDGER_KEY",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "MAX_BODY",
     "outputs": [
       {
@@ -154,6 +172,19 @@
     "name": "acceptOwnership",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "book",
+    "outputs": [
+      {
+        "internalType": "contract IEnclaveAddressBook",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -180,19 +211,6 @@
         "internalType": "bool",
         "name": "",
         "type": "bool"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "deployments",
-    "outputs": [
-      {
-        "internalType": "contract IEnclaveDeployments",
-        "name": "",
-        "type": "address"
       }
     ],
     "stateMutability": "view",
@@ -327,6 +345,32 @@
   },
   {
     "inputs": [],
+    "name": "ledger",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "ledgerFallback",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "owner",
     "outputs": [
       {
@@ -414,19 +458,6 @@
   {
     "inputs": [
       {
-        "internalType": "address",
-        "name": "_deployments",
-        "type": "address"
-      }
-    ],
-    "name": "setDeployments",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
         "internalType": "bytes32",
         "name": "appId",
         "type": "bytes32"
@@ -443,6 +474,19 @@
       }
     ],
     "name": "setHidden",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_ledger",
+        "type": "address"
+      }
+    ],
+    "name": "setLedgerFallback",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

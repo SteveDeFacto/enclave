@@ -157,8 +157,9 @@ class AdminConsole extends EnclaveElement {
                             readCampaigns().catch(() => []),
                             fetch(DEFAULT_API_BASE + "/featured-views").then((r) => r.json()).then((j) => j.views || {}).catch(() => null)])
               .then(([owner, payout, maxBid, pending, campaigns, views]) => ({ addr: feat, owner, payout, maxBid, pending, campaigns, views })) : null,
-        rev ? Promise.all([rdAddr(rev, rSel.owner), rdAddrSoft(rev, rSel.pendingOwner), rdAddr(rev, rSel.deployments)])
-              .then(([owner, pending, ledger]) => ({ addr: rev, owner, pending, ledger })) : null,
+        rev ? Promise.all([rdAddr(rev, rSel.owner), rdAddrSoft(rev, rSel.pendingOwner),
+                           rdAddr(rev, rSel.ledger), rdAddr(rev, rSel.ledgerFallback), rdAddr(rev, rSel.book)])
+              .then(([owner, pending, ledger, fallback, revBook]) => ({ addr: rev, owner, pending, ledger, fallback, revBook })) : null,
       ]);
       this._note.hidden = true;
       this._paint();
@@ -291,15 +292,20 @@ class AdminConsole extends EnclaveElement {
     /* -- reviews -- */
     if (S.rev) {
       const r = S.rev;
-      // the gate that decides who may review reads THIS pointer, not the
-      // address book: a redeployed ledger that isn't mirrored here silently
-      // stops accepting every new review (the old ledger has no new records)
-      const stale = S.dep && lc(r.ledger) !== lc(S.dep.addr);
+      // the receipt gate resolves its ledger THROUGH the book on every call,
+      // so it can't drift; what's worth surfacing is WHICH source answered -
+      // falling back means the book's `deployments` key is unset/zero
+      const viaBook = !isZero(r.revBook) && S.dep && lc(r.ledger) === lc(S.dep.addr);
       parts.push(sec(`EnclaveReviews · ${link(r.addr)}`,
-        `1-5 star ratings with comments. A review is only accepted from a wallet with a FUNDED deployment of that app, checked against the ledger below - so ratings come from people who ran the app. Per-review moderation (hide / unhide) lives on the <a href="apps">Apps page</a> when you browse an app with the owner wallet; it isn't duplicated here. Hiding drops a review from the average and keeps its bytes on-chain. Owner ${mono(r.owner)}.`,
-        this._row("Deployments ledger <code>setDeployments</code>",
-          `${mono(r.ledger)}${stale ? ` <b class="ac-warn">≠ book (${esc(short(S.dep.addr))}) - new reviews are being refused</b>` : ""}`,
-          "rev-deployments", { owner: r.owner, placeholder: (S.dep && S.dep.addr) || "0x…" })));
+        `1-5 star ratings with comments. A review is only accepted from a wallet with a FUNDED deployment of that app - so ratings come from people who ran the app. Per-review moderation (hide / unhide) lives on the <a href="apps">Apps page</a> when you browse an app with the owner wallet; it isn't duplicated here. Hiding drops a review from the average and keeps its bytes on-chain. Owner ${mono(r.owner)}.`,
+        `<div class="ac-row"><div class="ac-lbl">Receipt ledger <code>ledger()</code></div>
+          <div class="ac-cur">${mono(r.ledger)} ${viaBook
+            ? `<span class="dim">· follows the address book, no action needed</span>`
+            : `<b class="ac-warn">· via the fallback (the book's <code>deployments</code> key is unset)</b>`}</div>
+          <span></span><span></span><span></span></div>` +
+        this._row("Ledger fallback <code>setLedgerFallback</code>",
+          `${isZero(r.fallback) ? `<span class="dim">(unset)</span>` : mono(r.fallback)} <span class="dim">(used only when the book can't answer)</span>`,
+          "rev-fallback", { owner: r.owner, placeholder: (S.dep && S.dep.addr) || "0x…" })));
     }
 
     /* -- catalog pointer -- */
@@ -313,14 +319,22 @@ class AdminConsole extends EnclaveElement {
 
     /* -- deploy cards -- */
     {
+      // Every constructor argument this console can already answer from the
+      // chain is filled in - hand-pasting a known address is just a chance to
+      // paste the wrong one. Each entry falls back to a sibling contract's
+      // value when the contract being replaced isn't deployed yet.
+      const payoutAddr = (S.dep && S.dep.payout) || (S.pay && S.pay.payout) || (S.feat && S.feat.payout);
       const pre = {
-        EnclavePay: { usdc: USDC_BASE, payout: S.pay && S.pay.payout },
-        EnclaveDeployments: { usdc: USDC_BASE, payout: (S.dep && S.dep.payout) || (S.pay && S.pay.payout), registry: S.book.entries.registry, ethUsdFeed: S.dep && S.dep.feed },
+        EnclavePay: { usdc: USDC_BASE, payout: (S.pay && S.pay.payout) || payoutAddr },
+        EnclaveDeployments: { usdc: USDC_BASE, payout: payoutAddr, registry: S.book.entries.registry, ethUsdFeed: S.dep && S.dep.feed },
+        EnclaveFeatured: { usdc: USDC_BASE, payout: (S.feat && S.feat.payout) || payoutAddr },
+        EnclaveReviews: { book: S.book.addr, ledgerFallback: S.book.entries.deployments || (S.dep && S.dep.addr) },
       };
       const notes = {
         EnclaveAddressBook: `<span class="warn">redeploying the book replaces the ONE address baked into every component</span> - that path needs the config/site/CLI rebake + a release + a dashboard update. Use <code>scripts/deploy-address-book.mjs</code> instead unless you know exactly why.`,
         EnclaveRegistry: `EnclaveDeployments pins the registry it trusts at construction - after a registry redeploy, redeploy EnclaveDeployments too (pointed at the new registry), then update both book keys.`,
         EnclaveDeployments: `deploys with the source-default prices - adjust in the panel above after pointing the book. Existing deployments live on in the OLD contract; users top up there until they redeploy.`,
+        EnclaveReviews: `resolves the ledger it checks receipts against through the BOOK on every call, so a later EnclaveDeployments redeploy needs nothing here. <code>ledgerFallback</code> is only consulted when the book has no <code>deployments</code> key.`,
       };
       const cards = Object.keys(CONTRACTS).map((name) => {
         const c = CONTRACTS[name];
@@ -507,16 +521,18 @@ class AdminConsole extends EnclaveElement {
         if (!need(/^\d+$/.test(v) && +v >= 60 && +v <= 86400, "lease must be 60…86400 seconds")) return;
         return void this._tx(S.dep.addr, encCall(dSel.setLeaseSec, [{ t: "uint", v }]), `setLeaseSec(${v})`, panelStatus, true);
       }
-      if (act === "dep-feed" || act === "dep-payout" || act === "pay-payout" || act === "feat-payout" || act === "rev-deployments") {
+      if (act === "dep-feed" || act === "dep-payout" || act === "pay-payout" || act === "feat-payout" || act === "rev-fallback") {
         const v = inputFor(act);
         if (!need(ADDR_RE.test(v), "enter a 0x… address (40 hex)")) return;
-        if (act !== "dep-feed" && !need(!isZero(v), "the zero address is rejected by the contract")) return;
+        // the reviews fallback accepts zero (that's how you retire it and pin
+        // the contract to the book alone)
+        if (act !== "dep-feed" && act !== "rev-fallback" && !need(!isZero(v), "the zero address is rejected by the contract")) return;
         const map = {
           "dep-feed":   [S.dep.addr, dSel.setEthUsdFeed, "setEthUsdFeed"],
           "dep-payout": [S.dep.addr, dSel.setPayout, "setPayout"],
           "pay-payout": [S.pay.addr, CONTRACTS.EnclavePay.sel.setPayout, "setPayout"],
           "feat-payout": [S.feat && S.feat.addr, CONTRACTS.EnclaveFeatured.sel.setPayout, "setPayout"],
-          "rev-deployments": [S.rev && S.rev.addr, CONTRACTS.EnclaveReviews.sel.setDeployments, "setDeployments"],
+          "rev-fallback": [S.rev && S.rev.addr, CONTRACTS.EnclaveReviews.sel.setLedgerFallback, "setLedgerFallback"],
         };
         const [to, sel, fn] = map[act];
         return void this._tx(to, encCall(sel, [{ t: "addr", v }]), `${fn}(${short(v)})`, panelStatus, true);

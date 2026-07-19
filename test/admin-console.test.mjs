@@ -236,6 +236,25 @@ test("rev-1 source rows (extra sshPubKey string) decode with DEP_SCHEMA_V1 and s
     assert.equal(String(clean[f.k]).toLowerCase(), String(DEP_ROW[f.k]).toLowerCase(), f.k);
 });
 
+test("every constructor argument the console can answer is prefilled", () => {
+  // The deploy form's `pre` map is keyed by CONSTRUCTOR ARGUMENT NAME - a
+  // contract missing from it (or an arg name that drifted) silently renders an
+  // empty box, and the operator hand-pastes an address the console already
+  // knew. That's a paste-the-wrong-one bug with no error message, so pin it:
+  // any contract WITH constructor args must have a prefill covering all of
+  // them. (EnclaveFeatured shipped without one and went unnoticed.)
+  const src = fs.readFileSync(path.join(REPO, "site/components/admin-console/admin-console.js"), "utf8");
+  const block = /const pre = \{\n([\s\S]*?)\n\s*\};/.exec(src);
+  assert.ok(block, "the deploy form's `pre` map is still an object literal");
+  const entries = Object.fromEntries([...block[1].matchAll(/^\s*(Enclave\w+): \{(.*)\},$/gm)].map((m) => [m[1], m[2]]));
+  for (const [name, c] of Object.entries(CONTRACTS)) {
+    if (!c.ctor.length) continue;
+    assert.ok(entries[name], `${name} has constructor args but no prefill in the deploy form`);
+    for (const a of c.ctor)
+      assert.match(entries[name], new RegExp(`\\b${a.name}:`), `${name}'s prefill is missing ${a.name}`);
+  }
+});
+
 test("artifacts stay in sync with contracts/*.sol (regenerate check)", () => {
   // cheap staleness guard: every contract source is older-or-equal than the
   // generated module, or the build regenerates it anyway (build-site.mjs runs
