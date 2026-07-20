@@ -48,6 +48,10 @@ const DEPS = {
   "@tinfoilsh/verifier": "1.1.10",   // 1.1.9+ is Apache-2.0 (≤1.1.8 was AGPL — a license conflict with ours; keep ≥1.1.9)
   "@privy-io/js-sdk-core": "0.68.2",
   "fflate": "0.8.2",           // browser gunzipSync shim for the verifier's zlib use
+  "jsqr": "1.4.0",             // QR decode fallback for the Send-USDC camera scan
+                               // (wallet.js lazy-imports /vendor/jsqr.js when the
+                               // browser's BarcodeDetector can't do qr_code, e.g.
+                               // desktop Linux and Firefox). Apache-2.0.
 };
 
 fs.mkdirSync(WORK, { recursive: true });
@@ -89,11 +93,23 @@ await build({
   outfile: path.join(OUT, "privy-core.js"),
 });
 
+console.log("[vendor] esbuild jsqr -> site/vendor/jsqr.js");
+// jsqr ships CJS; the wrapper pins the ESM shape to a default export so the
+// caller's `(await import("/vendor/jsqr.js")).default` can never drift
+fs.writeFileSync(path.join(WORK, "jsqr-entry.js"),
+  'import jsQR from "jsqr";\nexport default jsQR;\n');
+await build({
+  ...shared,
+  entryPoints: [path.join(WORK, "jsqr-entry.js")],
+  outfile: path.join(OUT, "jsqr.js"),
+});
+
 // Fail loud if an upgrade ever drops an export the callers destructure, so a
 // broken bundle can never ship silently to the verify/wallet paths.
 const must = [
   ["verifier.js", ["Verifier", "assembleAttestationBundle"]],
   ["privy-core.js", ["LocalStorage", "default"]],
+  ["jsqr.js", ["default"]],
 ];
 for (const [file, names] of must) {
   const src = fs.readFileSync(path.join(OUT, file), "utf8");

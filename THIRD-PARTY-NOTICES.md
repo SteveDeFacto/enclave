@@ -8,7 +8,7 @@ under its own license; this file carries the copyright and permission notices
 that minified bundles cannot. Regenerate with `node scripts/build-notices.mjs`
 after any dependency change.
 
-Packages: 880 · Licenses: MIT ×680 · Apache-2.0 ×87 · ISC ×48 · SEE LICENSE IN LICENSE.md ×20 · BSD-3-Clause ×19 · UNKNOWN ×8 · MPL-2.0 ×4 · 0BSD ×4 · (MIT OR Apache-2.0) ×2 · BSD-2-Clause ×2 · CC-BY-4.0 ×1 · BlueOak-1.0.0 ×1 · (Apache-2.0 AND MIT) ×1 · LGPL-3.0-only ×1 · (MIT AND BSD-3-Clause) ×1 · (MIT OR CC0-1.0) ×1
+Packages: 881 · Licenses: MIT ×678 · Apache-2.0 ×90 · ISC ×48 · SEE LICENSE IN LICENSE.md ×20 · BSD-3-Clause ×19 · UNKNOWN ×8 · MPL-2.0 ×4 · 0BSD ×4 · (MIT OR Apache-2.0) ×2 · BSD-2-Clause ×2 · CC-BY-4.0 ×1 · BlueOak-1.0.0 ×1 · (Apache-2.0 AND MIT) ×1 · LGPL-3.0-only ×1 · (MIT AND BSD-3-Clause) ×1 · (MIT OR CC0-1.0) ×1
 
 Portions © 2025 Reown, Inc. All Rights Reserved
 
@@ -316,7 +316,6 @@ Portions © 2025 Reown, Inc. All Rights Reserved
 - **css-to-react-native@3.2.0** — Copyright (c) 2016 Jacob Parker and Maximilian Stoiber
 - **csstype@3.2.3** — Copyright (c) 2017-2018 Fredrik Nicol
 - **date-fns@2.30.0** — Copyright (c) 2021 Sasha Koss and Lesha Koss https://kossnocorp.mit-license.org
-- **date-fns@4.4.0** — Copyright (c) 2021 Sasha Koss and Lesha Koss https://kossnocorp.mit-license.org
 - **dateformat@4.6.3** — Copyright (c) Steven Levithan
 - **dayjs@1.11.13** — Copyright (c) 2018-present, iamkun
 - **debug@2.6.9** — Copyright (c) 2014 TJ Holowaychuk <tj@vision-media.ca>
@@ -450,6 +449,7 @@ Portions © 2025 Reown, Inc. All Rights Reserved
 - **keyvaluestorage-interface@1.0.0** — Copyright (c) 2020 Pedro Gomes
 - **leven@3.1.0** — Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 - **libphonenumber-js@1.13.8** — Copyright (c) 2016 @catamphetamine <purecatamphetamine@gmail.com>
+- **libphonenumber-js@1.13.9** — Copyright (c) 2016 @catamphetamine <purecatamphetamine@gmail.com>
 - **locate-path@5.0.0** — Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 - **lodash.throttle@4.1.1** — Copyright jQuery Foundation and other contributors <https://jquery.org/> · Copyright and related rights for sample code are waived via CC0. Sample
 - **lodash@4.18.1** — Copyright OpenJS Foundation and other contributors <https://openjsf.org/> · Copyright and related rights for sample code are waived via CC0. Sample
@@ -518,7 +518,6 @@ Portions © 2025 Reown, Inc. All Rights Reserved
 - **ox@0.4.4** — Copyright (c) 2023-present wevm
 - **ox@0.6.7** — Copyright (c) 2023-present wevm
 - **ox@0.6.9** — Copyright (c) 2023-present wevm
-- **ox@0.8.9** — Copyright (c) 2023-present wevm
 - **ox@0.9.1** — Copyright (c) 2023-present wevm
 - **ox@0.9.17** — Copyright (c) 2023-present wevm
 - **ox@0.9.3** — Copyright (c) 2023-present wevm
@@ -625,7 +624,6 @@ Portions © 2025 Reown, Inc. All Rights Reserved
 - **strip-json-comments@3.1.1** — Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 - **styled-components@6.4.3** — Copyright (c) 2016-present Glen Maddern and Maximilian Stoiber
 - **stylis@4.3.6** — Copyright (c) 2016-present Sultan Tarimo
-- **stylis@4.4.0** — Copyright (c) 2016-present Sultan Tarimo
 - **superstruct@1.0.4** — Copyright &copy; 2017, [Ian Storm Taylor](https://ianstormtaylor.com)
 - **superstruct@2.0.2** — Copyright &copy; 2017, [Ian Storm Taylor](https://ianstormtaylor.com)
 - **supports-color@7.2.0** — Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
@@ -737,15 +735,17 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 - **@internationalized/number@3.6.7** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2019 Adobe
 - **@internationalized/string@3.2.9** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2019 Adobe
 - **@privy-io/api-types@0.16.0** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2026 Privy
+- **@privy-io/api-types@0.17.0** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2026 Privy
 - **@privy-io/are-addresses-equal@0.0.9** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
 - **@privy-io/chains@0.5.0** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
 - **@privy-io/encoding@0.2.1** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
 - **@privy-io/ethereum@0.2.0** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
-- **@privy-io/js-sdk-core@0.68.1** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
 - **@privy-io/js-sdk-core@0.68.2** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
+- **@privy-io/js-sdk-core@0.68.3** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
 - **@privy-io/popup@0.0.4** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
-- **@privy-io/react-auth@3.34.0** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
+- **@privy-io/react-auth@3.35.1** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
 - **@privy-io/routes@0.2.6** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
+- **@privy-io/routes@0.2.7** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
 - **@privy-io/urls@0.0.4** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
 - **@react-aria/focus@3.22.1** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2019 Adobe
 - **@react-aria/interactions@3.28.1** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2019 Adobe
@@ -807,6 +807,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 - **exponential-backoff@3.1.3** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2019 Coveo Solutions Inc.
 - **fb-watchman@2.0.2** — Copyright (c) Wez Furlong <wez@fb.com> (http://wezfurlong.org)
 - **idb-keyval@6.2.1** — Copyright 2016, Jake Archibald
+- **jsqr@1.4.0** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright {yyyy} {name of copyright owner}
 - **lighthouse-logger@1.4.2** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2014 Google Inc.
 - **marky@1.3.0** — copyright owner that is granting the License. · Copyright 2016 Nolan Lawson
 - **react-aria@3.50.0** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2019 Adobe
@@ -1374,9 +1375,9 @@ If you have any questions, comments or interest in pursuing any other use cases,
   </details>
 - **@metamask/sdk-install-modal-web@0.32.1** — Copyright ConsenSys Software Inc. 2022. All rights reserved.
 - **@metamask/sdk@0.33.1** — Copyright ConsenSys Software Inc. 2022. All rights reserved.
-- **@privy-io/api-base@1.9.2** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
+- **@privy-io/api-base@1.9.3** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
 
-  <details><summary>license text (@privy-io/api-base@1.9.2 — shared by identical sibling packages above/below)</summary>
+  <details><summary>license text (@privy-io/api-base@1.9.3 — shared by identical sibling packages above/below)</summary>
 
 ```
 Apache License
@@ -1582,7 +1583,7 @@ Apache License
    limitations under the License.
 ```
   </details>
-- **@privy-io/api-base@1.9.3** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
+- **@privy-io/api-base@1.9.4** — copyright notice that is included in or attached to the work · copyright license to reproduce, prepare Derivative Works of, · Copyright 2022-2023 Horkos, Inc.
 - **eyes@0.1.8** — Copyright (c) 2009 cloudhead
 
   <details><summary>license text (eyes@0.1.8 — shared by identical sibling packages above/below)</summary>

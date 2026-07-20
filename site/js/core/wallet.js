@@ -313,7 +313,15 @@ export function openSendModal(){
   const m = fundModal(
     '<div class="wp-h">Send USDC</div>' +
     '<div class="wp-note">Move <b>USDC on Base</b> from your wallet to any address. This leaves Enclave and is <b>final</b> - double-check the address, and send only on the Base network.</div>' +
-    '<input class="wp-input" id="sendTo" aria-label="Recipient address" placeholder="0x… recipient address" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" />' +
+    '<div class="wp-sendrow wp-addrrow">' +
+      '<input class="wp-input" id="sendTo" aria-label="Recipient address" placeholder="0x… recipient address" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" />' +
+      '<button class="wp-mini" id="sendScan" type="button" title="Scan a QR code with your camera" aria-label="Scan recipient address QR code" aria-pressed="false">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="4"/></svg>' +
+      '</button>' +
+    '</div>' +
+    '<div class="wp-scan" id="scanBox" hidden>' +
+      '<video id="scanVid" playsinline muted aria-label="Camera preview - point at the recipient\'s QR code"></video>' +
+    '</div>' +
     '<div class="wp-sendrow">' +
       '<input class="wp-input" id="sendAmt" aria-label="Amount in USDC" inputmode="decimal" placeholder="0.00" autocomplete="off" />' +
       '<button class="wp-mini" id="sendMax" type="button">Max</button>' +
@@ -330,6 +338,89 @@ export function openSendModal(){
     (v) => { bal = v; if (balEl) balEl.textContent = v.toFixed(2); },
     ()  => { if (balEl) balEl.textContent = "unavailable"; });
   const maxB = $("#sendMax"); if (maxB) maxB.addEventListener("click", () => { const a = $("#sendAmt"); if (a) a.value = String(bal); });
+
+  /* ---- QR scan into the recipient field. Frames are decoded with the
+     browser's native BarcodeDetector when it really supports qr_code
+     (Chrome on Android/mac; desktop Linux and Firefox report no formats),
+     else with the vendored jsQR, lazy-loaded same-origin on first use
+     (site/vendor/jsqr.js - see scripts/build-vendor.mjs). Accepts plain
+     0x addresses and EIP-681 URIs (ethereum:0x…@8453): anything carrying
+     40 hex. The poll loop also owns cleanup: if the modal closes under a
+     live scan (backdrop, Escape), the video leaves the DOM and the next
+     tick stops the tracks - otherwise the camera light stays on. */
+  const scanBtn = $("#sendScan"), scanBox = $("#scanBox"), scanVid = $("#scanVid");
+  let scanStop = null;   // non-null while scanning; call to clean up
+  const stopScan = () => { if (scanStop){ const s = scanStop; scanStop = null; s(); } };
+  const startScan = async () => {
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    } catch(e){
+      const name = e && e.name;
+      return setStatus("err",
+        name === "NotAllowedError" ? "Camera access was denied - allow it for this site and try again." :
+        (name === "NotFoundError" || name === "OverconstrainedError") ? "No camera found on this device." :
+        "Couldn't start the camera: " + ((e && e.message) || e));
+    }
+    let detect = null;
+    try {
+      if (window.BarcodeDetector && (await window.BarcodeDetector.getSupportedFormats()).includes("qr_code")){
+        const bd = new window.BarcodeDetector({ formats: ["qr_code"] });
+        detect = async () => { const c = await bd.detect(scanVid); return c.length ? c[0].rawValue : null; };
+      }
+    } catch(_){}
+    if (!detect){
+      try {
+        const jsQR = (await import("/vendor/jsqr.js")).default;
+        const cv = document.createElement("canvas");
+        const cx = cv.getContext("2d", { willReadFrequently: true });
+        detect = async () => {
+          const w = scanVid.videoWidth, h = scanVid.videoHeight;
+          if (!w || !h) return null;
+          const k = Math.min(1, 640 / w);   // decode at ≤640px wide: plenty for QR, keeps the tick cheap
+          cv.width = Math.round(w * k); cv.height = Math.round(h * k);
+          cx.drawImage(scanVid, 0, 0, cv.width, cv.height);
+          const img = cx.getImageData(0, 0, cv.width, cv.height);
+          const hit = jsQR(img.data, img.width, img.height);
+          return hit && hit.data;
+        };
+      } catch(e){
+        stream.getTracks().forEach((t) => t.stop());
+        return setStatus("err", "QR scanning is unavailable: " + ((e && e.message) || e));
+      }
+    }
+    scanBox.hidden = false;
+    scanVid.srcObject = stream;
+    try { await scanVid.play(); } catch(_){}
+    scanBtn.setAttribute("aria-pressed", "true");
+    let timer = 0, busy = false, badShown = false;
+    scanStop = () => {
+      clearInterval(timer);
+      stream.getTracks().forEach((t) => t.stop());
+      scanVid.srcObject = null;
+      scanBox.hidden = true;
+      scanBtn.setAttribute("aria-pressed", "false");
+    };
+    timer = setInterval(async () => {
+      if (!scanVid.isConnected) return stopScan();   // modal closed mid-scan
+      if (busy) return; busy = true;
+      let text = null;
+      try { text = await detect(); } catch(_){}
+      busy = false;
+      if (!text) return;
+      const addr = (text.match(/0x[0-9a-fA-F]{40}/) || [])[0];
+      if (!addr){
+        if (!badShown){ badShown = true; setStatus("err", "That QR code doesn't contain an address. It says: " + text.slice(0, 60)); }
+        return;   // keep scanning - maybe the right code is next
+      }
+      $("#sendTo").value = addr;
+      stopScan();
+      setStatus("ok", "Scanned " + short(addr) + " - double-check it matches the recipient's address.");
+      const a = $("#sendAmt"); if (a) a.focus();
+    }, 280);
+  };
+  if (scanBtn) scanBtn.addEventListener("click", () => { scanStop ? stopScan() : startScan(); });
+
   if (go) go.addEventListener("click", async () => {
     const to = ($("#sendTo").value || "").trim();
     const amt = Number(($("#sendAmt").value || "").trim());

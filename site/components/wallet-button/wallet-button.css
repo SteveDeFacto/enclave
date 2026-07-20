@@ -53,6 +53,12 @@ c-wallet-button{display:contents;}
 .wp-sendrow{display:flex;gap:8px;align-items:stretch;}
 .wp-sendrow .wp-input{flex:1;margin-bottom:0;}
 .wp-sendrow .wp-mini{white-space:nowrap;}
+/* recipient row: the row replaces the input's own bottom margin; the scan
+   button turns jade while the camera is live (aria-pressed = the state) */
+.wp-addrrow{margin-bottom:8px;}
+.wp-addrrow .wp-mini[aria-pressed="true"]{border-color:var(--jade);color:var(--jade);}
+.wp-scan{margin-bottom:8px;}
+.wp-scan video{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:10px;background:#000;border:1px solid var(--line);}
 .wp-status{font-size:.72rem;line-height:1.5;margin:8px 0;word-break:break-word;}
 .wp-status.err{color:#ff8a8a;} .wp-status.ok{color:var(--jade);} .wp-status.pend{color:var(--text-muted);}
 .wp-dot-iris{background:linear-gradient(135deg,var(--iris),var(--jade));}
