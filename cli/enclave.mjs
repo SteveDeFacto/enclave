@@ -32,7 +32,7 @@ import { createPublicClient, createWalletClient, http as viemHttp, fallback,
 import { base } from "viem/chains";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 
-const VERSION = "0.1.0";
+const VERSION = "1.0.2";
 
 // The ONLY enclave source repo this CLI will verify against. Attestation targets
 // are pinned to this constant, never taken from the API response — a malicious
@@ -598,8 +598,12 @@ function pinnedRepo(apiRepo) {
   return EXPECTED_REPO;
 }
 async function attestDeployment(account, id) {
-  const nonce = crypto.randomBytes(32).toString("hex");
-  const att = await api("GET", `/v1/deployments/${id}/attestation?nonce=${nonce}`, { auth: account });
+  // Keyless works: the endpoint is public. An owner session adds one thing —
+  // the GPU report is regenerated fresh over OUR nonce (anonymous callers get
+  // the enclave's cached report; freshness then rests on the TLS-bound quote).
+  const nonce = account ? crypto.randomBytes(32).toString("hex") : null;
+  const att = await api("GET", `/v1/deployments/${id}/attestation${nonce ? `?nonce=${nonce}` : ""}`,
+                        account ? { auth: account } : {});
   const origin = new URL(att.verification.attestationEndpoint).origin;
   const repo = pinnedRepo(att.verification.repo);
   return { att, nonce, origin, repo, result: await verifyEnclaveOrigin(origin, repo) };
@@ -769,20 +773,25 @@ async function cmdAttest(rest) {
     if (!r.pass) exit(1);
     return;
   }
-  const account = loadKey();      // per-deployment attestation is owner-gated
+  // No wallet needed: attestation is a READER's tool (an app's users verify the
+  // enclave before sending it data, and they don't own the deployment). A key,
+  // when one is configured, only upgrades the GPU report to a fresh challenge
+  // signed over our own nonce.
+  const account = loadKey({ required: false });
   const id = await resolveId(rest[0], account);
   const { att, nonce, origin, repo, result } = await attestDeployment(account, id);
   // The GPU CC report must be signed over the SAME nonce we sent, or its
   // freshness is unproven (a replayed report would still "have a nonce").
   const gpuNonce = att.gpu ? String(att.gpu.nonce || "").toLowerCase().replace(/^0x/, "") : "";
-  const gpuNonceOk = !!gpuNonce && gpuNonce === nonce.toLowerCase();
+  const gpuNonceOk = !!nonce && !!gpuNonce && gpuNonce === nonce.toLowerCase();
   if (opt.json) return jout({ id, origin, repo, ...result, vm: att.vm ? { technology: att.vm.technology, measurements: att.vm.measurements } : null, gpu: att.gpu ? { ccMode: att.gpu.ccMode, nonce: att.gpu.nonce, nonceVerified: gpuNonceOk } : null });
   kv([["deployment", id], att.app?.digest ? ["app digest", att.app.digest] : null]);
   printVerdict(result, origin, repo);
   if (att.vm?.technology) say(`vm          ${att.vm.technology} quote present (registers in --json)`);
   if (att.gpu) say(`gpu         CC report ${att.gpu.report ? "present" : "absent"}${att.gpu.ccMode ? `, ccMode=${att.gpu.ccMode}` : ""}`
     + (gpuNonceOk ? `, fresh (signed over our nonce)`
-                  : `, freshness NOT verified (${att.gpu.nonce ? "nonce mismatch" : "no nonce returned"})`));
+     : nonce      ? `, freshness NOT verified (${att.gpu.nonce ? "nonce mismatch" : "no nonce returned"})`
+                  : `, enclave-chosen nonce (an owner key buys a challenge over your own nonce)`));
   if (!result.pass) exit(1);
 }
 
@@ -1328,7 +1337,7 @@ deployments
   status <id>                one deployment: state, lease, balance, URL
   logs <id> [-f] [--tail N]  the app's stdout/stderr (-f polls)
   fund <id> --usdc 5|--eth 0.002   top up runtime by the second
-  attest [<id>]              fetch attestation + verify it LOCALLY; nonzero exit on FAIL
+  attest [<id>]              fetch attestation + verify it LOCALLY (no key needed); nonzero exit on FAIL
   restart <id>               stop + relaunch the app in place (same version,
                              endpoint and balance; app state is ephemeral) - the
                              fix for a wedged instance, no wallet tx needed

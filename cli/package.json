@@ -1,6 +1,6 @@
 {
   "name": "enclave-cli",
-  "version": "0.1.0",
+  "version": "1.0.2",
   "description": "The `enclave` CLI — wallet-native terminal client for the Enclave platform (enclave.host). Every command maps 1:1 onto the public API and the on-chain contracts.",
   "type": "module",
   "bin": {

@@ -662,7 +662,13 @@
         ],
         "operationId": "getAttestation",
         "summary": "Get a deployment's attestation",
-        "description": "The live CPU attestation report (AMD SEV-SNP on today's fleet; relayed Tinfoil Remote Attestation Document plus parsed registers) and the NVIDIA GPU attestation report signed over your nonce, with honest per-app coverage notes. Verify client-side before sending data.",
+        "description": "The live CPU attestation report (AMD SEV-SNP on today's fleet; relayed Tinfoil Remote Attestation Document plus parsed registers) and the NVIDIA GPU attestation report, with honest per-app coverage notes. Public: no session needed (an app's users are exactly who should verify it). With the owner's session the GPU report is regenerated fresh over your ?nonce; anonymous callers share a short-lived cached report and get freshness from the TLS-bound quote instead. Verify client-side before sending data.",
+        "security": [
+          {},
+          {
+            "siwe": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -676,7 +682,7 @@
             "name": "nonce",
             "in": "query",
             "required": false,
-            "description": "32-byte hex freshness challenge folded into the GPU attestation report. Random if omitted.",
+            "description": "32-byte hex freshness challenge folded into the GPU attestation report (owner session required; without one, omit it). Random if omitted by the owner.",
             "schema": {
               "type": "string",
               "pattern": "^[0-9a-fA-F]{64}$"

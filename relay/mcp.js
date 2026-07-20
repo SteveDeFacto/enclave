@@ -433,7 +433,7 @@ ${SIGNING_NOTE}`,
 - Stopping (build_stop) keeps the balance on the record; build_resume continues it. Funds on a record are spent only while it runs.`,
 
   attestation: `Never trust the gateway: verify the enclave BEFORE sending it secrets.
-- attestation returns the fleet attestation document; deployment_attestation { id } returns the hosting enclave's (needs a session token).
+- attestation returns the fleet attestation document; deployment_attestation { id } returns the hosting enclave's (public; an owner token adds a fresh GPU nonce challenge).
 - REAL verification runs client-side with @tinfoilsh/verifier against the pinned source repo ${EXPECTED_REPO} (hardware TEE quote -> vendor root, Sigstore provenance, measurement match, TLS binding). Never verify against a repo name the API returns; pin ${EXPECTED_REPO}.
 - Easiest: the enclave CLI does it in one command: enclave attest [<id>]  (curl -fsSL https://get.enclave.host | sh)
 - Session tokens are minted in-enclave (ES256); the JWKS is at ${API_BASE}/v1/session-jwks and inside the attestation document, so a verified enclave transitively authenticates the API.`,
@@ -605,10 +605,10 @@ const TOOLS = [
   },
   {
     name: "deployment_attestation",
-    description: "The attestation of the enclave hosting one deployment (owner token required). Verify client-side; see guide topic \"attestation\".",
+    description: "The attestation of the enclave hosting one deployment (public — no token needed; an owner token adds a fresh GPU report over a caller nonce). Verify client-side; see guide topic \"attestation\".",
     inputSchema: S({ id: P.id, token: P.token }, ["id"]),
     handler: async ({ id }, ctx) => {
-      if (!ctx.token) throw new Error("pass token (see auth_nonce/auth_login)");
+      if (!ctx.token) return self("GET", `/v1/deployments/${encodeURIComponent(id)}/attestation`);
       const nonce = createHash("sha256").update(String(Math.random()) + Date.now()).digest("hex");
       return self("GET", `/v1/deployments/${encodeURIComponent(id)}/attestation?nonce=${nonce}`, { token: ctx.token });
     },

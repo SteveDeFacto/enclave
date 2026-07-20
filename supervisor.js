@@ -1483,6 +1483,20 @@ async function fetchGpuEvidence(nonceHex, timeoutMs = 30000) {
     throw new Error(r.body.error || `worker manager /attestation ${r.status}`);
   return r.body;
 }
+// Shared evidence for UNAUTHENTICATED callers: NVML report generation is not
+// free, so anonymous requests share one short-lived report over a self-chosen
+// nonce (freshness for them comes from the TLS-bound CPU quote instead). An
+// owner session is what buys a fresh report over a caller-chosen nonce.
+let _gpuEvCache = null;                       // { ev?, err?, at } - failures cached briefly too
+async function cachedGpuEvidence() {
+  const ttl = _gpuEvCache?.err ? 10_000 : 60_000;
+  if (!_gpuEvCache || Date.now() - _gpuEvCache.at > ttl) {
+    try { _gpuEvCache = { ev: await fetchGpuEvidence(randomBytes(32).toString("hex"), 15000), at: Date.now() }; }
+    catch (e) { _gpuEvCache = { err: e, at: Date.now() }; }
+  }
+  if (_gpuEvCache.err) throw _gpuEvCache.err;
+  return _gpuEvCache.ev;
+}
 
 // ---- SELF-CHECK (diagnostic, not trust) --------------------------------------
 // The enclave runs the exact five-step client verification against ITSELF
@@ -1574,7 +1588,7 @@ async function getSelfCheck(origin) {
                    note: SELF_CHECK_NOTE };
 }
 
-async function getMeasurements(rec, { origin = PUBLIC_URL, nonce } = {}) {
+async function getMeasurements(rec, { origin = PUBLIC_URL, nonce, freshGpu = true } = {}) {
   let enclaveHost = null; try { enclaveHost = origin ? new URL(origin).host : null; } catch {}
   const out = {
     // No server-asserted "verified" boolean: the machine being verified cannot
@@ -1624,7 +1638,7 @@ async function getMeasurements(rec, { origin = PUBLIC_URL, nonce } = {}) {
   if (IS_GPU && rec?._gpu && !rec._gpu.cpu) {
     const n = nonce || randomBytes(32).toString("hex");
     try {
-      const ev = await fetchGpuEvidence(n);
+      const ev = freshGpu ? await fetchGpuEvidence(n) : await cachedGpuEvidence();
       out.gpu = { technology: "nvidia-cc", ccMode: ev.ccMode ?? null, nonce: ev.nonce || n,
                   driverVersion: ev.driverVersion ?? null,
                   // first card's material at the top level (single-card enclaves); all cards in gpus[]
@@ -3106,21 +3120,32 @@ function attestNonce(req, res) {
   if (!/^[0-9a-fA-F]{64}$/.test(n)) { fail(res, 422, "bad_nonce", "nonce must be 32 bytes of hex."); return null; }
   return n.toLowerCase();
 }
-app.get("/v1/deployments/:id/attestation", authed, async (req, res) => {
+// PUBLIC: attestation exists for the app's counterparties — its users decide
+// whether to send data, and they are exactly the people WITHOUT an owner
+// session (everything here is public anyway: the deployment row is on-chain,
+// the enclave measurements are served unauthenticated at /v1/attestation on
+// this same origin). An owner session buys one upgrade: the GPU report is
+// regenerated FRESH over the caller-chosen ?nonce; anonymous callers share the
+// cached report (NVML generation is not free) and get freshness from the
+// TLS-bound CPU quote fetched over their own connection.
+app.get("/v1/deployments/:id/attestation", async (req, res) => {
   const rec = deployments.get(req.params.id);
-  if (!rec || rec.owner !== req.address) return fail(res, 404, "not_found", "No such deployment.");
-  const nonce = attestNonce(req, res); if (nonce == null) return;
+  if (!rec) return fail(res, 404, "not_found", "No such deployment.");
+  const isOwner = (await addrFromAuth(req)) === rec.owner;
+  let nonce = null;
+  if (isOwner) { nonce = attestNonce(req, res); if (nonce == null) return; }
+  else if (req.query.nonce != null)
+    return fail(res, 401, "unauthorized", "A caller-chosen nonce forces fresh GPU report generation and needs the owner's session; omit ?nonce (freshness then rests on the TLS-bound quote fetched over your own connection).");
   try { res.json({ deploymentId: rec.id, generatedAt: new Date().toISOString(),
-                   ...(await getMeasurements(rec, { origin: originOf(req), nonce })),
+                   ...(await getMeasurements(rec, { origin: originOf(req), nonce, freshGpu: isOwner })),
                    guideUrl: "https://enclave.host/#attest" }); }
   catch (e) { fail(res, 502, "attestation_error", e.message); }
 });
 
 // Enclave-level attestation, PUBLIC: verify the enclave before logging in or
-// sending a byte. GPU evidence is included from a short cache (refreshed with a
-// self-chosen nonce) so an unauthenticated caller can't spam NVML report
-// generation; pass a nonce on the per-deployment endpoint for a fresh challenge.
-let _gpuEvCache = null;                       // { ev?, err?, at } - failures cached briefly too
+// sending a byte. GPU evidence is included from the shared cache (refreshed
+// with a self-chosen nonce) so an unauthenticated caller can't spam NVML report
+// generation; an owner nonce on the per-deployment endpoint buys a fresh challenge.
 app.get("/v1/attestation", async (req, res) => {
   const out = await getMeasurements(null, { origin: originOf(req) });
   // Bind the session-verification key to the attestation: a client that trusts
@@ -3133,13 +3158,7 @@ app.get("/v1/attestation", async (req, res) => {
   if (!IS_GPU)                                 // CPU-only enclave: no card, no NVML evidence to fetch
     return res.json({ generatedAt: new Date().toISOString(), ...out, guideUrl: "https://enclave.host/#attest" });
   try {
-    const ttl = _gpuEvCache?.err ? 10_000 : 60_000;
-    if (!_gpuEvCache || Date.now() - _gpuEvCache.at > ttl) {
-      try { _gpuEvCache = { ev: await fetchGpuEvidence(randomBytes(32).toString("hex"), 15000), at: Date.now() }; }
-      catch (e) { _gpuEvCache = { err: e, at: Date.now() }; }
-    }
-    if (_gpuEvCache.err) throw _gpuEvCache.err;
-    const ev = _gpuEvCache.ev;
+    const ev = await cachedGpuEvidence();
     out.gpu = { technology: "nvidia-cc", ccMode: ev.ccMode ?? null, nonce: ev.nonce,
                 driverVersion: ev.driverVersion ?? null, generatedAt: new Date(_gpuEvCache.at).toISOString(),
                 report: ev.gpus?.[0]?.attestationReport_b64 ?? null,
