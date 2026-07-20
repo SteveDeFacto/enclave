@@ -598,12 +598,19 @@ function pinnedRepo(apiRepo) {
   return EXPECTED_REPO;
 }
 async function attestDeployment(account, id) {
-  // Keyless works: the endpoint is public. An owner session adds one thing —
-  // the GPU report is regenerated fresh over OUR nonce (anonymous callers get
-  // the enclave's cached report; freshness then rests on the TLS-bound quote).
-  const nonce = account ? crypto.randomBytes(32).toString("hex") : null;
+  // Keyless works: the endpoint is public. The OWNER's session adds one thing —
+  // the GPU report is regenerated fresh over OUR nonce — so only authenticate
+  // and send a challenge when our key actually owns the deployment; anyone
+  // else gets the enclave's cached report (the server would ignore their nonce
+  // anyway, and an ignored challenge prints as a scary false "nonce mismatch").
+  let asOwner = false;
+  if (account && isB32(id)) {
+    const d = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, (await depAbi()).abi, "get", [id]).catch(() => null);
+    asOwner = !!d && d.owner.toLowerCase() === account.address.toLowerCase();
+  } else if (account) asOwner = true;   // legacy dep_… id: no chain row to compare against
+  const nonce = asOwner ? crypto.randomBytes(32).toString("hex") : null;
   const att = await api("GET", `/v1/deployments/${id}/attestation${nonce ? `?nonce=${nonce}` : ""}`,
-                        account ? { auth: account } : {});
+                        asOwner ? { auth: account } : {});
   const origin = new URL(att.verification.attestationEndpoint).origin;
   const repo = pinnedRepo(att.verification.repo);
   return { att, nonce, origin, repo, result: await verifyEnclaveOrigin(origin, repo) };

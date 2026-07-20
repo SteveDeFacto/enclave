@@ -3134,8 +3134,11 @@ app.get("/v1/deployments/:id/attestation", async (req, res) => {
   const isOwner = (await addrFromAuth(req)) === rec.owner;
   let nonce = null;
   if (isOwner) { nonce = attestNonce(req, res); if (nonce == null) return; }
-  else if (req.query.nonce != null)
-    return fail(res, 401, "unauthorized", "A caller-chosen nonce forces fresh GPU report generation and needs the owner's session; omit ?nonce (freshness then rests on the TLS-bound quote fetched over your own connection).");
+  // A non-owner ?nonce is NOT an error - it's just not honored (fresh NVML
+  // generation is the owner's perk). The returned gpu.nonce then won't match
+  // the caller's, which is exactly how a verifier should read "freshness
+  // unproven" - a 401 here would lock the whole document away from the
+  // keyed-but-not-owner users attestation exists for.
   try { res.json({ deploymentId: rec.id, generatedAt: new Date().toISOString(),
                    ...(await getMeasurements(rec, { origin: originOf(req), nonce, freshGpu: isOwner })),
                    guideUrl: "https://enclave.host/#attest" }); }

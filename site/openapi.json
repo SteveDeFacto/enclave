@@ -682,7 +682,7 @@
             "name": "nonce",
             "in": "query",
             "required": false,
-            "description": "32-byte hex freshness challenge folded into the GPU attestation report (owner session required; without one, omit it). Random if omitted by the owner.",
+            "description": "32-byte hex freshness challenge folded into the GPU attestation report. Honored only with the owner's session (fresh NVML generation is the owner's perk); ignored otherwise - a non-matching gpu.nonce in the response means the report came from the shared cache. Random if omitted by the owner.",
             "schema": {
               "type": "string",
               "pattern": "^[0-9a-fA-F]{64}$"
