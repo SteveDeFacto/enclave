@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#070A0F" />
+<title>Checkout · Enclave</title>
+<!-- account-gated purchase flow: nothing indexable renders signed out -->
+<meta name="robots" content="noindex" />
+<meta name="description" content="Buy Enclave runtime: pay by card on a Stripe-hosted page, or pay USDC on Base from your own wallet." />
+<link rel="icon" href="favicon.ico" sizes="48x48 32x32 16x16" />
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+<script>
+/* Cross-document view transitions are skipped by Chromium when extensions
+   inject content scripts (MetaMask et al): the old page sees pageswap with
+   no viewTransition. Flag it, and the NEXT page (this script runs pre-paint)
+   plays the same settle-in itself (html.soft-enter, see base.css) - content
+   only, the static header stays put. */
+(function(){
+  try { if (sessionStorage.getItem("enclave_novt")) { sessionStorage.removeItem("enclave_novt"); document.documentElement.classList.add("soft-enter"); } } catch(e){}
+  addEventListener("pageswap", function(e){
+    try { if (!e.viewTransition && e.activation) sessionStorage.setItem("enclave_novt", "1"); } catch(e){}
+  });
+})();
+</script>
+<link rel="stylesheet" href="css/site.css" />
+<script type="module" blocking="render" src="js/boot.js"></script>
+</head>
+<body>
+<c-header current=""></c-header>
+<main id="main" tabindex="-1">
+<h1 class="sr-only">Buy Enclave runtime</h1>
+<section id="checkout" data-view="checkout" aria-label="Checkout">
+  <div class="wrap">
+    <c-section-head eyebrow="Checkout" heading="Buy runtime">
+      <p>Pick how long your deployment should run and pay by card or in USDC. Card payments happen on a Stripe-hosted page and never touch crypto; USDC goes from your own wallet straight to the treasury on Base, and either way your order provisions on-chain the moment payment settles.</p>
+    </c-section-head>
+    <div id="coBody" class="co-body">
+      <p class="co-note" id="coGate" hidden>Checkout isn't available yet.</p>
+    </div>
+  </div>
+</section>
+</main>
+<c-footer></c-footer>
+<c-toast></c-toast>
+</body>
+</html>

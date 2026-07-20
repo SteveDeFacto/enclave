@@ -12,13 +12,13 @@ import "../../components/app-card/app-card.js";
 import "../../components/app-detail/app-detail.js";
 import "../../components/app-reviews/app-reviews.js";
 import { $, $$, esc, short, blen, fmtDur, showToast, on, tosAccepted, setTosAccepted } from "../core/util.js";
-import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, FEATURED_ADDRESS, REVIEWS_ADDRESS, USDC_BASE, IPFS_UPLOAD_URL, IPFS_IMAGE_UPLOAD_URL, IPFS_IMG_GATEWAY, MAX_WASM_MB, MAX_WASM_BYTES, MAX_IMAGE_MB, MAX_IMAGE_BYTES, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
+import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, FEATURED_ADDRESS, REVIEWS_ADDRESS, USDC_BASE, IPFS_UPLOAD_URL, IPFS_IMAGE_UPLOAD_URL, IPFS_IMG_GATEWAY, MAX_WASM_MB, MAX_WASM_BYTES, MAX_IMAGE_MB, MAX_IMAGE_BYTES, BASE_CHAIN } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
 import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, depMaxGpuMilli, rate6Of, waitReceipt, catSchemaRev, catMaxFeePerSec6, catVersionFee, featConfigured, featMaxBid, FEAT_SEL, revConfigured, REV_SEL } from "../core/chain.js";
 import { FEATURED, loadCampaigns, pickFeatured, beaconView } from "../core/featured.js";
 import { loadTallies, loadReviews, confirmReceipt } from "../core/reviews.js";
 import { payForRuntime } from "../core/fund.js";
-import { connectWallet, authenticate, ensureBaseChain, sendTx, usdcBalanceOf, openBuyModal } from "../core/wallet.js";
+import { connectWallet, authenticate, ensureBaseChain, sendTx, usdcBalanceOf } from "../core/wallet.js";
 import { STORE, loadCatalog, selIdx, defaultIdx, appVerified, appPrivileged, visibleVerIdxs, validPortsCsv, REF_CACHE, PORTS_CACHE, SPECS_CACHE, specOf, CONFIG_CACHE, catalogRef, mediaOf, appMedia, stripMedia, withMedia } from "../core/catalog.js";
 import { minPctsOf, shareRates } from "../core/pricing.js";
 import { navigate } from "../boot.js";
@@ -382,7 +382,7 @@ function quickDeploy(app, v, idx){
       '<div class="qd-h">Deploy <b>' + esc(app.name || app.slug) + '</b> <span class="qd-ver">' + esc(v.version) + '</span></div>' +
       '<p class="qd-sub">Runs in its own confidential enclave at <b class="qd-rate">$' + perHr + '/hr</b>. Fund it from your wallet - it runs until the time you bought is used up, and you can top up or stop it whenever you like.</p>' +
       '<p class="qd-sub qd-fee" hidden></p>' +
-      '<div class="qd-bal"><span>Your wallet</span><b class="qd-balv">…</b><button class="qd-buy" type="button" hidden>Buy USDC →</button><button class="qd-connect btn btn-sm" type="button" hidden>Connect wallet</button></div>' +
+      '<div class="qd-bal"><span>Your wallet</span><b class="qd-balv">…</b><button class="qd-connect btn btn-sm" type="button" hidden>Connect wallet</button></div>' +
       '<label class="qd-lbl" for="qdAmt">Amount to fund (USDC)</label>' +
       '<input class="qd-amt" id="qdAmt" type="number" value="5" min="0.01" step="any" inputmode="decimal" />' +
       '<div class="qd-est">buys ≈ <b class="qd-estv"></b> of runtime</div>' +
@@ -405,7 +405,7 @@ function quickDeploy(app, v, idx){
   host.addEventListener("pointerdown", (e) => { if (e.target === host) closeQuick(); });
   const amt = host.querySelector(".qd-amt"), estv = host.querySelector(".qd-estv"), note = host.querySelector(".qd-note");
   const go = host.querySelector(".qd-go"), balv = host.querySelector(".qd-balv");
-  const buy = host.querySelector(".qd-buy"), conn = host.querySelector(".qd-connect");
+  const conn = host.querySelector(".qd-connect");
   const tos = host.querySelector(".qd-tosck");
   let bal = null, capMsg = null;
   const est = () => {
@@ -454,7 +454,6 @@ function quickDeploy(app, v, idx){
     if (!Enclave.address || !Enclave.provider){ balv.textContent = "not connected"; conn.hidden = false; return; }
     conn.hidden = true;
     try { bal = await usdcBalanceOf(Enclave.address); balv.textContent = bal.toFixed(2) + " USDC"; } catch(e){}
-    if (buy) buy.hidden = !(Enclave.walletRdns === PRIVY_RDNS);
     est();
   };
   conn.addEventListener("click", async () => {
@@ -463,7 +462,6 @@ function quickDeploy(app, v, idx){
     catch(e){ showToast(e.message || String(e)); }
     conn.disabled = false; loadBal();
   });
-  if (buy) buy.addEventListener("click", () => openBuyModal());
   host.querySelector(".qd-cancel").addEventListener("click", closeQuick);
   host.querySelector(".qd-adv").addEventListener("click", () => { closeQuick(); useInDeploy(app, v, idx); });
   go.addEventListener("click", async () => {

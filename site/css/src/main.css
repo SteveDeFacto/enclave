@@ -60,6 +60,7 @@
 @import "./apps.css" layer(components);
 @import "./develop.css" layer(components);
 @import "./dashboard.css" layer(components);
+@import "./checkout.css" layer(components);
 @import "./terms.css" layer(components);
 @import "./responsive.css" layer(components);
 @import "../../components/header/header.css" layer(components);
@@ -82,6 +83,7 @@
 @import "../../components/app-reviews/app-reviews.css" layer(components);
 @import "../../components/api-reference/api-reference.css" layer(components);
 @import "../../components/admin-console/admin-console.css" layer(components);
+@import "../../components/order-status/order-status.css" layer(components);
 
 /* Form-control boundaries must clear 3:1 against their surroundings
    (WCAG 1.4.11); every component styles inputs with --line (~1.2:1), so one

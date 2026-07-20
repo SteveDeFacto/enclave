@@ -4,7 +4,7 @@
    localStorage (the Deploy page exposes the field).
    ============================================================ */
 import { DEFAULT_API_BASE } from "./config.js";
-import { lsGet, lsSet } from "./util.js";
+import { lsGet, lsSet, emit } from "./util.js";
 import { adoptServerSpec } from "./pricing.js";
 
 /* ---- typed error carrying HTTP status ---- */
@@ -14,9 +14,20 @@ export class EnclaveError extends Error {
 
 export const Enclave = {
   base: (lsGet("enclave_api_base") || DEFAULT_API_BASE).replace(/\/+$/, ""),
-  token: null, address: null, chainId: null, provider: null, walletRdns: null, walletEmail: null,
+  token: null, address: null, chainId: null, provider: null, walletRdns: null,
+  /* relay ACCOUNT session (passkey or SIWE; account.js owns the lifecycle).
+     A separate trust domain from `token` (the enclave-minted session for
+     deployment-private reads): account tokens gate billing/orders only, and
+     the two are never interchangeable. */
+  accountToken: null, accountId: null, accountMethod: null,
   setBase(u){ this.base = String(u || "").trim().replace(/\/+$/, "") || DEFAULT_API_BASE; lsSet("enclave_api_base", this.base); },
   authed(){ return !!this.token; },
+  accountAuthed(){ return !!this.accountToken; },
+  clearAccountSession(){
+    this.accountToken = null; this.accountId = null; this.accountMethod = null;
+    lsSet("enclave_account", "");
+    emit("enclave:account", { authed: false });
+  },
   async _req(method, path, opts){
     opts = opts || {};
     let url = this.base + path;
@@ -33,6 +44,12 @@ export const Enclave = {
       if (!this.token) throw new EnclaveError("Not signed in. Connect your wallet first.", 401);
       headers["Authorization"] = "Bearer " + this.token;
     }
+    if (opts.accountAuth){
+      if (!this.accountToken) throw new EnclaveError("Sign in first.", 401);
+      headers["Authorization"] = "Bearer " + this.accountToken;
+    }
+    if (opts.accountAuthOptional && this.accountToken)
+      headers["Authorization"] = "Bearer " + this.accountToken;
     let res;
     try {
       res = await fetch(url, { method, headers, mode: "cors", body: hasBody ? JSON.stringify(opts.body) : undefined });
@@ -43,6 +60,10 @@ export const Enclave = {
     let data = null;
     if (text){ try { data = JSON.parse(text); } catch(e){ data = text; } }
     if (!res.ok){
+      // an account token the relay no longer honors is dead weight - drop the
+      // stored session so the UI flips back to signed-out instead of erroring
+      // on every poll
+      if (res.status === 401 && opts.accountAuth) this.clearAccountSession();
       const msg = (data && data.message) ? data.message
         : (typeof data === "string" && data) ? data
         : ("HTTP " + res.status + " " + res.statusText);
@@ -94,5 +115,22 @@ export const Enclave = {
   attestation(id){ return this._req("GET", "/deployments/" + encodeURIComponent(id) + "/attestation", { auth: true }); },
   /* System (public) */
   health(){ return this._req("GET", "/health"); },
-  version(){ return this._req("GET", "/version"); }
+  version(){ return this._req("GET", "/version"); },
+  /* Relay account (passkeys + SIWE; relay/auth.js). Bearer here is the
+     ACCOUNT token, never the enclave session. */
+  accountRegisterOptions(){ return this._req("POST", "/account/passkey/register/options", { body: {}, accountAuthOptional: true }); },
+  accountRegisterVerify(challengeId, credential, label){ return this._req("POST", "/account/passkey/register/verify", { body: { challengeId, credential, label }, accountAuthOptional: true }); },
+  accountLoginOptions(){ return this._req("POST", "/account/passkey/login/options", { body: {} }); },
+  accountLoginVerify(challengeId, credential){ return this._req("POST", "/account/passkey/login/verify", { body: { challengeId, credential } }); },
+  accountSiweNonce(address){ return this._req("GET", "/account/siwe/nonce", { query: { address } }); },
+  accountSiweVerify(message, signature){ return this._req("POST", "/account/siwe/verify", { body: { message, signature } }); },
+  accountLinkSiwe(message, signature){ return this._req("POST", "/account/link/siwe", { body: { message, signature }, accountAuth: true }); },
+  accountMe(){ return this._req("GET", "/account/me", { accountAuth: true }); },
+  /* Orders + checkout (relay/billing.js) */
+  createOrder(body){ return this._req("POST", "/billing/orders", { body, accountAuth: true }); },
+  listOrders(){ return this._req("GET", "/billing/orders", { accountAuth: true }); },
+  getOrder(id){ return this._req("GET", "/billing/orders/" + encodeURIComponent(id), { accountAuth: true }); },
+  orderCheckout(id){ return this._req("POST", "/billing/orders/" + encodeURIComponent(id) + "/checkout", { body: {}, accountAuth: true }); },
+  orderUsdc(id){ return this._req("GET", "/billing/orders/" + encodeURIComponent(id) + "/usdc", { accountAuth: true }); },
+  accountDeployments(){ return this._req("GET", "/billing/deployments", { accountAuth: true }); }
 };

@@ -36,9 +36,7 @@ c-wallet-button{display:contents;}
 .wp-input:focus{border-color:var(--jade);box-shadow:0 0 0 3px rgba(47,230,168,.12);}
 .wp-go{justify-content:center;color:var(--jade);border-color:var(--jade-dim);}
 .wp-err{font-size:.72rem;color:#ff8a8a;margin:-2px 0 8px;}
-.wp-foot{font-size:.64rem;color:var(--text-dim);text-align:center;margin-top:10px;letter-spacing:.04em;}
 .wp-fund{display:flex;gap:8px;margin:2px 0 10px;}
-.wp-buy{color:var(--jade);border-color:var(--jade-dim);}
 /* the Deposit QR: white quiet zone so phone cameras lock on against the dark card */
 .wp-qr{display:flex;justify-content:center;margin:10px 0 2px;}
 .wp-qr svg{width:176px;height:176px;background:#fff;padding:12px;border-radius:10px;}
@@ -46,30 +44,8 @@ c-wallet-button{display:contents;}
 .wp-amts{display:flex;gap:6px;margin:10px 0;}
 .wp-amt{flex:1;background:#0a0f17;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:.5em 0;cursor:pointer;font-family:inherit;font-size:.82rem;}
 .wp-amt.on{border-color:var(--jade);color:var(--jade);font-weight:700;text-decoration:underline;text-underline-offset:3px;}
-/* send-USDC form (openSendModal) */
-.wp-input{width:100%;background:#080C12;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:.6em .7em;margin-bottom:8px;font-family:var(--font-mono);font-size:.74rem;}
-.wp-input::placeholder{color:var(--text-muted);}
-.wp-input:focus{border-color:var(--jade);}
-/* in-field affordances (camera scan, Max): frameless buttons living INSIDE
-   the input's right edge - the wrapper owns the input's bottom margin so the
-   button centers against the true input box. padding-right keeps typed text
-   from running under them. The scan toggle turns jade while the camera is
-   live (aria-pressed = the state). */
-.wp-field{position:relative;margin-bottom:8px;}
-.wp-field .wp-input{margin-bottom:0;padding-right:3em;}
-.wp-infield{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;padding:2px 4px;margin:0;color:var(--text-dim);cursor:pointer;font-family:inherit;font-size:.7rem;min-width:24px;min-height:24px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;}
-.wp-infield:hover{color:var(--text);}
-.wp-infield:focus-visible{outline:2px solid var(--jade);outline-offset:1px;color:var(--text);}
-.wp-infield[aria-pressed="true"]{color:var(--jade);}
-.wp-scan{margin-bottom:8px;}
-.wp-scan video{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:10px;background:#000;border:1px solid var(--line);}
 .wp-status{font-size:.72rem;line-height:1.5;margin:8px 0;word-break:break-word;}
 .wp-status.err{color:#ff8a8a;} .wp-status.ok{color:var(--jade);} .wp-status.pend{color:var(--text-muted);}
-.wp-dot-iris{background:linear-gradient(135deg,var(--iris),var(--jade));}
-/* self-custody nudge in the sign-in chooser: browser wallet = your keys */
-.wp-rec{font-size:.68rem;line-height:1.55;color:var(--text-muted);border-left:2px solid var(--jade);padding:.05em 0 .05em .7em;margin:0 0 12px;}
-.wp-rec b{color:var(--jade);font-weight:600;}
-.wp-rec-foot{margin:14px 0 0;}
 .wp-or{display:flex;align-items:center;gap:10px;margin:2px 0 10px;color:var(--text-dim);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;}
 .wp-or::before,.wp-or::after{content:"";flex:1;height:1px;background:var(--line-soft);}
 .wp-hint{font-size:.66rem;line-height:1.5;color:var(--text-dim);margin:-4px 2px 10px;}

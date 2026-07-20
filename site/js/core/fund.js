@@ -34,16 +34,16 @@ const SEL_APPROVE = "095ea7b3";  // ERC-20 approve(address,uint256); verified vs
 const dataApprove = (spender, amt6) => "0x" + SEL_APPROVE + encAddr(spender) + encUint(amt6);
 const dataFund = (ref, amt6) => "0x" + DEP_SEL.fund + encBytes32(ref) + encUint(amt6);
 
-/* USDC only ecrecovers EIP-3009 signatures from CODE-FREE addresses; a payer
-   with code (a Safe or other smart-contract wallet, or an EOA carrying an
-   EIP-7702 delegation - e.g. a gas-sponsored Privy embedded wallet, which
-   gains Kernel delegate code on its FIRST sponsored send) is routed to
-   ERC-1271, which account implementations reject for raw digests
-   ("FiatTokenV2: invalid signature", surfacing as a gas-estimation failure
-   before anything is sent). Those payers must fund via the allowance pair.
-   Unknown (all RPCs down) = assume bare EOA: 3009 was the status quo, and
-   the estimate-and-send path will name the problem if we guessed wrong. */
-async function payerHasCode(){
+/* USDC only ecrecovers EIP-3009/EIP-2612 signatures from CODE-FREE addresses;
+   a payer with code (a Safe or other smart-contract wallet, or an EOA
+   carrying an EIP-7702 delegation) is routed to ERC-1271, which account
+   implementations reject for raw digests ("FiatTokenV2: invalid signature",
+   surfacing as a gas-estimation failure before anything is sent). Those
+   payers must fund via the allowance pair. Unknown (all RPCs down) = assume
+   bare EOA: the signature path was the status quo, and the estimate-and-send
+   path will name the problem if we guessed wrong.
+   (Exported: pay.js routes the PaymentRouter permit path the same way.) */
+export async function payerHasCode(){
   const params = [Enclave.address, "latest"];
   try {
     const code = await Enclave.provider.request({ method: "eth_getCode", params });

@@ -1,0 +1,15 @@
+/* <c-order-status> - one order's live status card */
+.os-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;max-width:520px;}
+.os-head{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1rem;margin-bottom:6px;}
+.os-head.ok{color:var(--jade);}
+.os-head.warn{color:var(--amber,#e8b34c);}
+.os-head.err{color:#ff8a8a;}
+.os-head.pend{color:var(--text);}
+.os-body{font-size:.8rem;line-height:1.6;color:var(--text-muted);margin:0 0 12px;}
+.os-meta{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:.72rem;color:var(--text-dim);margin-bottom:8px;}
+.os-meta code{font-family:var(--font-mono);color:var(--text-muted);word-break:break-all;}
+.os-meta b{color:var(--text);}
+.os-go{margin-top:6px;display:inline-block;}
+.os-spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--line-strong);border-top-color:var(--jade);animation:os-spin .9s linear infinite;flex:none;}
+@keyframes os-spin{to{transform:rotate(360deg);}}
+@media (prefers-reduced-motion:reduce){.os-spin{animation:none;border-top-color:var(--line-strong);}}
