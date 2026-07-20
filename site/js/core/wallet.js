@@ -313,18 +313,18 @@ export function openSendModal(){
   const m = fundModal(
     '<div class="wp-h">Send USDC</div>' +
     '<div class="wp-note">Move <b>USDC on Base</b> from your wallet to any address. This leaves Enclave and is <b>final</b> - double-check the address, and send only on the Base network.</div>' +
-    '<div class="wp-sendrow wp-addrrow">' +
+    '<div class="wp-field">' +
       '<input class="wp-input" id="sendTo" aria-label="Recipient address" placeholder="0x… recipient address" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" />' +
-      '<button class="wp-mini" id="sendScan" type="button" title="Scan a QR code with your camera" aria-label="Scan recipient address QR code" aria-pressed="false">' +
+      '<button class="wp-infield" id="sendScan" type="button" title="Scan a QR code with your camera" aria-label="Scan recipient address QR code" aria-pressed="false">' +
         '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="4"/></svg>' +
       '</button>' +
     '</div>' +
     '<div class="wp-scan" id="scanBox" hidden>' +
       '<video id="scanVid" playsinline muted aria-label="Camera preview - point at the recipient\'s QR code"></video>' +
     '</div>' +
-    '<div class="wp-sendrow">' +
+    '<div class="wp-field">' +
       '<input class="wp-input" id="sendAmt" aria-label="Amount in USDC" inputmode="decimal" placeholder="0.00" autocomplete="off" />' +
-      '<button class="wp-mini" id="sendMax" type="button">Max</button>' +
+      '<button class="wp-infield" id="sendMax" type="button">Max</button>' +
     '</div>' +
     '<div class="wp-note">Balance: <span id="sendBal">…</span> USDC</div>' +
     '<div class="wp-status" id="sendStatus" role="status" hidden></div>' +

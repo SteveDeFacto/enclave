@@ -50,13 +50,17 @@ c-wallet-button{display:contents;}
 .wp-input{width:100%;background:#080C12;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:.6em .7em;margin-bottom:8px;font-family:var(--font-mono);font-size:.74rem;}
 .wp-input::placeholder{color:var(--text-muted);}
 .wp-input:focus{border-color:var(--jade);}
-.wp-sendrow{display:flex;gap:8px;align-items:stretch;}
-.wp-sendrow .wp-input{flex:1;margin-bottom:0;}
-.wp-sendrow .wp-mini{white-space:nowrap;}
-/* recipient row: the row replaces the input's own bottom margin; the scan
-   button turns jade while the camera is live (aria-pressed = the state) */
-.wp-addrrow{margin-bottom:8px;}
-.wp-addrrow .wp-mini[aria-pressed="true"]{border-color:var(--jade);color:var(--jade);}
+/* in-field affordances (camera scan, Max): frameless buttons living INSIDE
+   the input's right edge - the wrapper owns the input's bottom margin so the
+   button centers against the true input box. padding-right keeps typed text
+   from running under them. The scan toggle turns jade while the camera is
+   live (aria-pressed = the state). */
+.wp-field{position:relative;margin-bottom:8px;}
+.wp-field .wp-input{margin-bottom:0;padding-right:3em;}
+.wp-infield{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;padding:2px 4px;margin:0;color:var(--text-dim);cursor:pointer;font-family:inherit;font-size:.7rem;min-width:24px;min-height:24px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;}
+.wp-infield:hover{color:var(--text);}
+.wp-infield:focus-visible{outline:2px solid var(--jade);outline-offset:1px;color:var(--text);}
+.wp-infield[aria-pressed="true"]{color:var(--jade);}
 .wp-scan{margin-bottom:8px;}
 .wp-scan video{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:10px;background:#000;border:1px solid var(--line);}
 .wp-status{font-size:.72rem;line-height:1.5;margin:8px 0;word-break:break-word;}
