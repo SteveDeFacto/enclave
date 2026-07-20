@@ -111,6 +111,7 @@ jobs:
           printf 'changed files:\n%s\n' "${CHANGED:-<none>}"
 
           site=false relay=false registry=false deployments=false catalog=false enclavepay=false
+          paymentrouter=false
           sup=false worker=false mps=false wasm=false config_touched=false
           while IFS= read -r f; do
             [ -n "$f" ] || continue
@@ -123,6 +124,8 @@ jobs:
               contracts/EnclaveDeployments.sol) deployments=true ;;
               contracts/EnclaveAppCatalog.sol)  catalog=true ;;
               contracts/EnclavePay.sol)         enclavepay=true ;;
+              contracts/PaymentRouter.sol)      paymentrouter=true ;;
+              contracts/foundry/*|foundry.toml) ;;   # Foundry test toolchain only - deploys stay solc-via-JS
               Dockerfile|supervisor.js|package.json|package-lock.json) sup=true ;;
               worker/*)                worker=true ;;
               mps-daemon/*)            mps=true ;;
@@ -143,7 +146,7 @@ jobs:
           fi
 
           contracts_any=false
-          if [ "$registry" = true ] || [ "$deployments" = true ] || [ "$catalog" = true ] || [ "$enclavepay" = true ]; then
+          if [ "$registry" = true ] || [ "$deployments" = true ] || [ "$catalog" = true ] || [ "$enclavepay" = true ] || [ "$paymentrouter" = true ]; then
             contracts_any=true
           fi
           release=false
@@ -160,6 +163,7 @@ jobs:
             echo "site=$site"; echo "relay=$relay"
             echo "registry=$registry"; echo "deployments=$deployments"
             echo "catalog=$catalog"; echo "enclavepay=$enclavepay"
+            echo "paymentrouter=$paymentrouter"
             echo "contracts_any=$contracts_any"
             echo "worker=$worker"; echo "mps=$mps"; echo "wasm=$wasm"
             echo "release=$release"; echo "cpu_release=$cpu_release"
@@ -204,6 +208,7 @@ jobs:
         env:
           DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
           NETWORK: ${{ vars.CONTRACTS_NETWORK || 'base' }}
+          TREASURY_ADDRESS: ${{ vars.TREASURY_ADDRESS || '' }}
         run: |
           set -euo pipefail
           [ -n "$DEPLOYER_PRIVATE_KEY" ] || { echo "::error::DEPLOYER_PRIVATE_KEY is not set on the contract-deploy environment"; exit 1; }
@@ -211,6 +216,7 @@ jobs:
           DEP='${{ needs.detect.outputs.deployments }}'
           CAT='${{ needs.detect.outputs.catalog }}'
           PAY='${{ needs.detect.outputs.enclavepay }}'
+          PRT='${{ needs.detect.outputs.paymentrouter }}'
           if [ "$REG" = "true" ]; then
             node scripts/deploy-registry.mjs --yes
             DEP=true   # claims are gated to the registry: a new registry needs a new deployments ledger
@@ -218,6 +224,10 @@ jobs:
           if [ "$PAY" = "true" ]; then node scripts/deploy-enclave-pay.mjs --yes; fi
           if [ "$DEP" = "true" ]; then node scripts/deploy-deployments.mjs --yes; fi
           if [ "$CAT" = "true" ]; then node scripts/deploy-app-catalog.mjs --yes; fi
+          if [ "$PRT" = "true" ]; then
+            [ -n "$TREASURY_ADDRESS" ] || { echo "::error::TREASURY_ADDRESS is not set on the contract-deploy environment (the router's treasury is immutable - set the variable before deploying)"; exit 1; }
+            node scripts/deploy-payment-router.mjs --yes
+          fi
 
       # Runs even if a later deploy in the sequence failed, so any address that
       # DID land on-chain is committed rather than stranded in the job log.
@@ -254,7 +264,7 @@ jobs:
     steps:
       - name: Contract change needs a hand deploy
         run: |
-          echo "::warning::Contract sources changed (registry=${{ needs.detect.outputs.registry }} deployments=${{ needs.detect.outputs.deployments }} catalog=${{ needs.detect.outputs.catalog }} enclavepay=${{ needs.detect.outputs.enclavepay }}) but CONTRACTS_HAND_DEPLOY=1: CI holds no deployer key (it is a governance root). Deploy locally with DEPLOYER_PRIVATE_KEY=... node scripts/deploy-<contract>.mjs --yes, then bash scripts/sync-contract-addresses.sh, commit and push - the next run deploys the site and cuts the enclave releases with the new addresses."
+          echo "::warning::Contract sources changed (registry=${{ needs.detect.outputs.registry }} deployments=${{ needs.detect.outputs.deployments }} catalog=${{ needs.detect.outputs.catalog }} enclavepay=${{ needs.detect.outputs.enclavepay }} paymentrouter=${{ needs.detect.outputs.paymentrouter }}) but CONTRACTS_HAND_DEPLOY=1: CI holds no deployer key (it is a governance root). Deploy locally with DEPLOYER_PRIVATE_KEY=... node scripts/deploy-<contract>.mjs --yes, then bash scripts/sync-contract-addresses.sh, commit and push - the next run deploys the site and cuts the enclave releases with the new addresses."
 
   site:
     needs: [detect, contracts]

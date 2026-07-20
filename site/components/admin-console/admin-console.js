@@ -329,12 +329,14 @@ class AdminConsole extends EnclaveElement {
         EnclaveDeployments: { usdc: USDC_BASE, payout: payoutAddr, registry: S.book.entries.registry, ethUsdFeed: S.dep && S.dep.feed },
         EnclaveFeatured: { usdc: USDC_BASE, payout: (S.feat && S.feat.payout) || payoutAddr },
         EnclaveReviews: { book: S.book.addr, ledgerFallback: S.book.entries.deployments || (S.dep && S.dep.addr) },
+        PaymentRouter: { usdc: USDC_BASE, treasury: payoutAddr },
       };
       const notes = {
         EnclaveAddressBook: `<span class="warn">redeploying the book replaces the ONE address baked into every component</span> - that path needs the config/site/CLI rebake + a release + a dashboard update. Use <code>scripts/deploy-address-book.mjs</code> instead unless you know exactly why.`,
         EnclaveRegistry: `EnclaveDeployments pins the registry it trusts at construction - after a registry redeploy, redeploy EnclaveDeployments too (pointed at the new registry), then update both book keys.`,
         EnclaveDeployments: `deploys with the source-default prices - adjust in the panel above after pointing the book. Existing deployments live on in the OLD contract; users top up there until they redeploy.`,
         EnclaveReviews: `resolves the ledger it checks receipts against through the BOOK on every call, so a later EnclaveDeployments redeploy needs nothing here. <code>ledgerFallback</code> is only consulted when the book has no <code>deployments</code> key.`,
+        PaymentRouter: `<span class="warn">IMMUTABLE - no owner, no setters</span>: <code>treasury</code> is burned in at deploy (prefilled from the current payout - change it deliberately). Rotating the treasury = deploying a new router and repointing the book key + the relay's <code>PAYMENT_ROUTER_ADDRESS</code>.`,
       };
       const cards = Object.keys(CONTRACTS).map((name) => {
         const c = CONTRACTS[name];

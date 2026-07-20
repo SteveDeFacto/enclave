@@ -1,0 +1,26 @@
+# Foundry is TEST-ONLY in this repo (PaymentRouter fuzz + invariant suite under
+# contracts/foundry/test). Deploys stay on the solc-via-JS pipeline
+# (scripts/deploy-*.mjs, scripts/build-contract-artifacts.mjs) — forge output
+# under contracts/foundry/{out,cache} is gitignored and feeds nothing.
+# Settings mirror the deploy pipeline (solc 0.8.35, optimizer runs 200) except
+# via_ir, which is on globally so EnclaveAppCatalog compiles too (its deploy
+# script passes viaIR; legacy codegen overflows on publishVersion's params).
+[profile.default]
+src = "contracts"
+test = "contracts/foundry/test"
+out = "contracts/foundry/out"
+cache_path = "contracts/foundry/cache"
+libs = ["contracts/foundry/lib"]
+solc = "0.8.35"
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+fs_permissions = []
+
+[fuzz]
+runs = 512
+
+[invariant]
+runs = 64
+depth = 64
+fail_on_revert = false

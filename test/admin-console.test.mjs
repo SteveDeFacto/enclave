@@ -246,7 +246,7 @@ test("every constructor argument the console can answer is prefilled", () => {
   const src = fs.readFileSync(path.join(REPO, "site/components/admin-console/admin-console.js"), "utf8");
   const block = /const pre = \{\n([\s\S]*?)\n\s*\};/.exec(src);
   assert.ok(block, "the deploy form's `pre` map is still an object literal");
-  const entries = Object.fromEntries([...block[1].matchAll(/^\s*(Enclave\w+): \{(.*)\},$/gm)].map((m) => [m[1], m[2]]));
+  const entries = Object.fromEntries([...block[1].matchAll(/^\s*([A-Z]\w+): \{(.*)\},$/gm)].map((m) => [m[1], m[2]]));
   for (const [name, c] of Object.entries(CONTRACTS)) {
     if (!c.ctor.length) continue;
     assert.ok(entries[name], `${name} has constructor args but no prefill in the deploy form`);
@@ -259,15 +259,16 @@ test("artifacts stay in sync with contracts/*.sol (regenerate check)", () => {
   // cheap staleness guard: every contract source is older-or-equal than the
   // generated module, or the build regenerates it anyway (build-site.mjs runs
   // the artifact builder first). Here we just assert the module carries all
-  // seven contracts with bytecode + the six book keys.
+  // eight contracts with bytecode + the seven book keys.
   assert.deepEqual(Object.keys(CONTRACTS).sort(), [
     "EnclaveAddressBook", "EnclaveAppCatalog", "EnclaveDeployments",
-    "EnclaveFeatured", "EnclavePay", "EnclaveRegistry", "EnclaveReviews"]);
+    "EnclaveFeatured", "EnclavePay", "EnclaveRegistry", "EnclaveReviews",
+    "PaymentRouter"]);
   for (const [name, c] of Object.entries(CONTRACTS)) {
     assert.match(c.bytecode, /^0x[0-9a-f]{100,}$/i, name + " bytecode");
     for (const a of c.ctor) assert.equal(a.type, "address", name + " ctor args are all addresses (the console's deploy encoder assumes this)");
   }
   assert.deepEqual(
     Object.values(CONTRACTS).map((c) => c.bookKey).filter(Boolean).sort(),
-    ["appCatalog", "deployments", "enclavePay", "featured", "registry", "reviews"]);
+    ["appCatalog", "deployments", "enclavePay", "featured", "paymentRouter", "registry", "reviews"]);
 });

@@ -19,6 +19,10 @@ wasm/apps/*/assets/
 wasm/*-shim/*.so
 # enclave CLI: bundled single-file build (cli/install.sh or npm run build)
 cli/dist/
+# Foundry build artifacts (test-only toolchain; forge-std under
+# contracts/foundry/lib IS committed - vendored, no submodules)
+contracts/foundry/out/
+contracts/foundry/cache/
 # site: bundled output (built by scripts/build-site.mjs; deploy.sh ships it)
 site/dist/
 # privy bundle build workspace (scripts/build-privy.mjs; its output site/privy/ IS committed)
