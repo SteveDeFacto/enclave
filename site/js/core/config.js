@@ -16,11 +16,11 @@ export const BASE_CHAIN = 8453, BASE_CHAIN_HEX = "0x2105";
 export const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
 /* ---- accounts + order checkout (passkeys/SIWE against the relay, card via
-   hosted Stripe Checkout, USDC via the PaymentRouter). Ships dark: flip the
-   default to true at activation; the localStorage override exists for tests
-   and local dev (e2e seeds it via addInitScript). ---- */
+   hosted Stripe Checkout, USDC via the PaymentRouter). LIVE since 2026-07-21;
+   the localStorage override exists for tests and local dev (e2e seeds it via
+   addInitScript), and "0" is the emergency per-browser off switch. ---- */
 let _acct = null; try { _acct = localStorage.getItem("enclave_accounts"); } catch(e){}
-export const ACCOUNTS_ENABLED = _acct != null ? _acct === "1" : false;
+export const ACCOUNTS_ENABLED = _acct != null ? _acct === "1" : true;
 
 /* ---- on-chain contracts (Base) ----
    The baked addresses are FALLBACKS for first paint: when
