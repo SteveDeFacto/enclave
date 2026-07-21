@@ -5,6 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { EnclaveCreditVault, EnclaveCreditVaultFactory, IERC20, IAddressBook } from "../../EnclaveCreditVault.sol";
 import { MockUSDC } from "./mocks/MockUSDC.sol";
 import { MockBook, MockDeployments } from "./mocks/MockPlatform.sol";
+import { ensureP256 } from "./EnclaveCreditVault.t.sol";
 
 /// The closed-loop money invariant: across ANY sequence of vault operations
 /// (valid and garbage), USDC that entered a vault only ever exists at the
@@ -75,6 +76,7 @@ contract EnclaveCreditVaultInvariantTest is Test {
     bytes32 constant BOOK_KEY_DEPLOYMENTS = 0x6465706c6f796d656e7473000000000000000000000000000000000000000000;
 
     function setUp() public {
+        ensureP256(vm);
         usdc = new MockUSDC();
         MockBook book = new MockBook();
         dep = new MockDeployments(IERC20(address(usdc)), PAYOUT);

@@ -1,10 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import { Test } from "forge-std/Test.sol";
+import { Test, Vm } from "forge-std/Test.sol";
 import { EnclaveCreditVault, EnclaveCreditVaultFactory, IERC20, IAddressBook } from "../../EnclaveCreditVault.sol";
 import { MockUSDC } from "./mocks/MockUSDC.sol";
 import { MockBook, MockDeployments } from "./mocks/MockPlatform.sol";
+
+/// Newer forge (>=1.7) serves RIP-7212 natively at 0x100 and REFUSES vm.etch
+/// there; older forge (CI's "stable" 1.5.x) has neither the precompile nor
+/// the refusal. Probe with a real signature and etch the Daimo verifier
+/// fixture (precompile-compatible, fetched from Base) only when needed - the
+/// same bytes the anvil e2e installs via anvil_setCode.
+function ensureP256(Vm vm) {
+    address p256 = 0x0000000000000000000000000000000000000100;
+    bytes32 digest = keccak256("p256 probe");
+    (bytes32 r, bytes32 s) = vm.signP256(0xA1CE, digest);
+    (uint256 x, uint256 y) = vm.publicKeyP256(0xA1CE);
+    (bool ok, bytes memory ret) = p256.staticcall(abi.encodePacked(digest, r, s, x, y));
+    if (!(ok && ret.length == 32 && ret[31] == 0x01))
+        vm.etch(p256, vm.parseBytes(vm.readFile("contracts/foundry/test/fixtures/p256-verifier.hex")));
+}
 
 /// Drives the vault with REAL WebAuthn-shaped P-256 signatures: vm.signP256
 /// signs op digests, vm.toBase64URL builds the clientDataJSON challenge (an
@@ -28,9 +43,7 @@ contract EnclaveCreditVaultTest is Test {
     uint256 x1; uint256 y1;
 
     function setUp() public {
-        // forge's EVM serves RIP-7212 natively at 0x100 (probed in-repo); the
-        // fixtures/p256-verifier.hex bytecode exists for the ANVIL e2e stack,
-        // which lacks the precompile and gets it via anvil_setCode instead
+        ensureP256(vm);
         usdc = new MockUSDC();
         book = new MockBook();
         dep = new MockDeployments(IERC20(address(usdc)), address(0xFEE));
