@@ -1,7 +1,7 @@
 // In-enclave ACME (supervisor.js) — the pure half: CSR/DER, RFC 7638
 // thumbprints, JWS/EAB signing, dns-01 TXT derivation. The supervisor is a
 // monolith with boot side effects, so instead of importing it we drive its
-// env-gated self-test seam (ACME_SELFTEST=csr|vectors prints one JSON line and
+// env-gated self-test seam (ACME_SELFTEST=csr|cas|sni|vectors prints one JSON line and
 // exits BEFORE any socket/state work) as a child process, then validate the
 // outputs against INDEPENDENT implementations: openssl for the hand-built
 // PKCS#10, jose (a second RFC 7638 implementation) for thumbprints, and raw
@@ -160,6 +160,32 @@ test("cas: the bare default directory is not an opt-in; enabled needs a slot + d
   const full = await casOf({ ACME_EAB_KID: "k", ACME_EAB_HMAC: "h",
                              APP_CERT_DOMAIN: "app.enclave.host", DNS_API: "http://10.0.0.1:8153" });
   assert.equal(full.enabled, true);
+});
+
+// ---------- SNI decision (fail-closed app zone) --------------------------------
+// ACME_SELFTEST=sni prints sniDecide's verdict for a fixed case table: "acme"
+// (the held CA cert), "bridge" (the pin-verified self-signed pair), or
+// "refuse" (fail closed). The invariant under test: an app-zone name is NEVER
+// served the self-signed placeholder — a hosted app's TLS either presents its
+// real CA cert or the handshake is refused, so click-through/-k clients can't
+// send sensitive traffic over an unauthenticatable session. Non-app names and
+// SNI-less clients keep the bridge pair (the attested-origin pin flow).
+
+test("sni: app-zone names are CA-or-refuse; pin-flow names keep the bridge pair", async () => {
+  const v = await selftest("sni", { APP_CERT_DOMAIN: "app.enclave.host" });
+  assert.equal(v.held,       "acme");     // held CA cert always wins
+  assert.equal(v.appNoCert,  "refuse");   // the directive: no valid cert -> nothing is sent
+  assert.equal(v.subSub,     "refuse");   // any depth under the app zone fails closed
+  assert.equal(v.caseFold,   "refuse");   // SNI is case-folded before the zone check
+  assert.equal(v.bareDomain, "bridge");   // no app lives at the bare domain
+  assert.equal(v.legacyTcp,  "bridge");   // legacy tcp zone = documented pin flow
+  assert.equal(v.noSni,      "bridge");   // SNI-less clients = pin flow by definition
+});
+
+test("sni: no APP_CERT_DOMAIN (feature off) leaves every name on the bridge pair", async () => {
+  const v = await selftest("sni", {});    // APP_CERT_DOMAIN cleared by the harness
+  assert.equal(v.appNoCert, "bridge");
+  assert.equal(v.noSni,     "bridge");
 });
 
 // ---------- EAB inner JWS ------------------------------------------------------

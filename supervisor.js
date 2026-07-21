@@ -424,6 +424,25 @@ for (const suf of ["", "_2", "_3"]) {
 }
 const ACME_ENABLED = !!(ACME_CAS.length && APP_CERT_DOMAIN && DNS_API);
 
+// Which context an in-enclave TLS termination point serves for a client's SNI
+// (pure - the runtime sniSelect below the TLS bridge feeds it live contexts;
+// ACME_SELFTEST=sni drives it with stand-ins). App-zone names are
+// CA-or-nothing: <label>.APP_CERT_DOMAIN promises validating clients a real CA
+// cert, and the self-signed bridge pair is name-valid for it (same wildcard
+// CN) — serving that placeholder while issuance is pending would invite
+// click-through and -k/noverify sessions that no client can authenticate and
+// any on-path box could equally terminate, so sensitive app traffic could
+// leak. Those names get their CA cert or a refused handshake, never a
+// stand-in. Everything else (no SNI, the bare domain, the legacy tcp zone)
+// keeps the self-signed bridge pair: that pair is verified by fingerprint over
+// the attested origin (/v1/tls-bridge), not by name, and refusing it would
+// break the pin flow.
+function sniDecide(servername, heldCtx, bridgeCtx) {
+  if (heldCtx) return { use: "acme", ctx: heldCtx };
+  if (APP_CERT_DOMAIN && String(servername || "").toLowerCase().endsWith(`.${APP_CERT_DOMAIN}`)) return { use: "refuse" };
+  return { use: "bridge", ctx: bridgeCtx || undefined };
+}
+
 // base64url without padding - the encoding EVERYTHING in JOSE/ACME speaks.
 const b64u     = (b) => Buffer.from(b).toString("base64url");
 const b64uJson = (o) => b64u(JSON.stringify(o));
@@ -513,7 +532,7 @@ function buildCsr(name) {
 }
 
 // ---- self-test seam ---------------------------------------------------------
-// ACME_SELFTEST=csr|cas|vectors prints the helpers' outputs as one JSON line
+// ACME_SELFTEST=csr|cas|sni|vectors prints the helpers' outputs as one JSON line
 // and exits BEFORE any boot side effect (nothing above this point opens a
 // socket or touches state). Driven by test/acme.test.mjs; also handy in a CVM
 // shell. Never active in production - the var appears in no env file.
@@ -526,6 +545,21 @@ if (process.env.ACME_SELFTEST) {
     // the parsed CA slot list, secrets reduced to presence bits
     console.log(JSON.stringify({ enabled: ACME_ENABLED,
       cas: ACME_CAS.map(({ directory, host, eabKid }) => ({ directory, host, eab: !!eabKid })) }));
+  } else if (process.env.ACME_SELFTEST === "sni") {
+    // the SNI decision table (APP_CERT_DOMAIN from env): "acme" = the held CA
+    // cert, "bridge" = the self-signed pair, "refuse" = fail closed.
+    const ctx = {};                     // truthy stand-in: the decision only routes contexts
+    const use = (name, held) => sniDecide(name, held, ctx).use;
+    console.log(JSON.stringify({
+      domain:     APP_CERT_DOMAIN,
+      held:       use("a.app.enclave.host", ctx),
+      appNoCert:  use("b.app.enclave.host", null),
+      subSub:     use("x.b.app.enclave.host", null),
+      caseFold:   use("B.APP.ENCLAVE.HOST", null),
+      bareDomain: use("app.enclave.host", null),
+      legacyTcp:  use("b.tcp.enclave.host", null),
+      noSni:      use(undefined, null),
+    }));
   } else {
     // RFC 7515 Appendix A.3's P-256 key: the fixed vector the tests compare
     // against an independent RFC 7638 implementation (jose).
@@ -3658,11 +3692,22 @@ function startAcme() {                                        // called at the b
 }
 
 // --- SNI selection -----------------------------------------------------------
-// One lookup shared by every in-enclave TLS termination point: a managed ACME
-// cert wins when the client's SNI names it; otherwise the self-signed bridge
-// pair (pin-verified via /v1/tls-bridge) serves, exactly as before.
-const acmeCtxFor = (servername) => acmeCerts.get(String(servername || "").toLowerCase())?.ctx || null;
-const sniSelect  = (servername, cb) => cb(null, acmeCtxFor(servername) || TLS_BRIDGE_CTX || undefined);
+// One lookup shared by every in-enclave TLS termination point. The rule and
+// its rationale live in sniDecide (pure, up with the ACME helpers): a held CA
+// cert wins, an app-zone name WITHOUT one is refused outright rather than
+// served the self-signed placeholder, anything else keeps the pin-verified
+// bridge pair. An expired held cert counts as absent — it too fails
+// validation, so serving it would reopen the same leak.
+const acmeCtxFor = (servername) => {
+  const held = acmeCerts.get(String(servername || "").toLowerCase());
+  return held && held.expiresAt > Date.now() ? held.ctx : null;
+};
+const sniSelect = (servername, cb) => {
+  const d = sniDecide(servername, acmeCtxFor(servername), TLS_BRIDGE_CTX);
+  if (d.use === "refuse")
+    return cb(new Error(`no CA cert held for ${servername} - refusing the handshake instead of serving the self-signed placeholder`));
+  cb(null, d.ctx);
+};
 
 // --- /x/:id/https - browser HTTPS terminated in-enclave -----------------------
 // The passthrough relay forwards a browser's raw TLS bytes here (same WS
@@ -3718,7 +3763,8 @@ function wsTlsBridge(req, socket, head, port) {
   wss.handleUpgrade(req, socket, head, (ws) => {
     const wsStream = createWebSocketStream(ws);
     // SNI naming a managed ACME cert gets THAT cert (CA-signed, browser-green);
-    // everything else keeps the pin-verified self-signed bridge pair.
+    // app-zone SNI without one is refused (sniSelect fails closed); no SNI or
+    // other names keep the pin-verified self-signed bridge pair.
     const tlsSock  = new tls.TLSSocket(wsStream, { isServer: true, secureContext: TLS_BRIDGE_CTX, SNICallback: sniSelect });
     const tcp = net.connect(port, "127.0.0.1");
     const close = () => { try { ws.close(); } catch {} try { tlsSock.destroy(); } catch {} try { tcp.destroy(); } catch {} };
