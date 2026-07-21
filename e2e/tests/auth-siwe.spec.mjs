@@ -9,8 +9,7 @@ test("SIWE: connect a wallet, sign the relay message, account session lands", as
   await injectWallet(context, stack.payer);
 
   await page.goto("/index.html");
-  await page.click("#walletBtn");
-  await page.click("#authWallet");                             // "Connect a wallet"
+  await page.click("#walletBtn");                              // wallet detected -> straight to SIWE, no chooser
   await expect(page.locator("#walletBtn")).toContainText(new RegExp(stack.payer.slice(0, 6), "i"));   // short() keeps checksum casing
   // the header paints on wallet CONNECT; the relay SIWE roundtrip lands a
   // beat later - poll for the stored account session, don't race it

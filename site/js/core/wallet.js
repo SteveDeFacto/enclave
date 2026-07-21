@@ -166,6 +166,13 @@ export async function ethBalanceOf(addr){
   return (hex && hex !== "0x") ? Number(BigInt(hex)) / 1e18 : 0;
 }
 
+// is any extension wallet present? (announced already, or answers a re-ask)
+export async function walletDetected(){
+  let wallets = Wallet.list();
+  if (!wallets.length) wallets = await Wallet.discover();
+  return wallets.length > 0;
+}
+
 async function pickWallet(){
   let wallets = Wallet.list();
   if (!wallets.length) wallets = await Wallet.discover();

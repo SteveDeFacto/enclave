@@ -22,7 +22,7 @@
    ============================================================ */
 import { ACCOUNTS_ENABLED } from "./config.js";
 import { Enclave, EnclaveError } from "./api.js";
-import { modalize, buildSiwe, jwtExp, connectWallet, refreshWallet } from "./wallet.js";
+import { modalize, buildSiwe, jwtExp, connectWallet, refreshWallet, walletDetected } from "./wallet.js";
 import { $, esc, lsGet, lsSet, showToast, emit } from "./util.js";
 import { qrSvg } from "../lib/qr.js";
 
@@ -110,6 +110,16 @@ export async function signInWalletAccount(){
   return adoptAccountSession(await Enclave.accountSiweVerify(message, signature));
 }
 
+/* ---- the sign-in entry point ----
+   The pre-accounts behavior, kept: an extension wallet present means the
+   user chose their auth the day they installed it - connect and SIWE
+   directly, no chooser. The modal (passkey primary, phone secondary) is
+   for everyone else; it has no wallet button. */
+export async function openSignIn(){
+  if (await walletDetected()) return signInWalletAccount();
+  return openAuthModal();
+}
+
 /* ---- the sign-in chooser (renders into the #walletPick overlay) ----
    Resolves with the session on success, rejects on cancel. Passkey errors
    that are retryable stay INSIDE the modal (inline role=alert); terminal
@@ -131,8 +141,7 @@ export function openAuthModal(){
       (pk ? '<button class="wp-item wp-go" id="authPasskey" type="button">Continue with passkey</button>' +
             '<div class="wp-hint">Signs you in - or creates your account if you\'re new. Uses your device\'s screen lock; no password, no email.</div>' +
             '<div class="wp-or"><span>or</span></div>'
-          : '<div class="wp-note">This browser does not support passkeys, so wallet sign-in it is.</div>') +
-      '<button class="wp-item wp-center" id="authWallet" type="button">Connect a wallet</button>' +
+          : '<div class="wp-note">This browser does not support passkeys - use your phone below.</div>') +
       '<button class="wp-item wp-center" id="authPhone" type="button">Use your phone</button>' +
       '<div class="wp-err" id="authErr" role="alert" hidden></div>' +
       '<button class="wp-cancel" type="button">Cancel</button></div>';
@@ -219,14 +228,6 @@ export function openAuthModal(){
     host.onclick = (e) => {
       if (e.target.closest("#authPasskey")) return attempt(passkeyFlow)();
       if (e.target.closest("#authPhone")) return void phoneView();
-      if (e.target.closest("#authWallet")){
-        // connectWallet's own chooser needs the #walletPick host - hand it
-        // over, then finish the relay SIWE and settle this modal's promise
-        if (done) return;
-        done = true; close();
-        signInWalletAccount().then(resolve, (err) => { showToast((err && err.message) || String(err)); reject(err); });
-        return;
-      }
       if (e.target.closest(".wp-cancel")) cancel();
     };
   });

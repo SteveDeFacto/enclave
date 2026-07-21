@@ -25,7 +25,7 @@ import "../../components/order-status/order-status.js";
 import { ACCOUNTS_ENABLED, PAYMENT_ROUTER_ADDRESS } from "../core/config.js";
 import { Enclave } from "../core/api.js";
 import { $, esc, on, showToast } from "../core/util.js";
-import { openAuthModal } from "../core/account.js";
+import { openSignIn } from "../core/account.js";
 import { payOrderWithUsdc } from "../core/pay.js";
 import { connectWallet } from "../core/wallet.js";
 
@@ -58,7 +58,10 @@ export function boot(){
       '<p>Sign in to buy runtime. A passkey takes one tap; a wallet works too.</p>' +
       '<button class="btn" id="coSignin" type="button">Sign in to continue</button></div>';
     const b = $("#coSignin");
-    if (b) b.addEventListener("click", async () => { try { await openAuthModal(); } catch(e){} });
+    if (b) b.addEventListener("click", async () => {
+      try { await openSignIn(); }
+      catch(e){ if (!/cancelled/i.test((e && e.message) || "")) showToast((e && e.message) || String(e)); }
+    });
     on("enclave:account", (d) => { if (d.authed) boot(); });
     return;
   }

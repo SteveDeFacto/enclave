@@ -13,7 +13,7 @@
 import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { Enclave } from "../../js/core/api.js";
 import { Wallet, connectWallet, refreshWallet, restoreSession, toggleWalletPop } from "../../js/core/wallet.js";
-import { restoreAccountSession, openAuthModal } from "../../js/core/account.js";
+import { restoreAccountSession, openSignIn } from "../../js/core/account.js";
 import { ACCOUNTS_ENABLED } from "../../js/core/config.js";
 import { navigate } from "../../js/boot.js";
 import { $, showToast } from "../../js/core/util.js";
@@ -36,9 +36,9 @@ class WalletButton extends EnclaveElement {
     wb.addEventListener("click", async () => {
       if (Enclave.address || Enclave.accountAuthed()){ toggleWalletPop(); return; }
       if (ACCOUNTS_ENABLED){
-        // account sign-in chooser: passkey primary, wallet secondary
-        try { await openAuthModal(); navigate("dashboard", { push: true }); }
-        catch(e){ /* cancelled or already toasted by the modal */ }
+        // wallet detected -> direct SIWE; otherwise the passkey/phone chooser
+        try { await openSignIn(); navigate("dashboard", { push: true }); }
+        catch(e){ if (!/cancelled/i.test((e && e.message) || "")) showToast((e && e.message) || String(e)); }
         return;
       }
       const o = wb.innerHTML; wb.disabled = true; wb.innerHTML = "connecting…";

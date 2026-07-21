@@ -9,8 +9,7 @@ test("an SDN-listed payer's order shows 'being checked', and never auto-provisio
   await injectWallet(context, stack.sanctioned);   // anvil account 2, seeded into the OFAC cache
 
   await page.goto("/checkout");
-  await page.click("#coSignin");
-  await page.click("#authWallet");
+  await page.click("#coSignin");                    // wallet detected -> direct SIWE
   await page.fill("#coApp", "ipfs://bafye2eofac");
   await page.fill("#coHours", "1");
   await page.click("#coUsdc");
@@ -28,8 +27,7 @@ test("an unpaid order expires with plain words and no funds taken", async ({ pag
   await injectWallet(context, stack.payer);
 
   await page.goto("/checkout");
-  await page.click("#coSignin");
-  await page.click("#authWallet");
+  await page.click("#coSignin");                    // wallet detected -> direct SIWE
   await page.fill("#coApp", "ipfs://bafye2eexpire");
   await page.fill("#coHours", "1");
   // create the order via the card path but never pay: the stub redirect

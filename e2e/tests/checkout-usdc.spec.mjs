@@ -16,8 +16,7 @@ const bal = (who) => pub.readContract({ address: stack.usdc, abi: ERC20, functio
 
 async function loginAndOrder(page, appRef) {
   await page.goto("/checkout");
-  await page.click("#coSignin");
-  await page.click("#authWallet");
+  await page.click("#coSignin");                               // wallet detected -> direct SIWE
   await expect(page.locator("#coUsdc")).toBeVisible();   // router in the seeded book -> USDC offered
   await page.fill("#coApp", appRef);
   await page.fill("#coHours", "1");

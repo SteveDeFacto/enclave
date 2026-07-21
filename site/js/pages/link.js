@@ -18,7 +18,7 @@ import "../../components/section-head/section-head.js";
 import { ACCOUNTS_ENABLED } from "../core/config.js";
 import { Enclave } from "../core/api.js";
 import { $, esc, showToast } from "../core/util.js";
-import { openAuthModal, passkeySupported, registerPasskey, signInWithPasskey } from "../core/account.js";
+import { openSignIn, passkeySupported, registerPasskey, signInWithPasskey } from "../core/account.js";
 
 const normalize = (s) => String(s || "").toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 8);
 let autoOpened = false;   // auto-open the sign-in chooser only once per load
@@ -80,7 +80,7 @@ async function showRequest(body, code){
       '<p class="co-note">Sign in to answer this request.</p>' +
       '<button class="btn btn-primary" id="lkAuth" type="button">Sign in</button></div>';
     const gate = async () => {
-      try { await openAuthModal(); showRequest(body, code); }
+      try { await openSignIn(); showRequest(body, code); }
       catch(e){ if (!/cancelled/i.test((e && e.message) || "")) showToast((e && e.message) || String(e)); }
     };
     $("#lkAuth").addEventListener("click", gate);
