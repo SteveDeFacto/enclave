@@ -6,7 +6,7 @@ import { test, expect } from "@playwright/test";
 import { seedStorage, addVirtualAuthenticator } from "../fixtures/session.mjs";
 
 test("an unpaid top-up expires with plain words and no funds taken", async ({ page, context }) => {
-  await seedStorage(context);
+  await seedStorage(context, page);
   await addVirtualAuthenticator(context, page);
 
   await page.goto("/checkout");

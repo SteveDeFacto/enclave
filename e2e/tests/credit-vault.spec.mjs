@@ -10,7 +10,7 @@ import { test, expect } from "@playwright/test";
 import { seedStorage, addVirtualAuthenticator, fireStripeWebhook } from "../fixtures/session.mjs";
 
 test("credit: card top-up lands on-chain; one passkey tap deploys from it; dashboard extends it", async ({ page, context }) => {
-  await seedStorage(context);
+  await seedStorage(context, page);
   await addVirtualAuthenticator(context, page);
 
   // sign up (passkey chain) straight from the checkout gate
@@ -30,20 +30,21 @@ test("credit: card top-up lands on-chain; one passkey tap deploys from it; dashb
   await page.goto("/checkout");
   await expect(page.locator("#coBal")).toContainText("$25.00");
 
-  // one tap = one signed vault op: create + fund, owned by the vault.
-  // (driven through the site's own vault module - the deploy console calls
-  // exactly this with its validated spec)
-  const out = await page.evaluate(async () => {
-    const { vaultOp } = await import("/js/core/vault.js");
-    return vaultOp("deploy", {
-      spec: { appRef: "ipfs://bafyvaultapp", gpuShare: 0.25, cpuShare: 0.1, appPort: 8080, isPublic: true },
-      fundUsd: 5,
+  // one tap = one signed vault op: create + fund, owned by the vault. Driven
+  // through deployOnChain - the SHARED entry every deploy surface calls (the
+  // console form AND the store's quick-deploy modal) - so this pins the branch
+  // that routes signed-in accounts to the passkey path instead of a wallet
+  // (the wallet path would die here: no provider is injected). It soft-
+  // navigates to the dashboard and narrates into the run log.
+  await page.evaluate(async () => {
+    const m = await import("/js/pages/deploy.js");
+    await m.deployOnChain({
+      reference: "ipfs://bafyvaultapp", gpuMilli: 250, cpuMilli: 100,
+      ports: "", isPublic: true, fundUsd: 5,
     });
   });
-  expect(out.deploymentId).toMatch(/^0x[0-9a-f]{64}$/);
-
-  // dashboard: balance card + the vault-owned row in the shared panel
-  await page.goto("/dashboard");
+  // the run strip lands on the dashboard and narrates the passkey deploy
+  await expect(page.locator("c-deployments .enc-live")).toContainText("created + funded", { timeout: 20_000 });
   await expect(page.locator("#acctBalV")).toContainText("$20.00");
   const row = page.locator("c-deployments .enc-row", { hasText: "bafyvaultapp" });
   // relay ledger cache (10s TTL) + the panel's 10s poll: allow a full cycle.
@@ -62,7 +63,7 @@ test("credit: card top-up lands on-chain; one passkey tap deploys from it; dashb
 });
 
 test("credit: a spend beyond the balance is refused with a plain message", async ({ page, context }) => {
-  await seedStorage(context);
+  await seedStorage(context, page);
   await addVirtualAuthenticator(context, page);
   await page.goto("/checkout");
   await page.click("#coSignin");

@@ -22,5 +22,10 @@ export default defineConfig({
     browserName: "chromium",
     baseURL: "http://localhost:18899",
     trace: "retain-on-failure",
+    // headless Chromium wedges frame production on some navigations (stuck
+    // cross-document view transition); the site skips soft-nav transitions
+    // under reduced motion, so navigation never waits on a frame that
+    // will not come
+    reducedMotion: "reduce",
   },
 });

@@ -7,7 +7,7 @@ import { test, expect } from "@playwright/test";
 import { seedStorage, addVirtualAuthenticator, stack } from "../fixtures/session.mjs";
 
 test("device flow: passkey-less desktop signs in via phone approval", async ({ page, context, browser }, testInfo) => {
-  await seedStorage(context);                                  // desktop: no authenticator, no wallet
+  await seedStorage(context, page);                            // desktop: no authenticator, no wallet
 
   await page.goto("/index.html");
   await page.click("#walletBtn");

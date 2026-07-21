@@ -12,7 +12,7 @@ import "../../components/app-card/app-card.js";
 import "../../components/app-detail/app-detail.js";
 import "../../components/app-reviews/app-reviews.js";
 import { $, $$, esc, short, blen, fmtDur, showToast, on, tosAccepted, setTosAccepted } from "../core/util.js";
-import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, FEATURED_ADDRESS, REVIEWS_ADDRESS, USDC_BASE, IPFS_UPLOAD_URL, IPFS_IMAGE_UPLOAD_URL, IPFS_IMG_GATEWAY, MAX_WASM_MB, MAX_WASM_BYTES, MAX_IMAGE_MB, MAX_IMAGE_BYTES, BASE_CHAIN } from "../core/config.js";
+import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, FEATURED_ADDRESS, REVIEWS_ADDRESS, USDC_BASE, IPFS_UPLOAD_URL, IPFS_IMAGE_UPLOAD_URL, IPFS_IMG_GATEWAY, MAX_WASM_MB, MAX_WASM_BYTES, MAX_IMAGE_MB, MAX_IMAGE_BYTES, BASE_CHAIN, ACCOUNTS_ENABLED } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
 import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, depMaxGpuMilli, rate6Of, waitReceipt, catSchemaRev, catMaxFeePerSec6, catVersionFee, featConfigured, featMaxBid, FEAT_SEL, revConfigured, REV_SEL } from "../core/chain.js";
 import { FEATURED, loadCampaigns, pickFeatured, beaconView } from "../core/featured.js";
@@ -375,22 +375,30 @@ function quickDeploy(app, v, idx){
   let baseRate = shareRates(mins.gpuPct, mins.cpuPct).rate, fee = 0;
   let rate = baseRate;
   const perHr = (rate * 3600).toFixed(2);
+  // passkey/card account with no wallet: the deploy spends prepaid credit
+  // (deployOnChain branches to the passkey-signed vault op itself) - the
+  // modal speaks in dollars and shows the credit balance instead
+  const acct = !Enclave.address && ACCOUNTS_ENABLED && Enclave.accountAuthed();
   const host = document.createElement("div");
   host.id = "quickDeploy"; host.className = "qd-overlay";
   host.innerHTML =
     '<div class="qd-card" role="dialog" aria-modal="true" aria-label="Deploy ' + esc(app.name || app.slug) + '">' +
       '<div class="qd-h">Deploy <b>' + esc(app.name || app.slug) + '</b> <span class="qd-ver">' + esc(v.version) + '</span></div>' +
-      '<p class="qd-sub">Runs in its own confidential enclave at <b class="qd-rate">$' + perHr + '/hr</b>. Fund it from your wallet - it runs until the time you bought is used up, and you can top up or stop it whenever you like.</p>' +
+      '<p class="qd-sub">Runs in its own confidential enclave at <b class="qd-rate">$' + perHr + '/hr</b>. ' +
+        (acct ? 'It runs on your credit - it runs until the time you bought is used up, and you can top up or stop it whenever you like.'
+              : 'Fund it from your wallet - it runs until the time you bought is used up, and you can top up or stop it whenever you like.') + '</p>' +
       '<p class="qd-sub qd-fee" hidden></p>' +
-      '<div class="qd-bal"><span>Your wallet</span><b class="qd-balv">…</b><button class="qd-connect btn btn-sm" type="button" hidden>Connect wallet</button></div>' +
-      '<label class="qd-lbl" for="qdAmt">Amount to fund (USDC)</label>' +
+      '<div class="qd-bal"><span>' + (acct ? 'Your credit' : 'Your wallet') + '</span><b class="qd-balv">…</b><button class="qd-connect btn btn-sm" type="button" hidden>Connect wallet</button></div>' +
+      '<label class="qd-lbl" for="qdAmt">Amount to fund (' + (acct ? 'USD' : 'USDC') + ')</label>' +
       '<input class="qd-amt" id="qdAmt" type="number" value="5" min="0.01" step="any" inputmode="decimal" />' +
       '<div class="qd-est">buys ≈ <b class="qd-estv"></b> of runtime</div>' +
       '<div class="qd-note" hidden></div>' +
       // the ToS gate: assent persists per terms version (core/util TOS_VERSION),
       // so returning deployers find it pre-checked. target=_blank keeps the
       // modal (and its amount) alive while the terms are read.
-      '<label class="qd-tos"><input type="checkbox" class="qd-tosck"' + (tosAccepted() ? " checked" : "") + ' /> <span>I have read and agree to the <a href="terms" target="_blank" rel="noopener">Terms of Service</a> - payments are crypto-only, non-custodial and final, and uptime isn’t guaranteed.</span></label>' +
+      '<label class="qd-tos"><input type="checkbox" class="qd-tosck"' + (tosAccepted() ? " checked" : "") + ' /> <span>I have read and agree to the <a href="terms" target="_blank" rel="noopener">Terms of Service</a> - ' +
+        (acct ? 'deploys spend prepaid, non-transferable account credit, and uptime isn’t guaranteed.'
+              : 'payments are crypto-only, non-custodial and final, and uptime isn’t guaranteed.') + '</span></label>' +
       '<div class="qd-actions">' +
         '<button class="btn btn-primary qd-go" type="button">▸ Deploy</button>' +
         '<button class="btn qd-adv" type="button" title="Pick shares, open ports, app config, and payment options on the full console">Advanced →</button>' +
@@ -416,7 +424,9 @@ function quickDeploy(app, v, idx){
     // adjustable short-on-funds note and pins the Deploy button off
     note.hidden = !shortOnFunds && !capMsg;
     if (capMsg) note.textContent = capMsg;
-    else if (shortOnFunds) note.textContent = "That’s more than your wallet holds ($" + bal.toFixed(2) + " USDC).";
+    else if (shortOnFunds) note.textContent = acct
+      ? "That’s more than your credit balance ($" + bal.toFixed(2) + "). Add credit first."
+      : "That’s more than your wallet holds ($" + bal.toFixed(2) + " USDC).";
     go.disabled = !(usd >= 0.01) || shortOnFunds || !tos.checked || !!capMsg;
     go.title = capMsg ? "" : tos.checked ? "" : "Agree to the Terms of Service above to deploy";
   };
@@ -448,9 +458,22 @@ function quickDeploy(app, v, idx){
     fee = Number(f) / 1e6;
     const fEl = host.querySelector(".qd-fee");
     if (fEl){ fEl.hidden = false; fEl.textContent = "The rate includes a $" + (fee * 3600).toFixed(2) + "/hr publisher fee, paid straight to this app's publisher."; }
+    // credit checkout can't forward a publisher's cut yet (relay refuses the
+    // spec too) - say so here, before any passkey prompt
+    if (acct && !capMsg) capMsg = "This app charges a publisher fee, which credit deploys don’t support yet - connect a wallet to deploy it.";
     paintRate();
   }).catch(() => {});
   const loadBal = async () => {
+    if (acct){
+      // credit balance instead of a wallet: the vault op draws from it
+      conn.hidden = true;
+      try {
+        const { getVault } = await import("../core/vault.js");
+        const vlt = await getVault();
+        if (vlt){ bal = parseFloat(vlt.balanceUsd) || 0; balv.textContent = "$" + vlt.balanceUsd; est(); return; }
+      } catch(e){}
+      balv.textContent = "no credit yet"; return;
+    }
     if (!Enclave.address || !Enclave.provider){ balv.textContent = "not connected"; conn.hidden = false; return; }
     conn.hidden = true;
     try { bal = await usdcBalanceOf(Enclave.address); balv.textContent = bal.toFixed(2) + " USDC"; } catch(e){}

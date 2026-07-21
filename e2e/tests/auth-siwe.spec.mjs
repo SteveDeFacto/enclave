@@ -5,7 +5,7 @@ import { test, expect } from "@playwright/test";
 import { seedStorage, injectWallet, stack } from "../fixtures/session.mjs";
 
 test("SIWE: connect a wallet, sign the relay message, account session lands", async ({ page, context }) => {
-  await seedStorage(context);
+  await seedStorage(context, page);
   await injectWallet(context, stack.payer);
 
   await page.goto("/index.html");

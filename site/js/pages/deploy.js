@@ -325,25 +325,13 @@ async function runDeploy(){
   // through the queue-confirm modal's explicit checkbox
   if (!(await confirmQueuedDeploy(gpuMilli / 10, cpuMilli / 10))) return;
 
-  // account/credit path: no wallet in the browser but a signed-in account -
-  // the passkey signs a vault operation and the deployment (owned on-chain by
-  // the customer's credit vault) funds from their balance. One tap.
+  // account/credit pre-checks: the passkey-signed vault deploy itself lives in
+  // deployOnChain (shared with the store's quick-deploy modal), but these
+  // refusals belong HERE, in the console form, before any navigation
   if (!Enclave.address && ACCOUNTS_ENABLED && Enclave.accountAuthed()){
     if (dry) return note([["warn", "[!] dry runs use the wallet path - credit deploys are always real"]]);
     if (wafSpec()) return note([["warn", "[!] WAF options need a wallet deploy for now - credit deploys don't carry a config envelope yet"]]);
     if (!(fund > 0)) return note([["warn", "[!] set a budget - it buys runtime at the live per-second rate"]]);
-    btn.disabled = true; const lbl0 = btn.textContent; btn.textContent = "confirm with your passkey…";
-    try {
-      const out = await vaultOp("deploy", {
-        spec: { appRef: rref.reference, gpuMilli, cpuMilli, appPort, ports: portsCsv, isPublic: dep.public },
-        fundUsd: fund,
-      });
-      note([["ok", "[✓] deployed from credit - " + String(out.deploymentId || "").slice(0, 12) + "… is funding on-chain; watch it on your dashboard"]]);
-      navigate("dashboard", { push: true });
-    } catch(e){
-      note([["warn", "[!] " + ((e && e.message) || e)]]);
-    } finally { btn.disabled = false; btn.textContent = lbl0; }
-    return;
   }
 
   btn.disabled = true; const lbl = btn.textContent; btn.textContent = "working…";
@@ -410,6 +398,46 @@ export async function deployOnChain(spec){
     // document never unloads - this async flow survives the soft navigation)
     await navigate("dashboard");
     w = runlog.startRun();
+    // account-credit path: no connected wallet but a signed-in passkey/card
+    // account - ONE passkey tap signs a vault op that creates + funds the
+    // deployment from credit (the customer's vault owns the record on-chain).
+    // Same run, same narrative, same claim watch as a wallet deploy. Every
+    // caller lands here (console form AND the store's quick-deploy modal).
+    if (!Enclave.address && ACCOUNTS_ENABLED && Enclave.accountAuthed()){
+      if (spec.waf){ w.line("warn", "[!] WAF options need a wallet deploy for now - credit deploys don't carry a config envelope yet"); return; }
+      if (fee6 > 0n){ w.line("warn", "[!] this app charges a publisher fee, which credit deploys don't support yet - deploy it from a wallet instead"); return; }
+      if (!(fund > 0)){ w.line("warn", "[!] set a budget - it buys runtime at the live per-second rate"); return; }
+      try {
+        adoptFreePct(await Enclave.getAvailability());
+        if (queuedVerdict(spec.gpuMilli / 10, spec.cpuMilli / 10))
+          w.line("warn", "[!] the fleet is full for this size right now - after funding, the deployment waits as Queued and starts automatically the moment capacity frees up (queued time is never billed; the balance only burns while the app runs)");
+      } catch(e){}
+      let crate6 = 0n;
+      try { crate6 = await Promise.race([depRate6(spec.gpuMilli, spec.cpuMilli), wait(6000).then(() => 0n)]); } catch(e){}
+      if (crate6 > 0n){
+        const rate = Number(crate6) / 1e6;
+        w.line("info", "    $" + fund + " of credit ≈ " + fmtDur(fund / rate) + " of runtime at $" + (rate * 3600).toFixed(2) + "/hr");
+      }
+      w.line("p", "$ EnclaveCreditVault.deployAndFund(…)  (passkey · one tap · your credit funds it)");
+      w.line("info", "[*] confirm with your passkey…");
+      let out;
+      try {
+        out = await vaultOp("deploy", {
+          spec: { appRef: spec.reference, gpuMilli: spec.gpuMilli, cpuMilli: spec.cpuMilli,
+                  appPort, ports: portsCsv, isPublic: !!spec.isPublic },
+          fundUsd: fund,
+        });
+      } catch(e){ w.line("warn", "[x] " + (e.message || String(e))); return; }
+      const cid = out.deploymentId;
+      w.setId(cid);
+      w.line("ok", "[✓] created + funded " + cid + " from your credit");
+      document.dispatchEvent(new CustomEvent("enclave:credit"));   // the dashboard's balance card refreshes
+      watchClaimAndRun(cid, null, w)
+        .catch(e => w.line("warn", "[x] " + (e.message || String(e))))
+        .finally(() => w.end());
+      detached = true;
+      return;
+    }
     // NO SIWE sign-in here: the create tx and the funding signature ARE the
     // proof of key ownership - a connected wallet is all the flow needs
     if (!Enclave.provider){
@@ -563,7 +591,10 @@ async function watchClaimAndRun(id, dPre, w){
     // tokenless flows read the LEDGER (create/fund/claim all show), but the
     // runner's live status stream is an owner-session read - the app itself
     // is already booting and reachable at the origin above
-    w.line("dimln", "    claimed and funded - the app boots now. Open the app origin above, or unlock live status/logs on the row below (one gas-free signature).");
+    w.line("dimln", "    claimed and funded - the app boots now. Open the app origin above" +
+      (!Enclave.address && Enclave.accountAuthed()
+        ? "; the row below tracks its status."
+        : ", or unlock live status/logs on the row below (one gas-free signature)."));
     const dp1 = depsPanel(); if (dp1) dp1.refresh(); return;
   }
   const final = await pollDeployment(id, w);

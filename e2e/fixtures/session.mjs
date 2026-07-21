@@ -11,13 +11,20 @@ import { fileURLToPath } from "node:url";
 export const stack = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".stack.json"), "utf8"));
 
-export async function seedStorage(context) {
+export async function seedStorage(context, page) {
   await context.addInitScript(({ relay, rpc, router, deployments }) => {
     localStorage.setItem("enclave_api_base", relay + "/v1");
     localStorage.setItem("enclave_rpc", rpc);
     localStorage.setItem("enclave_accounts", "1");                 // the dark-ship gate, forced on
     sessionStorage.setItem("enclave_addrbook", JSON.stringify({ paymentRouter: router, deployments }));
   }, { relay: stack.relay, rpc: stack.rpc, router: stack.router, deployments: stack.deployments });
+  // headless Chromium wedges frame production on some navigations (stuck
+  // cross-document view transition) and the site's soft-nav awaits the view
+  // transition's callback - under reduced motion it applies the swap directly,
+  // so navigation never waits on a frame that will not come. The config's
+  // use.reducedMotion should do this, but does not reach matchMedia on this
+  // Playwright build - emulateMedia verifiably does.
+  if (page) await page.emulateMedia({ reducedMotion: "reduce" });
 }
 
 // EIP-6963 wallet whose provider proxies to anvil - ZERO crypto in the

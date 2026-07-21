@@ -5,7 +5,7 @@ import { test, expect } from "@playwright/test";
 import { seedStorage, addVirtualAuthenticator } from "../fixtures/session.mjs";
 
 test("passkey: create account, restore across reload, sign out, sign back in", async ({ page, context }) => {
-  await seedStorage(context);
+  await seedStorage(context, page);
   await addVirtualAuthenticator(context, page);
 
   await page.goto("/index.html");

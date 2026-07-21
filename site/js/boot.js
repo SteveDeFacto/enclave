@@ -155,7 +155,10 @@ export async function navigate(href, opts) {
     const hdr = document.querySelector("c-header");
     if (hdr) hdr.current = PAGE_ALIAS[page] || page;         // hydrated header just re-toggles the active tab (aliases light their target's)
   };
-  if (document.startViewTransition) {
+  // the cross-fade is decoration: skip it under prefers-reduced-motion (a11y),
+  // which also sidesteps renderers with wedged frame production (headless test
+  // runs) where the transition callback would never get a rendering slot
+  if (document.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
     try { await document.startViewTransition(apply).updateCallbackDone; } catch (e) { apply(); }
   } else apply();
 
