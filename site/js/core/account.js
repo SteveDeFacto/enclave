@@ -137,9 +137,8 @@ export function openAuthModal(){
   const pk = passkeySupported();
   return new Promise((resolve, reject) => {
     host.innerHTML = '<div class="wp-card"><div class="wp-h">Sign in to Enclave</div>' +
-      '<div class="wp-note">Your apps, orders, and receipts live on your account.</div>' +
+      '<div class="wp-note">A wallet is the recommended way to use Enclave: it gives you direct, on-chain control of your deployments, and this button will use it automatically once one is installed. No wallet? A passkey account works for card checkout.</div>' +
       (pk ? '<button class="wp-item wp-go" id="authPasskey" type="button">Continue with passkey</button>' +
-            '<div class="wp-hint">Signs you in - or creates your account if you\'re new. Uses your device\'s screen lock; no password, no email.</div>' +
             '<div class="wp-or"><span>or</span></div>'
           : '<div class="wp-note">This browser does not support passkeys - use your phone below.</div>') +
       '<button class="wp-item wp-center" id="authPhone" type="button">Use your phone</button>' +
