@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createSign, createHash } from "node:crypto";
 import { coseToXY } from "../relay/auth.js";
-import { derToRS, buildControlCall } from "../relay/vaultsvc.js";
+import { derToRS, buildControlCall, floatSweepAmount } from "../relay/vaultsvc.js";
 
 function coseP256(x, y) {
   // map(5) { 1:2, 3:-7, -1:1, -2:bstr32(x), -3:bstr32(y) } - canonical CBOR
@@ -50,6 +50,16 @@ test("buildControlCall encodes the vault's two allowlisted ledger calls, pinned 
   const refAbi = [{ type: "function", name: "setAppRef", inputs: [{ type: "bytes32" }, { type: "string" }], outputs: [] }];
   assert.deepEqual(decodeFunctionData({ abi: refAbi, data: version }).args, [id, "catalog://3/1"]);
   await assert.rejects(buildControlCall(id, "terminate"), /unknown control action/);
+});
+
+test("floatSweepAmount: hysteresis band, sweep-to-target above the ceiling", () => {
+  const T = 200_000000n, C = 400_000000n;          // $200 target, $400 ceiling
+  assert.equal(floatSweepAmount(0n, T, C), 0n);                       // empty float: nothing to sweep
+  assert.equal(floatSweepAmount(T, T, C), 0n);                        // at target
+  assert.equal(floatSweepAmount(C, T, C), 0n);                        // at the ceiling: still inside the band
+  assert.equal(floatSweepAmount(C + 1n, T, C), C + 1n - T);           // one over: sweep down to TARGET, not ceiling
+  assert.equal(floatSweepAmount(1_000_000000n, T, C), 800_000000n);   // $1000 -> $200 stays
+  assert.equal(floatSweepAmount("1000000000", T, C), 800_000000n);    // string balances (JSON) coerce
 });
 
 test("derToRS round-trips real ECDSA signatures incl. leading-zero trims", () => {

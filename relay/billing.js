@@ -114,7 +114,7 @@ export async function initBilling(ctx) {
   });
   recoverProvisioning();
 
-  await initVault({ usdc: USDC, addressBook: BOOK, chainId: CHAIN_ID });
+  await initVault({ usdc: USDC, addressBook: BOOK, chainId: CHAIN_ID, alert });
   setInterval(retryCrediting, ORDER_SWEEP_SEC * 1000).unref?.();
 
   setInterval(expirySweep, ORDER_SWEEP_SEC * 1000).unref?.();

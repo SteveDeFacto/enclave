@@ -27,6 +27,10 @@ const FACTORY_ABI = [
     inputs: [{ type: "uint256" }, { type: "uint256" }], outputs: [{ type: "address" }] },
   { type: "function", name: "createVault", stateMutability: "nonpayable",
     inputs: [{ type: "uint256" }, { type: "uint256" }], outputs: [{ type: "address" }] },
+  { type: "function", name: "implementation", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+];
+const IMPL_ABI = [
+  { type: "function", name: "treasury", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
 ];
 const SIG_COMPONENTS = [
   { name: "authenticatorData", type: "bytes" }, { name: "clientDataJSON", type: "string" },
@@ -60,7 +64,7 @@ const OP = {
   refund:  "EnclaveVault.refundToTreasury.v1",
 };
 
-let cfg = null;            // { usdc, addressBook, chainId }
+let cfg = null;            // { usdc, addressBook, chainId, alert? }
 let account = null, wallet = null;
 let factoryEnv = "";
 let _factory = { addr: null, at: 0 };
@@ -79,6 +83,9 @@ export async function initVault(c) {
   wallet = createWalletClient({ account, chain, transport });
   const f = await factoryAddress().catch(() => null);
   console.log(`[vault] ${f ? "enabled - factory " + f : "no factory address yet (env VAULT_FACTORY_ADDRESS or book key vaultFactory) - vaults dark"} · relayer ${account.address}`);
+  setInterval(floatPass, FLOAT_SWEEP_SEC * 1000).unref?.();
+  console.log(`[vault] float manager: sweep above $${Number(FLOAT_CEILING_6) / 1e6} down to $${Number(FLOAT_TARGET_6) / 1e6}, ` +
+    `alert below $${Number(FLOAT_MIN_6) / 1e6} / ${Number(FLOAT_MIN_ETH_WEI) / 1e18} ETH, every ${FLOAT_SWEEP_SEC}s`);
 }
 
 export function vaultEnabled() { return !!wallet; }
@@ -227,6 +234,75 @@ export async function depositToVault(key, amount6) {
     if (rcpt.status !== "success") throw new Error(`vault deposit reverted (${hash})`);
     return { vault: address, txHash: hash };
   });
+}
+
+// ---- float manager --------------------------------------------------------------
+// The relayer wallet is a FLOAT, not a treasury: Stripe stablecoin payouts
+// (Bridge) land card revenue as USDC on Base directly here, sized by sales -
+// the exact demand that drains it. Two jobs, both company->company:
+//   - sweep everything above the ceiling down to the target, into the company
+//     treasury (read from the factory's implementation - the SAME address every
+//     vault refunds to; never an env var that could point anywhere else),
+//   - alert (once per dip, re-armed on recovery) when USDC or gas run low,
+//     BEFORE a customer top-up starts failing instead of after.
+// The ceiling/target gap is hysteresis: without it every daily payout would
+// trigger a dust sweep. See docs/billing-runbook.md ("Fiat -> crypto").
+const FLOAT_TARGET_6 = BigInt(process.env.FLOAT_TARGET_6 || "200000000");        // $200 stays behind after a sweep
+const FLOAT_CEILING_6 = BigInt(process.env.FLOAT_CEILING_6 || "400000000");      // sweep only above $400
+const FLOAT_MIN_6 = BigInt(process.env.FLOAT_MIN_6 || "50000000");               // low-USDC alert under $50
+const FLOAT_MIN_ETH_WEI = BigInt(process.env.FLOAT_MIN_ETH_WEI || "2000000000000000");   // low-gas alert under 0.002 ETH
+const FLOAT_SWEEP_SEC = parseInt(process.env.FLOAT_SWEEP_SEC || "300", 10);
+
+// how much a sweep moves to treasury: everything above the ceiling, down to
+// the target; zero otherwise. Pure - unit tested directly.
+export function floatSweepAmount(balance6, target6 = FLOAT_TARGET_6, ceiling6 = FLOAT_CEILING_6) {
+  balance6 = BigInt(balance6);
+  return balance6 > ceiling6 ? balance6 - target6 : 0n;
+}
+
+// the company treasury, resolved ON-CHAIN: factory -> implementation ->
+// treasury (an immutable; cached forever once read)
+let _treasury = null;
+export async function treasuryAddress() {
+  if (_treasury) return _treasury;
+  const pub = await rpcPool();
+  const impl = await pub.readContract({ address: await factoryAddress(), abi: FACTORY_ABI, functionName: "implementation" });
+  const t = await pub.readContract({ address: impl, abi: IMPL_ABI, functionName: "treasury" });
+  if (!t || /^0x0{40}$/i.test(t)) throw new Error("factory reports no treasury");
+  _treasury = t;
+  return t;
+}
+
+const _low = { usdc: false, eth: false };
+async function floatPass() {
+  if (!wallet) return;
+  try {
+    const pub = await rpcPool();
+    const [usdcBal, ethBal] = await Promise.all([
+      pub.readContract({ address: cfg.usdc, abi: ERC20_ABI, functionName: "balanceOf", args: [account.address] }),
+      pub.getBalance({ address: account.address }),
+    ]);
+    if (usdcBal < FLOAT_MIN_6) {
+      if (!_low.usdc) { _low.usdc = true; cfg.alert?.("float_low_usdc", { wallet: account.address, balance6: String(usdcBal), min6: String(FLOAT_MIN_6) }); }
+    } else _low.usdc = false;
+    if (ethBal < FLOAT_MIN_ETH_WEI) {
+      if (!_low.eth) { _low.eth = true; cfg.alert?.("float_low_gas", { wallet: account.address, balanceWei: String(ethBal), minWei: String(FLOAT_MIN_ETH_WEI) }); }
+    } else _low.eth = false;
+    if (floatSweepAmount(usdcBal) === 0n) return;
+    const treasury = await treasuryAddress();
+    await serial(async () => {
+      // recompute INSIDE the serial queue: a vault deposit may have spent
+      // part of the balance between the read above and our turn to send
+      const now6 = await pub.readContract({ address: cfg.usdc, abi: ERC20_ABI, functionName: "balanceOf", args: [account.address] });
+      const excess = floatSweepAmount(now6);
+      if (excess === 0n) return;
+      const hash = await wallet.writeContract({ address: cfg.usdc, abi: ERC20_ABI,
+        functionName: "transfer", args: [treasury, excess] });
+      const rcpt = await pub.waitForTransactionReceipt({ hash, timeout: 120_000 });
+      if (rcpt.status !== "success") throw new Error(`float sweep reverted (${hash})`);
+      console.log(`[vault] float sweep: $${(Number(excess) / 1e6).toFixed(2)} -> treasury ${treasury} (${hash})`);
+    });
+  } catch (e) { console.error("[vault] float pass failed:", e.message || e); }
 }
 
 // submit a passkey-signed vault op; the contract is the verifier of record

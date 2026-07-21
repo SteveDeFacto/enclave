@@ -2,9 +2,11 @@
 
 Operational procedures for the hybrid billing system (card via hosted Stripe
 Checkout, USDC via the PaymentRouter on Base). This document is the manual
-half of the design: everything here is deliberately a HUMAN process, and the
-code refuses to automate it. Pair it with the hard invariants the software
-enforces:
+half of the design: customer-facing money decisions (refunds, reviews,
+anything that moves value outward) are deliberately HUMAN processes the code
+refuses to automate. The only automated value movement is company->company
+toward cold storage (the float sweep, §1). Pair it with the hard invariants
+the software enforces:
 
 - Money flows **in only**. Company wallets never send crypto to customer
   addresses, there is no onramp, no customer crypto balance, no self-serve
@@ -19,23 +21,39 @@ enforces:
 
 ## 1. Converting Stripe fiat revenue to crypto (treasury management)
 
-Card revenue settles to the Stripe balance and pays out to the company bank
-account like any SaaS. If the treasury strategy calls for holding part of it
-as USDC, that conversion is **manual, finance-executed, and completely
-disconnected from customer flows**:
+**Adopted: Stripe stablecoin payouts (Bridge).** Card revenue settles as
+USDC on Base, paid out by Stripe's own batched payout schedule directly to
+the company **float wallet** (the relayer/provisioner address). This is the
+company choosing its settlement currency for its own receivables - payouts
+are batches of the company's balance, never a per-customer conversion, and
+no customer address is ever involved. That decoupling is the line that
+matters; the rules that keep us on the right side of it:
 
-- Preferred: a **business account at a regulated exchange** (e.g. Coinbase
-  Prime/Exchange or Kraken Institutional) in the company's name. Wire fiat
-  from the company bank, buy USDC, withdraw to the treasury address on Base.
-- Alternative: **Stripe/Bridge stablecoin settlement** (Stripe's USDC payout
-  rails), which settles card revenue directly as USDC. Adopt only after
-  finance reviews the terms; it changes nothing else in this document.
-- Never automate this conversion from platform infrastructure, never run it
-  from relay/enclave boxes, and never let a conversion touch any address a
-  customer has ever paid from or to. It is treasury management, not product.
+- **Never convert per customer transaction.** No code path may buy, sell, or
+  move crypto "for" a specific customer's payment. Stripe payouts are
+  batched settlement; keep them that way (daily schedule, no manual
+  per-order payouts).
+- The float wallet is HOT and its exposure is bounded by the relay's float
+  manager: everything above `FLOAT_CEILING_6` (default $400) is auto-swept
+  down to `FLOAT_TARGET_6` (default $200) into the treasury - the sweep
+  destination is read from the vault factory on-chain (the same immutable
+  address every vault refunds to), never from an env var. Sweeping toward
+  cold storage is the ONE direction of automated movement this document
+  permits.
+- Gas ETH stays a manual, occasional purchase (a Base transaction costs
+  fractions of a cent; ~0.01 ETH lasts months). The float manager alerts
+  (`float_low_gas`) before it runs out.
+- A previously considered alternative (manual conversion via a regulated
+  exchange business account) remains valid as a fallback if Bridge payouts
+  are ever unavailable; execute it finance-manual as before, withdraw to the
+  treasury (not the float wallet).
+- **Counsel item**: this section amended the earlier "no automation" stance
+  to permit batch settlement + sweep-to-cold. Fold the amended structure
+  into the pending counsel review (§6).
 
-Each conversion gets a ledger entry (date, fiat amount, USDC amount, venue,
-tx hash of the withdrawal) - see §4 accounting.
+Each payout and sweep gets a ledger entry (date, fiat amount, USDC amount,
+venue, tx hash) - Stripe's payout reports plus the sweep log lines / treasury
+transfer hashes cover this; see §4 accounting.
 
 ## 2. Treasury custody
 
@@ -46,13 +64,17 @@ founder, with the seed backed up offline in a second location. It signs
 rarely (treasury movements only) and never appears on any server.
 
 The **provisioner wallet** (relay-held `PROVISIONER_PRIVATE_KEY`) is NOT the
-treasury: it is an operating wallet that spends company USDC into the
-company's own EnclaveDeployments contract to fulfil paid orders. Keep it
-funded like petty cash - enough USDC for a few days of expected orders plus
-gas ETH, topped up manually from the treasury. A compromise of the relay box
-caps out at that float. If its balance guard alerts
-(`provisioner_underfunded`), top it up from the treasury; orders wait
-safely in `confirmed_provisioning` until then.
+treasury: it is the company's operating FLOAT - it deposits USDC into
+customer credit vaults when card top-ups settle and spends USDC into the
+company's own EnclaveDeployments contract to fulfil paid orders. It refills
+itself: Stripe stablecoin payouts land card revenue here (§1), and the
+relay's float manager sweeps everything above the ceiling to the treasury,
+so a compromise of the relay box caps out at `FLOAT_CEILING_6` plus at most
+one un-swept payout. Low USDC (`float_low_usdc`) and low gas
+(`float_low_gas`) alert through `ALERT_WEBHOOK_URL` before customer top-ups
+start failing; if float somehow runs dry anyway (e.g. a sales lull plus a
+big top-up), send USDC from the treasury manually - stuck top-ups sit in
+"crediting" and retry every minute, nothing is lost.
 
 **Migration criteria - move signing into the company's own TEE
 infrastructure** (the platform's CVM stack can hold the provisioner key the
@@ -129,7 +151,9 @@ reversal rather than a transfer service. Do not relax it for convenience.
 | Deploy / rotate the router | `scripts/deploy-payment-router.mjs` (explicit `TREASURY_ADDRESS`), repoint book key `paymentRouter` + relay env |
 | Light up the site checkout | flip `ACCOUNTS_ENABLED` default to `true` in `site/js/core/config.js` (one line; revert = rollback) |
 | Review queue | `GET /v1/billing/review` / `POST /v1/billing/review/:id/resolve` with `x-admin-token` |
-| Provisioner top-up | send USDC + a little ETH from the treasury to the provisioner address; the 60s sweep resumes held orders automatically |
+| Provisioner top-up (fallback) | send USDC + a little ETH from the treasury to the provisioner address; the 60s sweep resumes held orders/top-ups automatically |
+| Stripe stablecoin payouts | Stripe dashboard -> Balances -> payout settings -> stablecoin payouts (Bridge onboarding): USDC on **Base**, destination = the provisioner/float wallet, daily schedule. Verify with one small payout before relying on it |
+| Float manager tuning | `FLOAT_TARGET_6` / `FLOAT_CEILING_6` / `FLOAT_MIN_6` / `FLOAT_MIN_ETH_WEI` / `FLOAT_SWEEP_SEC` in the relay env; sweep destination is read from the vault factory on-chain |
 
 ## 6. Credit vaults (closed-loop prepaid credit, on-chain)
 
@@ -149,9 +173,9 @@ Operational rules:
   above $2,000 without counsel.
 - **Top-up settlement is company USDC**: card revenue arrives at Stripe, the
   relayer wallet (PROVISIONER_PRIVATE_KEY) deposits matching USDC into the
-  customer's vault. Keep the relayer's USDC float ahead of expected top-ups
-  (same petty-cash sizing as §2); a shortfall alerts and retries - orders
-  wait in "crediting", nothing is lost.
+  customer's vault. The float self-replenishes from Stripe stablecoin
+  payouts (§1) and the float manager alerts on shortfall; a short float
+  retries every minute - orders wait in "crediting", nothing is lost.
 - **Refunds are dual-authorized**: the customer signs refundToTreasury with
   their passkey (support walks them through it), THEN finance refunds the
   card via Stripe. Never refund the card first. Crypto never goes to the
