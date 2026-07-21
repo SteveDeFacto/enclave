@@ -12,7 +12,7 @@ test("card: passkey signup -> Stripe checkout -> webhook -> provisioned on-chain
   // sign up with a passkey ON the checkout page (the sign-in gate)
   await page.goto("/checkout");
   await page.click("#coSignin");
-  await page.click("#authPasskeyNew");
+  await page.click("#authPasskey");
   await expect(page.locator("#coCard")).toBeVisible();
 
   // configure the order: an app ref + one hour

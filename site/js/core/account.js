@@ -129,8 +129,7 @@ export function openAuthModal(){
     host.innerHTML = '<div class="wp-card"><div class="wp-h">Sign in to Enclave</div>' +
       '<div class="wp-note">Your apps, orders, and receipts live on your account.</div>' +
       (pk ? '<button class="wp-item wp-go" id="authPasskey" type="button">Continue with passkey</button>' +
-            '<button class="wp-item" id="authPasskeyNew" type="button">First time here? Create a passkey</button>' +
-            '<div class="wp-hint">A passkey uses your device\'s screen lock. No password, no email.</div>' +
+            '<div class="wp-hint">Signs you in - or creates your account if you\'re new. Uses your device\'s screen lock; no password, no email.</div>' +
             '<div class="wp-or"><span>or</span></div>'
           : '<div class="wp-note">This browser does not support passkeys, so wallet sign-in it is.</div>') +
       '<button class="wp-item" id="authWallet" type="button"><span class="wp-dot"></span>Connect a wallet</button>' +
@@ -197,9 +196,28 @@ export function openAuthModal(){
       };
       timer = setTimeout(poll, (d.interval || 3) * 1000);
     };
+    // one passkey button, the /link chain: sign in, and when that fails
+    // (no credential / dismissed - WebAuthn hides which) roll into register.
+    // Safari grants ONE user activation per tap and the failed get() can eat
+    // it, so when the whole chain dies the button converts to a direct
+    // "Create a passkey" - the next tap runs register alone, fresh activation.
+    let passkeyDirect = false;
+    const passkeyFlow = async () => {
+      if (passkeyDirect) return registerPasskey();
+      try { return await signInWithPasskey(); }
+      catch(_) {
+        try { return await registerPasskey(); }
+        catch(e2){
+          if (e2 && /already has a passkey/i.test(e2.message || "")) throw e2;   // InvalidStateError: sign-in is what they need
+          passkeyDirect = true;
+          const btn = host.querySelector("#authPasskey");
+          if (btn) btn.textContent = "Create a passkey";
+          throw Object.assign(new EnclaveError("That didn't finish. Tap \"Create a passkey\" to make one on this device.", 0), { retryable: true });
+        }
+      }
+    };
     host.onclick = (e) => {
-      if (e.target.closest("#authPasskey")) return attempt(signInWithPasskey)();
-      if (e.target.closest("#authPasskeyNew")) return attempt(registerPasskey)();
+      if (e.target.closest("#authPasskey")) return attempt(passkeyFlow)();
       if (e.target.closest("#authPhone")) return void phoneView();
       if (e.target.closest("#authWallet")){
         // connectWallet's own chooser needs the #walletPick host - hand it

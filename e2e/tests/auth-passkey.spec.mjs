@@ -11,7 +11,7 @@ test("passkey: create account, restore across reload, sign out, sign back in", a
   await page.goto("/index.html");
   await page.click("#walletBtn");
   await expect(page.locator("#walletPick .wp-h")).toHaveText("Sign in to Enclave");
-  await page.click("#authPasskeyNew");                         // "First time here? Create a passkey"
+  await page.click("#authPasskey");                            // one button: sign-in chains into register for first-timers
   await expect(page.locator("#walletBtn")).toContainText("Signed in");
   const sess = await page.evaluate(() => JSON.parse(localStorage.getItem("enclave_account")));
   expect(sess.accountId).toMatch(/^acct_/);
