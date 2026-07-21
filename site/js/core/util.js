@@ -138,6 +138,7 @@ export function copyText(text, btn) {
    feature could call every other feature's render directly) ----
    enclave:wallet - wallet/session state changed (repaint anything user-specific)
    enclave:auth - sign-in/out edges: detail.authed, detail.spinner
+   enclave:account - relay account session edges (account.js): detail.authed, detail.method
    enclave:catalog - app-catalog load lifecycle: detail.type = loading|loaded|error
    enclave:toast - show a toast: detail.message */
 export function emit(name, detail){ document.dispatchEvent(new CustomEvent(name, { detail: detail || {} })); }

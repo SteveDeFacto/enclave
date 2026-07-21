@@ -12,7 +12,7 @@
        its class at build time (static _tpl = "…"), so production
        pages make zero template fetches and the header exists at
        first paint without the sessionStorage warm-up
-     • pages, openapi.json, assets/, privy/, vendor/ are copied through
+     • pages, openapi.json, assets/, vendor/ are copied through
 
    Dev flow is unchanged: site/ itself is valid, unbundled ES
    modules — serve it directly and templates load via fetch.
@@ -83,7 +83,7 @@ const result = await build({
   outdir: DIST,
   outbase: SITE,                              // js/boot.js keeps its path: HTML needs no rewrite
   chunkNames: "js/chunks/[name]-[hash]",
-  external: ["https://*", "/vendor/*"],       // same-origin vendor bundles (verifier, privy-core) are loaded at runtime, not inlined into the page graph
+  external: ["https://*", "/vendor/*"],       // same-origin vendor bundles (verifier, webauthn) are loaded at runtime, not inlined into the page graph
   plugins: [inlineTemplates],
   metafile: true,
 });
@@ -108,7 +108,7 @@ for (const n of fs.readdirSync(path.join(SITE, "components"))) {
 const WALLET_PAINT = `<script>(function(){try{
 var s=JSON.parse(localStorage.getItem("enclave_session")||"null");if(!s||!s.address)return;
 var dt=document.querySelector('.nav-links a[data-view="dashboard"]');if(dt)dt.hidden=false;
-var who=s.email?(s.email.length>24?s.email.slice(0,21)+"…":s.email):(s.address.slice(0,6)+"…"+s.address.slice(-4));
+var who=s.address.slice(0,6)+"…"+s.address.slice(-4);
 var b=document.getElementById("walletBtn");if(!b)return;
 b.classList.add("connected");b.textContent="";
 var d=document.createElement("span");d.className="wdot";b.appendChild(d);
@@ -184,7 +184,7 @@ const chunksOf = (outFile, seen = new Set()) => {
   return seen;
 };
 const bootOut = Object.keys(outs).find(f => outs[f].entryPoint && outs[f].entryPoint.endsWith("js/boot.js"));
-const PAGE_HTML = { overview: "index.html", apps: "apps.html", develop: "develop.html", dashboard: "dashboard.html", admin: "admin.html", terms: "terms.html" };   // deploy.html is a redirect stub now
+const PAGE_HTML = { overview: "index.html", apps: "apps.html", develop: "develop.html", dashboard: "dashboard.html", admin: "admin.html", terms: "terms.html", checkout: "checkout.html" };   // deploy.html is a redirect stub now
 const preloads = {};
 for (const [outFile, o] of Object.entries(outs)) {
   const page = o.entryPoint && /js[\\/]pages[\\/](\w+)\.js$/.exec(o.entryPoint)?.[1];
@@ -194,26 +194,21 @@ for (const [outFile, o] of Object.entries(outs)) {
   preloads[PAGE_HTML[page]] = [...files]
     .map(c => `<link rel="modulepreload" href="${path.relative(DIST, path.resolve(ROOT, c)).replace(/\\/g, "/")}" />`).join("\n");
 }
-for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "dashboard.html", "admin.html", "terms.html", "privacy.html", "buy.html", "404.html", "openapi.json"]) {
+for (const f of ["index.html", "deploy.html", "apps.html", "develop.html", "dashboard.html", "admin.html", "terms.html", "privacy.html", "checkout.html", "404.html", "openapi.json"]) {
   let s = fs.readFileSync(path.join(SITE, f), "utf8");
-  if (f.endsWith(".html") && f !== "buy.html") {
+  if (f.endsWith(".html")) {
     s = bake(s);
     s = s.replace(/(<span data-build>)[^<]*(<\/span>)/, "$1" + BUILD_STAMP + "$2");
     // components are prerendered, so first paint is already the final layout:
     // rendering must NOT wait for the script (that wait was visible on cold,
     // slow fetches — a header-less page until JS arrived)
     s = s.replace(' blocking="render"', "");
+    s = s.replace("<head>", "<head>\n" + SKEW_HEAL);   // must be first: it watches every later load
   }
   if (preloads[f]) s = s.replace('<script type="module" src="js/boot.js">', preloads[f] + '\n<script type="module" src="js/boot.js">');
-  // buy.html ships RAW - byte-identical to source. Its only import is the
-  // stable-named /privy/entry.js (no hashed chunks -> no skew to heal), and
-  // SKEW_HEAL's reload-on-"Failed to fetch" is fatal mid-checkout: an
-  // ad-blocked Stripe telemetry fetch rejects with exactly that message and
-  // the watcher would reload the popup 8s later, killing the session.
-  if (f.endsWith(".html") && f !== "buy.html") s = s.replace("<head>", "<head>\n" + SKEW_HEAL);   // must be first: it watches every later load
   fs.writeFileSync(path.join(DIST, f), s);
 }
-for (const d of ["assets", "privy", "vendor", ".well-known"])
+for (const d of ["assets", "vendor", ".well-known"])
   fs.cpSync(path.join(SITE, d), path.join(DIST, d), { recursive: true });
 // pretty URLs: the gateway's rewrite rules ride the pin itself
 fs.copyFileSync(path.join(SITE, "_redirects"), path.join(DIST, "_redirects"));
@@ -311,11 +306,12 @@ fs.writeFileSync(path.join(DIST, "apps", "index.html"), appsNested);
       hashes.add("'sha256-" + createHash("sha256").update(body, "utf8").digest("base64") + "'");
     }
   }
+  // No third-party script origins: card checkout is a full top-level redirect
+  // to Stripe's hosted page, so nothing of Stripe's (or its captcha vendors')
+  // ever executes on this origin. Deliberately down from the old onramp era
+  // (js.stripe.com, crypto-js.stripe.com, hcaptcha, cloudflare challenges).
   const sorted = [...hashes].sort();
-  const scriptSrc = ["'self'", "'wasm-unsafe-eval'",
-    "https://js.stripe.com", "https://crypto-js.stripe.com",
-    "https://*.hcaptcha.com", "https://challenges.cloudflare.com",
-    ...sorted].join(" ");
+  const scriptSrc = ["'self'", "'wasm-unsafe-eval'", ...sorted].join(" ");
   fs.writeFileSync(path.join(DIST, "csp-script-src.txt"),
     "# Generated by scripts/build-site.mjs. The hardened Content-Security-Policy\n" +
     "# script-src for the enclave.host + nan.host Caddy vhosts. The hashes cover\n" +

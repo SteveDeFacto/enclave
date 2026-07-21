@@ -18,7 +18,7 @@ import { runlog } from "../core/runlog.js";
 import { payForRuntime } from "../core/fund.js";
 import { navigate } from "../boot.js";
 import { $, $$, esc, short, wait, fmtNum, fmtDur, hlJson, hlCode, copyText, showToast, statusCls, on, tosAccepted, setTosAccepted } from "../core/util.js";
-import { APP_DOMAIN, DEPLOYMENTS_ADDRESS, BASE_CHAIN, PRIVY_RDNS } from "../core/config.js";
+import { APP_DOMAIN, DEPLOYMENTS_ADDRESS, BASE_CHAIN, ACCOUNTS_ENABLED } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
 import { minPctsOf, serverSpec, shareRates } from "../core/pricing.js";
 import { encCall, DEP_SEL, DEP_CREATED_TOPIC, APPROVAL, depGet, depRate6, depPrices6, depSchemaRev, depMaxGpuMilli, rate6Of, waitReceipt, catVersionFee } from "../core/chain.js";
@@ -26,7 +26,7 @@ import { encCall, DEP_SEL, DEP_CREATED_TOPIC, APPROVAL, depGet, depRate6, depPri
 // create()'s shape on the live contract (rev 1 carried a removed sshPubKey
 // string): sniffed once at init; the samples and the real encode both use it.
 let depRev = 2;
-import { connectWallet, refreshWallet, ensureBaseChain, sendTx, usdcBalanceOf, ethBalanceOf, openBuyModal } from "../core/wallet.js";
+import { connectWallet, refreshWallet, ensureBaseChain, sendTx, usdcBalanceOf, ethBalanceOf } from "../core/wallet.js";
 import { STORE, loadCatalog, REF_CACHE, PORTS_CACHE, SPECS_CACHE, CONFIG_CACHE, looksFriendly, resolveAppRef, catalogRef, parseCatalogRef, publisherOfRef } from "../core/catalog.js";
 
 /* component handles (assigned in initDeploy) */
@@ -800,39 +800,40 @@ function startAvailPoll(){
 /* ============================================================
    Wallet-dependent console chrome
    ============================================================ */
-/* Privy (email) users hold only USDC bought by card - the ETH pay option is
-   noise they can't use, and they can't see how much they can spend. Hide ETH
-   and show a live USDC balance under the Pay-with control. */
-function updatePayAssetUI(){
-  const seg = $("#cfgAsset"); if (!seg) return;
-  const privy = Enclave.walletRdns === PRIVY_RDNS;
-  const ethBtn = seg.querySelector('button[data-asset="ETH"]');
-  if (ethBtn) ethBtn.hidden = privy;
-  if (privy && dep.asset === "ETH"){
-    dep.asset = "USDC";
-    $$("#cfgAsset button").forEach(x => segSet(x, x.dataset.asset === "USDC"));
-    renderDeploy();
-  }
-  updateUsdcBalance();
-}
+/* Live balance for the selected pay asset under the Pay-with control. When
+   the order checkout is live (ACCOUNTS_ENABLED), a "Buy runtime" link offers
+   the card path: it parks the console's configured spec for the checkout
+   page and navigates there. The direct wallet-pay flow around it is
+   untouched - this is an alternative, not a replacement. */
 let _balSeq = 0;
 async function updateUsdcBalance(){
   const el = $("#payBal"); if (!el) return;
   if (!Enclave.address || !Enclave.provider){ el.hidden = true; return; }
   const seq = ++_balSeq;
   try {
-    // the card follows the selected pay asset: USDC by default, ETH when an
-    // extension user flips the toggle
-    const wantEth = (dep.asset === "ETH" && Enclave.walletRdns !== PRIVY_RDNS);
+    // the card follows the selected pay asset: USDC by default, ETH when the
+    // user flips the toggle
+    const wantEth = (dep.asset === "ETH");
     const label = wantEth ? "ETH balance" : "USDC balance";
     const val = wantEth ? (await ethBalanceOf(Enclave.address)).toFixed(4) + " ETH"
                         : (await usdcBalanceOf(Enclave.address)).toFixed(2) + " USDC";
     if (seq !== _balSeq) return;
-    const privy = Enclave.walletRdns === PRIVY_RDNS;
     el.innerHTML = '<div><span class="pb-k">' + label + '</span><span class="pb-v">' + esc(val) + '</span></div>' +
-      (privy ? '<button class="pb-buy" id="payBuyMore" type="button">Buy more →</button>' : "");
+      (ACCOUNTS_ENABLED ? '<button class="pb-buy" id="payBuyRuntime" type="button">Buy runtime →</button>' : "");
     el.hidden = false;
-    const bm = $("#payBuyMore"); if (bm) bm.onclick = () => openBuyModal();
+    const br = $("#payBuyRuntime");
+    if (br) br.onclick = () => {
+      try {
+        const raw = ($("#cfgImage") && $("#cfgImage").value || "").trim();
+        sessionStorage.setItem("enclave_checkout_spec", JSON.stringify({
+          appRef: raw ? resolveAppRef(raw).reference : "",
+          gpuShare: (dep.gpuEnclave ? Math.round(dep.gpuPct) : 0) / 100,
+          cpuShare: Math.max(1, Math.round(dep.cpuPct)) / 100,
+          appPort: 8080, isPublic: dep.public !== false,
+        }));
+      } catch(e){}
+      navigate("checkout", { push: true });
+    };
   } catch(e){ if (seq === _balSeq) el.hidden = true; }
 }
 
@@ -1029,7 +1030,7 @@ function initDeploy(){
 // own). Subscribed once at module load; every callee null-guards its elements,
 // so it's inert while another page's <main> is mounted.
 on("enclave:wallet", () => {
-  updatePayAssetUI();
+  updateUsdcBalance();
 });
 
 /* called by apps.js the first time the #deploy view opens on each <main>

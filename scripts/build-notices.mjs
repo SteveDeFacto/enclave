@@ -16,9 +16,8 @@
      • root production deps    -> supervisor/CLI (enclave images,
        installer builds)             [package-lock, dev filtered]
      • scripts/.vendor-build/  -> site/vendor bundles
-     • scripts/.privy-build/   -> site/privy checkout bundle
-   The .*-build trees are gitignored npm workdirs; run their
-   builders first if missing (build-vendor.mjs / build-privy.mjs).
+   The .vendor-build tree is a gitignored npm workdir; run its
+   builder first if missing (build-vendor.mjs).
 
    Re-run after ANY dependency or pin change:
      node scripts/build-notices.mjs
@@ -96,7 +95,6 @@ for (const [k, v] of Object.entries(lock.packages || {})) {
 walkTree(path.join(ROOT, "node_modules"), (rel) => prodPaths.has(rel));
 walkTree(path.join(ROOT, "relay", "node_modules"));
 walkTree(path.join(ROOT, "scripts", ".vendor-build", "node_modules"));
-walkTree(path.join(ROOT, "scripts", ".privy-build", "node_modules"));
 
 // group by license id
 const byLicense = new Map();
@@ -139,7 +137,7 @@ let md = `# Third-party notices
 
 Enclave (see [LICENSE](LICENSE)) distributes artifacts that embed the
 third-party packages below — in the site's JavaScript bundles
-(\`site/vendor/\`, \`site/privy/\`, the built page chunks), the enclave
+(\`site/vendor/\`, the built page chunks), the enclave
 container images, and the CLI's installed dependencies. Each package remains
 under its own license; this file carries the copyright and permission notices
 that minified bundles cannot. Regenerate with \`node scripts/build-notices.mjs\`

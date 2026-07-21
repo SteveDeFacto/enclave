@@ -1,1 +1,0 @@
-var f=({origin:r,path:o,query:h={},hash:i={}})=>{let c=r.endsWith("/")?r:`${r}/`,a=new URL(o,c);for(let[e,t]of Object.entries(h))t!==void 0&&a.searchParams.set(e,t);let n=Object.entries(i);if(n.length>0){let e=new URLSearchParams;for(let[t,s]of n)s!==void 0&&e.append(t,s);a.hash=e.toString()}return a.href};export{f as a};

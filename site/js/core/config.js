@@ -15,11 +15,12 @@ export const APP_DOMAIN = "app.enclave.host";
 export const BASE_CHAIN = 8453, BASE_CHAIN_HEX = "0x2105";
 export const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
-/* ---- Privy embedded wallet: email-login fallback when no extension wallet
-   is available. An empty PRIVY_APP_ID disables the option entirely. ---- */
-export const PRIVY_APP_ID = "cmr8u8m5y00cf0djiqotqm7ag";
-export const PRIVY_CLIENT_ID = "client-WY6b9c219SjvhdjLGYDriJ9xjSrbV7c4joihKRQPRm3QN";   // web app client, registered for enclave.host
-export const PRIVY_RDNS = "io.privy.embedded";
+/* ---- accounts + order checkout (passkeys/SIWE against the relay, card via
+   hosted Stripe Checkout, USDC via the PaymentRouter). Ships dark: flip the
+   default to true at activation; the localStorage override exists for tests
+   and local dev (e2e seeds it via addInitScript). ---- */
+let _acct = null; try { _acct = localStorage.getItem("enclave_accounts"); } catch(e){}
+export const ACCOUNTS_ENABLED = _acct != null ? _acct === "1" : false;
 
 /* ---- on-chain contracts (Base) ----
    The baked addresses are FALLBACKS for first paint: when
@@ -38,6 +39,7 @@ export let DEPLOYMENTS_ADDRESS = "0x0A7dE5D205c10B812AbaF0b89f3A243466bCEe01"; /
 export let REGISTRY_ADDRESS    = "";                            // EnclaveRegistry (fleet membership); resolved from the address book only
 export let FEATURED_ADDRESS    = "";                            // EnclaveFeatured (featured-slot view bids); resolved from the address book only - "" = editorial featured pick, no bidding UI
 export let REVIEWS_ADDRESS     = "";                            // EnclaveReviews (1-5 star ratings + comments); resolved from the address book only - "" = the store shows no ratings at all
+export let PAYMENT_ROUTER_ADDRESS = "";                         // PaymentRouter (order checkout, USDC -> treasury); resolved from the address book only - "" = card-only checkout
 export const APP_CATALOG_CHAIN   = 8453;                        // Base mainnet (kept in sync by the deploy script; 84532 = Base Sepolia)
 
 /* apply an address-book map ({appCatalog, deployments}) onto the live
@@ -60,6 +62,9 @@ export function __applyAddresses(map){
   if (map && ok(map.reviews) && map.reviews.toLowerCase() !== REVIEWS_ADDRESS.toLowerCase()){
     REVIEWS_ADDRESS = map.reviews; changed.push("REVIEWS_ADDRESS");
   }
+  if (map && ok(map.paymentRouter) && map.paymentRouter.toLowerCase() !== PAYMENT_ROUTER_ADDRESS.toLowerCase()){
+    PAYMENT_ROUTER_ADDRESS = map.paymentRouter; changed.push("PAYMENT_ROUTER_ADDRESS");
+  }
   return changed;
 }
 if (ADDRESS_BOOK_ADDRESS){
@@ -69,8 +74,11 @@ export const APP_CATALOG_RPC     = "https://base-rpc.publicnode.com";  // prefer
 /* Failover pool: reads are stateless, and every public Base RPC rate-limits by
    IP - the official mainnet.base.org hard enough that one catalog load can
    trip "over rate limit". Calls start on the last endpoint that worked and
-   rotate on failure. */
-export const APP_CATALOG_RPCS    = [APP_CATALOG_RPC, "https://base.drpc.org", "https://1rpc.io/base", "https://mainnet.base.org"];
+   rotate on failure. A localStorage "enclave_rpc" override (absent in
+   production; the e2e suite seeds it) points every read at one endpoint -
+   same guarded-read style as the addrbook cache above. */
+let _rpc = null; try { _rpc = localStorage.getItem("enclave_rpc"); } catch(e){}
+export const APP_CATALOG_RPCS    = _rpc ? [_rpc] : [APP_CATALOG_RPC, "https://base.drpc.org", "https://1rpc.io/base", "https://mainnet.base.org"];
 
 /* ---- IPFS ---- */
 export const IPFS_UPLOAD_URL = "https://ipfs.enclave.host/add-wasm"; // validating upload gateway (server validates + pins); empty => paste-a-CID only
