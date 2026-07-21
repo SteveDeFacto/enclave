@@ -4,7 +4,7 @@
 // requester context + warning, approves - and the desktop's poll claims a
 // session for the SAME account with amr "phone".
 import { test, expect } from "@playwright/test";
-import { seedStorage, addVirtualAuthenticator } from "../fixtures/session.mjs";
+import { seedStorage, addVirtualAuthenticator, stack } from "../fixtures/session.mjs";
 
 test("device flow: passkey-less desktop signs in via phone approval", async ({ page, context, browser }, testInfo) => {
   await seedStorage(context);                                  // desktop: no authenticator, no wallet
@@ -42,5 +42,14 @@ test("device flow: passkey-less desktop signs in via phone approval", async ({ p
   // the code is burned: reopening the link page reports it gone
   await phone.goto("/link?code=" + code);
   await expect(phone.locator("#lkBody")).toContainText("expired or unknown");
+
+  // returning user, fresh request: the resident passkey auto-signs-in on
+  // load - the approve screen appears with ZERO auth taps (phone signs out
+  // first so the auto-ceremony, not the stored session, is what's proven)
+  const second = await (await fetch(stack.relay + "/v1/account/device/start", {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
+  await phone.evaluate(() => localStorage.removeItem("enclave_account"));
+  await phone.goto("/link?code=" + second.code);
+  await expect(phone.locator("#lkApprove")).toBeVisible();
   await phoneCtx.close();
 });
