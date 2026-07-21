@@ -158,7 +158,7 @@ reversal rather than a transfer service. Do not relax it for convenience.
 | Deploy / rotate the router | `scripts/deploy-payment-router.mjs` (explicit `TREASURY_ADDRESS`), repoint book key `paymentRouter` + relay env |
 | Light up the site checkout | flip `ACCOUNTS_ENABLED` default to `true` in `site/js/core/config.js` (one line; revert = rollback) |
 | Review queue | `GET /v1/billing/review` / `POST /v1/billing/review/:id/resolve` with `x-admin-token` |
-| Provisioner top-up (fallback) | send USDC + a little ETH from the treasury to the provisioner address; the 60s sweep resumes held orders/top-ups automatically |
+| Provisioner top-up (fallback) | send USDC + a little ETH from the treasury to the provisioner address; the 60s sweep resumes held orders and re-plans every in-flight top-up (verify-before-retry, see §6) |
 | USDC settlement (Bridge) | Bridge business onboarding (bridge.xyz, KYB) -> create a USD virtual account with destination = the float wallet, USDC on **Base** -> Stripe Settings -> Business -> Bank accounts and currencies: replace the payout bank account with the virtual account's routing/account number, schedule Automatic. Verify with one small payout end-to-end before relying on it |
 | Float manager tuning | `FLOAT_TARGET_6` / `FLOAT_CEILING_6` / `FLOAT_MIN_6` / `FLOAT_MIN_ETH_WEI` / `FLOAT_SWEEP_SEC` in the relay env; sweep destination is read from the vault factory on-chain |
 
@@ -192,7 +192,23 @@ Operational rules:
   add a second passkey while you still have the first. Stranded balances
   stay at the vault address forever; account for them as unredeemed
   prepaid credit (escheatment rules may eventually apply - counsel item).
+  The relay refuses to DELETE an account's vault passkey while the vault
+  holds a balance (`vault_key_in_use`) - do not work around that guard.
 - **Factory rotation**: deploy a new EnclaveCreditVaultFactory (admin
   console) and repoint the book key `vaultFactory` + relay env
   VAULT_FACTORY_ADDRESS. Existing vaults keep working forever (they carry
   their own book reference for the ledger); only NEW vault addresses change.
+
+Top-up review reasons and how to resolve them (`POST
+/v1/billing/review/:id/resolve`). For a top-up item, **approve means "safe
+to (re-)credit"** - the relay re-runs settlement, verifying any recorded
+deposit tx against the chain first; **reject means "do not credit"** (the
+card refund, if owed, goes through §3). Resolving re-arms the
+one-review-per-reason guard, so a repeat failure opens a fresh item.
+
+| Reason | What happened | Before approving |
+|---|---|---|
+| `topup_uncertain` | the relay died inside the deposit's broadcast window (no tx hash recorded), or a recorded tx vanished from the chain | check the relayer wallet's recent USDC transfers on Basescan; approve ONLY if no deposit for this order landed |
+| `topup_over_cap` | crediting would push the vault past the $2,000 cap (concurrent top-ups) | usually nothing - it auto-retries as credit is spent; reject + Stripe refund if the customer wants out |
+| `topup_no_vault_key` | the account lost its P-256 passkey between order and settlement | auto-retries if a passkey is added; otherwise reject + Stripe refund |
+| `usdc_on_topup` | customer sent USDC against a card-only top-up order | funds are at the treasury; approve credits the QUOTED amount, mismatches go through §3 |

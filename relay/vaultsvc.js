@@ -3,9 +3,11 @@
 // The relay NEVER holds authority over vault funds - every operation carries a
 // WebAuthn P-256 signature from the customer's passkey, and the CONTRACT
 // recomputes and verifies the signed digest on-chain. This module only:
-//   - computes op digests for the site to display-and-sign (prepare); the
-//     site independently recomputes the digest before signing, so a lying
-//     relay cannot get a different op signed,
+//   - computes op digests for the site to display-and-sign (prepare). The
+//     site does NOT yet recompute the digest client-side (tracked hardening,
+//     see site/js/core/vault.js): the trust bound is the CONTRACT's outflow
+//     allowlist - a lying relay could at worst get credit spent on the
+//     platform's own contracts or moved to the company treasury,
 //   - wraps signed assertions into transactions and submits them, paying gas
 //     (a relayer, not a custodian - the sender is irrelevant to the contract),
 //   - deposits company USDC into vaults when a card top-up settles, and
@@ -221,8 +223,13 @@ export async function ensureVault(key) {
   });
 }
 
-// deposit company USDC into a customer's vault (card top-up settlement)
-export async function depositToVault(key, amount6) {
+// deposit company USDC into a customer's vault (card top-up settlement).
+// onBroadcast(hash, vault) fires the moment the tx leaves the wallet, BEFORE
+// the receipt wait - the caller persists the hash so a receipt timeout can be
+// verified on-chain later instead of blind-retried into a double credit (the
+// provisioner's write-ahead discipline). A revert throws with e.reverted=true:
+// nothing moved and the nonce is spent, so a fresh retry is safe.
+export async function depositToVault(key, amount6, onBroadcast) {
   const address = await ensureVault(key);
   return serial(async () => {
     const pub = await rpcPool();
@@ -230,8 +237,9 @@ export async function depositToVault(key, amount6) {
     if (have < BigInt(amount6)) throw new Error(`relayer wallet is short of USDC (${have} < ${amount6})`);
     const hash = await wallet.writeContract({ address: cfg.usdc, abi: ERC20_ABI,
       functionName: "transfer", args: [address, BigInt(amount6)] });
+    onBroadcast?.(hash, address);
     const rcpt = await pub.waitForTransactionReceipt({ hash, timeout: 120_000 });
-    if (rcpt.status !== "success") throw new Error(`vault deposit reverted (${hash})`);
+    if (rcpt.status !== "success") { const e = new Error(`vault deposit reverted (${hash})`); e.reverted = true; throw e; }
     return { vault: address, txHash: hash };
   });
 }

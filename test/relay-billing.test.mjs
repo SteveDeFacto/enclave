@@ -16,7 +16,7 @@ import os from "node:os";
 import { createHmac } from "node:crypto";
 import { privateKeyToAccount } from "viem/accounts";
 import { toFunctionSelector } from "viem";
-import { evaluatePayment, verifyStripeSignature } from "../relay/billing.js";
+import { evaluatePayment, verifyStripeSignature, topupPlan } from "../relay/billing.js";
 
 const RELAY_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "relay");
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -44,6 +44,20 @@ test("evaluatePayment: dust under provisions, real under reviews, overpay provis
   // auto-heal shape: an underpaid total that a second payment completes
   assert.equal(evaluatePayment(amount, 4_000_000n).action, "review");
   assert.equal(evaluatePayment(amount, 4_000_000n + 6_000_000n).action, "provision");
+});
+
+test("topupPlan: hash write-ahead decides retry vs verify vs review, never a blind resend", () => {
+  // nothing attempted, or a mined-and-reverted attempt: fresh deposit is safe
+  assert.equal(topupPlan(null, false), "settle");
+  assert.equal(topupPlan({ step: "failed", error: "x" }, false), "settle");
+  // hash recorded: the chain is the referee - verify, whatever else happened
+  assert.equal(topupPlan({ step: "depositing", txHash: "0xabc" }, false), "verify");
+  assert.equal(topupPlan({ step: "depositing", txHash: "0xabc" }, true), "verify");
+  // crash inside the broadcast window (no hash): human review, exactly once
+  assert.equal(topupPlan({ step: "depositing", txHash: null }, false), "review");
+  assert.equal(topupPlan({ step: "depositing", txHash: null }, true), "wait");
+  // settled records never re-enter the pipeline
+  assert.equal(topupPlan({ step: "done", txHash: "0xabc" }, false), "wait");
 });
 
 test("verifyStripeSignature: HMAC, timestamp window, constant-time", () => {

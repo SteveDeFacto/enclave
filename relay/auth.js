@@ -35,6 +35,7 @@
 import fs from "node:fs";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, timingSafeEqual } from "node:crypto";
 import { JsonStore, dataDir, dataFile, makeRateLimiter, rid, rpcPool } from "./store.js";
+import { vaultEnabled, vaultInfo } from "./vaultsvc.js";
 
 const SESSION_TTL = parseInt(process.env.SESSION_TTL || "604800", 10);
 const RP_ID = (process.env.PASSKEY_RP_ID || "enclave.host").trim();
@@ -493,6 +494,18 @@ export async function handleAccount(req, res, u, ctx) {
     if (idx < 0) return err(ctx, res, req, 404, "not_found", "No such passkey on this account.");
     if (a.passkeys.length === 1 && !a.wallets.length)
       return err(ctx, res, req, 409, "last_method", "This is the account's only sign-in method; link a wallet or add another passkey first.");
+    // the FIRST P-256 passkey is the credit-vault key (vaultKeyOf): the vault
+    // address derives from it and every spend needs its signature, so deleting
+    // it while the vault holds a balance would strand the money forever (no
+    // key = no signature = no refund). Fail closed if the balance is unreadable.
+    const vk = vaultKeyOf(sess.accountId);
+    if (vk && vk.credId === del[1] && vaultEnabled()) {
+      let balance6;
+      try { balance6 = BigInt((await vaultInfo(vk)).balance6); }
+      catch { return err(ctx, res, req, 503, "vault_unreachable", "Cannot verify this passkey's credit balance right now; try again shortly."); }
+      if (balance6 > 0n) return err(ctx, res, req, 409, "vault_key_in_use",
+        `This passkey controls $${(Number(balance6) / 1e6).toFixed(2)} of credit; spend or refund it before removing the passkey.`);
+    }
     delete accounts.data.byCredential[del[1]];
     a.passkeys.splice(idx, 1);
     accounts.saveSoon();

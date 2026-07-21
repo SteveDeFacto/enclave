@@ -20,7 +20,9 @@
 //   awaiting_payment       created; Stripe session or USDC instructions live
 //   pending_confirmations  display-only: unconfirmed router log seen
 //   confirmed_provisioning payment settled + screened; provisioner working
-//   complete               deployment created + funded on-chain
+//   crediting              (top-up orders) card settled; the company-USDC vault
+//                          deposit is in flight (sweep-recovered, see settleTopup)
+//   complete               deployment created + funded on-chain (top-ups: vault credited)
 //   under_review           needs a human: underpaid beyond dust, OFAC hit,
 //                          stale screening, paid after expiry
 //   expired                order TTL passed with no payment (terminal)
@@ -80,6 +82,9 @@ let reviews = null;       // JsonStore { items }
 let routerAddress = (process.env.PAYMENT_ROUTER_ADDRESS || "").trim();
 let ctxRef = null;
 const rlOrders = makeRateLimiter({ capacity: 10, refillPerSec: 10 / 3600 });
+// vault ops cost relayer gas (control ops move no customer funds at all) and
+// share the one serial company-wallet queue - cap the burn per account
+const rlVaultExec = makeRateLimiter({ capacity: 30, refillPerSec: 30 / 3600 });
 
 // --- init -----------------------------------------------------------------------
 export async function initBilling(ctx) {
@@ -115,7 +120,8 @@ export async function initBilling(ctx) {
   recoverProvisioning();
 
   await initVault({ usdc: USDC, addressBook: BOOK, chainId: CHAIN_ID, alert });
-  setInterval(retryCrediting, ORDER_SWEEP_SEC * 1000).unref?.();
+  sweepCrediting();   // boot recovery: crash-interrupted top-ups re-plan immediately
+  setInterval(sweepCrediting, ORDER_SWEEP_SEC * 1000).unref?.();
 
   setInterval(expirySweep, ORDER_SWEEP_SEC * 1000).unref?.();
   // prune settled stripe events after 30 days (idempotency only needs recency)
@@ -232,6 +238,16 @@ async function handleConfirmedPayment({ orderRef, payer, amount, txHash, logInde
     return;
   }
 
+  if (order.kind === "topup") {
+    // top-ups are card-only: the vault deposit is company USDC sized by the
+    // CARD charge, so customer USDC arriving here has no automatic destination.
+    // The money is at the treasury; a human routes it (credit vs runbook refund).
+    setOrderState(order, "under_review", "indexer", "usdc_on_topup");
+    if (!order.flags.includes("usdc_on_topup"))
+      openReview(order, "usdc_on_topup", `USDC payment ${txHash} (${amount}) arrived on card-only top-up ${order.id}`);
+    return;
+  }
+
   const verdict = evaluatePayment(order.quote.amount6, order.usdc.total6);
   for (const f of verdict.flags) if (!order.flags.includes(f)) order.flags.push(f);
   // reasons only a human may clear: a clean later payment must NOT auto-
@@ -258,37 +274,112 @@ async function handlePendingPayment({ orderRef }) {
 }
 
 // ---- top-up settlement: card money became revenue; company USDC becomes the
-// customer's closed-loop vault credit. Write-ahead step guards double-deposits:
-// a crash AFTER the deposit tx was sent but BEFORE its hash was recorded goes
-// to human review instead of a blind (double-crediting) retry.
+// customer's closed-loop vault credit. Recovery mirrors the provisioner's
+// write-ahead discipline: the deposit tx HASH is persisted the moment it is
+// broadcast, so a receipt timeout or crash is re-VERIFIED on-chain by the
+// sweep - never blind-retried into a double credit. A "depositing" record
+// with no hash means the process died inside the broadcast window; only a
+// human can say whether money moved, so that goes to review.
+
+// Pure recovery decision for a crediting top-up (cf. provisioner planRecovery):
+// vault = the persisted write-ahead record; alreadyReviewed = a topup_uncertain
+// review is open for it. -> "settle" (fresh deposit is safe) | "verify" (hash
+// known: ask the chain) | "review" (uncertain: human decides) | "wait".
+export function topupPlan(vault, alreadyReviewed) {
+  if (!vault || vault.step === "failed") return "settle";
+  if (vault.step === "depositing") {
+    if (vault.txHash) return "verify";
+    return alreadyReviewed ? "wait" : "review";
+  }
+  return "wait";   // done (state transition imminent) or unknown
+}
+
+// a recorded deposit tx -> "done" | "retry" (reverted: nothing moved) | "wait"
+async function verifyDeposit(order) {
+  const v = order.vault;
+  const pub = await rpcPool();
+  let rcpt = null;
+  try { rcpt = await pub.getTransactionReceipt({ hash: v.txHash }); } catch { /* not mined (or RPC blip) */ }
+  if (rcpt && rcpt.status === "success") {
+    order.vault = { ...v, step: "done" };
+    setOrderState(order, "complete", "vault_deposit_verified", v.txHash);
+    return "done";
+  }
+  if (rcpt) return "retry";
+  try { await pub.getTransaction({ hash: v.txHash }); return "wait"; }   // still in the mempool
+  catch { /* the chain has never seen it */ }
+  if (Date.parse(v.at || 0) < Date.now() - 15 * 60_000 && !order.flags.includes("topup_uncertain"))
+    openReview(order, "topup_uncertain",
+      `deposit tx ${v.txHash} was broadcast but the chain never saw it (>15m); verify before approving a re-credit`);
+  return "wait";
+}
+
+const _settling = new Set();   // in-process only: dies with a crash, which is the point
 async function settleTopup(orderId) {
   const order = orders.data.orders[orderId];
-  if (!order || order.state !== "crediting") return;
-  const key = vaultKeyOf(order.accountId);
-  if (!key) { openReview(order, "topup_no_vault_key", { accountId: order.accountId }); return; }
-  if (order.vault?.step === "depositing" && !order.vault.txHash) {
-    openReview(order, "topup_uncertain", { note: "deposit attempt interrupted; verify on-chain before re-crediting" });
-    return;
-  }
-  order.vault = { step: "depositing", address: null, txHash: null };
-  orders.flush();
+  if (!order || order.state !== "crediting" || _settling.has(orderId)) return;
+  _settling.add(orderId);
   try {
-    const { vault, txHash } = await depositToVault(key, order.quote.amount6);
-    order.vault = { step: "done", address: vault, txHash };
-    setOrderState(order, "complete", "vault_deposit", txHash);
-  } catch (e) {
-    order.vault = { step: "failed", error: String(e.message || e).slice(0, 300) };
-    orders.saveSoon();
-    alert("topup_deposit_failed", { orderId, error: order.vault.error });   // retryCrediting keeps trying
-  }
+    const plan = topupPlan(order.vault, order.flags.includes("topup_uncertain"));
+    if (plan === "wait") return;
+    if (plan === "review") {
+      openReview(order, "topup_uncertain",
+        "deposit attempt interrupted before the tx hash was recorded; verify the relayer's recent transfers on-chain before approving a re-credit");
+      return;
+    }
+    if (plan === "verify") {
+      if (await verifyDeposit(order) !== "retry") return;
+      order.vault = null; orders.saveSoon();   // reverted: safe to go fresh
+    }
+    const key = vaultKeyOf(order.accountId);
+    if (!key) {
+      if (!order.flags.includes("topup_no_vault_key"))
+        openReview(order, "topup_no_vault_key", `account ${order.accountId} has no P-256 passkey to derive a vault from (auto-retries if one is added)`);
+      return;
+    }
+    // re-check the closed-loop cap at SETTLEMENT time: concurrent orders can
+    // each pass the creation-time check; the cap is a legal boundary, so the
+    // deposit holds (and auto-retries as credit is spent) rather than crossing it
+    let balance6;
+    try { balance6 = BigInt((await vaultInfo(key)).balance6); }
+    catch (e) { alert("topup_deposit_failed", { orderId, error: "balance read: " + String(e.message || e).slice(0, 200) }); return; }
+    if (balance6 + BigInt(order.quote.amount6) > VAULT_CAP_6) {
+      if (!order.flags.includes("topup_over_cap"))
+        openReview(order, "topup_over_cap",
+          `crediting ${order.quote.amount6} onto ${balance6} would cross the $${Number(VAULT_CAP_6) / 1e6} closed-loop cap; holding (auto-retries as credit is spent)`);
+      return;
+    }
+    order.vault = { step: "depositing", address: null, txHash: null, at: new Date().toISOString() };
+    orders.flush();
+    try {
+      const { vault, txHash } = await depositToVault(key, order.quote.amount6, (hash, address) => {
+        order.vault.txHash = hash; order.vault.address = address;
+        orders.flush();   // the hash is durable BEFORE the receipt wait
+      });
+      order.vault = { ...order.vault, step: "done", address: vault, txHash };
+      setOrderState(order, "complete", "vault_deposit", txHash);
+    } catch (e) {
+      const msg = String(e.message || e).slice(0, 300);
+      if (order.vault.txHash && !e.reverted) {
+        // broadcast, outcome unknown (receipt timeout / RPC error): keep the
+        // record as-is - the sweep verifies the hash, NEVER resends over it
+        orders.saveSoon();
+        alert("topup_deposit_unconfirmed", { orderId, txHash: order.vault.txHash, error: msg });
+      } else {
+        // reverted, or nothing left the wallet: a fresh retry is safe
+        order.vault = { step: "failed", error: msg };
+        orders.saveSoon();
+        alert("topup_deposit_failed", { orderId, error: msg });
+      }
+    }
+  } finally { _settling.delete(orderId); }
 }
-function retryCrediting() {
+// every crediting top-up, every sweep: topupPlan inside settleTopup decides
+// whether that means a fresh deposit, an on-chain verify, or a review
+function sweepCrediting() {
   if (!vaultEnabled()) return;
   for (const o of Object.values(orders.data.orders))
-    if (o.kind === "topup" && o.state === "crediting" && o.vault?.step === "failed") {
-      o.vault = null; orders.saveSoon();
-      settleTopup(o.id);
-    }
+    if (o.kind === "topup" && o.state === "crediting") settleTopup(o.id);
 }
 
 function expirySweep() {
@@ -492,7 +583,22 @@ export async function handleBilling(req, res, u, ctx) {
     item.resolution = { action, note: String(b.note || "").slice(0, 500) };
     reviews.saveSoon();
     const order = item.orderId && orders.data.orders[item.orderId];
-    if (order && order.state === "under_review") {
+    if (order && order.kind === "topup") {
+      // top-up reviews settle through the VAULT path, never the provisioner
+      // (there is no spec to provision). approve = "safe to (re-)credit": a
+      // hash-less depositing record is cleared only here, because the reviewer
+      // has confirmed on-chain that no deposit landed; a recorded hash is
+      // re-verified against the chain before any fresh deposit either way.
+      order.flags = order.flags.filter((f) => f !== item.reason);   // re-arm the one-review-per-reason guard
+      if (action === "approve") {
+        if (order.vault && order.vault.step !== "done" && !order.vault.txHash) order.vault = null;
+        orders.saveSoon();
+        if (order.state === "under_review") setOrderState(order, "crediting", "reviewer", item.reason);
+        settleTopup(order.id);
+      } else if (["under_review", "crediting"].includes(order.state)) {
+        setOrderState(order, "rejected", "reviewer", item.reason);
+      }
+    } else if (order && order.state === "under_review") {
       if (action === "approve") { setOrderState(order, "confirmed_provisioning", "reviewer", item.reason); enqueueProvision(order.id); }
       else setOrderState(order, "rejected", "reviewer", item.reason);
     }
@@ -583,6 +689,8 @@ export async function handleBilling(req, res, u, ctx) {
   if (usdc && req.method === "GET") {
     const order = orders.data.orders[usdc[1]];
     if (!order || order.accountId !== sess.accountId) return err(ctx, res, req, 404, "not_found", "No such order.");
+    if (order.kind === "topup") return err(ctx, res, req, 409, "card_only",
+      "Top-ups are card-only; USDC sent against one has no automated crediting path. Pay at the order's Stripe link.");
     if (!routerAddress) return err(ctx, res, req, 503, "usdc_disabled", "USDC checkout is not live yet (no PaymentRouter deployed).");
     return ctx.json(res, 200, {
       chainId: CHAIN_ID, usdc: USDC, router: routerAddress,
@@ -720,6 +828,7 @@ export async function handleBilling(req, res, u, ctx) {
 
   if (p === "/v1/billing/vault/exec" && req.method === "POST") {
     if (!vaultEnabled()) return err(ctx, res, req, 503, "vault_disabled", "Credit vaults are not configured on this relay.");
+    if (!rlVaultExec(sess.accountId)) return err(ctx, res, req, 429, "rate_limited", "Too many vault operations; retry later.");
     const key = vaultKeyOf(sess.accountId);
     if (!key) return err(ctx, res, req, 409, "no_vault_key", "This account has no P-256 passkey.");
     let b; try { b = JSON.parse((await ctx.readBody(req, 262144)).toString() || "{}"); } catch { return err(ctx, res, req, 400, "bad_json", "Body must be JSON."); }
