@@ -1,8 +1,9 @@
 // The credit era, end to end: a passkey user adds credit by card (Stripe stub
 // + signed webhook), the relay deposits into their on-chain vault (created on
 // first use), and ONE passkey tap signs a vault op that creates + funds a
-// deployment the vault owns. The dashboard shows the balance and the row in
-// the SAME <c-deployments> panel wallet users get; its Top up control funds
+// deployment the vault owns. The header popover shows the credit balance (the
+// same slot wallet users' USDC balance fills) and the dashboard shows the row
+// in the SAME <c-deployments> panel wallet users get; its Top up control funds
 // more runtime from credit (passkey-signed). The virtual authenticator answers
 // every WebAuthn ceremony; the P-256 verifier at 0x100 checks them on anvil
 // exactly as Base's native precompile does in prod.
@@ -45,7 +46,11 @@ test("credit: card top-up lands on-chain; one passkey tap deploys from it; dashb
   });
   // the run strip lands on the dashboard and narrates the passkey deploy
   await expect(page.locator("c-deployments .enc-live")).toContainText("created + funded", { timeout: 20_000 });
-  await expect(page.locator("#acctBalV")).toContainText("$20.00");
+  // the credit balance lives in the header popover (fetched fresh on every
+  // open): open it, read it, Escape closes it again
+  await page.locator("#walletBtn").dispatchEvent("click");
+  await expect(page.locator("#wpBalCredit")).toContainText("$20.00");
+  await page.keyboard.press("Escape");
   const row = page.locator("c-deployments .enc-row", { hasText: "bafyvaultapp" });
   // relay ledger cache (10s TTL) + the panel's 10s poll: allow a full cycle.
   // "queued": funded on-chain, no live enclave claims in e2e
@@ -61,7 +66,11 @@ test("credit: card top-up lands on-chain; one passkey tap deploys from it; dashb
   await row.locator(".enc-fundbtn").dispatchEvent("click");
   await row.locator(".ef-amt").fill("3");
   await row.locator(".ef-go").dispatchEvent("click");
-  await expect(page.locator("#acctBalV")).toContainText("$17.00", { timeout: 20_000 });
+  // the toast confirms the vault op settled; a fresh popover open then reads
+  // the post-top-up balance (the popover fetches once per open, no live poll)
+  await expect(page.locator("#toast")).toContainText("topped up", { timeout: 20_000 });
+  await page.locator("#walletBtn").dispatchEvent("click");
+  await expect(page.locator("#wpBalCredit")).toContainText("$17.00", { timeout: 20_000 });
 });
 
 test("credit: a spend beyond the balance is refused with a plain message", async ({ page, context }) => {
