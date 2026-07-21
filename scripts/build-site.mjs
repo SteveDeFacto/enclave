@@ -106,13 +106,15 @@ for (const n of fs.readdirSync(path.join(SITE, "components"))) {
    static "Sign in →" flash through the header on every navigation until
    hydration + the wallet round-trip (~300ms with MetaMask) restores it. */
 const WALLET_PAINT = `<script>(function(){try{
-var s=JSON.parse(localStorage.getItem("enclave_session")||"null");if(!s||!s.address)return;
+var s=JSON.parse(localStorage.getItem("enclave_session")||"null");
+var a=JSON.parse(localStorage.getItem("enclave_account")||"null");
+var wallet=s&&s.address,acct=a&&a.token;
+if(!wallet&&!acct)return;
 var dt=document.querySelector('.nav-links a[data-view="dashboard"]');if(dt)dt.hidden=false;
-var who=s.address.slice(0,6)+"…"+s.address.slice(-4);
 var b=document.getElementById("walletBtn");if(!b)return;
 b.classList.add("connected");b.textContent="";
 var d=document.createElement("span");d.className="wdot";b.appendChild(d);
-b.appendChild(document.createTextNode(who));
+b.appendChild(document.createTextNode(wallet?s.address.slice(0,6)+"…"+s.address.slice(-4):"Signed in"));
 b.dataset.painted="1";
 }catch(e){}})();</script>`;
 

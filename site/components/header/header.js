@@ -23,14 +23,17 @@ class Header extends EnclaveElement {
     this.querySelectorAll(".nav-links a").forEach(a =>
       a.classList.toggle("active", a.dataset.view === this.current));
     const d = this.querySelector('a[data-view="dashboard"]');
-    if (d) d.hidden = !Enclave.address;
+    if (d) d.hidden = !(Enclave.address || Enclave.accountAuthed());
   }
 }
 register("c-header", Header);
 
-// session edges (connect / restore / sign-out) toggle the Dashboard tab on
-// the live header - the same DOM node across all soft navigations
-on("enclave:wallet", () => {
+// session edges (connect / restore / sign-out, wallet AND account domains)
+// toggle the Dashboard tab on the live header - the same DOM node across all
+// soft navigations
+const toggleDash = () => {
   const d = document.querySelector('c-header a[data-view="dashboard"]');
-  if (d) d.hidden = !Enclave.address;
-});
+  if (d) d.hidden = !(Enclave.address || Enclave.accountAuthed());
+};
+on("enclave:wallet", toggleDash);
+on("enclave:account", toggleDash);
