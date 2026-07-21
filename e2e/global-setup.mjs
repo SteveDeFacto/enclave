@@ -46,8 +46,14 @@ async function waitHttp(url, { tries = 100, rpc = false } = {}) {
 export default async function globalSetup() {
   const pids = [];
 
-  // 1) anvil - Base's chain id so the site/wallet chain checks all pass
-  const anvil = spawn("anvil", ["--port", String(ANVIL_PORT), "--chain-id", "8453", "--silent"],
+  // 1) anvil - Base's chain id so the site/wallet chain checks all pass.
+  // --base-fee 0 --gas-price 0: anvil 1.5.x (CI's "stable") quotes fee
+  // estimates below its own block base fee, so the provisioner's raw txs
+  // bounce ("fee cap cannot be lower than the block base fee") or sit
+  // unmined below the 1-gwei price floor, and its 60s retry outlives every
+  // test timeout; zeroing both makes the suite hermetic across anvil versions
+  const anvil = spawn("anvil", ["--port", String(ANVIL_PORT), "--chain-id", "8453", "--silent",
+                                "--base-fee", "0", "--gas-price", "0"],
     { stdio: "ignore", detached: false });
   pids.push(anvil.pid);
   await waitHttp(RPC, { rpc: true }).catch(() => { throw new Error("anvil did not start (is Foundry installed?)"); });
@@ -88,6 +94,7 @@ export default async function globalSetup() {
       PASSKEY_ORIGINS: SITE,
       SIWE_DOMAIN: `localhost:${SITE_PORT}`, SIWE_URI: SITE,
       BASE_RPC: RPC,
+      RPC_FALLBACKS: "0",       // hermetic: never fall back from anvil to real Base
       DEPLOYMENTS_ADDRESS: chain.deployments,
       PAYMENT_ROUTER_ADDRESS: chain.router,
       USDC_ADDRESS: chain.usdc,

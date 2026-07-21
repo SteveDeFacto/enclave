@@ -92,7 +92,7 @@ async function startRelay(t, { enclaves, ledger }) {
   const port = await freePort();
   const child = spawn(process.execPath, [path.join(RELAY_DIR, "api-relay.js")], {
     env: { ...process.env, ENCLAVES: enclaves, API_RELAY_PORT: String(port), API_RELAY_BIND: "127.0.0.1",
-           BASE_RPC: `http://127.0.0.1:${rpc.address().port}`, DEPLOYMENTS_ADDRESS: "0x" + "12".repeat(20),
+           BASE_RPC: `http://127.0.0.1:${rpc.address().port}`, RPC_FALLBACKS: "0", DEPLOYMENTS_ADDRESS: "0x" + "12".repeat(20),
            FEATURED_VIEWS_FILE: path.join(os.tmpdir(), `feat-views-${port}.json`) },
     stdio: ["ignore", "pipe", "pipe"],
   });

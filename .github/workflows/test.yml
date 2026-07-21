@@ -78,4 +78,5 @@ jobs:
             e2e/test-results/
             e2e/.data/
             !e2e/.data/*.pem
+          include-hidden-files: true   # .data/ is silently dropped without this
           retention-days: 7

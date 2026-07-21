@@ -111,7 +111,10 @@ export async function rpcParts() {
   const { base, baseSepolia } = await import("viem/chains");
   const testnet = (process.env.BILLING_NETWORK || "base") === "base-sepolia";
   const BASE_RPC = process.env.BASE_RPC || (testnet ? "https://sepolia.base.org" : "https://mainnet.base.org");
-  const pool = testnet ? [BASE_RPC] : [...new Set([BASE_RPC,
+  // RPC_FALLBACKS=0 pins the pool to BASE_RPC alone. Tests need this: with a
+  // local BASE_RPC (anvil/stub) the mainnet fallbacks are a DIFFERENT CHAIN,
+  // and one transient local error silently routes sends/receipt-polls there
+  const pool = (testnet || process.env.RPC_FALLBACKS === "0") ? [BASE_RPC] : [...new Set([BASE_RPC,
     "https://base-rpc.publicnode.com", "https://base.drpc.org",
     "https://1rpc.io/base", "https://mainnet.base.org"])];
   return { chain: testnet ? baseSepolia : base,

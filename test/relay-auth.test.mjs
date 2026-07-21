@@ -32,7 +32,7 @@ async function startRelay(t, { dataDir }) {
       ENCLAVES: "http://127.0.0.1:1", API_RELAY_PORT: String(port), API_RELAY_BIND: "127.0.0.1",
       AUTH_DATA_DIR: dataDir,
       OFAC_SDN_URLS: "http://127.0.0.1:1/x",            // no live fetches in tests
-      BASE_RPC: "http://127.0.0.1:1/rpc",
+      BASE_RPC: "http://127.0.0.1:1/rpc", RPC_FALLBACKS: "0",
       SIWE_DOMAIN: "enclave.host", SIWE_URI: "https://enclave.host",
       FEATURED_VIEWS_FILE: path.join(dataDir, "feat.json"),
     },

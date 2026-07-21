@@ -143,7 +143,7 @@ async function startRelay(t) {
   const child = spawn(process.execPath, [path.join(RELAY_DIR, "api-relay.js")], {
     env: { ...process.env, ENCLAVES: `http://127.0.0.1:${enclave.address().port}`,
            API_RELAY_PORT: String(port), API_RELAY_BIND: "127.0.0.1",
-           BASE_RPC: `http://127.0.0.1:${rpc.address().port}`,
+           BASE_RPC: `http://127.0.0.1:${rpc.address().port}`, RPC_FALLBACKS: "0",
            ADDRESS_BOOK_ADDRESS: "", DEPLOYMENTS_ADDRESS: "0x" + "12".repeat(20),
            APP_DOMAIN: "app.enclave.host", UPLOAD_KEY },
     stdio: ["ignore", "pipe", "pipe"],

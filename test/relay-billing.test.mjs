@@ -121,7 +121,7 @@ async function startStack(t, { dataDir }) {
     env: { ...process.env,
       ENCLAVES: "http://127.0.0.1:1", API_RELAY_PORT: String(port), API_RELAY_BIND: "127.0.0.1",
       AUTH_DATA_DIR: dataDir,
-      BASE_RPC: `http://127.0.0.1:${rpc.address().port}`,
+      BASE_RPC: `http://127.0.0.1:${rpc.address().port}`, RPC_FALLBACKS: "0",
       DEPLOYMENTS_ADDRESS: "0x" + "12".repeat(20),
       PAYMENT_ROUTER_ADDRESS: "0x" + "34".repeat(20),
       USDC_ADDRESS: "0x" + "56".repeat(20),
