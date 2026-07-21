@@ -532,7 +532,8 @@ export async function handleBilling(req, res, u, ctx) {
     const mine = Object.values(orders.data.orders)
       .filter((o) => o.accountId === sess.accountId && o.provision?.deploymentId);
     let rows = [];
-    try { rows = await ctxRef.ledgerRows(); } catch { /* ledger read down; serve what we know */ }
+    try { rows = await ctxRef.ledgerRows(); }
+    catch (e) { console.error("[billing] ledger read failed for the deployments join:", (e && (e.shortMessage || e.message)) || e); }
     const byId = new Map(rows.map((r) => [String(r.id).toLowerCase(), r]));
     return ctx.json(res, 200, { deployments: mine.map((o) => {
       const row = byId.get(String(o.provision.deploymentId).toLowerCase());

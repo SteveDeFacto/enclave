@@ -40,4 +40,12 @@ test("card: passkey signup -> Stripe checkout -> webhook -> provisioned on-chain
   expect(deps.deployments.length).toBe(1);
   expect(deps.deployments[0].orderId).toBe(orderId);
   expect(deps.deployments[0].deploymentId).toMatch(/^0x[0-9a-f]{64}$/);
+
+  // and the DASHBOARD shows it to the passkey user (account view - no wallet).
+  // "queued" is the e2e truth: the stack has no live enclave to claim it -
+  // status comes from the real ledger join either way
+  await page.goto("/dashboard");
+  await expect(page.locator(".acct-row")).toHaveCount(1);
+  await expect(page.locator(".acct-row")).toContainText("bafye2ecardapp");
+  await expect(page.locator(".acct-st")).toContainText("queued");
 });
