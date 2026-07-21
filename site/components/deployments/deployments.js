@@ -331,10 +331,12 @@ class Deployments extends EnclaveElement {
     body.innerHTML = pageRows.map(d => {
       const ep = appEndpoint(d), st = d.status || "–";
       // vault rows speak in dollars (account customers never see token names);
-      // wallet rows keep the explicit USDC wording
+      // wallet rows keep the explicit USDC wording. Paid AND spent: both row
+      // sources (supervisor live view, relay ledger view) carry spentUsdc.
       const ctl = ctlOf(d);
       const bud = (d.paidUsdc != null)
         ? ((ctl === "wallet" ? esc(d.paidUsdc) + " USDC paid" : "$" + esc(d.paidUsdc) + " paid")
+           + (d.spentUsdc != null ? " · " + (ctl === "wallet" ? esc(d.spentUsdc) : "$" + esc(d.spentUsdc)) + " spent" : "")
            + (d.timeRemainingSec > 0 ? " · " + esc(fmtDur(d.timeRemainingSec)) + " left" : "")
            + (d.paused ? " · ⏸ time frozen (" + esc(d.pauseReason || "outage") + ", resumes when service is restored)" : ""))
         : "–";

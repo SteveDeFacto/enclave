@@ -50,6 +50,8 @@ test("credit: card top-up lands on-chain; one passkey tap deploys from it; dashb
   // relay ledger cache (10s TTL) + the panel's 10s poll: allow a full cycle.
   // "queued": funded on-chain, no live enclave claims in e2e
   await expect(row).toContainText("queued", { timeout: 30_000 });
+  // the spend line, in dollars: $5 funded, nothing burned while queued
+  await expect(row).toContainText("$5.00 paid · $0.00 spent");
 
   // dispatchEvent, not click(): headless Chromium freezes frame production on
   // this page (stuck cross-document view transition), so Playwright's
