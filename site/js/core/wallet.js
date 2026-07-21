@@ -364,12 +364,14 @@ export function toggleWalletPop(){
 export async function renderWalletPop(){
   const pop = $("#walletPop"); if (!pop) return;
   if (!Enclave.address){
-    // account-only popover (passkey user, no wallet): account card + sign out
+    // account-only popover (passkey user, no wallet): account card, the credit
+    // balance (the account's vault - same slot wallet users' USDC fills), sign out
     if (!Enclave.accountAuthed()) return;
     pop.innerHTML =
       '<div class="wp-row"><span class="wp-k">Account</span><span class="wp-v">signed in' + (Enclave.accountMethod ? " · " + esc(Enclave.accountMethod) : "") + '</span></div>' +
+      '<div class="wp-bal"><div class="bl"><span>Credit</span><span id="wpBalCredit">…</span></div></div>' +
       '<div class="wp-fund">' +
-        '<button class="wp-mini" id="wpOrders">Buy runtime</button>' +
+        '<button class="wp-mini" id="wpOrders">Add credit</button>' +
       '</div>' +
       '<button class="wp-disc" id="wpDisc">Sign out</button>';
     pop.hidden = false;
@@ -379,6 +381,9 @@ export async function renderWalletPop(){
       (await import("../boot.js")).navigate("checkout", { push: true });
     });
     const d = $("#wpDisc"); if (d) d.addEventListener("click", disconnectWallet);
+    import("./vault.js").then(({ getVault }) => getVault()).then(
+      (v) => { const el = $("#wpBalCredit"); if (el) el.textContent = v ? "$" + v.balanceUsd : "unavailable"; },
+      ()  => { const el = $("#wpBalCredit"); if (el) el.textContent = "unavailable"; });
     return;
   }
   const offBase = Enclave.chainId && Enclave.chainId !== BASE_CHAIN;

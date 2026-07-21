@@ -568,7 +568,6 @@ class Deployments extends EnclaveElement {
           await vaultOp("fund", { id, amountUsd: usd });
           paint("ok", "[✓] topped up from your credit" + (rate > 0 ? " - +" + fmtDur(usd / rate) + " of runtime" : "") + " · the enclave picks up the new balance within a minute");
           showToast("topped up " + id.slice(0, 10) + "… with $" + usd.toFixed(2));
-          document.dispatchEvent(new CustomEvent("enclave:credit"));   // the dashboard's credit card refreshes
           setTimeout(() => { if (box.isConnected && !box.hidden){ box.hidden = true; box.innerHTML = ""; } this.refresh(); }, 3500);
         } catch(e){ paint("warn", "[x] " + (e.message || String(e))); }
         finally { go.disabled = false; }

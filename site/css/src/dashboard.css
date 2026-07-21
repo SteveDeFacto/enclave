@@ -22,8 +22,3 @@
 .dash-fleet-h{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin:0 0 10px;font-weight:400;}
 .dash-fleet-h .dim{text-transform:none;letter-spacing:0;color:var(--text-dim);}
 @media (max-width:1000px){ .dash-head{grid-template-columns:minmax(0,1fr);} }
-/* the account credit card above the shared deployments panel
-   (passkey/card customers - js/pages/dashboard.js) */
-#dashboard .acct-row{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:10px;}
-#dashboard .acct-app{font-size:.82rem;min-width:0;}
-#dashboard .acct-meta{display:flex;gap:14px;font-size:.74rem;color:var(--text-muted);align-items:center;}

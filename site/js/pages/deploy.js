@@ -431,7 +431,6 @@ export async function deployOnChain(spec){
       const cid = out.deploymentId;
       w.setId(cid);
       w.line("ok", "[✓] created + funded " + cid + " from your credit");
-      document.dispatchEvent(new CustomEvent("enclave:credit"));   // the dashboard's balance card refreshes
       watchClaimAndRun(cid, null, w)
         .catch(e => w.line("warn", "[x] " + (e.message || String(e))))
         .finally(() => w.end());

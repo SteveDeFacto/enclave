@@ -30,42 +30,11 @@ function gate(){
   try { acct = JSON.parse(lsGet("enclave_account") || "null"); } catch(e){}
   if ((!stored || !stored.address) && (!acct || !acct.token)) navigate("./");
 }
-on("enclave:wallet", gate);   // module-load-once: restore-settle and sign-out edges
-on("enclave:account", (d) => {
-  gate();
-  // passkey/card sign-in: mount the credit card above the shared panel (the
-  // deployment rows themselves live in <c-deployments>, which reads the
-  // account-scoped join by itself - one dashboard for both kinds of customer)
-  if (document.querySelector('section[data-view="dashboard"]')){
-    if (d && d.authed) mountAccountBar();
-    else { const b = $("#acctBal"); if (b) b.remove(); }
-  }
-});
-// a vault op inside <c-deployments> (Top up) moved credit - refresh the card
-on("enclave:credit", () => refreshAccountBal());
-
-/* the account extras: a credit-balance card above the shared <c-deployments>
-   panel. Nothing else is account-specific here anymore - the panel renders
-   vault-owned rows with the same controls wallet rows get. */
-function mountAccountBar(){
-  const cd = document.querySelector("c-deployments"); if (!cd) return;
-  if (!$("#acctBal")){
-    const bal = document.createElement("div");
-    bal.id = "acctBal"; bal.className = "acct-row";
-    bal.innerHTML = '<div class="acct-app"><b>Credit</b></div><div class="acct-meta"><span id="acctBalV">…</span>' +
-      '<a class="btn btn-sm" href="checkout">Add credit</a></div>';
-    cd.parentNode.insertBefore(bal, cd);
-  }
-  refreshAccountBal();
-}
-async function refreshAccountBal(){
-  const el = $("#acctBalV"); if (!el) return;
-  try {
-    const { getVault } = await import("../core/vault.js");
-    const v = await getVault();
-    el.textContent = v ? "$" + v.balanceUsd : "unavailable";
-  } catch(e){ el.textContent = "unavailable"; }
-}
+on("enclave:wallet", gate);    // module-load-once: restore-settle and sign-out edges
+on("enclave:account", gate);   // passkey/card session edges gate the same way
+// Nothing here is account-specific anymore: <c-deployments> renders vault-owned
+// rows with the same controls wallet rows get, and the credit balance lives in
+// the header popover (wallet.js) next to the wallet users' USDC balance.
 
 /* the fleet capacity panel: the relay's /enclaves table, same sort as the
    deploy console; polled only while this page's <main> is mounted */
@@ -90,7 +59,6 @@ export function boot() {
   if (!_fleetPoll) _fleetPoll = setInterval(() => {
     if (!document.querySelector('section[data-view="dashboard"]')) return;
     refreshFleet();
-    if ($("#acctBal")) refreshAccountBal();
   }, 20000);
   // the ledger's provenance mark: one icon straight to the contract on
   // Basescan (Steven's call); full name + address in the tooltip
@@ -101,7 +69,5 @@ export function boot() {
       link.title = "EnclaveDeployments · " + DEPLOYMENTS_ADDRESS;
     } else link.hidden = true;
   }
-  if (Enclave.accountAuthed()) mountAccountBar();
-  else { const b = $("#acctBal"); if (b) b.remove(); }
   gate();
 }
