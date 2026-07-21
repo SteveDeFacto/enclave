@@ -21,13 +21,20 @@ the software enforces:
 
 ## 1. Converting Stripe fiat revenue to crypto (treasury management)
 
-**Adopted: Stripe stablecoin payouts (Bridge).** Card revenue settles as
-USDC on Base, paid out by Stripe's own batched payout schedule directly to
-the company **float wallet** (the relayer/provisioner address). This is the
-company choosing its settlement currency for its own receivables - payouts
-are batches of the company's balance, never a per-customer conversion, and
-no customer address is ever involved. That decoupling is the line that
-matters; the rules that keep us on the right side of it:
+**Adopted: USDC settlement via a Bridge virtual account.** (Stripe's native
+"stablecoin payouts" product is Connect-only - platforms paying individual
+recipients - and does NOT let a business take its own balance in USDC, so
+the pipe is one hop earlier:) Bridge (bridge.xyz, Stripe-owned) issues the
+company a USD virtual account (real ACH routing/account number, FBO
+structure, in the company's name) after business KYB; every dollar deposited
+auto-converts to USDC and forwards to the configured destination - the
+company **float wallet** on Base. Stripe's payout destination is simply
+changed from the bank to that virtual account; Stripe sees an ordinary bank
+payout on its ordinary automatic schedule. This is the company choosing its
+settlement currency for its own receivables - payouts are batches of the
+company's balance, never a per-customer conversion, and no customer address
+is ever involved. That decoupling is the line that matters; the rules that
+keep us on the right side of it:
 
 - **Never convert per customer transaction.** No code path may buy, sell, or
   move crypto "for" a specific customer's payment. Stripe payouts are
@@ -67,7 +74,7 @@ The **provisioner wallet** (relay-held `PROVISIONER_PRIVATE_KEY`) is NOT the
 treasury: it is the company's operating FLOAT - it deposits USDC into
 customer credit vaults when card top-ups settle and spends USDC into the
 company's own EnclaveDeployments contract to fulfil paid orders. It refills
-itself: Stripe stablecoin payouts land card revenue here (§1), and the
+itself: USDC settlement via Bridge lands card revenue here (§1), and the
 relay's float manager sweeps everything above the ceiling to the treasury,
 so a compromise of the relay box caps out at `FLOAT_CEILING_6` plus at most
 one un-swept payout. Low USDC (`float_low_usdc`) and low gas
@@ -152,7 +159,7 @@ reversal rather than a transfer service. Do not relax it for convenience.
 | Light up the site checkout | flip `ACCOUNTS_ENABLED` default to `true` in `site/js/core/config.js` (one line; revert = rollback) |
 | Review queue | `GET /v1/billing/review` / `POST /v1/billing/review/:id/resolve` with `x-admin-token` |
 | Provisioner top-up (fallback) | send USDC + a little ETH from the treasury to the provisioner address; the 60s sweep resumes held orders/top-ups automatically |
-| Stripe stablecoin payouts | Stripe dashboard -> Balances -> payout settings -> stablecoin payouts (Bridge onboarding): USDC on **Base**, destination = the provisioner/float wallet, daily schedule. Verify with one small payout before relying on it |
+| USDC settlement (Bridge) | Bridge business onboarding (bridge.xyz, KYB) -> create a USD virtual account with destination = the float wallet, USDC on **Base** -> Stripe Settings -> Business -> Bank accounts and currencies: replace the payout bank account with the virtual account's routing/account number, schedule Automatic. Verify with one small payout end-to-end before relying on it |
 | Float manager tuning | `FLOAT_TARGET_6` / `FLOAT_CEILING_6` / `FLOAT_MIN_6` / `FLOAT_MIN_ETH_WEI` / `FLOAT_SWEEP_SEC` in the relay env; sweep destination is read from the vault factory on-chain |
 
 ## 6. Credit vaults (closed-loop prepaid credit, on-chain)
@@ -173,9 +180,9 @@ Operational rules:
   above $2,000 without counsel.
 - **Top-up settlement is company USDC**: card revenue arrives at Stripe, the
   relayer wallet (PROVISIONER_PRIVATE_KEY) deposits matching USDC into the
-  customer's vault. The float self-replenishes from Stripe stablecoin
-  payouts (§1) and the float manager alerts on shortfall; a short float
-  retries every minute - orders wait in "crediting", nothing is lost.
+  customer's vault. The float self-replenishes from the Bridge USDC
+  settlement pipe (§1) and the float manager alerts on shortfall; a short
+  float retries every minute - orders wait in "crediting", nothing is lost.
 - **Refunds are dual-authorized**: the customer signs refundToTreasury with
   their passkey (support walks them through it), THEN finance refunds the
   card via Stripe. Never refund the card first. Crypto never goes to the
