@@ -100,7 +100,7 @@ const PAGE = 50;
 // at broadcast - it never lands, so the console sits on "sent … waiting" while
 // the receipt never appears. Bound every packed tx on BOTH axes (see packPlan),
 // and size-chunk versions since their `config` blob can be up to 4 KB each.
-const CHUNK = { deployments: 6, apps: 10 };
+const CHUNK = { deployments: 6, apps: 10, fees: 40 };   // fees: 3 words + 1 SSTORE + event per id - cheap
 const VER_TX_BYTES = 6 * 1024;   // max calldata for a single importVersions call
 
 /* -- deployments -- */
@@ -115,12 +115,28 @@ async function depRevOf(addr) {
 }
 async function readDeployments(source) {
   const sel = CONTRACTS.EnclaveDeployments.sel;
-  const schema = (await depRevOf(source)) >= 2 ? DEP_SCHEMA : DEP_SCHEMA_V1;
+  const rev = await depRevOf(source);
+  const schema = rev >= 2 ? DEP_SCHEMA : DEP_SCHEMA_V1;
   const total = wNum(await call(source, "0x" + sel.count), 0);
-  const rows = [];
+  let rows = [];
   for (let s = 0; s < total; s += PAGE)
     rows.push(...decodeStructArray(await call(source, encCallX(sel.getPage, [{ t: "uint", v: s }, { t: "uint", v: PAGE }])), schema));
-  return rows.map(({ sshPubKey, ...r }) => r);
+  rows = rows.map(({ sshPubKey, ...r }) => r);
+  // Publisher-fee snapshots live in a SIDE MAPPING (rev >= 4), invisible to
+  // getPage - read feeOf(id) per row and ride it along as `fee` (a non-schema
+  // key: tuple encodes and depCmp ignore it). Skipping this on a fee-bearing
+  // record would migrate its rate intact but silently redirect the publisher's
+  // cut to payout - and runners fail closed on an under-declared fee, so the
+  // record would strand unclaimable on the new ledger.
+  if (rev >= 4) {
+    for (const page of chunked(rows, 10)) {
+      await Promise.all(page.map(async (r) => {
+        const f = await call(source, encCallX(sel.feeOf, [{ t: "bytes32", v: r.id }]));
+        r.fee = { recipient: wAddr(f, 0), rate6: hexBig("0x" + (word(f, 1) || "0")).toString() };
+      }));
+    }
+  }
+  return rows;
 }
 const depKey = (d) => d.id;
 const depClean = (d) => ({ ...d, runner: "0x" + "0".repeat(64), runnerOperator: "0x" + "0".repeat(40), leaseUntil: 0 });
@@ -214,7 +230,10 @@ export const MIG_KINDS = {
   deployments: {
     label: "Deployments", contractName: "EnclaveDeployments", bookKey: "deployments",
     read: readDeployments,
-    counts: (d) => `${d.length} deployment${d.length === 1 ? "" : "s"}`,
+    counts: (d) => {
+      const fees = d.filter((x) => x.fee && x.fee.rate6 !== "0").length;
+      return `${d.length} deployment${d.length === 1 ? "" : "s"}` + (fees ? ` (${fees} fee-bearing)` : "");
+    },
     /* delta plan: skip anything the target already holds, so an interrupted
        run resumes by re-clicking Migrate, and a second pass right before the
        book flips picks up records created on the source in the meantime. */
@@ -222,17 +241,40 @@ export const MIG_KINDS = {
       const sel = CONTRACTS.EnclaveDeployments.sel;
       const have = new Set(after.map((d) => d.id.toLowerCase()));
       const todo = data.filter((d) => !have.has(d.id.toLowerCase())).map(depClean);
-      return packPlan("EnclaveDeployments", chunked(todo, CHUNK.deployments).map((c, i) => ({
+      const txs = chunked(todo, CHUNK.deployments).map((c, i) => ({
         label: `importDeployments · batch ${i + 1} (${c.length})`,
         gas: 120_000 + 450_000 * c.length,
         dataHex: encCallX(sel.importDeployments, [{ t: "tuple[]", schema: DEP_SCHEMA, v: c }]),
+      }));
+      // fee snapshots ride AFTER the record imports (importFees requires the
+      // id to exist on the target; in-order packing preserves that). Delta
+      // like the records: skip fees the target already holds, so a resumed
+      // run re-plans only what's missing.
+      const haveFee = new Set(after.filter((d) => d.fee && d.fee.rate6 !== "0").map((d) => d.id.toLowerCase()));
+      const feeTodo = data.filter((d) => d.fee && d.fee.rate6 !== "0" && !haveFee.has(d.id.toLowerCase()));
+      txs.push(...chunked(feeTodo, CHUNK.fees).map((c, i) => ({
+        label: `importFees · batch ${i + 1} (${c.length})`,
+        gas: 100_000 + 45_000 * c.length,
+        dataHex: encCallX(sel.importFees, [
+          { t: "bytes32[]", v: c.map((d) => d.id) },
+          { t: "addr[]", v: c.map((d) => d.fee.recipient) },
+          { t: "uint[]", v: c.map((d) => d.fee.rate6) },
+        ]),
       })));
+      return packPlan("EnclaveDeployments", txs);
     },
     async verify(data, target) {
       const after = await readDeployments(target);
       const byId = Object.fromEntries(after.map((d) => [d.id.toLowerCase(), d]));
-      const bad = data.filter((d) => !byId[d.id.toLowerCase()] || !depCmp(d, byId[d.id.toLowerCase()]))
-        .map((d) => d.id.slice(0, 10) + "… (" + d.appRef + ")");
+      const feeCmp = (a, b) => (a.fee?.rate6 || "0") === (b.fee?.rate6 || "0")
+        && ((a.fee?.rate6 || "0") === "0" || a.fee.recipient.toLowerCase() === b.fee.recipient.toLowerCase());
+      const bad = data.filter((d) => {
+        const t = byId[d.id.toLowerCase()];
+        return !t || !depCmp(d, t) || !feeCmp(d, t);
+      }).map((d) => {
+        const t = byId[d.id.toLowerCase()];
+        return d.id.slice(0, 10) + "… (" + (t && depCmp(d, t) ? "fee · " : "") + d.appRef + ")";
+      });
       return { total: data.length, ok: data.length - bad.length, bad };
     },
   },

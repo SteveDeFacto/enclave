@@ -190,6 +190,16 @@ test("import calls (tuple[] args) encode like viem", () => {
 });
 
 
+test("importFees (parallel arrays) encodes like viem", () => {
+  const depAbi = ABI("EnclaveDeployments");
+  const ids = ["0x" + "ab".repeat(32), "0x" + "ef".repeat(32)];
+  const recipients = [A2, "0x" + "33".repeat(20)];
+  const rates6 = ["139", "1389"];   // migrate.js carries rate6 as decimal strings
+  eq(encCallX(S("EnclaveDeployments").importFees, [
+    { t: "bytes32[]", v: ids }, { t: "addr[]", v: recipients }, { t: "uint[]", v: rates6 }]),
+    encodeFunctionData({ abi: depAbi, functionName: "importFees", args: [ids, recipients, rates6.map(BigInt)] }));
+});
+
 test("multicall wrapping encodes like viem", () => {
   const catAbi = ABI("EnclaveAppCatalog");
   const inner1 = encCallX(S("EnclaveAppCatalog").importApps, [{ t: "tuple[]", schema: APP_SCHEMA, v: [APP_ROW] }]);
