@@ -30,7 +30,11 @@ c-app-card{display:contents;}
 .app-rating{display:flex;align-items:center;gap:7px;margin-top:-2px;
   font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);}
 .app-rating-n{color:var(--text-muted);}
-.app-desc{margin:0;font-size:.88rem;color:var(--text-muted);line-height:1.5;}
+/* clamp to ~4 lines with a trailing … - long descriptions belong to the
+   detail page; the clamp keeps every tile roughly the same height. The full
+   text stays in the a11y tree (overflow-hidden, not display:none). */
+.app-desc{margin:0;font-size:.88rem;color:var(--text-muted);line-height:1.5;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;line-clamp:4;overflow:hidden;}
 .app-metaline{display:flex;flex-wrap:wrap;gap:8px;font-family:var(--font-mono);font-size:.72rem;color:var(--text-dim);}
 .app-cid{display:flex;align-items:center;gap:6px;background:var(--bg-1);border:1px solid var(--line-soft);border-radius:var(--radius-sm);padding:6px 8px;}
 .app-cid code{font-family:var(--font-mono);font-size:.7rem;color:var(--text-muted);word-break:break-all;line-height:1.4;}
