@@ -217,6 +217,7 @@
           <label for="cfgConfig">App config
             <span class="dim" id="cfgHintRO">(the version's config, shown for review · JSON the app receives as ENCLAVE_CONFIG · immutable once published and covered by the owner's approval - the enclave applies it straight from the on-chain record · different config = publish a new version)</span>
             <span class="dim" id="cfgHintRW" hidden>(JSON the app receives as ENCLAVE_CONFIG · pre-filled from the picked version; edit it to override for THIS deployment only - the catalog and everyone else's deployments are untouched · empty box = the version's config · {} = explicitly no config · fixed at create, rides the on-chain record)</span>
+            <span class="dim" id="cfgHintWait" hidden>(the version's config, shown for review · JSON the app receives as ENCLAVE_CONFIG · the fleet is ready for per-deployment config overrides, but the live deployments ledger predates them - editing unlocks with the next ledger upgrade)</span>
           </label>
           <textarea id="cfgConfig" rows="3" placeholder="empty · set by the picked version" spellcheck="false" autocapitalize="off" autocomplete="off" readonly></textarea>
         </div>

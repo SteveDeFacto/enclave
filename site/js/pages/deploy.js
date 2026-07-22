@@ -882,15 +882,19 @@ async function refreshAvailability(){
     // deployment would be refused at claim and sit Queued forever - AND the
     // ledger is rev 5+: earlier contracts cap create()'s options field at 100
     // bytes (CID-sized) and revert on a real override, so the wallet would
-    // simulate a failure and the tx never lands. Fail closed on both.
-    let cfgOk = a.configOverride === true;
-    if (cfgOk){ try { cfgOk = (await depSchemaRev()) >= 5; } catch(e){ cfgOk = false; } }
-    dep.cfgAvail = cfgOk;
+    // simulate a failure and the tx never lands. Fail closed on both; the
+    // fleet-ready-but-ledger-pending state gets its own hint so a locked box
+    // says WHY instead of the generic publish-a-new-version copy.
+    const cfgFleet = a.configOverride === true;
+    let cfgRev = false;
+    if (cfgFleet){ try { cfgRev = (await depSchemaRev()) >= 5; } catch(e){} }
+    dep.cfgAvail = cfgFleet && cfgRev;
     const ccTa = $("#cfgConfig");
     if (ccTa) ccTa.readOnly = !dep.cfgAvail;
-    const hRO = $("#cfgHintRO"), hRW = $("#cfgHintRW");
-    if (hRO) hRO.hidden = dep.cfgAvail;
+    const hRO = $("#cfgHintRO"), hRW = $("#cfgHintRW"), hWait = $("#cfgHintWait");
+    if (hRO) hRO.hidden = dep.cfgAvail || (cfgFleet && !cfgRev);
     if (hRW) hRW.hidden = !dep.cfgAvail;
+    if (hWait) hWait.hidden = !(cfgFleet && !cfgRev);
     const vRO = $("#volHintRO"), vRW = $("#volHintRW");
     if (vRO) vRO.hidden = dep.cfgAvail;
     if (vRW) vRW.hidden = !dep.cfgAvail;
