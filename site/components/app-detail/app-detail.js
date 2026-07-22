@@ -11,10 +11,10 @@
    ============================================================ */
 import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc, short, copyText } from "../../js/core/util.js";
-import { IPFS_GATEWAY, IPFS_IMG_GATEWAY } from "../../js/core/config.js";
+import { IPFS_GATEWAY } from "../../js/core/config.js";
 import { Enclave } from "../../js/core/api.js";
 import { APPROVAL, catVersionFee } from "../../js/core/chain.js";
-import { STORE, selIdx, appOfficial, mediaOf, verVisible, visibleVerIdxs } from "../../js/core/catalog.js";
+import { STORE, selIdx, appOfficial, mediaOf, mediaUrl, verVisible, visibleVerIdxs } from "../../js/core/catalog.js";
 import { tallyOf, avgOf, starsHtml } from "../../js/core/reviews.js";
 import { minPctsOf } from "../../js/core/pricing.js";
 
@@ -39,7 +39,7 @@ class AppDetail extends EnclaveElement {
     const media = mediaOf(v), banner = this.querySelector(".appd-banner");
     if (media.banner){
       banner.hidden = false;
-      banner.style.backgroundImage = "url('" + IPFS_IMG_GATEWAY + encodeURIComponent(media.banner) + "')";
+      banner.style.backgroundImage = "url('" + mediaUrl(media.banner, media.bannerSvg) + "')";
     } else { banner.hidden = true; banner.style.backgroundImage = ""; }
 
     this.querySelector("h1").textContent = app.name;

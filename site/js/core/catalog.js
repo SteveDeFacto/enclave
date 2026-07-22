@@ -118,12 +118,18 @@ export const appVerified = (app) => { const i = defaultIdx(app); return i >= 0 &
    extra `_media` key it ignores; the deploy console strips it from its preview. */
 export const MEDIA_KEY = "_media";
 const cleanCid = (c) => (typeof c === "string" && /^[a-zA-Z0-9]{10,100}$/.test(c.trim())) ? c.trim() : "";
+// Gateway URL for a media CID. SVG media carries a flag in _media because it
+// only renders in image contexts under an exact image/svg+xml content-type,
+// which the Kubo gateway derives from the ?filename extension; bare raster
+// CIDs content-sniff fine without it.
+export const mediaUrl = (cid, svg) => IPFS_IMG_GATEWAY + encodeURIComponent(cid) + (svg ? "?filename=i.svg" : "");
 export function mediaOf(version){
   if (!version || !version.config) return {};
   try {
     const m = JSON.parse(version.config)[MEDIA_KEY];
     if (m && typeof m === "object" && !Array.isArray(m))
-      return { thumbnail: cleanCid(m.thumbnail), banner: cleanCid(m.banner) };
+      return { thumbnail: cleanCid(m.thumbnail), banner: cleanCid(m.banner),
+               thumbnailSvg: !!m.thumbnailSvg, bannerSvg: !!m.bannerSvg };
   } catch(e){}
   return {};
 }
@@ -140,13 +146,15 @@ export function stripMedia(configStr){
   return configStr;
 }
 // fold thumbnail/banner CIDs into a config string for publishing (JSON string,
-// or "" when there's neither config nor media)
-export function withMedia(configStr, thumbnail, banner){
+// or "" when there's neither config nor media). thumbnailSvg/bannerSvg mark
+// SVG media (the /add-image gateway's verdict) so renderers can request the
+// svg content-type - see mediaUrl.
+export function withMedia(configStr, thumbnail, banner, thumbnailSvg, bannerSvg){
   let o = {};
   if (configStr){ try { const p = JSON.parse(configStr); if (p && typeof p === "object" && !Array.isArray(p)) o = p; } catch(e){} }
   const m = {};
-  if (cleanCid(thumbnail)) m.thumbnail = thumbnail.trim();
-  if (cleanCid(banner)) m.banner = banner.trim();
+  if (cleanCid(thumbnail)){ m.thumbnail = thumbnail.trim(); if (thumbnailSvg) m.thumbnailSvg = true; }
+  if (cleanCid(banner)){ m.banner = banner.trim(); if (bannerSvg) m.bannerSvg = true; }
   if (Object.keys(m).length) o[MEDIA_KEY] = m; else delete o[MEDIA_KEY];
   return Object.keys(o).length ? JSON.stringify(o) : "";
 }
@@ -277,7 +285,7 @@ export function artOfRef(ref, label){
   const cr = parseCatalogRef(ref);
   const hit = cr && appOfRef(cr);
   const m = hit && hit.v ? mediaOf(hit.v) : {};
-  if (m.thumbnail) return "url('" + IPFS_IMG_GATEWAY + encodeURIComponent(m.thumbnail) + "')";
+  if (m.thumbnail) return "url('" + mediaUrl(m.thumbnail, m.thumbnailSvg) + "')";
   const name = (hit && (hit.app.name || hit.app.slug)) || String(label || "?");
   return placeholderArt((cr && cr.appId) || ref || label, name);
 }

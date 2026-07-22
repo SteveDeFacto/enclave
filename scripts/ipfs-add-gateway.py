@@ -3,15 +3,20 @@
 #
 # Why this exists: the browser's checks (extension, size, wasm preamble) are UX only
 # — anyone can bypass them by POSTing straight to Kubo. So we do NOT expose Kubo's
-# /api/v0/add to the internet. Caddy forwards ONLY /add-wasm and /add-json to this
-# gateway (on 127.0.0.1); the gateway validates the bytes, then adds+pins to Kubo
-# with hardcoded params and returns {"cid": ...}. Kubo's API stays bound to localhost.
+# /api/v0/add to the internet. Caddy forwards ONLY /add-wasm, /add-json and
+# /add-image to this gateway (on 127.0.0.1); the gateway validates the bytes, then
+# adds+pins to Kubo with hardcoded params and returns {"cid": ...}. Kubo's API
+# stays bound to localhost, and its public /ipfs/* path runs NoFetch behind a
+# Caddy handle that adds CSP sandbox + nosniff — nothing this gateway didn't
+# admit is servable, and what it serves can't script even opened directly.
 #
 # Routes:
 #   POST /add-wasm  - a wasm component (validated), for app publishing.
 #   POST /add-json  - a small JSON object, for deployment config (the console
 #                     pins a {"volumes":[...], ...} config and uses the CID as
 #                     the deployment's configCid). Enclaves re-verify the CID.
+#   POST /add-image - an app thumbnail/banner: raster (magic-checked) or SVG
+#                     (strictly validated, see svg_error). Answers {"cid", "svg"}.
 #
 # Validation tiers:
 #   Tier 1 (always): size cap + wasm magic (\0asm) + component *layer* field
@@ -92,22 +97,123 @@ def wasm_tools_error(data: bytes):
 MAX_JSON_BYTES = int(os.environ.get("MAX_CONFIG_BYTES", str(256 * 1024)))
 
 # Cap for /add-image pins (app thumbnail + detail banner). Small, wallet-signed
-# like /add-wasm; raster only.
+# like /add-wasm; raster, or SVG that passes the strict validator below.
 MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(4 * 1024 * 1024)))
 
 
-def image_error(b: bytes):
-    """Return an error string unless the bytes are a supported RASTER image.
-    SVG is deliberately refused: an SVG can carry <script>, and it would run on
-    the gateway origin when opened - a stored-XSS vector. Magic-byte sniffing
+def raster_kind(b: bytes):
+    """The raster format the magic bytes name, or None. Magic-byte sniffing
     (not the filename/content-type) is authoritative."""
     if len(b) < 12:
-        return "too small to be an image"
-    if b[0:8] == b"\x89PNG\r\n\x1a\n":              return None   # PNG
-    if b[0:3] == b"\xff\xd8\xff":                   return None   # JPEG
-    if b[0:6] in (b"GIF87a", b"GIF89a"):            return None   # GIF
-    if b[0:4] == b"RIFF" and b[8:12] == b"WEBP":    return None   # WebP
-    return "unsupported image type - use PNG, JPEG, WebP, or GIF (SVG is not allowed)"
+        return None
+    if b[0:8] == b"\x89PNG\r\n\x1a\n":              return "png"
+    if b[0:3] == b"\xff\xd8\xff":                   return "jpeg"
+    if b[0:6] in (b"GIF87a", b"GIF89a"):            return "gif"
+    if b[0:4] == b"RIFF" and b[8:12] == b"WEBP":    return "webp"
+    return None
+
+
+# --- SVG validation (strict, fail-closed) -----------------------------------
+# An SVG can carry <script>, event handlers and external references; served
+# from this origin and opened directly it would be stored XSS. Policy:
+# VALIDATE AND REJECT, never sanitize-and-rewrite (rewriters get beaten by
+# parser differentials; a refusal can't). Layers behind this validator:
+#   - the site renders media only as CSS background-image / <img>, contexts
+#     where browsers never execute SVG scripts or load its external resources;
+#   - Caddy serves /ipfs/* with `Content-Security-Policy: sandbox` +
+#     X-Content-Type-Options, so a direct navigation can't run script either;
+#   - Kubo runs NoFetch, so only bytes THIS validator admitted are servable.
+_SVG_NS = "http://www.w3.org/2000/svg"
+# script-capable or embedding elements an app image never needs
+_SVG_BAD_ELEMENTS = {"script", "foreignobject", "iframe", "embed", "object",
+                     "audio", "video", "handler", "listener", "annotation-xml"}
+# strip the chars browsers ignore inside URLs before scheme checks
+_squeeze = lambda v: re.sub(r"[\x00-\x20]", "", v or "").lower()
+_DATA_RASTER = re.compile(r"^data:image/(png|jpe?g|gif|webp);base64,")
+
+
+def _svg_css_error(css):
+    """CSS can't execute script, but url() pulls external resources on direct
+    navigation - allow only internal url(#...) targets, no @import."""
+    low = _squeeze(css)
+    if "@import" in low:
+        return "SVG styles must not use @import"
+    for m in re.finditer(r"url\(", low):
+        rest = low[m.end():].lstrip("'\"")
+        if not rest.startswith("#"):
+            return "SVG styles may only reference internal url(#...) targets"
+    return None
+
+
+def svg_error(b: bytes):
+    """Return an error string unless the bytes are a safe standalone SVG."""
+    try:
+        text = b.decode("utf-8")
+    except UnicodeDecodeError:
+        return "SVG must be UTF-8"
+    if text[:1] == "\ufeff":
+        text = text[1:]
+    low = text.lower()
+    # DTD machinery enables entity expansion tricks; no image needs it
+    if "<!doctype" in low or "<!entity" in low:
+        return "SVG must not contain DOCTYPE or entity declarations"
+    # processing instructions: only the leading <?xml declaration is allowed
+    # (<?xml-stylesheet?> attaches external CSS on direct navigation)
+    for m in re.finditer(r"<\?", text):
+        if m.start() == 0 and re.match(r"<\?xml[\s?]", text):
+            continue
+        return "SVG must not contain processing instructions"
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(text)
+    except Exception as e:  # noqa: BLE001
+        return "SVG is not well-formed XML: %s" % str(e)[:120]
+    if root.tag != "{%s}svg" % _SVG_NS:
+        return "the root element must be <svg> in the SVG namespace"
+    for el in root.iter():
+        if not isinstance(el.tag, str):
+            return "SVG contains a node the validator cannot inspect"
+        if not el.tag.startswith("{%s}" % _SVG_NS):
+            return "SVG must not embed non-SVG-namespace elements"
+        local = el.tag.rsplit("}", 1)[1].lower()
+        if local in _SVG_BAD_ELEMENTS:
+            return "SVG must not contain <%s> elements" % local
+        for name, val in el.attrib.items():
+            lname = name.rsplit("}", 1)[-1].lower()
+            if lname.startswith("on"):
+                return "SVG must not carry event-handler attributes (%s)" % lname[:32]
+            sval = _squeeze(val)
+            # scheme check on EVERY value: catches animated/indirect targets too
+            # (ElementTree hands us entity-DECODED values, so &#106;avascript
+            # tricks are already unfolded here)
+            if "javascript:" in sval or "vbscript:" in sval:
+                return "SVG must not reference script URLs"
+            if lname == "href":
+                if not (sval.startswith("#") or _DATA_RASTER.match(sval)):
+                    return "SVG references must be internal (#id) or embedded raster data: URIs"
+            if lname == "attributename" and sval in ("href", "xlink:href"):
+                return "SVG must not animate href attributes"
+            if lname == "style":
+                err = _svg_css_error(val)
+                if err:
+                    return err
+        if local == "style":
+            err = _svg_css_error("".join(el.itertext()))
+            if err:
+                return err
+    return None
+
+
+def image_error(b: bytes):
+    """(kind, error): kind "png"/"jpeg"/"gif"/"webp"/"svg" when accepted."""
+    kind = raster_kind(b)
+    if kind:
+        return kind, None
+    head = b[:512].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    if head.startswith(b"<?xml") or head.startswith(b"<svg") or b"<svg" in head:
+        err = svg_error(b)
+        return ("svg", None) if err is None else (None, err)
+    return None, "unsupported image type - use PNG, JPEG, WebP, GIF, or SVG"
 
 
 def kubo_add(data: bytes, filename="app.wasm"):
@@ -258,19 +364,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"cid": cid}) if cid else self._json(502, {"error": "ipfs returned no CID"})
 
         # /add-image: app thumbnail/banner. Wallet-signed like /add-wasm (same
-        # token, same per-wallet daily byte cap), raster-only (no SVG).
+        # token, same per-wallet daily byte cap); raster by magic bytes, or SVG
+        # through the strict validator. "svg": true tells the uploader to store
+        # the _media flag its renderers need (SVG only displays with an exact
+        # image/svg+xml content-type, which the ?filename=i.svg param buys).
         if route == "/add-image":
             auth = upload_auth_error(self.headers, data)
             if auth:
                 return self._json(auth[0], {"error": auth[1]})
-            err = image_error(data)
+            kind, err = image_error(data)
             if err:
                 return self._json(415, {"error": err})
             try:
-                cid = kubo_add(data, filename="image")
+                cid = kubo_add(data, filename="image.svg" if kind == "svg" else "image")
             except Exception as e:  # noqa: BLE001
                 return self._json(502, {"error": "ipfs add failed: %s" % e})
-            return self._json(200, {"cid": cid}) if cid else self._json(502, {"error": "ipfs returned no CID"})
+            return self._json(200, {"cid": cid, "svg": kind == "svg"}) if cid else self._json(502, {"error": "ipfs returned no CID"})
 
         # signed-upload gate (see upload_auth_error): wallet-authorized + rate-limited
         auth = upload_auth_error(self.headers, data)

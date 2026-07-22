@@ -10,10 +10,9 @@
    ============================================================ */
 import { EnclaveElement, register } from "../../js/lib/enclave-element.js";
 import { esc } from "../../js/core/util.js";
-import { IPFS_IMG_GATEWAY } from "../../js/core/config.js";
 import { Enclave } from "../../js/core/api.js";
 import { APPROVAL } from "../../js/core/chain.js";
-import { STORE, selIdx, appOfficial, appMedia, placeholderArt } from "../../js/core/catalog.js";
+import { STORE, selIdx, appOfficial, appMedia, mediaUrl, placeholderArt } from "../../js/core/catalog.js";
 import { tallyOf, avgOf, starsHtml } from "../../js/core/reviews.js";
 
 class AppCard extends EnclaveElement {
@@ -36,7 +35,7 @@ class AppCard extends EnclaveElement {
     const media = appMedia(app), thumb = this.querySelector(".app-thumb");
     thumb.hidden = false;
     thumb.style.backgroundImage = media.thumbnail
-      ? "url('" + IPFS_IMG_GATEWAY + encodeURIComponent(media.thumbnail) + "')"
+      ? "url('" + mediaUrl(media.thumbnail, media.thumbnailSvg) + "')"
       : placeholderArt(app.appId || app.slug, app.name || app.slug);
 
     // the title is a real link (the heading survives in the a11y tree; Enter

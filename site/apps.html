@@ -146,19 +146,19 @@
           <textarea id="pubDesc" maxlength="500" placeholder="What does it do?"></textarea>
         </div>
         <div class="full pub-media">
-          <span class="lbl">App images <span class="dim">(optional · PNG/JPEG/WebP/GIF · ≤ 4 MB · pinned to IPFS &amp; stored with this version)</span></span>
+          <span class="lbl">App images <span class="dim">(optional · PNG/JPEG/WebP/GIF/SVG · ≤ 4 MB · pinned to IPFS &amp; stored with this version)</span></span>
           <div class="pub-media-row">
             <div class="pub-img">
               <div class="pub-img-top">Thumbnail <span class="dim">catalog tile · ~16:9</span></div>
               <label class="pub-img-prev" id="pubThumbPrev" for="pubThumbFile"><span class="pub-img-ph">＋ add image</span></label>
-              <input type="file" id="pubThumbFile" class="sr-only" accept="image/png,image/jpeg,image/webp,image/gif" aria-label="Thumbnail image" />
+              <input type="file" id="pubThumbFile" class="sr-only" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" aria-label="Thumbnail image" />
               <input type="hidden" id="pubThumbCid" />
               <div class="pub-img-foot"><span class="hint" id="pubThumbHint"></span><button type="button" class="btn btn-sm pub-img-clear" id="pubThumbClear" hidden>clear</button></div>
             </div>
             <div class="pub-img">
               <div class="pub-img-top">Banner <span class="dim">app page hero · ~4:1</span></div>
               <label class="pub-img-prev banner" id="pubBannerPrev" for="pubBannerFile"><span class="pub-img-ph">＋ add image</span></label>
-              <input type="file" id="pubBannerFile" class="sr-only" accept="image/png,image/jpeg,image/webp,image/gif" aria-label="Banner image" />
+              <input type="file" id="pubBannerFile" class="sr-only" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" aria-label="Banner image" />
               <input type="hidden" id="pubBannerCid" />
               <div class="pub-img-foot"><span class="hint" id="pubBannerHint"></span><button type="button" class="btn btn-sm pub-img-clear" id="pubBannerClear" hidden>clear</button></div>
             </div>

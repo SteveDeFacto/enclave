@@ -12,14 +12,14 @@ import "../../components/app-card/app-card.js";
 import "../../components/app-detail/app-detail.js";
 import "../../components/app-reviews/app-reviews.js";
 import { $, $$, esc, short, blen, fmtDur, showToast, on, tosAccepted, setTosAccepted } from "../core/util.js";
-import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, FEATURED_ADDRESS, REVIEWS_ADDRESS, USDC_BASE, IPFS_UPLOAD_URL, IPFS_IMAGE_UPLOAD_URL, IPFS_IMG_GATEWAY, MAX_WASM_MB, MAX_WASM_BYTES, MAX_IMAGE_MB, MAX_IMAGE_BYTES, BASE_CHAIN, ACCOUNTS_ENABLED } from "../core/config.js";
+import { APP_CATALOG_ADDRESS, APP_CATALOG_CHAIN, FEATURED_ADDRESS, REVIEWS_ADDRESS, USDC_BASE, IPFS_UPLOAD_URL, IPFS_IMAGE_UPLOAD_URL, MAX_WASM_MB, MAX_WASM_BYTES, MAX_IMAGE_MB, MAX_IMAGE_BYTES, BASE_CHAIN, ACCOUNTS_ENABLED } from "../core/config.js";
 import { Enclave, EnclaveError } from "../core/api.js";
 import { catConfigured, catExplorer, encCall, CAT_SEL, CAT_MAX, APPROVAL, depPrices6, depMaxGpuMilli, rate6Of, waitReceipt, catSchemaRev, catMaxFeePerSec6, catVersionFee, featConfigured, featMaxBid, FEAT_SEL, revConfigured, REV_SEL } from "../core/chain.js";
 import { FEATURED, loadCampaigns, pickFeatured, beaconView } from "../core/featured.js";
 import { loadTallies, loadReviews, confirmReceipt } from "../core/reviews.js";
 import { payForRuntime } from "../core/fund.js";
 import { connectWallet, authenticate, ensureBaseChain, sendTx, usdcBalanceOf } from "../core/wallet.js";
-import { STORE, loadCatalog, selIdx, defaultIdx, appVerified, appPrivileged, visibleVerIdxs, validPortsCsv, REF_CACHE, PORTS_CACHE, SPECS_CACHE, specOf, CONFIG_CACHE, catalogRef, mediaOf, appMedia, stripMedia, withMedia } from "../core/catalog.js";
+import { STORE, loadCatalog, selIdx, defaultIdx, appVerified, appPrivileged, visibleVerIdxs, validPortsCsv, REF_CACHE, PORTS_CACHE, SPECS_CACHE, specOf, CONFIG_CACHE, catalogRef, mediaOf, appMedia, mediaUrl, stripMedia, withMedia } from "../core/catalog.js";
 import { minPctsOf, shareRates } from "../core/pricing.js";
 import { navigate } from "../boot.js";
 
@@ -594,13 +594,15 @@ async function signedUploadToken(bytes){
   }
 }
 
-/* Upload an app image (thumbnail/banner) to the validating gateway; returns its
-   CID. Small + wallet-signed like the wasm; the gateway re-checks the raster
-   magic bytes and pins. */
+/* Upload an app image (thumbnail/banner) to the validating gateway; returns
+   { cid, svg }. Small + wallet-signed like the wasm; the gateway re-checks the
+   bytes (raster magic, or the strict SVG validator) and pins. `svg` is the
+   GATEWAY's verdict, not the file extension - it rides _media so renderers
+   can request the svg content-type (see mediaUrl). */
 async function putImage(file){
   if (!IPFS_IMAGE_UPLOAD_URL) throw new EnclaveError("Image upload isn’t configured here.", 0);
-  if (!/\.(png|jpe?g|webp|gif)$/i.test(file.name || "") && !/^image\/(png|jpeg|webp|gif)$/i.test(file.type || ""))
-    throw new EnclaveError("Pick a PNG, JPEG, WebP, or GIF image.", 0);
+  if (!/\.(png|jpe?g|webp|gif|svg)$/i.test(file.name || "") && !/^image\/(png|jpeg|webp|gif|svg\+xml)$/i.test(file.type || ""))
+    throw new EnclaveError("Pick a PNG, JPEG, WebP, GIF, or SVG image.", 0);
   if (file.size > MAX_IMAGE_BYTES) throw new EnclaveError("Image too large: max " + MAX_IMAGE_MB + " MB (this is " + (file.size / 1048576).toFixed(1) + " MB).", 0);
   let buf; try { buf = await file.arrayBuffer(); } catch(_){ throw new EnclaveError("Couldn’t read this image to sign it.", 0); }
   const { token, address, expiry } = await signedUploadToken(buf);
@@ -610,7 +612,7 @@ async function putImage(file){
   }, body: buf });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.cid) throw new EnclaveError("image upload rejected: " + (j.error || ("HTTP " + r.status)), 0);
-  return j.cid;
+  return { cid: j.cid, svg: !!j.svg };
 }
 // Lock the publish path while bytes are in flight: an enabled button next to a
 // CID field still holding the PREVIOUS upload's CID is how a stale CID lands
@@ -701,7 +703,9 @@ async function publishApp(){
   // media field. Re-check the ceiling: media adds ~150 bytes over the app config.
   const thumbCid = ($("#pubThumbCid") && $("#pubThumbCid").value || "").trim();
   const bannerCid = ($("#pubBannerCid") && $("#pubBannerCid").value || "").trim();
-  const finalConfig = withMedia(cfg.val, thumbCid, bannerCid);
+  const thumbSvg = !!($("#pubThumbCid") && $("#pubThumbCid").dataset.svg);
+  const bannerSvg = !!($("#pubBannerCid") && $("#pubBannerCid").dataset.svg);
+  const finalConfig = withMedia(cfg.val, thumbCid, bannerCid, thumbSvg, bannerSvg);
   if (blen(finalConfig) > CAT_MAX.config) return pubStatus("app config + image references exceed " + CAT_MAX.config + " bytes - shorten the config", true);
   // Pre-flight against the loaded catalog. Both cases REVERT on-chain, which a
   // wallet surfaces as a gas-estimation hang and the form as a bare timeout -
@@ -794,14 +798,14 @@ async function onPubImage(e, kind){
   let objUrl = ""; try { objUrl = URL.createObjectURL(f); prev.classList.add("has"); prev.style.backgroundImage = "url('" + objUrl + "')"; } catch(_){}
   if (hint) hint.textContent = "uploading…";
   try {
-    const cid = await putImage(f);
-    if (cidEl) cidEl.value = cid;
+    const { cid, svg } = await putImage(f);
+    if (cidEl){ cidEl.value = cid; cidEl.dataset.svg = svg ? "1" : ""; }
     prev.classList.add("has");
-    prev.style.backgroundImage = "url('" + IPFS_IMG_GATEWAY + encodeURIComponent(cid) + "')";
+    prev.style.backgroundImage = "url('" + mediaUrl(cid, svg) + "')";
     if (hint){ hint.textContent = "pinned"; hint.className = "hint ok"; }
     if (clr) clr.hidden = false;
   } catch(err){
-    if (cidEl) cidEl.value = "";
+    if (cidEl){ cidEl.value = ""; cidEl.dataset.svg = ""; }
     prev.classList.remove("has"); prev.style.backgroundImage = "";
     if (hint){ hint.textContent = err.message || String(err); hint.className = "hint err"; }
     e.target.value = "";
@@ -809,18 +813,18 @@ async function onPubImage(e, kind){
 }
 function clearPubImage(kind){
   const K = IMG_KIND[kind];
-  const cidEl = $("#pub"+K+"Cid"); if (cidEl) cidEl.value = "";
+  const cidEl = $("#pub"+K+"Cid"); if (cidEl){ cidEl.value = ""; cidEl.dataset.svg = ""; }
   const prev = $("#pub"+K+"Prev"); if (prev){ prev.classList.remove("has"); prev.style.backgroundImage = ""; }
   const f = $("#pub"+K+"File"); if (f) f.value = "";
   const hint = $("#pub"+K+"Hint"); if (hint){ hint.textContent = ""; hint.className = "hint"; }
   const clr = $("#pub"+K+"Clear"); if (clr) clr.hidden = true;
 }
 // prefill a picker from an existing CID (add-version keeps the current media)
-function setPubImage(kind, cid){
+function setPubImage(kind, cid, svg){
   const K = IMG_KIND[kind];
-  const cidEl = $("#pub"+K+"Cid"); if (cidEl) cidEl.value = cid || "";
+  const cidEl = $("#pub"+K+"Cid"); if (cidEl){ cidEl.value = cid || ""; cidEl.dataset.svg = svg ? "1" : ""; }
   const prev = $("#pub"+K+"Prev");
-  if (prev){ prev.classList.toggle("has", !!cid); prev.style.backgroundImage = cid ? "url('" + IPFS_IMG_GATEWAY + encodeURIComponent(cid) + "')" : ""; }
+  if (prev){ prev.classList.toggle("has", !!cid); prev.style.backgroundImage = cid ? "url('" + mediaUrl(cid, svg) + "')" : ""; }
   const clr = $("#pub"+K+"Clear"); if (clr) clr.hidden = !cid;
 }
 function readPubConfig(){
@@ -956,6 +960,7 @@ function prefillPublish(app){
     mem: String(Number(v.memMb) || 128), cpuG: String(Math.max(1, Number(v.cpuGflops) || 1)),
     ports: v.ports || "", config: prettyConfig(stripMedia(v.config || "")),
     thumb: media.thumbnail || "", banner: media.banner || "",
+    thumbSvg: !!media.thumbnailSvg, bannerSvg: !!media.bannerSvg,
     note: "pre-filled from " + app.slug + " " + (v.version || "") + " - fix specs/ports and publish (same bytes), or pick a new .wasm if the code changed"
           + (app.active ? "" : " · publishing relists the app"),
   };
@@ -974,7 +979,7 @@ function applyPrefillPublish(){
   $("#pubVram").value = s.vram || "0"; $("#pubGpuT").value = s.gpuT || "0";
   $("#pubMem").value = s.mem || "128"; $("#pubCpuG").value = s.cpuG || "1"; $("#pubPorts").value = s.ports || "";
   const pc = $("#pubConfig"); if (pc) pc.value = s.config || "";
-  setPubImage("thumb", s.thumb || ""); setPubImage("banner", s.banner || "");
+  setPubImage("thumb", s.thumb || "", !!s.thumbSvg); setPubImage("banner", s.banner || "", !!s.bannerSvg);
   pubStatus(s.note || "");
 }
 /* ============================================================
