@@ -78,6 +78,29 @@ function openCtl(d, ep, tls){
     : '<button class="enc-open" data-tls="' + esc(d.id) + '" type="button" disabled aria-label="Open app - waiting for its TLS certificate" title="waiting for the app’s TLS certificate - minted inside the enclave, usually ready within a minute">' + LOCK_OPEN + ' open ↗</button>';
 }
 
+// Per-row SECRETS section (wallet-owned on-chain rows): rendered PERMANENTLY
+// as its locked bar - id + the Unlock control - with the editor body absent
+// until a reveal signature succeeds (_secretsWire). Values only ever exist in
+// the DOM while unlocked; every repaint guard keys on .enc-sec-body so the
+// poll never wipes an open editor and never stalls on the always-present bar.
+function secretsSection(id){
+  const label = appLabel(id);
+  return '<div class="enc-sec" data-id="' + esc(id) + '">'
+    +   '<div class="ap-attbar">'
+    +     '<button class="btn btn-sm btn-primary es-toggle" type="button" aria-controls="esBody' + label + '" aria-expanded="false" title="Private env vars for this app (S3 keys, API tokens): stored on the relay - never on the public chain - and injected at app start by the enclave holding its lease. One wallet signature reveals them for editing">Unlock ↓</button>'
+    +     'secrets · ' + esc(id)
+    +   '</div>'
+    +   '<div class="enc-sec-body" id="esBody' + label + '" hidden>'
+    +     '<label for="esTa' + label + '">Private env vars, one KEY=value per line - stored on the relay, never on-chain; the enclave injects them when the app starts</label>'
+    +     '<textarea class="es-ta" id="esTa' + label + '" rows="5" spellcheck="false" autocomplete="off" placeholder="S3_ACCESS_KEY_ID=…&#10;S3_SECRET_ACCESS_KEY=…"></textarea>'
+    +     '<span class="enc-sec-acts">'
+    +       '<button class="btn btn-sm es-save" type="button" title="One wallet signature stores the textarea as this deployment’s complete secret set">Save</button>'
+    +     '</span>'
+    +   '</div>'
+    +   '<div class="term enc-sec-status" role="status" aria-live="polite"></div>'
+    + '</div>';
+}
+
 function shortImg(s){ if (!s) return ""; return s.length > 44 ? s.slice(0, 42) + "…" : s; }
 // Status buckets for the filter bar: coarse groups beat ten raw statuses.
 // Unknown/new statuses land in "ended" rather than vanishing.
@@ -160,7 +183,7 @@ class Deployments extends EnclaveElement {
     // the open panel the user just unlocked - skip the repaint, the poll
     // catches up once the panel closes.
     this._onAuth = (e) => {
-      if (Enclave.address && this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden]), .enc-upg:not([hidden]), .enc-sec:not([hidden])")) return;
+      if (Enclave.address && this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden]), .enc-upg:not([hidden]), .enc-sec-body:not([hidden])")) return;
       this.refresh({ spinner: !!(e.detail && e.detail.spinner) });
     };
     document.addEventListener("enclave:auth", this._onAuth);
@@ -192,7 +215,7 @@ class Deployments extends EnclaveElement {
     // clobber rule as _onAuth; the regular poll catches up after it closes).
     loadCatalog();
     this._onCat = () => {
-      if (this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden]), .enc-upg:not([hidden]), .enc-sec:not([hidden])")) return;
+      if (this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden]), .enc-upg:not([hidden]), .enc-sec-body:not([hidden])")) return;
       if (this._list) this._renderRows(this._list);
     };
     document.addEventListener("enclave:catalog", this._onCat);
@@ -370,7 +393,7 @@ class Deployments extends EnclaveElement {
             '<button class="btn btn-sm enc-outbtn" data-id="' + esc(d.id) + '" aria-expanded="false">Output</button>' +
             (live && ctl !== "order" ? '<button class="btn btn-sm enc-fundbtn" data-id="' + esc(d.id) + '" aria-expanded="false" title="' + (ctl === "vault" ? 'Add runtime from your credit balance - one passkey tap' : 'Add runtime - a gas-free USDC signature credits the deployment’s on-chain balance') + '">Top up</button>' : '') +
             (onchain && (live || resumable) && ctl !== "order" ? '<button class="btn btn-sm enc-upgbtn" data-id="' + esc(d.id) + '" aria-expanded="false" title="Switch to another approved version of this app - paid time carries over; the app restarts in place on the new version">Version</button>' : '') +
-            (onchain && (live || resumable) && ctl === "wallet" ? '<button class="btn btn-sm enc-secbtn" data-id="' + esc(d.id) + '" aria-expanded="false" title="Private env vars for this app (S3 keys, API tokens): stored on the relay - never on the public chain - and injected into the app at start by the enclave holding its lease">Secrets</button>' : '') +
+
             (st === "running" && ctl === "wallet" ? '<button class="btn btn-sm enc-restart" data-id="' + esc(d.id) + '" title="Stop and relaunch the app in place - same version, endpoint and balance; app state is ephemeral. The fix for a wedged instance (e.g. a model that never loaded at boot)">Restart</button>' : '') +
             '<button class="btn btn-sm enc-verify" data-id="' + esc(d.id) + '" aria-expanded="false">Verify</button>' +
             (resumable && ctl !== "order" ? '<button class="btn btn-sm enc-resume" data-id="' + esc(d.id) + '" title="Put it back on the queue - an enclave re-claims it and the app relaunches fresh from its published version, spending the remaining balance">Resume</button>' : '') +
@@ -389,7 +412,7 @@ class Deployments extends EnclaveElement {
         depIp6Row(d) +
         '<div class="enc-fund" hidden></div>' +
         '<div class="enc-upg" hidden></div>' +
-        '<div class="enc-sec" hidden></div>' +
+        (onchain && (live || resumable) && ctl === "wallet" ? secretsSection(d.id) : '') +
         '<div class="enc-out" data-id="' + esc(d.id) + '" hidden></div>' +
         '<div class="enc-att" hidden></div>' +
       '</div>';
@@ -399,7 +422,7 @@ class Deployments extends EnclaveElement {
     $$(".enc-outbtn", body).forEach(b => b.addEventListener("click", () => this._output(b.dataset.id, b)));
     $$(".enc-fundbtn", body).forEach(b => b.addEventListener("click", () => this._fund(b.dataset.id, b)));
     $$(".enc-upgbtn", body).forEach(b => b.addEventListener("click", () => this._upgrade(b.dataset.id, b)));
-    $$(".enc-secbtn", body).forEach(b => b.addEventListener("click", () => this._secrets(b.dataset.id, b)));
+    $$(".enc-sec[data-id]", body).forEach(el => this._secretsWire(el));
     $$(".enc-verify", body).forEach(b => b.addEventListener("click", () => this._verify(b.dataset.id, b)));
     $$(".enc-kill", body).forEach(b => b.addEventListener("click", () => this._kill(b.dataset.id, b)));
     $$(".enc-resume", body).forEach(b => b.addEventListener("click", () => this._resume(b.dataset.id, b)));
@@ -723,48 +746,24 @@ class Deployments extends EnclaveElement {
     });
   }
 
-  /* ---- per-row Secrets panel: private env vars, relay-stored ----
+  /* ---- per-row Secrets section: private env vars, relay-stored ----
      S3 keys and API tokens live on the RELAY (encrypted at rest), never on the
      public chain; the enclave holding the lease injects them as env vars at
      every app start. No session: each owner op is one single-use personal_sign
      over a canonical string the relay checks against the on-chain owner -
        get:  enclave-secrets:get:<id>:<expiry>
        put:  enclave-secrets:put:<id>:<expiry>:<sha256hex(payload)>
-     The editor is deliberately unlock-first: Save REPLACES the whole set, so
-     it stays disabled until one reveal signature has shown what's stored -
-     saving blind over unseen keys is how secrets get wiped by accident. ---- */
-  async _secrets(id, btn) {
-    const row = btn.closest(".enc-row"), box = row && row.querySelector(".enc-sec"); if (!box) return;
-    if (!box.hidden){ box.hidden = true; box.innerHTML = ""; btn.setAttribute("aria-expanded", "false"); return; }
-    btn.setAttribute("aria-expanded", "true");
-    box.hidden = false;
-    // Locked-first: the panel opens as just the bar with an Unlock control -
-    // the body (editor + Save) doesn't exist on screen until one signature
-    // reveals what's stored. Lock wipes the values and collapses back to the bar.
-    const taId = "esTa" + appLabel(id), bodyId = "esBody" + appLabel(id);
-    box.innerHTML = '<div class="ap-attbar">'
-      +   '<button class="btn btn-sm btn-primary es-toggle" type="button" aria-controls="' + bodyId + '" aria-expanded="false" title="One wallet signature reveals this deployment’s stored secrets for editing">Unlock ↓</button>'
-      +   'secrets · ' + esc(id)
-      + '</div>'
-      + '<div class="enc-sec-body" id="' + bodyId + '" hidden>'
-      +   '<label for="' + taId + '">Private env vars, one KEY=value per line - stored on the relay, never on-chain; the enclave injects them when the app starts</label>'
-      +   '<textarea class="es-ta" id="' + taId + '" rows="5" spellcheck="false" autocomplete="off" placeholder="S3_ACCESS_KEY_ID=…&#10;S3_SECRET_ACCESS_KEY=…"></textarea>'
-      +   '<span class="enc-sec-acts">'
-      +     '<button class="btn btn-sm es-save" type="button" title="One wallet signature stores the textarea as this deployment’s complete secret set">Save</button>'
-      +   '</span>'
-      + '</div>'
-      + '<div class="term enc-sec-status" role="status" aria-live="polite"></div>';
+     The bar renders permanently (secretsSection); this wires its Unlock/Lock
+     control. Reveal-first on purpose: Save REPLACES the whole set, and saving
+     blind over unseen keys is how secrets get wiped by accident, so the editor
+     only exists after a reveal signature has shown what's stored. ---- */
+  _secretsWire(box) {
+    const id = box.dataset.id;
     const ta = box.querySelector(".es-ta"), toggle = box.querySelector(".es-toggle"),
           body_ = box.querySelector(".enc-sec-body"), save = box.querySelector(".es-save"),
           st = box.querySelector(".enc-sec-status");
+    if (!id || !ta || !toggle || !body_ || !save || !st) return;
     const paint = (cls, txt) => paintLine(st, cls, txt);
-    // fleet advisory only - the relay stores regardless; injection needs the fleet
-    try {
-      const a = await Enclave.getAvailability();
-      if (a && a.aggregate && a.secrets !== true)
-        paint("dimln", "// heads-up: the live fleet doesn’t inject secrets yet - values you store apply once it updates");
-    } catch(e){}
-    if (box.hidden || !box.isConnected) return;
     const sha256hex = async (s) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))]
       .map(b => b.toString(16).padStart(2, "0")).join("");
     const sign = async (message) => {
@@ -812,6 +811,12 @@ class Deployments extends EnclaveElement {
         paint("ok", r.names.length
           ? "[✓] rev " + r.rev + " · " + r.names.length + " secret" + (r.names.length === 1 ? "" : "s") + " - edit below, then Save (replaces the whole set)"
           : "[✓] nothing stored yet - add KEY=value lines below, then Save");
+        // fleet advisory - the relay stores regardless; injection needs the fleet
+        try {
+          const a = await Enclave.getAvailability();
+          if (a && a.aggregate && a.secrets !== true)
+            paint("dimln", "// heads-up: the live fleet doesn’t inject secrets yet - values you store apply once it updates");
+        } catch(e){}
       } catch(e){
         paint("warn", "[x] " + (e.message || String(e)));
         toggle.disabled = false;
@@ -1093,7 +1098,7 @@ class Deployments extends EnclaveElement {
     if (this._poll) return;
     this._poll = setInterval(() => {
       if (!Enclave.address && !Enclave.accountAuthed()){ this._stopPoll(); return; }
-      if (this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden]), .enc-upg:not([hidden]), .enc-sec:not([hidden])")) return;   // don't clobber an open attestation/output/top-up view
+      if (this.querySelector(".enc-att:not([hidden]), .enc-out:not([hidden]), .enc-fund:not([hidden]), .enc-upg:not([hidden]), .enc-sec-body:not([hidden])")) return;   // don't clobber an open attestation/output/top-up view
       this.refresh();
     }, 10000);
   }
