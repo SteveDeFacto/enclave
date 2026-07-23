@@ -768,6 +768,10 @@ function aggregateAvailability() {
     // fleet-AND — a mixed fleet would strand an overridden deploy on a runner
     // that refuses the namespace, so the console only unlocks the box on true
     configOverride: live.length > 0 && live.every((e) => e.availability?.configOverride === true),
+    // setConfig reaches LIVE deployments (audit envelope watch: waf swaps in
+    // place, a config change restarts the app on the new value): fleet-AND -
+    // on false an edit still lands on-chain but only applies at re-claim
+    configEdit: live.length > 0 && live.every((e) => e.availability?.configEdit === true),
     // per-deployment secrets (relay-stored, injected as guest env by the lease
     // holder): needs BOTH this relay configured (SECRETS_KEY + data dir) and a
     // fleet-AND of runners that fetch+inject — a mixed fleet would run the same

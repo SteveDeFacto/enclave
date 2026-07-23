@@ -25,7 +25,7 @@ import { createHash, createHmac } from "node:crypto";
 import { decodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { encodeCreateTx, encodeFundTxs, encodeSetActiveTx, encodeSetAppRefTx, encodePublishTx }
+import { encodeCreateTx, encodeFundTxs, encodeSetActiveTx, encodeSetAppRefTx, encodeSetConfigTx, encodePublishTx }
   from "../relay/mcp.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -92,6 +92,15 @@ test("mcp encoders: setActive / setAppRef decode against the ledger ABI", () => 
   const up = decodeFunctionData({ abi: DEPS_ABI, data: encodeSetAppRefTx({ deployments: D, id: ID, appRef: "catalog://" + ID + "/3" }).data });
   assert.equal(up.functionName, "setAppRef");
   assert.deepEqual(up.args, [ID, "catalog://" + ID + "/3"]);
+});
+
+test("mcp encoders: setConfig decodes against the ledger ABI (envelope and empty)", () => {
+  const env = '{"waf":{"rps":10},"config":{"MODEL":"x"}}';
+  const set = decodeFunctionData({ abi: DEPS_ABI, data: encodeSetConfigTx({ deployments: D, id: ID, envelope: env }).data });
+  assert.equal(set.functionName, "setConfig");
+  assert.deepEqual(set.args, [ID, env]);
+  const clr = decodeFunctionData({ abi: DEPS_ABI, data: encodeSetConfigTx({ deployments: D, id: ID, envelope: "" }).data });
+  assert.deepEqual(clr.args, [ID, ""]);
 });
 
 test("mcp encoders: publishVersion (rev 5) decodes against contracts/EnclaveAppCatalog.abi.json", () => {

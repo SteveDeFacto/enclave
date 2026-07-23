@@ -821,6 +821,43 @@ function parseDepOptions(raw) {
   opts.waf = out;
   return opts;
 }
+
+// ---- owner envelope change (setConfig): does the serving record re-apply? ---
+// Pure core of the audit's envelope watch. The options envelope is mutable
+// on-chain (EnclaveDeployments.setConfig) but was only ever read at claim -
+// this verdict is what makes an owner's edit reach a LIVE deployment. Verdicts:
+//   "skip"    - not applicable, or nothing changed
+//   "stamp"   - a record from before this watch: adopt the current value
+//               WITHOUT a restart (rollout must not restart the fleet)
+//   "waf"     - only the waf namespace changed: swap rec.waf live, no restart
+//   "restart" - the config namespace changed: relaunch on the new
+//               ENCLAVE_CONFIG (the setAppRef restart-in-place rule)
+//   "error"   - the new envelope doesn't parse under THIS build's rules: keep
+//               the old config serving and surface why (the claim gate's
+//               fail-closed refusal can't apply to what already runs)
+function envelopeEditVerdict(rec, chainCid) {
+  if (!rec._onchain || rec.status !== "running") return "skip";
+  const cur = String(chainCid || "");
+  if (rec._envelope == null) return "stamp";
+  if (rec._envelope === cur) return "skip";
+  let oldO = {}, newO;
+  try { oldO = parseDepOptions(rec._envelope); } catch {}    // a stale-unparsable stamp reads as "no options"
+  try { newO = parseDepOptions(cur); } catch { return "error"; }
+  // "config absent" (version default) and "config: {}" (explicitly empty) are
+  // different owner intents - null vs "{}" keeps them distinct here too
+  const cfg = (o) => "config" in o ? JSON.stringify(o.config) : null;
+  return cfg(newO) === cfg(oldO) ? "waf" : "restart";
+}
+
+// CFG_EDIT_SELFTEST='{"records":[{"rec":{…},"chainCid":"…"},…]}' prints each
+// record's verdict as one JSON line and exits - same contract as the seams
+// above (test/config-edit.test.mjs drives it).
+if (process.env.CFG_EDIT_SELFTEST) {
+  const c = JSON.parse(process.env.CFG_EDIT_SELFTEST);
+  console.log(JSON.stringify((c.records || []).map((r) => ({ verdict: envelopeEditVerdict(r.rec || {}, r.chainCid) }))));
+  process.exit(0);
+}
+
 // Is this app-relative URL blocked by the deployment's path rules? Decoded
 // (percent-encoding must not dodge a prefix), lowercased, query stripped.
 function wafPathBlocked(w, url) {
@@ -2188,6 +2225,7 @@ app.get("/availability", async (_req, res) => {
     ...(IS_GPU ? { cardVramSource: CARD_VRAM_SRC } : {}),   // "nvidia-smi"/"manager"/"worker" = probed hardware; "env"/"default" = config fallback
     waf: true,   // this build accepts + enforces the deployment-options envelope (waf); the relay ANDs this across the fleet and the console shows the Protection controls only then
     configOverride: true,   // this build accepts the envelope's `config` namespace (per-deployment app-config override); same fleet-AND rule — the console unlocks the App config box only when every live runner honors it
+    configEdit: true,   // this build's audit re-applies an owner's setConfig to LIVE deployments (waf live-swapped, config = restart in place); without it an edit only lands at the next re-claim — same fleet-AND rule
     secrets: true,   // this build pulls relay-staged per-deployment secrets into the guest env at every launch; fleet-AND'd with the relay's own secretsEnabled() before clients see it
     secretsInConfig: true,   // this build also resolves $NAME/${NAME} placeholders in config STRING values from those secrets at launch (wasm-manager _subst_secrets); same fleet-AND rule
     source, ...(note ? { note } : {}), updatedAt: new Date().toISOString(),
@@ -2422,6 +2460,7 @@ const VIEW_FIELDS = ["id", "owner", "status", "public", "firewall", "image", "co
   "app", "appWasm", "config", "resources", "network", "attestation", "region",
   "createdAt", "startedAt", "paused", "pauseReason", "payDeadline", "digest",
   "payRef", "paidUsdc", "portMap", "error", "waf", "configOverride", "versionChange",
+  "configChange",  // an envelope edit (setConfig) this runner deferred/refused - the owner's evidence, versionChange's twin
   "secretsRev"];   // which relay secrets snapshot the running instance was launched with (names/values never leave the guest)
 const view = (rec) => {
   const o = {};
@@ -4340,6 +4379,7 @@ async function switchTenantVersion(rec, d) {
     const o = parseDepOptions(d.configCid);
     rec.config = "config" in o ? JSON.stringify(o.config) : (g.config || "");
     if ("config" in o) rec.configOverride = true; else delete rec.configOverride;
+    rec._envelope = String(d.configCid || "");   // the envelope watch must not re-restart for what this switch just applied
   } catch { rec.config = g.config || ""; }
   rec.firewall = firewall;
   rec.network.port = httpFw ? +httpFw.slice(5) : 8080;
@@ -4355,6 +4395,63 @@ async function switchTenantVersion(rec, d) {
     // here (the backoff clears if the owner switches the version again)
     noteProvisionFailure(rec.id, to);
     releaseLease(rec.id, "version change provision failed").catch(() => {});
+  }
+  saveStateSoon();
+}
+
+// Apply an owner's on-chain envelope rewrite (setConfig) to a SERVING record -
+// the audit calls this on envelopeEditVerdict's waf/restart/error verdicts.
+// WAF swaps live (the /x gate reads rec.waf per request); a config-namespace
+// change relaunches the app on the new ENCLAVE_CONFIG exactly like a version
+// switch (same lease, balance and endpoint; app state is ephemeral by design).
+// When the override is REMOVED the record falls back to the VERSION's
+// approval-covered config, resolved fresh from the catalog - a transient
+// catalog failure defers to the next pass rather than launching on the wrong
+// config. rec.configChange mirrors versionChange: the owner's evidence when an
+// edit can't apply (the console/CLI poll the record).
+async function applyEnvelopeEdit(rec, d, verdict) {
+  const cur = String(d.configCid || "");
+  const refuse = (why) => {
+    if (rec.configChange?.error !== why)
+      console.warn(`[claim] ${rec.id} config change deferred/refused: ${why}`);
+    rec.configChange = { error: why };
+    saveStateSoon();
+  };
+  if (verdict === "error") {
+    let why = "unparseable envelope";
+    try { parseDepOptions(cur); } catch (e) { why = e.message; }
+    return refuse(why);
+  }
+  const o = parseDepOptions(cur);                  // waf/restart: the verdict already parsed it clean
+  if (o.waf) rec.waf = o.waf; else delete rec.waf;
+  if (verdict === "waf") {
+    rec._envelope = cur;
+    delete rec.configChange;
+    console.log(`[claim] ${rec.id} owner updated the waf envelope; applied live`);
+    saveStateSoon();
+    return;
+  }
+  let cfg;
+  if ("config" in o) cfg = JSON.stringify(o.config);
+  else {
+    // override removed: back to the version's own config
+    let g;
+    try { g = await gateAppReference(d.appRef); }
+    catch (e) { g = { error: { msg: e.shortMessage || e.message } }; }
+    if (g.error) return refuse("couldn't resolve the version's config to fall back to: " + g.error.msg);
+    cfg = g.config || "";
+  }
+  console.log(`[claim] ${rec.id} owner changed the deployment config on-chain; restarting in place`);
+  try { await stopContainer(rec); } catch {}
+  rec.config = cfg;
+  if ("config" in o) rec.configOverride = true; else delete rec.configOverride;
+  rec._envelope = cur;
+  delete rec.configChange;
+  rec._deaths = 0;                 // an owner-initiated relaunch earns a fresh crash budget (the version-switch rule)
+  rec.status = "claimed";          // the provision path's input state
+  if (!(await provisionTenant(rec))) {
+    noteProvisionFailure(rec.id, rec.image && rec.image.reference);
+    releaseLease(rec.id, "config change provision failed").catch(() => {});
   }
   saveStateSoon();
 }
@@ -4488,6 +4585,16 @@ async function auditClaims(ledgerById) {
       // a stale refusal must not outlive its cause (the owner switched back,
       // or the version's approval landed and the switch above succeeded)
       if (rec.versionChange) { delete rec.versionChange; saveStateSoon(); }
+      // Owner rewrote the deployment-options envelope (setConfig): re-apply it
+      // in place - the mutable half of the record the claim gate only reads
+      // once. See envelopeEditVerdict/applyEnvelopeEdit for the rules.
+      const ev = envelopeEditVerdict(rec, d.configCid);
+      if (ev === "stamp") { rec._envelope = String(d.configCid || ""); saveStateSoon(); }
+      else if (ev === "skip") { if (rec.configChange) { delete rec.configChange; saveStateSoon(); } }
+      else {
+        await applyEnvelopeEdit(rec, d, ev);
+        if (ev === "restart") continue;          // just provisioned; the alive-check below would race it
+      }
       // Crash recovery for a DIED app instance (fatal signal, OOM-kill): the
       // lease is ours and paid, the wasm is cached - relaunch. Bounded: an
       // app that keeps dying (crash-on-first-request) gets handed back after
@@ -4789,6 +4896,9 @@ async function adopt(d, g, firewall, slice) {
     // the quantum the claim just burned - the next audit pass (~CLAIM_POLL_SEC)
     // corrects it; the resume path is exact
     _balance6: Number(d.balance6),
+    // which envelope string this instance runs on: the audit's envelope watch
+    // (envelopeEditVerdict) compares it against the ledger to catch setConfig
+    _envelope: String(d.configCid || ""),
     // which ledger this lease lives on: a book repoint retires the old
     // contract and ledgerMoveSweep tears down what it left behind
     _onchain: true, _ledger: DEPLOYMENTS_ADDRESS, _leaseUntil: Number(d.leaseUntil), _renewing: false,

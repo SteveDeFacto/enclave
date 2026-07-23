@@ -124,6 +124,8 @@ const depsAbiFor = (rev) => [
     inputs: [{ name: "id", type: "bytes32" }, { name: "active", type: "bool" }], outputs: [] },
   { type: "function", name: "setAppRef", stateMutability: "nonpayable",
     inputs: [{ name: "id", type: "bytes32" }, { name: "appRef", type: "string" }], outputs: [] },
+  { type: "function", name: "setConfig", stateMutability: "nonpayable",
+    inputs: [{ name: "id", type: "bytes32" }, { name: "configCid", type: "string" }], outputs: [] },
   { type: "function", name: "feeOf", stateMutability: "view", inputs: [{ name: "id", type: "bytes32" }],
     outputs: [{ name: "recipient", type: "address" }, { name: "feePerSec6", type: "uint256" }] },
   { type: "function", name: "get", stateMutability: "view", inputs: [{ name: "id", type: "bytes32" }],
@@ -347,6 +349,10 @@ export function encodeSetAppRefTx({ deployments, id, appRef }) {
   return tx(deployments, encodeFunctionData({ abi: depsAbiFor(3), functionName: "setAppRef", args: [id, appRef] }), 0n,
     `EnclaveDeployments.setAppRef(${id.slice(0, 10)}…, ${appRef})`);
 }
+export function encodeSetConfigTx({ deployments, id, envelope }) {
+  return tx(deployments, encodeFunctionData({ abi: depsAbiFor(2), functionName: "setConfig", args: [id, envelope] }), 0n,
+    `EnclaveDeployments.setConfig(${id.slice(0, 10)}…, ${envelope ? envelope.length + "-byte envelope" : "empty envelope"})`);
+}
 export function encodePublishTx({ rev, appCatalog, slug, name, description, version, cid, res, ports, config, feePerSec6 }) {
   const args = [slug, name, description, version, cid, res, ports,
                 ...(rev >= 3 ? [config || ""] : []), ...(rev >= 5 ? [feePerSec6] : [])];
@@ -423,7 +429,8 @@ Reads (pricing, availability, catalog, deployment status) need no auth. Owner-on
 5. build_fund { id, usd: 5 } (whole cents) or { id, eth: 0.002 }; sign and send. Runners skip unfunded work.
 6. claim_hint { id }, then poll get_deployment { id }: awaiting_payment -> queued -> claimed -> running. Queued-over-capacity work starts by itself when capacity frees.
 7. The app URL is https://<first-8-hex-of-id>.${APP_DOMAIN} (its own origin). Websockets work. Declared tcp:/udp: ports get a dedicated public IPv6 (in the deployment record's network field).
-Notes: shares are immutable after create; a deployment that under-provisions its app's minimums is never claimed. Stop/resume/upgrade are build_stop / build_resume / build_upgrade. ${SIGNING_NOTE}`,
+Notes: shares are immutable after create; a deployment that under-provisions its app's minimums is never claimed. Stop/resume/upgrade are build_stop / build_resume / build_upgrade.
+After it runs, the mutable knobs are: get_config/build_set_config (the app-config override + waf envelope, one owner tx; the runner re-applies it in place) and get_secrets/set_secrets (private env vars on the relay; restart_deployment applies them now). ${SIGNING_NOTE}`,
 
   publish: `Publishing an app to the catalog (wasm component -> IPFS -> on-chain version, then an approval gate):
 1. Build a wasm32-wasip2 COMPONENT (wasi:http). Core modules are refused.
@@ -872,6 +879,86 @@ const TOOLS = [
       return { id: full, owner: d.owner, from: d.appRef, to: `catalog://${app.appId}/${vi}`, version: ver.version,
         transactions: [encodeSetAppRefTx({ deployments, id: full, appRef: `catalog://${app.appId}/${vi}` })],
         next: `sign+send with the owner wallet (${d.owner}), then claim_hint { id: "${full}" }` };
+    },
+  },
+  {
+    name: "get_config",
+    description: "A deployment's options envelope (public ledger data): its per-deployment app-config override and WAF settings, plus the version's default config for context. The app's effective ENCLAVE_CONFIG is the override when present, else the version's approved config. $NAME/${NAME} placeholders inside config STRING values resolve from the deployment's relay-stored secrets at launch.",
+    inputSchema: S({ id: P.id }, ["id"]),
+    handler: async ({ id }) => {
+      const full = await resolveFullId(id);
+      const d = await depGet(full);
+      const raw = String(d.configCid || "").trim();
+      let cur = {};
+      if (raw.startsWith("{")) { try { cur = JSON.parse(raw); } catch {} }
+      if (!cur || Array.isArray(cur) || typeof cur !== "object") cur = {};
+      let versionConfig = null;
+      const m = /^catalog:\/\/(0x[0-9a-fA-F]{64})\/(\d{1,9})$/.exec(d.appRef || "");
+      if (m) { try { versionConfig = ((await readVersions(m[1], Number(m[2]) + 1))[Number(m[2])] || {}).config || ""; } catch {} }
+      return { id: full, envelope: raw, waf: cur.waf ?? null,
+        configOverride: "config" in cur ? cur.config : null, versionConfig,
+        effectiveConfig: "config" in cur ? JSON.stringify(cur.config) : (versionConfig || ""),
+        hint: "build_set_config edits the envelope; set_secrets stores the private values $NAME placeholders resolve from" };
+    },
+  },
+  {
+    name: "build_set_config",
+    description: "Unsigned setConfig transaction rewriting a deployment's options envelope: `config` (the per-deployment app-config override that becomes its ENCLAVE_CONFIG) and/or `waf` (per-IP protection). A namespace you don't pass is PRESERVED — editing the config never wipes the waf and vice versa; clearConfig falls the app back to the version's approved config. On a fleet advertising configEdit the holding runner re-applies the envelope to the LIVE app within ~a minute (waf swaps live; a config change restarts the app in place — same lease, balance and endpoint; app state is ephemeral).",
+    inputSchema: S({
+      id: P.id,
+      config: { type: "object", description: "New app-config override ({} = explicitly empty config). Omit to leave the current override untouched.", additionalProperties: true },
+      waf: { type: "object", description: "New waf namespace, e.g. {\"rps\":10,\"blockScanners\":true}. Omit to leave the current waf untouched.", additionalProperties: true },
+      clearConfig: { type: "boolean", description: "Remove the config override — the version's approved config applies again" },
+      clearWaf: { type: "boolean", description: "Remove the waf namespace" },
+    }, ["id"]),
+    handler: async (a) => {
+      const full = await resolveFullId(a.id);
+      const [d, rev] = await Promise.all([depGet(full), depRev()]);
+      const raw = String(d.configCid || "").trim();
+      let cur = {};
+      if (raw.startsWith("{")) { try { cur = JSON.parse(raw); } catch {} }
+      if (!cur || Array.isArray(cur) || typeof cur !== "object") cur = {};
+      if (a.config === undefined && a.waf === undefined && !a.clearConfig && !a.clearWaf)
+        throw new Error("nothing to change: pass config and/or waf (or clearConfig/clearWaf)");
+      if (a.config !== undefined && a.clearConfig) throw new Error("config and clearConfig are mutually exclusive");
+      if (a.waf !== undefined && a.clearWaf) throw new Error("waf and clearWaf are mutually exclusive");
+      const next = { ...cur };
+      if (a.config !== undefined) {
+        if (!a.config || Array.isArray(a.config) || typeof a.config !== "object")
+          throw new Error("config must be a JSON object ({} = explicitly empty)");
+        if ("_media" in a.config) throw new Error("config._media is reserved for the catalog's store media and never reaches an app — remove it");
+        next.config = a.config;
+      }
+      if (a.clearConfig) delete next.config;
+      if (a.waf !== undefined) {
+        if (!a.waf || Array.isArray(a.waf) || typeof a.waf !== "object" || !Object.keys(a.waf).length)
+          throw new Error("waf must be a non-empty object, e.g. {\"rps\":10} (use clearWaf to remove it)");
+        next.waf = a.waf;
+      }
+      if (a.clearWaf) delete next.waf;
+      const envelope = Object.keys(next).length ? JSON.stringify(next) : "";
+      if (envelope === raw) return { id: full, note: "the envelope already reads exactly that; nothing to do", transactions: [] };
+      const cap = rev >= 5 ? 4096 : 100;
+      if (envelope.length > cap)
+        throw new Error(rev >= 5
+          ? `the options envelope (waf + config) is ${envelope.length} bytes; the ledger caps it at 4096 — trim the config`
+          : `this ledger (deploymentsSchema ${rev}) caps the envelope at 100 bytes — config overrides need the rev-5 ledger`);
+      // the plan_deploy fail-closed rule: a config namespace no runner accepts
+      // makes the deployment unclaimable at its NEXT claim; configEdit only
+      // decides whether a LIVE app applies the edit in place or later
+      const av = await self("GET", "/availability").catch(() => null);
+      if ("config" in next && !("config" in cur) && av && av.aggregate && av.configOverride !== true)
+        throw new Error("the live fleet doesn't support per-deployment config overrides (availability.configOverride is not true) — the deployment would be unclaimable at its next relaunch");
+      const leased = Number(d.leaseUntil) * 1000 > Date.now();
+      const liveEdit = !!(av && av.aggregate && av.configEdit === true);
+      const { deployments } = await addresses();
+      return { id: full, owner: d.owner, envelope,
+        applies: leased
+          ? (liveEdit ? "in place within ~a minute (waf live; a config change restarts the app — same lease, balance and endpoint)"
+                      : "at the app's next relaunch or claim (the live fleet predates in-place envelope edits)")
+          : "when the deployment is next claimed",
+        transactions: [encodeSetConfigTx({ deployments, id: full, envelope })],
+        next: `sign+send with the owner wallet (${d.owner}); get_deployment shows configChange if a runner can't apply it` };
     },
   },
   {

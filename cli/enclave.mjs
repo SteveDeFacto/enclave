@@ -39,7 +39,7 @@ import { createPublicClient, createWalletClient, http as viemHttp, fallback,
 import { base } from "viem/chains";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 
 // The ONLY enclave source repo this CLI will verify against. Attestation targets
 // are pinned to this constant, never taken from the API response — a malicious
@@ -111,6 +111,9 @@ const depsAbiFor = (tuple, rev) => [
   // rev-3 ledgers only (deploymentsSchema >= 3): the owner's version change
   { type: "function", name: "setAppRef", stateMutability: "nonpayable",
     inputs: [{ name: "id", type: "bytes32" }, { name: "appRef", type: "string" }], outputs: [] },
+  // the owner's envelope rewrite (all revs; rev < 5 caps the field at 100 bytes)
+  { type: "function", name: "setConfig", stateMutability: "nonpayable",
+    inputs: [{ name: "id", type: "bytes32" }, { name: "configCid", type: "string" }], outputs: [] },
   { type: "function", name: "get", stateMutability: "view",
     inputs: [{ name: "id", type: "bytes32" }],
     outputs: [{ type: "tuple", components: tuple }] },
@@ -1121,10 +1124,11 @@ async function cmdDeploy(rest) {
       throw new Error("--config must be a JSON object — it replaces the version's config as this deployment's ENCLAVE_CONFIG (--config '{}' = explicitly empty)");
     envParts.config = c;
     // Fail closed while the tx is still unsent: a runner that predates the
-    // `config` namespace refuses the claim, and a created record's envelope is
-    // immutable — the deployment would sit Queued forever, its funding
-    // unrecoverable. Only an unreachable aggregate falls through (same
-    // information the --waf path has always had), with a loud warning.
+    // `config` namespace refuses the claim, so the deployment would sit
+    // Queued until the owner notices and rewrites the envelope (`enclave
+    // config clear`) — refuse here instead. Only an unreachable aggregate
+    // falls through (same information the --waf path has always had), with a
+    // loud warning.
     try {
       const av = await api("GET", "/availability");
       if (av && av.aggregate && av.configOverride !== true)
@@ -1578,6 +1582,105 @@ async function cmdSecrets(rest) {
   }
 }
 
+// ---- per-deployment options envelope: the owner's config/waf EDIT path --------
+// The envelope (create()'s configCid field: {"waf":{…},"config":{…}}) is
+// MUTABLE via EnclaveDeployments.setConfig - one owner tx rewrites it, and a
+// fleet advertising configEdit re-applies it to the LIVE app within ~a minute
+// (waf swaps in place; a config change restarts the app on the new
+// ENCLAVE_CONFIG - same lease, balance and endpoint). `set` PRESERVES the
+// namespace you didn't pass, so editing the config never silently wipes the
+// waf and vice versa; `clear config` falls the app back to the version's
+// approval-covered config.
+async function cmdConfig(rest) {
+  const sub = rest.shift();
+  const usage = "usage: enclave config show <id>\n"
+              + "     | enclave config set <id> '<json>' | --file app-config.json  [--waf '<json>']\n"
+              + "     | enclave config clear <id> [config|waf|all]      (default config: the app falls back to the version's config)";
+  if (!["show", "get", "set", "clear"].includes(sub || "")) throw new Error(usage);
+  const f = flags(rest, { val: ["--file", "--waf"] });
+  if (!f._[0]) throw new Error(usage);
+  const account = loadKey();
+  const id = await resolveId(f._[0], account);
+  if (!isB32(id)) throw new Error("only on-chain deployments (bytes32 ids) carry an options envelope");
+  const { rev, abi } = await depAbi();
+  const d = await read(DEFAULTS.DEPLOYMENTS_ADDRESS, abi, "get", [id]);
+  if (!d || d.owner === "0x0000000000000000000000000000000000000000") throw new Error(`no deployment ${short(id)} on the ledger`);
+  // the current envelope; a legacy/unparseable string reads as empty (setConfig
+  // replaces it wholesale, which is also how such a string gets healed)
+  const raw = String(d.configCid || "").trim();
+  let cur = {};
+  if (raw.startsWith("{")) { try { cur = JSON.parse(raw); } catch {} }
+  if (!cur || Array.isArray(cur) || typeof cur !== "object") cur = {};
+
+  if (sub === "show" || sub === "get") {
+    // the effective ENCLAVE_CONFIG: the deployment's override, else the
+    // version's approved config (read from its catalog record)
+    let verCfg = null;
+    const m = /^catalog:\/\/(0x[0-9a-fA-F]{64})\/(\d{1,9})$/.exec(d.appRef || "");
+    if (m) { try { verCfg = ((await readVersions(m[1], Number(m[2]) + 1))[Number(m[2])] || {}).config || ""; } catch {} }
+    if (opt.json) return jout({ id, envelope: raw, waf: cur.waf ?? null,
+      config: "config" in cur ? cur.config : null, versionConfig: verCfg });
+    say(`deployment ${short(id)} options envelope (${Buffer.byteLength(raw)} bytes of ${rev >= 5 ? 4096 : 100})`);
+    say(cur.waf ? `waf: ${JSON.stringify(cur.waf)}` : "waf: (none)");
+    if ("config" in cur) say(`config: ${JSON.stringify(cur.config)}   <- per-deployment override: this deployment's ENCLAVE_CONFIG`);
+    else if (verCfg) say(`config: the version's applies (no override): ${verCfg.length > 200 ? verCfg.slice(0, 197) + "…" : verCfg}`);
+    else say(`config: (none - ${m ? "this version publishes no config and" : ""} no override is set)`);
+    return;
+  }
+
+  if (d.owner.toLowerCase() !== account.address.toLowerCase())
+    throw new Error(`${short(id)} is owned by ${d.owner}, not this key`);
+  const next = { ...cur };
+  if (sub === "set") {
+    const cfgArg = f._[1] !== undefined ? f._[1] : (f.file !== undefined ? fs.readFileSync(f.file, "utf8") : undefined);
+    if (cfgArg === undefined && f.waf === undefined)
+      throw new Error("nothing to set: pass the app-config JSON (positional or --file) and/or --waf '<json>'\n" + usage);
+    if (cfgArg !== undefined) {
+      let c; try { c = JSON.parse(cfgArg); } catch (e) { throw new Error("the app config must be a JSON object, e.g. '{\"api_key\":\"…\"}': " + e.message); }
+      if (!c || Array.isArray(c) || typeof c !== "object")
+        throw new Error("the app config must be a JSON object - it replaces the version's config as this deployment's ENCLAVE_CONFIG ('{}' = explicitly empty)");
+      if ("_media" in c) throw new Error("config._media is reserved for the catalog's store media and never reaches an app - remove it");
+      next.config = c;
+    }
+    if (f.waf !== undefined) {
+      let w; try { w = JSON.parse(f.waf); } catch (e) { throw new Error("--waf must be a JSON object, e.g. --waf '{\"rps\":10}': " + e.message); }
+      if (!w || Array.isArray(w) || typeof w !== "object") throw new Error("--waf must be a JSON object ('{}' removes the waf)");
+      if (Object.keys(w).length) next.waf = w; else delete next.waf;
+    }
+  } else {                                                   // clear
+    const what = (f._[1] || "config").toLowerCase();
+    if (!["config", "waf", "all"].includes(what)) throw new Error(usage);
+    if (what !== "waf") delete next.config;
+    if (what !== "config") delete next.waf;
+  }
+  const envelope = Object.keys(next).length ? JSON.stringify(next) : "";
+  if (envelope === raw) return say("nothing to change - the envelope already reads exactly that");
+  const cap = rev >= 5 ? 4096 : 100;
+  if (Buffer.byteLength(envelope) > cap)
+    throw new Error(rev >= 5
+      ? `the options envelope (waf + config) is ${Buffer.byteLength(envelope)} bytes; the ledger caps it at 4096 - trim the config`
+      : `this ledger (deploymentsSchema ${rev}) caps the envelope at 100 bytes (got ${Buffer.byteLength(envelope)}) - config overrides need the rev-5 ledger`);
+  // the deploy --config fail-closed rule: a `config` namespace no runner
+  // accepts makes the deployment unclaimable at its NEXT claim; configEdit
+  // only decides whether a LIVE app applies the edit in place or later
+  let av = null; try { av = await api("GET", "/availability"); } catch {}
+  if ("config" in next && !("config" in cur)) {
+    if (av && av.aggregate && av.configOverride !== true)
+      throw new Error("the live fleet doesn't support per-deployment config overrides yet (availability.configOverride is not true) - the deployment would be unclaimable at its next relaunch");
+    if (!av || !av.aggregate) say("! couldn't read fleet availability to confirm config-override support; if a runner predates it, the next claim would refuse this deployment");
+  }
+  const leased = Number(d.leaseUntil) * 1000 > Date.now();
+  const liveEdit = !!(av && av.aggregate && av.configEdit === true);
+  const when = leased
+    ? (liveEdit ? "the runner re-applies it in place within ~a minute; a config change restarts the app, waf changes apply live"
+                : "the live fleet predates in-place envelope edits - it applies at the app's next relaunch or claim")
+    : "it applies when the deployment is next claimed";
+  if (!(await confirm(`rewrite the options envelope of ${short(id)}? (${envelope ? Buffer.byteLength(envelope) + " bytes" : "empty"}; ${when})`))) return say("aborted");
+  await sendTx(account, { address: DEFAULTS.DEPLOYMENTS_ADDRESS, abi, functionName: "setConfig", args: [id, envelope] });
+  if (opt.json) return jout({ id, envelope, applies: leased ? (liveEdit ? "in_place" : "next_relaunch") : "next_claim" });
+  say(`envelope updated - ${when}; watch: enclave status ${short(id)}`);
+}
+
 // ---- encrypted volumes: wallet key derivation + credentials envelope ----------
 // BYTE-EXACT contract shared with scripts/enclave-encvol.sh and the
 // encrypted-volumes app's JS, pinned by test/encvol-e2e.py stage 3:
@@ -1689,6 +1792,15 @@ deployments
   secrets ls <id> [--show]   list them (values masked without --show)
   secrets rm <id> KEY…       remove some; "secrets clear <id>" removes all
                              (--restart on any of these applies changes now)
+  config show <id>           the deployment's options envelope: its waf and its
+                             app-config override (or the version config that applies)
+  config set <id> '<json>' [--file app-config.json] [--waf '<json>']
+                             rewrite the envelope (one owner tx): the JSON becomes
+                             this deployment's ENCLAVE_CONFIG; each namespace you
+                             don't pass is preserved. The runner re-applies it in
+                             place: waf live, config via an in-place app restart
+  config clear <id> [config|waf|all]   drop the override (default config: the app
+                             falls back to the version's approved config)
   ls                         your deployments: live, queued and unfunded
   status <id>                one deployment: state, lease, balance, URL
   logs <id> [-f] [--tail N]  the app's stdout/stderr (-f polls)
@@ -1742,7 +1854,7 @@ const COMMANDS = {
   status: cmdStatus, logs: cmdLogs, fund: cmdFund, attest: cmdAttest,
   restart: cmdRestart, stop: cmdStop, suspend: cmdStop, resume: cmdResume,
   upgrade: cmdUpgrade, "set-version": cmdUpgrade,
-  secrets: cmdSecrets,
+  secrets: cmdSecrets, config: cmdConfig,
   publish: cmdPublish, apps: cmdApps,
   pricing: cmdPricing, availability: cmdAvailability, gpu: cmdGpu, account: cmdAccount,
   encvol: cmdEncvol,
