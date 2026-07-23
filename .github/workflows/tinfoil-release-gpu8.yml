@@ -67,9 +67,11 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          # CR_PAT so a first-time org package push persists (GITHUB_TOKEN can't
-          # create new org packages); falls back to GITHUB_TOKEN when unset.
-          password: ${{ secrets.CR_PAT || secrets.GITHUB_TOKEN }}
+          # GITHUB_TOKEN pushes fine now that every package exists and grants this
+          # repo Actions access (the CR_PAT bootstrap for FIRST-TIME org package
+          # creation is retired 2026-07-23 - a brand-new package name needs a
+          # one-time web-UI creation before its first push).
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push the supervisor image
         id: build

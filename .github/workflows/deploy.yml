@@ -367,9 +367,6 @@ jobs:
       - name: Build, push, and repin changed sidecar images
         env:
           GH_TOKEN: ${{ github.token }}
-          # Optional: a classic PAT with write:packages. GITHUB_TOKEN can only
-          # push ghcr packages that already grant this repo Actions access.
-          CR_PAT: ${{ secrets.CR_PAT }}
         run: |
           set -euo pipefail
           TARGETS=""

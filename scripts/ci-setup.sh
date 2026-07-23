@@ -74,6 +74,7 @@ done
 say "still manual:"
 say "  1. gh secret set DEPLOYER_PRIVATE_KEY -R $REPO_SLUG --env contract-deploy   # funded Base EOA for contract deploys"
 say "  2. ghcr package settings for enclave-worker / enclave-mps / enclave-wasm-manager: grant this repo"
-say "     'Actions access: write' (or set a classic PAT: gh secret set CR_PAT -R $REPO_SLUG)"
+say "     'Actions access: write' (workflows auth with GITHUB_TOKEN only; the CR_PAT secret is retired -"
+say "     a brand-new package name needs one-time web-UI creation before its first push)"
 say "  3. gh secret set TINFOIL_API_KEY -R $REPO_SLUG   # Tinfoil admin key (dash.tinfoil.sh) —"
 say "     lets tinfoil-release-publish.yml auto-update the running enclaves after each release"
