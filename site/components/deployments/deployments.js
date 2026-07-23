@@ -773,7 +773,16 @@ class Deployments extends EnclaveElement {
       return j;
     };
     let hadKeys = 0, armedClear = false;
+    // Unlock is a one-way reveal, so after it succeeds the same control turns
+    // into Lock: wipe the values and tear the panel down (close = innerHTML
+    // cleared, so revealed secrets leave the DOM entirely - nothing is sent).
     unlock.addEventListener("click", async () => {
+      if (unlock.dataset.open) {
+        ta.value = "";
+        box.hidden = true; box.innerHTML = "";
+        btn.setAttribute("aria-expanded", "false");
+        return;
+      }
       unlock.disabled = true;
       try {
         paint("info", "[*] one signature reveals this deployment’s stored secrets…");
@@ -783,6 +792,10 @@ class Deployments extends EnclaveElement {
         hadKeys = r.names.length;
         ta.value = r.names.map(n => n + "=" + r.env[n]).join("\n");
         ta.disabled = false; save.disabled = false;
+        unlock.dataset.open = "1";
+        unlock.textContent = "Lock";
+        unlock.title = "Hide the revealed values and close this panel (what’s stored is untouched)";
+        unlock.disabled = false;
         paint("ok", r.names.length
           ? "[✓] rev " + r.rev + " · " + r.names.length + " secret" + (r.names.length === 1 ? "" : "s") + " - edit below, then Save (replaces the whole set)"
           : "[✓] nothing stored yet - add KEY=value lines below, then Save");
