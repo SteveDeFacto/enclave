@@ -91,8 +91,8 @@ function secretsSection(id){
     +     'secrets · ' + esc(id)
     +   '</div>'
     +   '<div class="enc-sec-body" id="esBody' + label + '" hidden>'
-    +     '<label for="esTa' + label + '">Private env vars, one KEY=value per line - stored on the relay, never on-chain; the enclave injects them when the app starts</label>'
-    +     '<textarea class="es-ta" id="esTa' + label + '" rows="5" spellcheck="false" autocomplete="off" placeholder="S3_ACCESS_KEY_ID=…&#10;S3_SECRET_ACCESS_KEY=…"></textarea>'
+    +     '<label for="esTa' + label + '">Private env vars, one KEY="value" per line (quotes optional; inside double quotes, escape &quot; and \\ with a backslash) - stored on the relay, never on-chain; the enclave injects them when the app starts</label>'
+    +     '<textarea class="es-ta" id="esTa' + label + '" rows="5" spellcheck="false" autocomplete="off" placeholder="S3_ACCESS_KEY_ID=&quot;…&quot;&#10;S3_SECRET_ACCESS_KEY=&quot;…&quot;"></textarea>'
     +     '<span class="enc-sec-acts">'
     +       '<button class="btn btn-sm es-save" type="button" title="One wallet signature stores the textarea as this deployment’s complete secret set">Save</button>'
     +     '</span>'
@@ -764,6 +764,17 @@ class Deployments extends EnclaveElement {
           st = box.querySelector(".enc-sec-status");
     if (!id || !ta || !toggle || !body_ || !save || !st) return;
     const paint = (cls, txt) => paintLine(st, cls, txt);
+    // dotenv-style value quoting, both directions: the reveal renders every
+    // value as KEY="…" (with " and \ escaped), and the parser strips one layer
+    // of matched quotes ('single' = literal, "double" = \" \\ unescape). Bare
+    // KEY=value still works; the quotes are a client convention only - the
+    // relay stores the unquoted value.
+    const quo = (v) => '"' + String(v).replace(/(["\\])/g, "\\$1") + '"';
+    const unq = (v) => {
+      const dq = /^"([\s\S]*)"$/.exec(v); if (dq) return dq[1].replace(/\\(["\\])/g, "$1");
+      const sq = /^'([\s\S]*)'$/.exec(v); if (sq) return sq[1];
+      return v;
+    };
     const sha256hex = async (s) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))]
       .map(b => b.toString(16).padStart(2, "0")).join("");
     const sign = async (message) => {
@@ -800,7 +811,7 @@ class Deployments extends EnclaveElement {
         const signature = await sign("enclave-secrets:get:" + id + ":" + expiry);
         const r = await call("/secrets/" + id + "/get", { expiry, signature });
         hadKeys = r.names.length;
-        ta.value = r.names.map(n => n + "=" + r.env[n]).join("\n");
+        ta.value = r.names.map(n => n + "=" + quo(r.env[n])).join("\n");
         body_.hidden = false;
         toggle.dataset.open = "1";
         toggle.textContent = "Lock";
@@ -831,7 +842,7 @@ class Deployments extends EnclaveElement {
           const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
           if (!m) throw new Error('"' + (line.length > 40 ? line.slice(0, 37) + "…" : line) + '" is not KEY=value');
           if (/^ENCLAVE_/i.test(m[1])) throw new Error(m[1] + ": the ENCLAVE_ prefix is reserved for platform variables");
-          set[m[1]] = m[2];
+          set[m[1]] = unq(m[2]);
         }
       } catch(e){ return paint("warn", "[x] " + e.message); }
       if (!Object.keys(set).length && hadKeys && !armedClear) {

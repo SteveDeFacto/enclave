@@ -1492,13 +1492,24 @@ async function secretsCall(account, id, payload) {           // payload null = r
   return api("POST", `/v1/secrets/${id}${payload == null ? "/get" : ""}`,
              { body: payload == null ? { expiry, signature } : { payload, expiry, signature } });
 }
-// KEY=VALUE args + optional .env file (# comments, blank lines, `export ` prefix)
+// KEY=VALUE args + optional .env file (# comments, blank lines, `export ` prefix).
+// dotenv-style quoting: KEY="value" / KEY='value' strip one layer of matched
+// quotes ('single' literal, "double" unescapes \" and \\); bare values pass
+// through. `secrets ls --show` prints the same canonical quoted form, so its
+// output is valid input here. The quotes are a client convention - the relay
+// stores the unquoted value.
+const secretsUnq = (v) => {
+  const dq = /^"([\s\S]*)"$/.exec(v); if (dq) return dq[1].replace(/\\(["\\])/g, "$1");
+  const sq = /^'([\s\S]*)'$/.exec(v); if (sq) return sq[1];
+  return v;
+};
+const secretsQuo = (v) => '"' + String(v).replace(/(["\\])/g, "\\$1") + '"';
 function secretsKv(pairs, file) {
   const set = {};
   const add = (line, from) => {
     const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
     if (!m) throw new Error(`${from}: "${line.length > 40 ? line.slice(0, 37) + "…" : line}" is not KEY=VALUE`);
-    set[m[1]] = m[2];
+    set[m[1]] = secretsUnq(m[2]);
   };
   for (const p of pairs) add(p, "argument");
   if (file) {
@@ -1553,7 +1564,7 @@ async function cmdSecrets(rest) {
     if (opt.json) return jout(f.show ? r : { ...r, env: undefined });
     if (!r.names.length) return say(`no secrets stored for ${short(id)} (set some: enclave secrets set ${short(id)} KEY=VALUE)`);
     say(`rev ${r.rev} · ${r.updatedAt || ""}`.trim());
-    for (const n of r.names) say(f.show ? `${n}=${r.env[n]}` : `${n}  (${Buffer.byteLength(r.env[n], "utf8")} bytes; --show to reveal)`);
+    for (const n of r.names) say(f.show ? `${n}=${secretsQuo(r.env[n])}` : `${n}  (${Buffer.byteLength(r.env[n], "utf8")} bytes; --show to reveal)`);
     return;
   }
   if (opt.json) return jout(r);
